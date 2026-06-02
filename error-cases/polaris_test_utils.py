@@ -362,8 +362,12 @@ def search_and_debug(request_id, minutes_ago=10):
     debug_opensearch(minutes_ago=minutes_ago)
     return []
 
-def search_401_errors(minutes_ago=5):
-    """Find all 401 unauthorized errors — general pattern."""
+# ── General error search functions ───────────────────────────
+# Use these instead of search_and_debug(request_id)
+# minutes_ago=1 → only current run logs
+
+def search_401_errors(minutes_ago=1):
+    """Find 401 unauthorized errors — general pattern, no requestId needed."""
     client = os_client()
     result = client.search(
         index=LOG_INDEX,
@@ -381,6 +385,7 @@ def search_401_errors(minutes_ago=5):
                         {"match": {"message": "Failed to resolve principal"}},
                         {"match": {"message": "unauthorized_client"}},
                         {"match": {"message": "getToken API with status code 401"}},
+                        {"match": {"message": "not authorized"}},
                     ],
                     "minimum_should_match": 1
                 }
@@ -393,8 +398,8 @@ def search_401_errors(minutes_ago=5):
     return result["hits"]["hits"]
 
 
-def search_403_errors(minutes_ago=5):
-    """Find all 403 forbidden errors — general pattern."""
+def search_403_errors(minutes_ago=1):
+    """Find 403 forbidden errors — general pattern."""
     client = os_client()
     result = client.search(
         index=LOG_INDEX,
@@ -409,7 +414,7 @@ def search_403_errors(minutes_ago=5):
                         {"match": {"message": "\" 403"}},
                         {"match": {"message": "ForbiddenException"}},
                         {"match": {"message": "lacks privilege"}},
-                        {"match": {"message": "not authorized"}},
+                        {"match": {"message": "is not authorized"}},
                         {"match": {"message": "drop-with-purge"}},
                     ],
                     "minimum_should_match": 1
@@ -423,8 +428,37 @@ def search_403_errors(minutes_ago=5):
     return result["hits"]["hits"]
 
 
-def search_409_errors(minutes_ago=5):
-    """Find all 409 conflict errors — general pattern."""
+def search_404_errors(minutes_ago=1):
+    """Find 404 not found errors — general pattern."""
+    client = os_client()
+    result = client.search(
+        index=LOG_INDEX,
+        body={
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
+                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                    ],
+                    "should": [
+                        {"match": {"message": "\" 404"}},
+                        {"match": {"message": "not found"}},
+                        {"match": {"message": "NoSuch"}},
+                        {"match": {"message": "does not exist"}},
+                    ],
+                    "minimum_should_match": 1
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "collapse": {"field": "sequence"},
+            "size": 10
+        }
+    )
+    return result["hits"]["hits"]
+
+
+def search_409_errors(minutes_ago=1):
+    """Find 409 conflict errors — general pattern."""
     client = os_client()
     result = client.search(
         index=LOG_INDEX,
@@ -441,6 +475,7 @@ def search_409_errors(minutes_ago=5):
                         {"match": {"message": "not empty"}},
                         {"match": {"message": "NamespaceNotEmpty"}},
                         {"match": {"message": "AlreadyExists"}},
+                        {"match": {"message": "duplicate key"}},
                     ],
                     "minimum_should_match": 1
                 }
@@ -453,8 +488,38 @@ def search_409_errors(minutes_ago=5):
     return result["hits"]["hits"]
 
 
-def search_500_errors(minutes_ago=5):
-    """Find all 500 internal server errors — general pattern."""
+def search_400_errors(minutes_ago=1):
+    """Find 400 bad request errors — general pattern."""
+    client = os_client()
+    result = client.search(
+        index=LOG_INDEX,
+        body={
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
+                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                    ],
+                    "should": [
+                        {"match": {"message": "\" 400"}},
+                        {"match": {"message": "Bad Request"}},
+                        {"match": {"message": "validation"}},
+                        {"match": {"message": "malformed"}},
+                        {"match": {"message": "invalid"}},
+                    ],
+                    "minimum_should_match": 1
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "collapse": {"field": "sequence"},
+            "size": 10
+        }
+    )
+    return result["hits"]["hits"]
+
+
+def search_500_errors(minutes_ago=1):
+    """Find 500 internal server errors — general pattern."""
     client = os_client()
     result = client.search(
         index=LOG_INDEX,
@@ -470,6 +535,9 @@ def search_500_errors(minutes_ago=5):
                         {"match": {"message": "NullPointerException"}},
                         {"match": {"message": "getRawLeafEntity"}},
                         {"match": {"message": "Internal Server Error"}},
+                        {"match": {"message": "RuntimeException"}},
+                        {"match": {"message": "duplicate key"}},
+                        {"match": {"message": "grant_records_pkey"}},
                     ],
                     "minimum_should_match": 1
                 }
@@ -482,8 +550,41 @@ def search_500_errors(minutes_ago=5):
     return result["hits"]["hits"]
 
 
-def search_all_errors(minutes_ago=5):
-    """Find ALL errors across all error types."""
+def search_db_errors(minutes_ago=1):
+    """Find DB connection pool errors."""
+    client = os_client()
+    result = client.search(
+        index=LOG_INDEX,
+        body={
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
+                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                    ],
+                    "should": [
+                        {"match": {"message": "connection"}},
+                        {"match": {"message": "pool exhausted"}},
+                        {"match": {"message": "SQLException"}},
+                        {"match": {"message": "connection refused"}},
+                        {"match": {"message": "broken pipe"}},
+                        {"match": {"message": "Unable to acquire"}},
+                        {"match": {"message": "postmaster is accepting"}},
+                        {"match": {"loggerName": "io.agroal.pool"}},
+                    ],
+                    "minimum_should_match": 1
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "collapse": {"field": "sequence"},
+            "size": 10
+        }
+    )
+    return result["hits"]["hits"]
+
+
+def search_all_errors(minutes_ago=1):
+    """Find ALL errors across all error types — for dashboard overview."""
     client = os_client()
     result = client.search(
         index=LOG_INDEX,
@@ -500,6 +601,71 @@ def search_all_errors(minutes_ago=5):
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
             "size": 20
+        }
+    )
+    return result["hits"]["hits"]
+
+
+def search_entity_version_errors(minutes_ago=5):
+    """
+    Find entity_version mismatch errors.
+    Key signal for PostgreSQL restore-from-backup incidents.
+    """
+    client = os_client()
+    result = client.search(
+        index=LOG_INDEX,
+        body={
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
+                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                    ],
+                    "should": [
+                        {"match": {"message": "EntityVersionMismatch"}},
+                        {"match": {"message": "entity_version"}},
+                        {"match": {"message": "version mismatch"}},
+                        {"match": {"message": "optimistic lock"}},
+                        {"match": {"message": "concurrent modification"}},
+                    ],
+                    "minimum_should_match": 1
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "collapse": {"field": "sequence"},
+            "size": 10
+        }
+    )
+    return result["hits"]["hits"]
+
+def search_blocked_thread_errors(minutes_ago=2):
+    """
+    Find Vert.x blocked thread warnings.
+    Key signal: event loop thread blocked by DB connection wait.
+    Appears during PostgreSQL outage BEFORE service fully freezes.
+    """
+    client = os_client()
+    result = client.search(
+        index=LOG_INDEX,
+        body={
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
+                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                    ],
+                    "should": [
+                        {"match": {"message": "has been blocked"}},
+                        {"match": {"message": "BlockedThreadChecker"}},
+                        {"match": {"loggerName": "io.vertx.core.impl.BlockedThreadChecker"}},
+                        {"match": {"message": "Thread blocked"}},
+                    ],
+                    "minimum_should_match": 1
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "collapse": {"field": "sequence"},
+            "size": 10
         }
     )
     return result["hits"]["hits"]
