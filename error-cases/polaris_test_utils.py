@@ -361,3 +361,145 @@ def search_and_debug(request_id, minutes_ago=10):
     print("  → No recent logs found, running full debug...")
     debug_opensearch(minutes_ago=minutes_ago)
     return []
+
+def search_401_errors(minutes_ago=5):
+    """Find all 401 unauthorized errors — general pattern."""
+    client = os_client()
+    result = client.search(
+        index=LOG_INDEX,
+        body={
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
+                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                    ],
+                    "should": [
+                        # HTTP access log shows 401 status
+                        {"match": {"message": "\" 401"}},
+                        # Auth failures
+                        {"match": {"message": "Failed to resolve principal"}},
+                        {"match": {"message": "unauthorized_client"}},
+                        {"match": {"message": "getToken API with status code 401"}},
+                    ],
+                    "minimum_should_match": 1
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "collapse": {"field": "sequence"},
+            "size": 10
+        }
+    )
+    return result["hits"]["hits"]
+
+
+def search_403_errors(minutes_ago=5):
+    """Find all 403 forbidden errors — general pattern."""
+    client = os_client()
+    result = client.search(
+        index=LOG_INDEX,
+        body={
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
+                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                    ],
+                    "should": [
+                        {"match": {"message": "\" 403"}},
+                        {"match": {"message": "ForbiddenException"}},
+                        {"match": {"message": "lacks privilege"}},
+                        {"match": {"message": "not authorized"}},
+                        {"match": {"message": "drop-with-purge"}},
+                    ],
+                    "minimum_should_match": 1
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "collapse": {"field": "sequence"},
+            "size": 10
+        }
+    )
+    return result["hits"]["hits"]
+
+
+def search_409_errors(minutes_ago=5):
+    """Find all 409 conflict errors — general pattern."""
+    client = os_client()
+    result = client.search(
+        index=LOG_INDEX,
+        body={
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
+                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                    ],
+                    "should": [
+                        {"match": {"message": "\" 409"}},
+                        {"match": {"message": "already exists"}},
+                        {"match": {"message": "not empty"}},
+                        {"match": {"message": "NamespaceNotEmpty"}},
+                        {"match": {"message": "AlreadyExists"}},
+                    ],
+                    "minimum_should_match": 1
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "collapse": {"field": "sequence"},
+            "size": 10
+        }
+    )
+    return result["hits"]["hits"]
+
+
+def search_500_errors(minutes_ago=5):
+    """Find all 500 internal server errors — general pattern."""
+    client = os_client()
+    result = client.search(
+        index=LOG_INDEX,
+        body={
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
+                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                    ],
+                    "should": [
+                        {"match": {"message": "\" 500"}},
+                        {"match": {"message": "NullPointerException"}},
+                        {"match": {"message": "getRawLeafEntity"}},
+                        {"match": {"message": "Internal Server Error"}},
+                    ],
+                    "minimum_should_match": 1
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "collapse": {"field": "sequence"},
+            "size": 10
+        }
+    )
+    return result["hits"]["hits"]
+
+
+def search_all_errors(minutes_ago=5):
+    """Find ALL errors across all error types."""
+    client = os_client()
+    result = client.search(
+        index=LOG_INDEX,
+        body={
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
+                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                        {"terms": {"level.keyword": ["ERROR", "WARN"]}}
+                    ]
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "collapse": {"field": "sequence"},
+            "size": 20
+        }
+    )
+    return result["hits"]["hits"]
