@@ -10,12 +10,27 @@ import subprocess
 
 # ── Connection ───────────────────────────────────────────────
 DATAHUB_URL   = "http://192.168.139.2:8080"
-FRONTEND_URL  = "http://localhost:32634"
+FRONTEND_URL  = "http://192.168.139.2:9002"
+DATAHUB_ES    = "http://192.168.139.2:9200"   # opensearch-cluster-master-lb
 NAMESPACE     = "datahub-hynix"
 
 # ── Default credentials ───────────────────────────────────────
 DEFAULT_USER  = "datahub"
 DEFAULT_PASS  = "datahub"
+
+# ── DataHub internal Elasticsearch ───────────────────────────
+# DataHub uses opensearch-cluster-master via LoadBalancer
+# DATAHUB_ES defined above in Connection section
+
+def datahub_es_indices():
+    """List DataHub Elasticsearch indices."""
+    r = requests.get(f"{DATAHUB_ES}/_cat/indices?h=index,health,status,docs.count&s=index")
+    return r.text
+
+def datahub_es_health():
+    """Check DataHub Elasticsearch cluster health."""
+    r = requests.get(f"{DATAHUB_ES}/_cluster/health")
+    return r.json()
 
 # ── OpenSearch ────────────────────────────────────────────────
 import opensearchpy
@@ -37,34 +52,67 @@ def os_client():
     )
 
 # ── Auth ──────────────────────────────────────────────────────
-def get_token(username=DEFAULT_USER, password=DEFAULT_PASS):
-    """Get DataHub access token via login API."""
-    r = requests.post(
+def get_session(username=DEFAULT_USER, password=DEFAULT_PASS):
+    """
+    Login via frontend and return a requests.Session with cookies set.
+    Use this session for all subsequent API calls.
+    """
+    session = requests.Session()
+    r = session.post(
         f"{FRONTEND_URL}/logIn",
         json={"username": username, "password": password},
+    )
+    assert r.status_code == 200, f"Login failed: {r.status_code} {r.text}"
+    return session
+
+def get_token(username=DEFAULT_USER, password=DEFAULT_PASS):
+    """Login via frontend — returns raw response (for status check)."""
+    return requests.post(
+        f"{FRONTEND_URL}/logIn",
+        json={"username": username, "password": password},
+    )
+
+def graphql(query, variables=None, session=None):
+    """
+    Execute GraphQL via frontend proxy.
+    Requires session from get_session().
+    """
+    if session is None:
+        session = get_session()
+    r = session.post(
+        f"{FRONTEND_URL}/api/v2/graphql",
+        headers={"Content-Type": "application/json"},
+        json={"query": query, "variables": variables or {}},
     )
     return r
 
 def get_access_token(username=DEFAULT_USER, password=DEFAULT_PASS):
-    """Get DataHub personal access token."""
-    token = get_token(username, password)
-    assert token.status_code == 200, f"Login failed: {token.text}"
-    session_cookie = token.cookies.get("actor")
+    """
+    Get DataHub personal access token (Bearer) via frontend login.
+    Returns: access token string or None on failure.
+    """
+    # Step 1: Login via frontend → get session cookie
+    r_login = get_token(username, password)
+    assert r_login.status_code == 200, f"Login failed: {r_login.text}"
+    session_cookie = r_login.cookies.get("actor")
+    assert session_cookie, "No actor cookie in login response"
 
+    # Step 2: Generate personal access token via frontend GraphQL
     r = requests.post(
-        f"{DATAHUB_URL}/api/v2/generateToken",
+        f"{FRONTEND_URL}/api/v2/graphql",
         headers={
             "Cookie": f"actor={session_cookie}",
             "Content-Type": "application/json",
+            "X-RestLi-Protocol-Version": "2.0.0",
         },
         json={
             "query": """
-                mutation createAccessToken {
+                mutation {
                     createAccessToken(input: {
                         type: PERSONAL,
                         actorUrn: "urn:li:corpuser:datahub",
                         duration: ONE_DAY,
-                        name: "test-token"
+                        name: "notebook-test-token"
                     }) {
                         accessToken
                     }
@@ -72,7 +120,30 @@ def get_access_token(username=DEFAULT_USER, password=DEFAULT_PASS):
             """
         }
     )
-    return r
+    if r.status_code == 200:
+        data = r.json()
+        token = data.get("data", {}).get("createAccessToken", {}).get("accessToken")
+        if token:
+            return token
+    # Fallback: use session cookie directly on GMS
+    return session_cookie
+
+def gms_headers(token):
+    """Return GMS API headers with Bearer token."""
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+def frontend_headers(username=DEFAULT_USER, password=DEFAULT_PASS):
+    """Return frontend session headers (cookie-based)."""
+    r_login = get_token(username, password)
+    assert r_login.status_code == 200
+    session_cookie = r_login.cookies.get("actor")
+    return {
+        "Cookie": f"actor={session_cookie}",
+        "Content-Type": "application/json",
+    }
 
 def auth_headers(token):
     """Return headers with Bearer token."""
