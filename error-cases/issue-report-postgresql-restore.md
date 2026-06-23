@@ -97,7 +97,7 @@ After PostgreSQL restore:
   ✅ PostgreSQL health check: UP
   ✅ Polaris /q/health: UP (health only checks connection, not entity_version)
   ✅ Polaris logs: "Database connections health check UP"
-  ❌ But actual requests: 500 EntityVersionMismatchException
+  ❌ But actual requests: 500 Entity Version Error (NullPointerException)
 
 Without observability:
   Engineers check PostgreSQL → looks fine

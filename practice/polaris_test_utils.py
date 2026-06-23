@@ -31,6 +31,14 @@ TEST_PRINCIPAL  = "test-principal"
 TEST_PR         = "test-principal-role"
 TEST_CR         = "test-catalog-role"
 
+# Watchdog resource names (daily availability test — uses default POLARIS realm)
+WATCHDOG_PRINCIPAL = "watchdog-principal"
+WATCHDOG_PR        = "watchdog-principal-role"
+WATCHDOG_CR        = "watchdog-catalog-role"
+WATCHDOG_CATALOG   = "watchdog-catalog"
+WATCHDOG_NAMESPACE = "watchdog-ns"
+WATCHDOG_TABLE     = "watchdog-table"
+
 BASE_MGMT = f"{POLARIS_URL}/api/management/v1"
 BASE_CAT  = f"{POLARIS_URL}/api/catalog/v1"
 
@@ -60,6 +68,138 @@ def h(token=None, realm=REALM):
         "Polaris-Realm":  realm,
         "Content-Type":   "application/json",
     }
+
+# ── Watchdog bootstrap ──────────────────────────────────────────
+def ensure_watchdog_setup():
+    """
+    Idempotent one-time setup for the daily watchdog test.
+    Uses the root token + default POLARIS realm (no separate realm needed).
+
+    Creates (only if missing):
+      principal       watchdog-principal
+      principal role  watchdog-principal-role
+      catalog         watchdog-catalog
+      catalog role    watchdog-catalog-role  (granted CATALOG_MANAGE_CONTENT)
+
+    Returns: (client_id, client_secret) for the watchdog principal.
+    If the principal already existed, client_secret is None
+    (Polaris does not return secrets again — reuse the stored one).
+    """
+    tok = root_token()
+    print("🔧 Checking watchdog setup (realm: POLARIS)...")
+
+    # 1. Principal
+    principals = requests.get(f"{BASE_MGMT}/principals", headers=h(tok)).json().get("principals", [])
+    existing = next((p for p in principals if p["name"] == WATCHDOG_PRINCIPAL), None)
+
+    client_secret = None
+    if existing:
+        print(f"  ✅ principal exists: {WATCHDOG_PRINCIPAL}")
+        client_id = existing.get("clientId", WATCHDOG_PRINCIPAL)
+    else:
+        r = create_principal(name=WATCHDOG_PRINCIPAL, token=tok)
+        assert r.status_code in (200, 201), f"create_principal failed: {r.status_code} {r.text}"
+        body = r.json()
+        client_id = body.get("principal", {}).get("clientId", WATCHDOG_PRINCIPAL)
+        client_secret = body.get("credentials", {}).get("clientSecret")
+        print(f"  ✅ principal created: {WATCHDOG_PRINCIPAL}")
+        print(f"     clientId:     {client_id}")
+        print(f"     clientSecret: {client_secret}")
+        print("     ⚠️  Save this secret — Polaris will not show it again.")
+
+    # 2. Principal role
+    pr_list = requests.get(f"{BASE_MGMT}/principal-roles", headers=h(tok)).json().get("roles", [])
+    if any(pr["name"] == WATCHDOG_PR for pr in pr_list):
+        print(f"  ✅ principal role exists: {WATCHDOG_PR}")
+    else:
+        r = create_principal_role(name=WATCHDOG_PR, token=tok)
+        assert r.status_code in (200, 201), f"create_principal_role failed: {r.status_code} {r.text}"
+        print(f"  ✅ principal role created: {WATCHDOG_PR}")
+
+    # 3. Assign principal role to principal (idempotent — PUT is safe to repeat)
+    r = assign_principal_role_to_principal(principal=WATCHDOG_PRINCIPAL, pr=WATCHDOG_PR, token=tok)
+    print(f"  ✅ principal role assigned ({r.status_code})")
+
+    # 4. Catalog
+    catalogs = requests.get(f"{BASE_MGMT}/catalogs", headers=h(tok)).json().get("catalogs", [])
+    if any(c["name"] == WATCHDOG_CATALOG for c in catalogs):
+        print(f"  ✅ catalog exists: {WATCHDOG_CATALOG}")
+    else:
+        r = create_catalog(name=WATCHDOG_CATALOG, token=tok)
+        assert r.status_code in (200, 201), f"create_catalog failed: {r.status_code} {r.text}"
+        print(f"  ✅ catalog created: {WATCHDOG_CATALOG}")
+
+    # 5. Catalog role
+    cr_list = requests.get(f"{BASE_MGMT}/catalogs/{WATCHDOG_CATALOG}/catalog-roles", headers=h(tok)).json().get("roles", [])
+    if any(cr["name"] == WATCHDOG_CR for cr in cr_list):
+        print(f"  ✅ catalog role exists: {WATCHDOG_CR}")
+    else:
+        r = create_catalog_role(catalog=WATCHDOG_CATALOG, name=WATCHDOG_CR, token=tok)
+        assert r.status_code in (200, 201), f"create_catalog_role failed: {r.status_code} {r.text}"
+        print(f"  ✅ catalog role created: {WATCHDOG_CR}")
+
+    # 6. Grant + assign (idempotent — safe to repeat)
+    grant_privilege(catalog=WATCHDOG_CATALOG, cr=WATCHDOG_CR,
+                     privilege="CATALOG_MANAGE_CONTENT", token=tok)
+    assign_catalog_role_to_principal_role(catalog=WATCHDOG_CATALOG, pr=WATCHDOG_PR, cr=WATCHDOG_CR, token=tok)
+    print(f"  ✅ grants verified")
+
+    print("🔧 Watchdog setup complete (realm: POLARIS)\n")
+    return client_id, client_secret
+
+def reset_watchdog_principal():
+    """
+    Force-recreate watchdog principal using root token.
+    Use when: 401 unauthorized_client (stale/lost secret).
+
+    Deletes existing principal if present, creates fresh one,
+    returns (client_id, client_secret).
+    """
+    tok = root_token()
+    print("🔄 Resetting watchdog principal...")
+
+    # Delete if exists (ignore 404)
+    r = requests.delete(f"{BASE_MGMT}/principals/{WATCHDOG_PRINCIPAL}", headers=h(tok))
+    print(f"  DELETE existing principal: {r.status_code}")
+
+    # Recreate
+    r = create_principal(name=WATCHDOG_PRINCIPAL, token=tok)
+    assert r.status_code in (200, 201), f"create_principal failed: {r.status_code} {r.text}"
+    body = r.json()
+    client_id     = body.get("principal", {}).get("clientId", WATCHDOG_PRINCIPAL)
+    client_secret = body.get("credentials", {}).get("clientSecret")
+    print(f"  ✅ principal recreated")
+    print(f"     clientId:     {client_id}")
+    print(f"     clientSecret: {client_secret}")
+    print("     ⚠️  Save this secret — Polaris will not show it again.")
+
+    # Re-assign principal role (catalog role already exists)
+    r = assign_principal_role_to_principal(principal=WATCHDOG_PRINCIPAL, pr=WATCHDOG_PR, token=tok)
+    print(f"  ✅ principal role re-assigned ({r.status_code})")
+
+    return client_id, client_secret
+
+def get_watchdog_token(client_id, client_secret):
+    """
+    Acquire a token for the watchdog principal using the default POLARIS realm.
+    client_secret must be the value saved from ensure_watchdog_setup()'s
+    first run (or wherever it's stored — e.g. K8s secret).
+
+    Note: unlike root (service_admin, can use PRINCIPAL_ROLE:ALL),
+    watchdog-principal must request its specific assigned role scope.
+    """
+    r = requests.post(
+        f"{POLARIS_URL}/api/catalog/v1/oauth/tokens",
+        headers={"Polaris-Realm": REALM},
+        data={
+            "grant_type":    "client_credentials",
+            "client_id":     client_id,
+            "client_secret": client_secret,
+            "scope":         f"PRINCIPAL_ROLE:{WATCHDOG_PR}",
+        },
+    )
+    assert r.status_code == 200, f"Watchdog token failed: {r.status_code} {r.text}"
+    return r.json()["access_token"]
 
 # ── Management API helpers ────────────────────────────────────
 def create_catalog(name=TEST_CATALOG, token=None):
@@ -798,3 +938,27 @@ def search_blocked_thread_errors(minutes_ago=2):
         }
     )
     return result["hits"]["hits"]
+# ── Test result helper ────────────────────────────────────────
+class TestResult:
+    """Lightweight pass/fail tracker for notebook test runs."""
+    def __init__(self):
+        self.results = {}
+
+    def record(self, name, passed, detail=""):
+        self.results[name] = {"passed": passed, "detail": detail}
+        icon = "✅" if passed else "❌"
+        print(f"  {icon} {name}: {detail}")
+
+    def summary(self):
+        total  = len(self.results)
+        passed = sum(1 for v in self.results.values() if v["passed"])
+        failed = [k for k, v in self.results.items() if not v["passed"]]
+        print(f"\n{'='*50}")
+        print(f"Result: {passed}/{total} passed")
+        if failed:
+            print(f"Failed: {', '.join(failed)}")
+        return passed == total
+
+print("✅ Polaris test utils loaded")
+print(f"   Polaris: {POLARIS_URL}  | Realm: {REALM}")
+print(f"   OpenSearch: https://{OPENSEARCH_HOST}:{OPENSEARCH_PORT}")
