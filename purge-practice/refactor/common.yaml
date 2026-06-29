@@ -1,0 +1,8 @@
+# Shared defaults across all environments (non-secret).
+realm: POLARIS
+root_client: root
+opensearch_port: 9200
+opensearch_user: admin
+log_index: "k8s-logs-*"
+polaris_container_name: benchmarks-polaris
+bucket: data-catalog-bucket

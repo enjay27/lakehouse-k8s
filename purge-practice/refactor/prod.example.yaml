@@ -1,0 +1,17 @@
+# PROD environment TEMPLATE. Copy to prod.yaml and fill in.
+# Do NOT put prod secrets in a committed file. Prefer env vars:
+#   export POLARIS_ROOT_SECRET=...  MINIO_ACCESS_KEY=...  MINIO_SECRET_KEY=...
+polaris_url: http://<PROD_POLARIS_HOST>:8181
+minio_endpoint: http://<PROD_MINIO_HOST>:9000
+minio_endpoint_internal: http://<PROD_MINIO_INTERNAL>:9000
+opensearch_host: <PROD_OPENSEARCH_HOST>
+opensearch_pass: "<set via env or here>"
+
+# secrets — leave blank; inject via env vars (POLARIS_ROOT_SECRET, MINIO_*)
+root_secret: ""
+minio_access_key: ""
+minio_secret_key: ""
+
+# behavioral flags — set after confirming the prod Polaris version / #379 status
+polaris_version: "<PROD_VERSION>"
+purge_deletes_files: false      # set true ONLY if #379 is fixed in prod
