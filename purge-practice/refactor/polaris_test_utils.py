@@ -403,11 +403,25 @@ def assign_principal_role_to_principal(principal=TEST_PRINCIPAL, pr=TEST_PR, tok
 
 def grant_privilege(catalog=TEST_CATALOG, cr=TEST_CR,
                     privilege="CATALOG_MANAGE_CONTENT", token=None):
-    return requests.put(
+    """Grant a catalog privilege to a catalog-role. IDEMPOTENT: Polaris implements
+    the grant PUT as an INSERT that throws a duplicate-key (23505) /
+    'already exists' error if the grant already exists, instead of being a no-op.
+    We treat that case as success so re-running a cell or re-granting is safe."""
+    r = requests.put(
         f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles/{cr}/grants",
         headers=h(token),
         json={"grant": {"type": "catalog", "privilege": privilege}},
     )
+    if r.status_code >= 400:
+        body = r.text.lower()
+        if ("already exists" in body or "23505" in body
+                or "duplicate key" in body or "grant_records_pkey" in body):
+            # grant already present → treat as success (idempotent)
+            return r
+        # otherwise surface the real error
+        print(f"  ⚠️ grant_privilege {privilege} on {catalog}/{cr} → "
+              f"[{r.status_code}] {r.text[:160]}")
+    return r
 
 # ── Cleanup ───────────────────────────────────────────────────
 # System entities — never delete
