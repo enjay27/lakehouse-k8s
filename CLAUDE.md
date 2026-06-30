@@ -8,7 +8,7 @@
 
 ## Repository Layout
 - **`src/`** — all reusable Python modules imported by notebooks (`polaris_test_utils.py`, `minio_rest.py`). No test logic lives in notebooks that belongs in a module.
-- **`src/config/`** — environment config. `common.yaml` (shared non-secret defaults) + `<env>.yaml` (per-env: `local` / `dev` / `prod`) are merged by `init_env(env)`. Secrets may be overridden by env vars (`POLARIS_ROOT_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `OPENSEARCH_PASS`). `*.yaml` here is gitignored except `common.yaml` and `*.example.yaml`; each env ships a `*.example.yaml` template — copy e.g. `dev.example.yaml` → `dev.yaml` and fill in.
+- **`src/config/`** — environment config. `common.yaml` (shared non-secret defaults) + `<env>.yaml` (per-env: `local` / `dev` / `prod`) are merged by `init_env(env)`. Secrets may be overridden by env vars (`POLARIS_ROOT_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `OPENSEARCH_PASS`, `POSTGRES_PASSWORD`). `init_env` also exposes PostgreSQL globals (`PG_URL`, `PG_CONFIG`, `PG_HOST`…) for the diagnostics notebooks. `*.yaml` here is gitignored except `common.yaml` and `*.example.yaml`; each env ships a `*.example.yaml` template — copy e.g. `dev.example.yaml` → `dev.yaml` and fill in.
 - **Per-test directories** — each test domain has its own folder containing its notebook(s) plus a `README.md` (concept / purpose / how-to-run / result) and any `doc-*.md` reference reports:
   - `lifecycle/` — catalog→namespace→table/view→snapshot→drop lifecycle.
   - `privilege/` — minimum-privilege matrix tests.
@@ -22,7 +22,7 @@
   - `admin/` — destructive teardown / clean-all + credential rotation utilities.
 - **`attic/`** — superseded duplicates / backups parked for deletion; not part of the active suite.
 - **`datahub-error-cases/`** — separate product (DataHub), its own `datahub_test_utils.py`; intentionally left outside the Polaris `src/` model.
-- **Self-contained notebooks:** several `diagnostics/`, `rbac/`, `scenario/`, `etl/`, and `admin/` notebooks still hardcode endpoints/creds instead of using `init_env`/`src` (migrated as-is). Porting them is tracked in `MEMORY.md`; `admin/` clean-all stays hardcoded by design.
+- **Self-contained notebooks (remaining):** `rbac/polaris_rbac_graph.ipynb` and `scenario/polaris_production_scenario.ipynb` still hardcode endpoints/creds — they target a different realm (`DATACORP-PROD`) and were intentionally left as-is (tracked in `MEMORY.md`). `admin/polaris_clean_all.ipynb` stays hardcoded to localhost **by design**. Everything else (`diagnostics/`, `etl/`, `rbac/` verification + test) uses `init_env`/`src`.
 - **Notebook import convention:** the first cell bootstraps `src/` onto the path before importing:
   ```python
   import sys, pathlib

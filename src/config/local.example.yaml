@@ -7,6 +7,10 @@ minio_endpoint_internal: http://benchmarks-minio.datahub-hynix.svc.cluster.local
 opensearch_host: localhost
 opensearch_pass: "<local opensearch password>"
 
+# PostgreSQL metastore (host local-specific; password secret)
+postgres_host: <LOCAL_HOST>
+postgres_password: "<local postgres password>"
+
 # secrets (local only — convenient; shared envs use env vars instead)
 root_secret: "<local polaris root secret>"
 minio_access_key: "<local minio access key>"

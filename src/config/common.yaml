@@ -6,3 +6,8 @@ opensearch_user: admin
 log_index: "k8s-logs-*"
 polaris_container_name: benchmarks-polaris
 bucket: data-catalog-bucket
+
+# PostgreSQL metastore — non-secret defaults (host + password are per-env).
+postgres_port: 5432
+postgres_db: polaris
+postgres_user: polaris

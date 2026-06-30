@@ -16,4 +16,4 @@ Validate that role assignments and grants resolve as intended, and render the re
 2. Open `polaris_rbac_graph.html` in a browser to view the rendered graph (keep `lib/` alongside it).
 
 ## Notes
-`polaris_rbac_graph.ipynb` / `polaris_rbac_verification.ipynb` were migrated self-contained (hardcoded local endpoint). Porting them onto `init_env`/`src` is tracked in `MEMORY.md`.
+`polaris_rbac_test.ipynb` and `polaris_rbac_verification.ipynb` use `../src` + `init_env` (no hardcoded creds; verification also uses the `PG_*` globals). **`polaris_rbac_graph.ipynb` is intentionally left self-contained** — it targets a different realm (`DATACORP-PROD` / its own secret), so it was not folded onto the local `init_env` config. Reconciling it is tracked in `MEMORY.md`.

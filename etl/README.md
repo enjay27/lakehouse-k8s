@@ -13,5 +13,5 @@ Exercise data writes and confirm the flow lands correctly (catalog record + MinI
 ## How to run
 **Restart & Run All.** `polaris_etl_flow_test.ipynb` bootstraps `../src` and calls `require_not_prod(...)`.
 
-## Migration note
-`polaris_insert_data.ipynb` was migrated self-contained (hardcoded local endpoint); porting it onto `init_env`/`../src` is tracked in `MEMORY.md`.
+## Configuration
+Both notebooks bootstrap `../src` and call `init_env("local")` (no hardcoded endpoints/credentials). `polaris_insert_data.ipynb` mutates state, so it calls `require_not_prod(...)`.

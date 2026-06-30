@@ -16,5 +16,5 @@ Provide visibility for debugging and verification: what catalogs/namespaces/enti
 ## How to run
 **Restart & Run All.** Linear execution; close DB cursors/pools in the teardown cell.
 
-## ⚠️ Migration note
-These were migrated **self-contained** — they currently hardcode `POLARIS_URL` (and some, credentials) rather than using `init_env`/`../src`. They target the local device. Porting them onto `../src/polaris_test_utils.py` + `init_env` (and removing hardcoded secrets per the Zero-Hardcoded-Credentials rule) is tracked in `MEMORY.md`.
+## Configuration
+All five now bootstrap `../src` and call `init_env("local")` — no hardcoded endpoints or credentials. Polaris/MinIO settings come from `init_env`; the PostgreSQL ones (`metastore`, `configuration`, `entities`) use the `PG_URL` / `PG_CONFIG` globals (`src/config/<env>.yaml` → `postgres_*`, password overridable via `POSTGRES_PASSWORD`). Switch environments with `init_env("dev")`.

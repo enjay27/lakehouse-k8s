@@ -64,6 +64,8 @@ POLARIS_URL = REALM = ROOT_CLIENT = ROOT_SECRET = None
 OPENSEARCH_HOST = None; OPENSEARCH_PORT = 9200; OPENSEARCH_USER = None; OPENSEARCH_PASS = None
 LOG_INDEX = None; POLARIS_CONTAINER = None
 MINIO_ENDPOINT = MINIO_ENDPOINT_INTERNAL = MINIO_ACCESS_KEY = MINIO_SECRET_KEY = BUCKET = None
+PG_HOST = None; PG_PORT = 5432; PG_DB = "polaris"; PG_USER = "polaris"; PG_PASSWORD = None
+PG_URL = None; PG_CONFIG = {}
 BASE_MGMT = BASE_CAT = None
 PURGE_DELETES_FILES = None; POLARIS_VERSION = None
 mc = None   # MinioREST client (built by init_env)
@@ -80,6 +82,7 @@ def init_env(env=None):
     global OPENSEARCH_HOST, OPENSEARCH_PORT, OPENSEARCH_USER, OPENSEARCH_PASS
     global LOG_INDEX, POLARIS_CONTAINER, BASE_MGMT, BASE_CAT
     global MINIO_ENDPOINT, MINIO_ENDPOINT_INTERNAL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, BUCKET
+    global PG_HOST, PG_PORT, PG_DB, PG_USER, PG_PASSWORD, PG_URL, PG_CONFIG
     global PURGE_DELETES_FILES, POLARIS_VERSION, mc
 
     ENV = env or os.environ.get("POLARIS_ENV", "local")
@@ -102,6 +105,19 @@ def init_env(env=None):
     MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", CFG.get("minio_access_key"))
     MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", CFG.get("minio_secret_key"))
     BUCKET           = CFG.get("bucket", "data-catalog-bucket")
+
+    # PostgreSQL metastore (used by diagnostics notebooks). Password may be
+    # overridden by the POSTGRES_PASSWORD env var. PG_URL / PG_CONFIG are ready-made
+    # for sqlalchemy.create_engine(PG_URL) and psycopg2.connect(**PG_CONFIG).
+    PG_HOST     = CFG.get("postgres_host")
+    PG_PORT     = CFG.get("postgres_port", 5432)
+    PG_DB       = CFG.get("postgres_db", "polaris")
+    PG_USER     = CFG.get("postgres_user", "polaris")
+    PG_PASSWORD = os.environ.get("POSTGRES_PASSWORD", CFG.get("postgres_password"))
+    PG_URL = (f"postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DB}"
+              if PG_HOST else None)
+    PG_CONFIG = {"host": PG_HOST, "port": PG_PORT, "dbname": PG_DB,
+                 "user": PG_USER, "password": PG_PASSWORD}
 
     PURGE_DELETES_FILES = CFG.get("purge_deletes_files", False)
     POLARIS_VERSION     = CFG.get("polaris_version", "unknown")
