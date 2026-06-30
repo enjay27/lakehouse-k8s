@@ -10,3 +10,12 @@ wheels/
 .venv
 
 .idea
+
+# macOS
+.DS_Store
+
+# Local secrets — env config files may contain credentials.
+# Only common.yaml and *.example.yaml are tracked.
+src/config/*.yaml
+!src/config/common.yaml
+!src/config/*.example.yaml
