@@ -142,11 +142,16 @@ except Exception as _e:
     print(f"[polaris_test_utils] init_env deferred: {_e}")
 
 # ── Token ─────────────────────────────────────────────────────
-def get_token(client_id=None, client_secret=None, realm=None):
+def get_token(client_id=None, client_secret=None, realm=None, scope="PRINCIPAL_ROLE:ALL"):
     # Read config globals at CALL time (init_env sets them); None = use active env
     client_id     = client_id     if client_id     is not None else ROOT_CLIENT
     client_secret = client_secret if client_secret is not None else ROOT_SECRET
     realm         = realm         if realm         is not None else REALM
+    # NOTE on scope: root (service_admin) can request PRINCIPAL_ROLE:ALL. A NON-ROOT
+    # principal generally CANNOT — requesting ALL yields a token with no effective
+    # role, which downstream policy (OPA) / Polaris then denies (403). Non-root
+    # callers must request their SPECIFIC assigned principal-role, e.g.
+    # scope=f"PRINCIPAL_ROLE:{their_role}".
     r = requests.post(
         f"{POLARIS_URL}/api/catalog/v1/oauth/tokens",
         headers={"Polaris-Realm": realm},
@@ -154,7 +159,7 @@ def get_token(client_id=None, client_secret=None, realm=None):
             "grant_type":    "client_credentials",
             "client_id":     client_id,
             "client_secret": client_secret,
-            "scope":         "PRINCIPAL_ROLE:ALL",
+            "scope":         scope,
         },
     )
     return r
@@ -306,6 +311,229 @@ def get_watchdog_token(client_id, client_secret):
     return r.json()["access_token"]
 
 # ── Management API helpers ────────────────────────────────────
+# Instance principal (run tests as a dedicated non-root principal)
+#
+# Instead of authenticating as root (whose service_admin role BYPASSES catalog
+# privilege checks and hides real authorization behavior), each test runs its
+# data operations (namespace / table / view create + drop) as a DEDICATED
+# "instance principal" with exactly the catalog privileges it needs. Root is used
+# ONLY to bootstrap - create the catalog, the principal, its roles, and the
+# grants - because those are Management-API operations that require admin.
+
+# Privilege set for an instance principal. MODELED ON THE PRODUCTION-VERIFIED
+# watchdog availability test: a single CATALOG_MANAGE_CONTENT grant on the
+# principal's OWN catalog is sufficient for all namespace/table/view CRUD
+# (proven by watchdog T03/T04 in dev AND prod). Granting only this — and nothing
+# at the management/service_admin level — is the "limited scope for safety"
+# property: the principal can fully operate inside its own catalog but cannot
+# touch any other catalog or management resource (watchdog T05 proves this).
+INSTANCE_PRINCIPAL_PRIVS = ["CATALOG_MANAGE_CONTENT"]
+
+def instance_principal(catalog, privileges=None, suffix="inst", root=None):
+    """Create (idempotently) a dedicated instance principal for `catalog` and
+    return (auth_header, names) where auth_header authenticates AS THE INSTANCE
+    PRINCIPAL (use it for all namespace/table/view operations), and
+    names = (principal, principal_role, catalog_role).
+
+    Bootstrap uses the root token (`root`, defaults to root_token()), since
+    creating principals/roles/grants requires admin. `privileges` defaults to
+    INSTANCE_PRINCIPAL_PRIVS; pass a narrower list to test least-privilege."""
+    rtok = root or root_token()
+    privs = privileges if privileges is not None else INSTANCE_PRINCIPAL_PRIVS
+    P  = f"{catalog}-{suffix}-prin"
+    PR = f"{catalog}-{suffix}-prole"
+    CR = f"{catalog}-{suffix}-crole"
+
+    requests.delete(f"{BASE_MGMT}/principals/{P}", headers=h(rtok))
+    requests.delete(f"{BASE_MGMT}/principal-roles/{PR}", headers=h(rtok))
+
+    rp = create_principal(P, token=rtok).json()
+    # Extract credentials exactly as the production-verified watchdog setup does:
+    #   clientId    is under  body["principal"]["clientId"]
+    #   clientSecret is under body["credentials"]["clientSecret"]
+    cid  = rp.get("principal", {}).get("clientId")     or rp.get("clientId")
+    csec = rp.get("credentials", {}).get("clientSecret") or rp.get("clientSecret")
+
+    create_principal_role(PR, token=rtok)
+    create_catalog_role(catalog=catalog, name=CR, token=rtok)
+    assign_catalog_role_to_principal_role(catalog=catalog, pr=PR, cr=CR, token=rtok)
+    assign_principal_role_to_principal(principal=P, pr=PR, token=rtok)
+    for pv in privs:
+        grant_privilege(catalog=catalog, cr=CR, privilege=pv, token=rtok)
+
+    itok = get_token(client_id=cid, client_secret=csec,
+                     scope=f"PRINCIPAL_ROLE:{PR}").json().get("access_token")
+    header = {"Authorization": f"Bearer {itok}",
+              "Polaris-Realm": REALM, "Content-Type": "application/json"}
+    return header, (P, PR, CR)
+
+
+# Suffixes used by tests when creating instance principals (instance_principal's
+# default plus the ones the view-purge probe and the scaff/worker pattern use).
+# Cleanup sweeps all of them.
+INSTANCE_PRINCIPAL_SUFFIXES = ("inst", "full", "scaffold", "scaff", "worker")
+
+def delete_instance_principal(names, catalog=None, root=None):
+    """Delete ONE instance principal + its principal-role (and catalog-role if a
+    catalog is given). Pass the `names` tuple (P, PR, CR) returned by
+    instance_principal(). Safe/idempotent — ignores 404s."""
+    if not names:
+        return
+    rtok = root or root_token()
+    P, PR, CR = names
+    requests.delete(f"{BASE_MGMT}/principals/{P}", headers=h(rtok))
+    requests.delete(f"{BASE_MGMT}/principal-roles/{PR}", headers=h(rtok))
+    if catalog:
+        requests.delete(f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles/{CR}", headers=h(rtok))
+
+def delete_instance_principals_for(catalog, suffixes=INSTANCE_PRINCIPAL_SUFFIXES, root=None):
+    """Delete every instance principal + principal-role created for `catalog` by
+    naming convention ({catalog}-{suffix}-prin / -prole). Called from catalog
+    teardown so each test cleans up its own instance principals (they are
+    catalog-independent and otherwise leak). Idempotent."""
+    rtok = root or root_token()
+    for sfx in suffixes:
+        requests.delete(f"{BASE_MGMT}/principals/{catalog}-{sfx}-prin", headers=h(rtok))
+        requests.delete(f"{BASE_MGMT}/principal-roles/{catalog}-{sfx}-prole", headers=h(rtok))
+
+def sweep_instance_principals(prefixes=None, suffixes=INSTANCE_PRINCIPAL_SUFFIXES, root=None):
+    """Safety sweep: delete ALL leftover instance principals/principal-roles
+    matching the test naming convention (…-{suffix}-prin / -prole). Use to clear
+    accumulation from earlier runs. `prefixes` optionally restricts to names
+    starting with one of the given strings (e.g. ['vptest-','vpprobe-'])."""
+    rtok = root or root_token()
+    def _match(name, tail):
+        if not any(name.endswith(f"-{sfx}-{tail}") for sfx in suffixes):
+            return False
+        if prefixes and not any(name.startswith(p) for p in prefixes):
+            return False
+        return True
+    prins = requests.get(f"{BASE_MGMT}/principals", headers=h(rtok)).json().get("principals", [])
+    n = 0
+    for p in prins:
+        nm = p["name"] if isinstance(p, dict) else p
+        if nm != "root" and _match(nm, "prin"):
+            requests.delete(f"{BASE_MGMT}/principals/{nm}", headers=h(rtok)); n += 1
+    roles = requests.get(f"{BASE_MGMT}/principal-roles", headers=h(rtok)).json().get("roles", [])
+    for r in roles:
+        nm = r["name"] if isinstance(r, dict) else r
+        if _match(nm, "prole"):
+            requests.delete(f"{BASE_MGMT}/principal-roles/{nm}", headers=h(rtok)); n += 1
+    print(f"🧹 swept {n} leftover instance principal/role objects")
+    return n
+
+
+def worker_principal(catalog, privileges, suffix="worker", root=None):
+    """Provision a CHALLENGE-phase worker principal holding EXACTLY the given
+    privilege(s) and nothing else. Thin wrapper over instance_principal used by
+    the scaffolding pattern: the worker fires the actual mutate/DELETE under test
+    so its single privilege is the only thing that could authorize the action.
+    Returns (auth_header, (P, PR, CR))."""
+    privs = privileges if isinstance(privileges, (list, tuple)) else [privileges]
+    return instance_principal(catalog, privileges=list(privs), suffix=suffix, root=root)
+
+
+class case_scaffold:
+    """Three-phase scaff/worker lifecycle as a context manager (blueprint §2B/§2C).
+
+      Phase 1 SETUP       : a full-privilege scaff principal (CATALOG_MANAGE_CONTENT)
+                            runs `build(scaff_header)` to create the namespace and
+                            any prerequisite table/view the challenge needs.
+      Phase 2 DESTROY     : the scaff principal is deleted (only if destroy_scaff=
+                            True — strict isolation for the privilege matrix; set
+                            False to keep a persistent scaffold for speed, e.g. in
+                            view-purge).
+      Phase 3 CHALLENGE   : the caller calls .worker([priv]) to get a header for a
+                            principal holding only the privilege under test, then
+                            fires the actual request inside the `with` block.
+      __exit__ (ALWAYS)   : atomic teardown. Deletes the worker + scaff principals,
+                            then runs `teardown(catalog)` if given (e.g. the
+                            notebook's force_delete_catalog), else a self-contained
+                            recursive catalog teardown + MinIO sweep.
+
+    Usage:
+        create_catalog(cat, token=tok, properties={...})          # caller owns config
+        with case_scaffold(cat, build=build_fn, teardown=force_delete_catalog,
+                           root=tok, destroy_scaff=True) as scaf:
+            whdr, _ = scaf.worker(["VIEW_DROP"])
+            r = requests.delete(view_url, headers=whdr)
+        # teardown ran here, no leaks
+    """
+    def __init__(self, catalog, build=None, teardown=None, root=None,
+                 destroy_scaff=True, scaff_privs=None):
+        self.catalog       = catalog
+        self.build         = build
+        self.teardown      = teardown
+        self.root          = root or root_token()
+        self.destroy_scaff = destroy_scaff
+        self.scaff_privs   = scaff_privs or ["CATALOG_MANAGE_CONTENT"]
+        self.scaff_hdr     = None
+        self.scaff_names   = None
+        self._workers      = []   # names of worker principals to clean up
+
+    def __enter__(self):
+        # Phase 1: setup with a full-priv scaff principal
+        self.scaff_hdr, self.scaff_names = instance_principal(
+            self.catalog, privileges=self.scaff_privs, suffix="scaff", root=self.root)
+        if self.build is not None:
+            self.build(self.scaff_hdr)
+        # Phase 2: destroy scaff (strict isolation) — the entity it built remains
+        if self.destroy_scaff:
+            delete_instance_principal(self.scaff_names, catalog=self.catalog, root=self.root)
+            self.scaff_names = None
+        return self
+
+    def worker(self, privileges, suffix="worker"):
+        """Phase 3: provision the challenge principal with only `privileges`."""
+        hdr, names = worker_principal(self.catalog, privileges, suffix=suffix, root=self.root)
+        self._workers.append(names)
+        return hdr, names
+
+    def __exit__(self, exc_type, exc, tb):
+        # Atomic teardown — always runs, even on exception.
+        for names in self._workers:
+            delete_instance_principal(names, catalog=self.catalog, root=self.root)
+        if self.scaff_names is not None:
+            delete_instance_principal(self.scaff_names, catalog=self.catalog, root=self.root)
+        if self.teardown is not None:
+            try:
+                self.teardown(self.catalog)
+            except Exception as e:
+                print(f"   ⚠️ teardown({self.catalog}) raised: {e}")
+        else:
+            _teardown_catalog_selfcontained(self.catalog, root=self.root)
+        return False   # never suppress exceptions
+
+
+def _teardown_catalog_selfcontained(catalog, root=None):
+    """Fallback recursive teardown when no notebook teardown is supplied:
+    drop views/tables → namespaces (deepest first) → non-default catalog-roles →
+    catalog, then sweep instance principals and MinIO objects. Best-effort."""
+    rtok = root or root_token()
+    if requests.get(f"{BASE_MGMT}/catalogs/{catalog}", headers=h(rtok)).status_code == 404:
+        delete_instance_principals_for(catalog, root=rtok)
+        return True
+    nss = requests.get(f"{BASE_CAT}/{catalog}/namespaces", headers=h(rtok)).json().get("namespaces", [])
+    nss = sorted(nss, key=lambda n: len(n if isinstance(n, list) else [n]), reverse=True)
+    for ns in nss:
+        nsn = "\x1f".join(ns) if isinstance(ns, list) else ns
+        for t in requests.get(f"{BASE_CAT}/{catalog}/namespaces/{nsn}/tables", headers=h(rtok)).json().get("identifiers", []):
+            requests.delete(f"{BASE_CAT}/{catalog}/namespaces/{nsn}/tables/{t['name']}", headers=h(rtok))
+        for v in requests.get(f"{BASE_CAT}/{catalog}/namespaces/{nsn}/views", headers=h(rtok)).json().get("identifiers", []):
+            requests.delete(f"{BASE_CAT}/{catalog}/namespaces/{nsn}/views/{v['name']}", headers=h(rtok))
+        requests.delete(f"{BASE_CAT}/{catalog}/namespaces/{nsn}", headers=h(rtok))
+    for cr in requests.get(f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles", headers=h(rtok)).json().get("roles", []):
+        crn = cr["name"] if isinstance(cr, dict) else cr
+        if crn != "catalog_admin":
+            requests.delete(f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles/{crn}", headers=h(rtok))
+    requests.delete(f"{BASE_MGMT}/catalogs/{catalog}?purgeRequested=true", headers=h(rtok))
+    delete_instance_principals_for(catalog, root=rtok)
+    if mc is not None:
+        try: mc.delete_prefix(f"{catalog}/", min_size=0)
+        except Exception: pass
+    return requests.get(f"{BASE_MGMT}/catalogs/{catalog}", headers=h(rtok)).status_code == 404
+
+
 def create_catalog(name=TEST_CATALOG, token=None, properties=None):
     """Create an INTERNAL S3/MinIO catalog using the ACTIVE environment's
     endpoints and bucket (from init_env). Pass `properties` to merge/override
@@ -403,12 +631,31 @@ def assign_principal_role_to_principal(principal=TEST_PRINCIPAL, pr=TEST_PR, tok
 
 def grant_privilege(catalog=TEST_CATALOG, cr=TEST_CR,
                     privilege="CATALOG_MANAGE_CONTENT", token=None):
-    """Grant a catalog privilege to a catalog-role. IDEMPOTENT: Polaris implements
-    the grant PUT as an INSERT that throws a duplicate-key (23505) /
-    'already exists' error if the grant already exists, instead of being a no-op.
-    We treat that case as success so re-running a cell or re-granting is safe."""
+    """Grant a catalog privilege to a catalog-role, idempotently and CHEAPLY.
+
+    Polaris implements the grant PUT as an INSERT. If the grant already exists it
+    does NOT no-op: it retries the write against the metastore for ~5 SECONDS and
+    then throws a duplicate-key (23505) error. Under PG-Pool/PG-HA that 5s wait is
+    pure dead time (the existence check reads a lagging replica, the insert hits
+    the primary and conflicts, and it retries for the full window). Six redundant
+    grants = ~30s wasted per run.
+
+    To avoid that cost entirely, we SKIP the grant if the role already holds the
+    privilege (a cheap GET on existing grants). If the grant still races through,
+    we treat the 23505 / 'already exists' response as success (correctness)."""
+    grants_url = f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles/{cr}/grants"
+    # 1. skip-if-present: avoid the redundant INSERT (and its 5s server retry)
+    try:
+        existing = requests.get(grants_url, headers=h(token))
+        if existing.status_code == 200:
+            for g in existing.json().get("grants", []):
+                if g.get("privilege") == privilege and g.get("type", "catalog") == "catalog":
+                    return existing   # already granted → no write, no 5s wait
+    except Exception:
+        pass   # if the check fails, fall through to the PUT (still safe)
+    # 2. issue the grant
     r = requests.put(
-        f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles/{cr}/grants",
+        grants_url,
         headers=h(token),
         json={"grant": {"type": "catalog", "privilege": privilege}},
     )
@@ -422,7 +669,6 @@ def grant_privilege(catalog=TEST_CATALOG, cr=TEST_CR,
         print(f"  ⚠️ grant_privilege {privilege} on {catalog}/{cr} → "
               f"[{r.status_code}] {r.text[:160]}")
     return r
-
 # ── Cleanup ───────────────────────────────────────────────────
 # System entities — never delete
 _SKIP_PRINCIPALS      = {'root'}
