@@ -8,7 +8,7 @@
 
 ## Repository Layout
 - **`src/`** — all reusable Python modules imported by notebooks (`polaris_test_utils.py`, `minio_rest.py`). No test logic lives in notebooks that belongs in a module.
-- **`src/config/`** — environment config. `common.yaml` (shared non-secret defaults) + `<env>.yaml` (per-env, e.g. `dev.yaml`) are merged by `init_env(env)`. Secrets may be overridden by env vars (`POLARIS_ROOT_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `OPENSEARCH_PASS`). `*.yaml` here is gitignored except `common.yaml` and `*.example.yaml`; copy `prod.example.yaml` → `prod.yaml` and fill in.
+- **`src/config/`** — environment config. `common.yaml` (shared non-secret defaults) + `<env>.yaml` (per-env: `local` / `dev` / `prod`) are merged by `init_env(env)`. Secrets may be overridden by env vars (`POLARIS_ROOT_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `OPENSEARCH_PASS`). `*.yaml` here is gitignored except `common.yaml` and `*.example.yaml`; each env ships a `*.example.yaml` template — copy e.g. `dev.example.yaml` → `dev.yaml` and fill in.
 - **Per-test directories** — each test domain has its own folder containing its notebook(s) plus a `README.md` (concept / purpose / how-to-run / result) and any `doc-*.md` reference reports:
   - `lifecycle/` — catalog→namespace→table/view→snapshot→drop lifecycle.
   - `privilege/` — RBAC privilege-matrix tests.
@@ -19,20 +19,21 @@
   import sys, pathlib
   sys.path.insert(0, str(pathlib.Path.cwd().parent / "src"))
   from polaris_test_utils import *
-  init_env("dev")   # switch env here: "dev" → "prod"
+  init_env("local")             # default is "local"; switch to "dev"/"prod" for shared clusters
+  require_not_prod("…")         # mutating notebooks: hard-fail against company PROD
   ```
 
 ## Environments & Test Flow
-Tests run across three **distinct** environments whose connection settings and secrets are **totally different** — never assume one environment's variables apply to another. Each is selected with `init_env(<env>)`, which loads a separate `src/config/<env>.yaml` (+ env-var secret overrides).
+Tests run across three **distinct** environments whose connection settings and secrets are **totally different** — never assume one environment's variables apply to another. Each is selected with `init_env(<env>)`, which loads a separate `src/config/<env>.yaml` (+ env-var secret overrides). The default (bare `import *` / `init_env()` with no arg) is **`local`** — the safe target.
 
-1. **Local device** — personal OrbStack single-node. The full test suite runs here, plus the destructive local-only utilities in `admin/`. (Currently `src/config/dev.yaml` targets this local device.)
-2. **Company DEV** — shared team environment with its own endpoints and credentials (injected via env vars / its own `<env>.yaml`). Run functional / integration suites here, but **never** destructive teardown — it would delete other users' data.
-3. **Company PROD** — **availability tests only.** Do not run lifecycle, privilege, purge, or any mutating / teardown notebook against PROD.
+1. **`local`** — personal OrbStack single-node (`src/config/local.yaml`, gitignored). The full test suite runs here, plus the destructive local-only utilities in `admin/`. This is the default env.
+2. **`dev`** — shared **company** DEV cluster (`src/config/dev.yaml`, gitignored; copy from `dev.example.yaml`). Endpoints/secrets are totally different from `local`. Run functional / integration suites here, but **never** destructive teardown — it would delete other users' data.
+3. **`prod`** — shared **company** PROD (`src/config/prod.yaml`, from `prod.example.yaml`). **Availability tests only.** Do not run lifecycle, privilege, purge, or any mutating / teardown notebook against PROD.
 
 Rules:
-- Secrets for the shared (DEV/PROD) environments come from env vars and are never committed; only `common.yaml` and `*.example.yaml` are tracked.
-- `admin/` teardown notebooks are **local-device only** and hardcoded to localhost by design (see `admin/README.md`); they are never pointed at a shared environment.
-- Gate mutating tests so they refuse to run against PROD (e.g. `require_not_prod()`); PROD is restricted to the availability suite.
+- Secrets for the shared (`dev`/`prod`) environments come from env vars and are never committed; only `common.yaml` and `*.example.yaml` are tracked. Each env has a `*.example.yaml` template.
+- Mutating notebooks call `require_not_prod(...)` right after setup so they hard-fail against `prod`; PROD is restricted to the availability suite.
+- `admin/` teardown notebooks are **`local`-only** and hardcoded to localhost by design (see `admin/README.md`), with an `assert`-based host guard that refuses any non-local `POLARIS_URL`; they are never pointed at a shared environment, and must **not** be wired to `init_env()`.
 
 ## Environment Commands
 *Always execute commands within your active local virtual environment (`.venv`); dependencies are managed with `uv` (`pyproject.toml` / `uv.lock`).*

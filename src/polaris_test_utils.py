@@ -20,8 +20,10 @@ except ImportError:
 # ── Environment / Config ──────────────────────────────────────
 # Config comes from config/<env>.yaml (+ common.yaml). Secrets may also be
 # supplied via environment variables, which OVERRIDE file values.
-# Select the environment with init_env("dev"|"prod") in your notebook, or set
-# the POLARIS_ENV environment variable. Default is "dev" (safe).
+# Select the environment with init_env("local"|"dev"|"prod") in your notebook, or
+# set the POLARIS_ENV environment variable. Default is "local" (safe — your own
+# device). "dev"/"prod" are the SHARED company environments with totally different
+# endpoints/secrets; "prod" runs availability tests only.
 
 _CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
 
@@ -80,7 +82,7 @@ def init_env(env=None):
     global MINIO_ENDPOINT, MINIO_ENDPOINT_INTERNAL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, BUCKET
     global PURGE_DELETES_FILES, POLARIS_VERSION, mc
 
-    ENV = env or os.environ.get("POLARIS_ENV", "dev")
+    ENV = env or os.environ.get("POLARIS_ENV", "local")
     CFG = _load_config(ENV)
 
     POLARIS_URL = CFG["polaris_url"]
@@ -117,7 +119,7 @@ def init_env(env=None):
     except ImportError:
         mc = None
 
-    banner = "🔴 PROD" if ENV == "prod" else "🟢 DEV"
+    banner = {"prod": "🔴 PROD", "dev": "🟡 DEV (shared)"}.get(ENV, "🟢 LOCAL")
     print(f"{banner}   POLARIS_ENV={ENV}   (Polaris {POLARIS_VERSION})")
     print(f"   Polaris: {POLARIS_URL}")
     print(f"   MinIO:   {MINIO_ENDPOINT}  bucket={BUCKET}")

@@ -16,16 +16,17 @@
 - [x] **Refactor pass 1 (2026-06-30):** migrated the canonical `purge-practice/refactor/` set into the `src/` + per-domain structure above (via `git mv`). Added per-dir READMEs. Notebooks now bootstrap `src/`. Fixed a latent bug where `common.yaml` lived outside `config/` and was never loaded.
 
 ## Environments & Test Flow (do not conflate)
-Three environments, totally different connection vars/secrets, selected via `init_env(<env>)`:
-1. **Local device** — personal OrbStack; full suite + destructive `admin/` utilities. `src/config/dev.yaml` currently targets this.
-2. **Company DEV** — shared; functional/integration suites only. NEVER destructive teardown (wipes other users' data).
-3. **Company PROD** — **availability tests ONLY.** No lifecycle/privilege/purge/mutating notebooks.
-`admin/polaris_clean_all.ipynb` is **intentionally** hardcoded to localhost (a safety feature) — do NOT port it onto `init_env`/shared config.
+Three environments, totally different connection vars/secrets, selected via `init_env(<env>)`. Default = **`local`** (safe):
+1. **`local`** — personal OrbStack; full suite + destructive `admin/` utilities. `src/config/local.yaml` (gitignored).
+2. **`dev`** — shared **company** DEV; functional/integration suites only. NEVER destructive teardown (wipes other users' data). `src/config/dev.yaml` from `dev.example.yaml`.
+3. **`prod`** — shared **company** PROD; **availability tests ONLY.** No lifecycle/privilege/purge/mutating notebooks. From `prod.example.yaml`.
+Enforcement now in place: module default env = `local`; mutating notebooks call `require_not_prod(...)`; `admin/polaris_clean_all.ipynb` is **intentionally** hardcoded to localhost + has an `assert` host guard (a safety feature) — do NOT port it onto `init_env`/shared config.
 
 ## Active State & Roadmap
 - [ ] **Pass 2 — migrate remaining suites** into the new structure (after sign-off): `purge-practice/` root duplicates, `notebooks/`, `test/` (availability/etl/rbac), `error-cases/`, `datahub-error-cases/`.
-- [ ] **Config naming** — `dev.yaml` presently = local device. To support company DEV/PROD cleanly, recommend `local.yaml` (current dev content) + a real company `dev.yaml` + `prod.yaml`; update `init_env(...)` calls accordingly.
-- [ ] **PROD guardrail** — add a per-notebook env allowlist so only the availability suite runs when `ENV=prod`; ensure mutating helpers call `require_not_prod()`.
+- [x] **Config naming (done 2026-06-30)** — renamed `dev.yaml` → `local.yaml`; added `local.example.yaml` + company `dev.example.yaml` (+ existing `prod.example.yaml`); module default env flipped `dev` → `local`; notebooks now `init_env("local")`.
+- [x] **PROD guardrail (done 2026-06-30)** — mutating notebooks (lifecycle/privilege/purge) call `require_not_prod(...)`; `clean_all` has a localhost `assert` guard. TODO refinement: a positive availability-only allowlist for any future PROD notebook.
+- [ ] **Company DEV/PROD configs** — copy `dev.example.yaml`/`prod.example.yaml` → real (gitignored) `dev.yaml`/`prod.yaml` with company endpoints; inject secrets via env vars only.
 - [ ] **Authority test notebook** — assert RBAC + OAuth tokens against the Polaris catalog API (build on `privilege/` harness).
 - [ ] **PgBouncer connection verifier** in `src/` — loop tests against the pool endpoint for connection isolation.
 - [ ] **Schema/table mapping notebook** — audit table existence, row distributions, structural schemas across the PostgreSQL HA nodes.
