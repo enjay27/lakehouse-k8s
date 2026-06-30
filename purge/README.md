@@ -7,11 +7,12 @@ What actually happens to the underlying **MinIO data files** when a Polaris tabl
 Prove, at the mechanism level, whether purge removes files or orphans them — and isolate the root cause — for a build running **without STS**.
 
 ## Notebooks
+- `polaris_purge_practice.ipynb` — main purge walkthrough: write a real table, purge it, and observe MinIO + logs.
 - `view_purge_behavior_test.ipynb` — observes purge behavior for views/tables and correlates with logs.
 - `prove_minio_deletion_no_sts.ipynb` — direct-to-MinIO proof that file deletion itself works with static credentials (isolating the issue from MinIO/permissions/RBAC).
 
 ## How to run
-1. Confirm Polaris, MinIO, and OpenSearch are reachable per `../src/config/dev.yaml`.
+1. Confirm Polaris, MinIO, and OpenSearch are reachable per `../src/config/local.yaml` (or `dev.yaml`).
 2. **Restart & Run All**. The first cell bootstraps `../src` and imports the utils.
 
 ## Result / findings (bottom line)

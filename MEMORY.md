@@ -7,13 +7,14 @@
 ## Repository Map
 - `src/polaris_test_utils.py`, `src/minio_rest.py` — shared modules.
 - `src/config/` — `common.yaml` + `<env>.yaml` (merged by `init_env`); secrets via env vars. `dev.yaml`/`prod.yaml` gitignored.
-- `lifecycle/` — entity lifecycle (`polaris_lifecycle_practice.ipynb`).
-- `privilege/` — RBAC privilege matrix (`polaris_privilege_matrix_test.ipynb`).
-- `purge/` — purge → MinIO behavior (`view_purge_behavior_test.ipynb`, `prove_minio_deletion_no_sts.ipynb`).
-- `admin/` — teardown (`polaris_clean_all.ipynb`).
+- `lifecycle/` — entity lifecycle. `privilege/` — min-privilege matrix. `rbac/` — RBAC verify + role graph.
+- `purge/` — purge→MinIO (purge_practice, view_purge, prove_minio). `etl/` — ingestion/flow. `diagnostics/` — config/metastore/data_layers/entities/api_deps.
+- `scenario/` — composite scenario. `availability/` — read-only checks (**PROD-safe**). `error-cases/` — 21 negative tests. `admin/` — teardown + rotate_credential.
+- `attic/` — superseded dups/backups (delete on host). `datahub-error-cases/` — separate product, left untouched (will move to a datahub root later).
 
 ## Completed
 - [x] **Refactor pass 1 (2026-06-30):** migrated the canonical `purge-practice/refactor/` set into the `src/` + per-domain structure above (via `git mv`). Added per-dir READMEs. Notebooks now bootstrap `src/`. Fixed a latent bug where `common.yaml` lived outside `config/` and was never loaded.
+- [x] **Refactor pass 2 (2026-06-30):** migrated `test/`, `notebooks/`, `error-cases/`, and `purge-practice/` root into the new categories (`availability/`, `rbac/`, `diagnostics/`, `etl/`, `scenario/` + existing dirs). Consolidated all Polaris suites onto `src/` (3 dup util copies → `attic/`; confirmed `src/` is a superset of their APIs). Repointed 25 utils-importing notebooks to `src/` with `require_not_prod()` guards (availability excluded — PROD-safe). Wrote READMEs for the new categories. DataHub left untouched.
 
 ## Environments & Test Flow (do not conflate)
 Three environments, totally different connection vars/secrets, selected via `init_env(<env>)`. Default = **`local`** (safe):
@@ -27,6 +28,9 @@ Enforcement now in place: module default env = `local`; mutating notebooks call 
 - [x] **Config naming (done 2026-06-30)** — renamed `dev.yaml` → `local.yaml`; added `local.example.yaml` + company `dev.example.yaml` (+ existing `prod.example.yaml`); module default env flipped `dev` → `local`; notebooks now `init_env("local")`.
 - [x] **PROD guardrail (done 2026-06-30)** — mutating notebooks (lifecycle/privilege/purge) call `require_not_prod(...)`; `clean_all` has a localhost `assert` guard. TODO refinement: a positive availability-only allowlist for any future PROD notebook.
 - [ ] **Company DEV/PROD configs** — copy `dev.example.yaml`/`prod.example.yaml` → real (gitignored) `dev.yaml`/`prod.yaml` with company endpoints; inject secrets via env vars only.
+- [ ] **Port self-contained notebooks onto `src`/`init_env`** — `diagnostics/*`, `rbac/polaris_rbac_graph`+`_verification`, `scenario/polaris_production_scenario`, `etl/polaris_insert_data` still hardcode endpoints/creds (migrated as-is, not yet verified). Replace with the `src` bootstrap + `init_env` + `require_not_prod()` (where mutating), removing hardcoded secrets. `admin/polaris_clean_all` stays hardcoded by design.
+- [ ] **Delete `attic/` on host** — superseded dups/backups (sandbox couldn't hard-delete).
+- [ ] **Move DataHub out** — relocate `datahub-error-cases/` to its own datahub root later (per owner).
 - [ ] **Authority test notebook** — assert RBAC + OAuth tokens against the Polaris catalog API (build on `privilege/` harness).
 - [ ] **PgBouncer connection verifier** in `src/` — loop tests against the pool endpoint for connection isolation.
 - [ ] **Schema/table mapping notebook** — audit table existence, row distributions, structural schemas across the PostgreSQL HA nodes.

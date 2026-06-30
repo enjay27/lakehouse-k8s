@@ -11,9 +11,18 @@
 - **`src/config/`** — environment config. `common.yaml` (shared non-secret defaults) + `<env>.yaml` (per-env: `local` / `dev` / `prod`) are merged by `init_env(env)`. Secrets may be overridden by env vars (`POLARIS_ROOT_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `OPENSEARCH_PASS`). `*.yaml` here is gitignored except `common.yaml` and `*.example.yaml`; each env ships a `*.example.yaml` template — copy e.g. `dev.example.yaml` → `dev.yaml` and fill in.
 - **Per-test directories** — each test domain has its own folder containing its notebook(s) plus a `README.md` (concept / purpose / how-to-run / result) and any `doc-*.md` reference reports:
   - `lifecycle/` — catalog→namespace→table/view→snapshot→drop lifecycle.
-  - `privilege/` — RBAC privilege-matrix tests.
+  - `privilege/` — minimum-privilege matrix tests.
+  - `rbac/` — RBAC wiring verification + role-graph visualization.
   - `purge/` — purge → MinIO file-deletion behavior.
-  - `admin/` — destructive teardown / clean-all utilities.
+  - `etl/` — data ingestion / end-to-end flow.
+  - `diagnostics/` — read/inspect notebooks (config, metastore, data layers, entities, API deps).
+  - `scenario/` — composite end-to-end production scenario.
+  - `availability/` — read-only health checks; the **only** suite safe to run against PROD.
+  - `error-cases/` — negative tests that provoke and assert specific failures (401/403/404/409/500/503…).
+  - `admin/` — destructive teardown / clean-all + credential rotation utilities.
+- **`attic/`** — superseded duplicates / backups parked for deletion; not part of the active suite.
+- **`datahub-error-cases/`** — separate product (DataHub), its own `datahub_test_utils.py`; intentionally left outside the Polaris `src/` model.
+- **Self-contained notebooks:** several `diagnostics/`, `rbac/`, `scenario/`, `etl/`, and `admin/` notebooks still hardcode endpoints/creds instead of using `init_env`/`src` (migrated as-is). Porting them is tracked in `MEMORY.md`; `admin/` clean-all stays hardcoded by design.
 - **Notebook import convention:** the first cell bootstraps `src/` onto the path before importing:
   ```python
   import sys, pathlib
