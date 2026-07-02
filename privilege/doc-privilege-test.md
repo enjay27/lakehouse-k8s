@@ -1,3 +1,5 @@
+> ⚠️ **MEASURED RECONCILIATION (2026-07-02, Polaris 1.3.0).** This document is the *original hypothesis* set. Live runs refuted parts of it — see **`doc-privilege-results.md`** for the source-of-truth measurements. Key corrections: (1) reading a single view needs **`VIEW_READ_PROPERTIES`**, not `VIEW_LIST` (§2); (2) `CATALOG_MANAGE_METADATA` is **not read-only** — it authorizes create/drop/commit (§1, §3 Use Case C); (3) all privilege names below were accepted at grant time (no `GRANT_INVALID`). Inline `MEASURED:` notes flag each spot.
+
 ### Analysis of the `CREATE_NAMESPACE` Authorization Failure
 
 The `403 Forbidden` error encountered by your Service Principal (`vptest-c1-inst-prin`) represents a clean perimeter rejection by the Apache Polaris access control engine.
@@ -36,6 +38,8 @@ At any given securable level, coarse-grained administrative privileges encompass
 
 ```
 
+> **MEASURED:** on this build the split above does not hold — **both** coarse masters authorize the *full* action set (namespace/table/view create, list, drop, read, commit, get). `CATALOG_MANAGE_METADATA` is not a metadata-read-only master; it grants mutation too. See `doc-privilege-results.md` §3.
+
 ---
 
 ### 2. Comprehensive Minimal Privilege Action Matrix
@@ -53,7 +57,7 @@ This matrix maps out the absolute minimal authorizing grant required for every m
 | **Table** | `GET /v1/{cat}/namespaces/{ns}/tables/{tbl}` | Fetching the live metadata-location string to read data. | `TABLE_READ_DATA` | `CATALOG_MANAGE_METADATA` |
 | **Table** | `DELETE /v1/{cat}/namespaces/{ns}/tables/{tbl}` | Dropping the table record (with or without a file purge). | `TABLE_DROP` | `CATALOG_MANAGE_CONTENT` |
 | **View** | `POST /v1/{cat}/namespaces/{ns}/views` | Instantiating a fresh Iceberg SQL View definition. | `VIEW_CREATE` | `CATALOG_MANAGE_CONTENT` |
-| **View** | `GET /v1/{cat}/namespaces/{ns}/views/{vw}` | Reading back the SQL query text and view schema mapping. | `VIEW_LIST` | `CATALOG_MANAGE_METADATA` |
+| **View** | `GET /v1/{cat}/namespaces/{ns}/views/{vw}` | Reading back the SQL query text and view schema mapping. | `VIEW_READ_PROPERTIES` ⟵ *MEASURED (not `VIEW_LIST`, which returns 403 here)* | `CATALOG_MANAGE_METADATA` |
 | **View** | `DELETE /v1/{cat}/namespaces/{ns}/views/{vw}` | Removing the view registration from the catalog. | `VIEW_DROP` | `CATALOG_MANAGE_CONTENT` |
 
 ---
@@ -73,12 +77,14 @@ In production enterprise deployments, you should avoid using the global root ide
 * **Business Profile:** A data analyst querying dashboards via Trino, StarRocks, or Athena. They require full visibility to read records and construct aggregate business views, but must never modify raw backend data.
 * **Assigned Privilege Footprint:** `["TABLE_LIST", "TABLE_READ_DATA", "VIEW_LIST", "VIEW_CREATE"]`
 * **Boundary Enforcement:** Fully read-only on physical tables. They can create local, personal analytical views to save specialized queries but cannot perform schema evolution or run table drops.
+* **MEASURED (6/7):** the footprint is right *except* it cannot read a single view — `VIEW_LIST` authorizes listing views but not `GET /views/{view}` (→ 403). Add **`VIEW_READ_PROPERTIES`** to let analysts open a view's definition.
 
 #### Use Case C: The Data Governance & Compliance Officer (Auditor)
 
 * **Business Profile:** A security officer auditing table history, schema modifications, access vectors, and metadata file trails across the entire organization.
 * **Assigned Privilege Footprint:** `["CATALOG_MANAGE_METADATA"]`
 * **Boundary Enforcement:** Can review the structure, lifecycle properties, and metadata paths of every single table and view across the catalog. However, they are blocked from seeing the actual raw rows inside the data files (`TABLE_READ_DATA` is absent), keeping sensitive records hidden during metadata evaluations.
+* **MEASURED (4/10 — footprint is wrong):** on this build `CATALOG_MANAGE_METADATA` is **not read-only** — it authorizes CREATE/DROP/COMMIT on namespaces, tables, and views, so this "auditor" is actually a full read-write admin. For a genuinely read-only auditor, grant the granular read set instead: `NAMESPACE_LIST, TABLE_LIST, TABLE_READ_DATA` (or `TABLE_READ_PROPERTIES`), `VIEW_LIST, VIEW_READ_PROPERTIES`. (Raw-row hiding is enforced at credential-vending, not the REST catalog API.)
 
 #### Use Case D: The Catalog Tenant Administrator (Tenant Manager)
 

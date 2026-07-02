@@ -7,6 +7,8 @@ import requests
 import json
 import time
 import os
+import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from opensearchpy import OpenSearch
 import urllib3
@@ -560,6 +562,161 @@ def teardown_catalog(catalog, root=None):
     `from polaris_test_utils import *` does NOT export leading-underscore names,
     so calling the private function directly raises NameError."""
     return _teardown_catalog_selfcontained(catalog, root=root)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test-case orchestration (arrange → act → assert → guaranteed cleanup)
+#
+# A test case is four responsibilities, composed by `run_case`:
+#   1. Suite   (arrange) — build_suite(): common; records setup entities.
+#   2. Execute (act)     — per-case core logic; returns a response.
+#   3. Result  (assert)  — per-case; PURE (prints/derives, changes nothing).
+#   4. Cleaner (teardown)— clean(): common; deletes tracked entities, ALWAYS.
+# Cleanup operates on the *recorded* Entities, not a naming guess — so no case
+# can leak into another.
+# ─────────────────────────────────────────────────────────────────────────────
+@dataclass
+class Entities:
+    """Cleanup ledger + light context bag for one test case. `Suite` fills it
+    during arrange; `Execute` may record what it creates into a second Entities;
+    `clean(*bundles)` reclaims all of it. Only GLOBAL objects need recording —
+    catalogs, principals, principal-roles — because a catalog purge cascades its
+    namespaces/tables/views/catalog-roles + MinIO objects. `ctx` carries the
+    working handles Execute/Result need (catalog, ns, entity, worker_hdr, …)."""
+    catalogs: list = field(default_factory=list)
+    principals: list = field(default_factory=list)
+    principal_roles: list = field(default_factory=list)
+    catalog_roles: list = field(default_factory=list)   # (catalog, name); usually cascade-cleaned
+    ctx: dict = field(default_factory=dict)
+
+
+def provision_worker_multi(catalog, privileges, suffix="worker", root=None):
+    """Provision a single-use worker principal holding EXACTLY `privileges`.
+    Polls until the catalog-role is visible before granting (avoids the 404
+    read-after-write lag under PG-HA), issues the token AFTER the grants (so it
+    reflects the full footprint), and reports which names the build rejected.
+    Returns (header_or_None, granted, invalid, (P, PR, CR))."""
+    rtok = root or root_token()
+    P  = f"{catalog}-{suffix}-prin"
+    PR = f"{catalog}-{suffix}-prole"
+    CR = f"{catalog}-{suffix}-crole"
+    requests.delete(f"{BASE_MGMT}/principals/{P}", headers=h(rtok))
+    requests.delete(f"{BASE_MGMT}/principal-roles/{PR}", headers=h(rtok))
+    rp   = create_principal(P, token=rtok).json()
+    cid  = rp.get("principal", {}).get("clientId")      or rp.get("clientId")
+    csec = rp.get("credentials", {}).get("clientSecret") or rp.get("clientSecret")
+    create_principal_role(PR, token=rtok)
+    create_catalog_role(catalog=catalog, name=CR, token=rtok)
+    assign_catalog_role_to_principal_role(catalog=catalog, pr=PR, cr=CR, token=rtok)
+    assign_principal_role_to_principal(principal=P, pr=PR, token=rtok)
+    # wait for the catalog-role to be visible before granting
+    for _ in range(6):
+        lr = requests.get(f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles", headers=h(rtok))
+        names = [(c.get("name") if isinstance(c, dict) else c)
+                 for c in (lr.json().get("roles", []) if lr.status_code == 200 else [])]
+        if CR in names:
+            break
+        time.sleep(0.5)
+    privs = list(privileges) if isinstance(privileges, (list, tuple)) else [privileges]
+    granted, invalid = [], []
+    for pv in privs:
+        gr = grant_privilege(catalog=catalog, cr=CR, privilege=pv, token=rtok)
+        gb = gr.text.lower()
+        ok = (gr.status_code < 400 or "already exists" in gb
+              or "23505" in gb or "duplicate key" in gb)
+        (granted if ok else invalid).append(pv)
+    tr = get_token(client_id=cid, client_secret=csec, scope=f"PRINCIPAL_ROLE:{PR}")
+    if tr.status_code != 200:
+        return None, granted, invalid, (P, PR, CR)
+    wtok = tr.json().get("access_token")
+    hdr = {"Authorization": f"Bearer {wtok}", "Polaris-Realm": REALM,
+           "Content-Type": "application/json"}
+    return hdr, granted, invalid, (P, PR, CR)
+
+
+def build_suite(ents, root=None, *, prefix="case-", build=None, footprint=None,
+                drop_gate=False, entity=None, scaff_privs=None):
+    """Common **Suite** (arrange): fresh catalog (+optional drop-with-purge gate)
+    → scaffold prereqs via a full-privilege scaff principal that is then destroyed
+    (so the worker's single grant is the only thing under test) → provision a
+    worker holding EXACTLY `footprint`. Every created entity (catalog, scaff +
+    worker principals/roles) is recorded into `ents` BEFORE it might fail, so a
+    mid-arrange error still cleans up. Working handles land in `ents.ctx`:
+    catalog, ns, entity, worker_hdr, granted, invalid. `build(catalog, scaff_hdr,
+    ctx)` creates any prerequisite namespace/table/view."""
+    rtok = root or root_token()
+    cat = f"{prefix}{uuid.uuid4().hex[:6]}"
+    props = ({"polaris.config.drop-with-purge.enabled": "true",
+              "polaris.config.purge-view-metadata-on-drop": "false"} if drop_gate else {})
+    create_catalog(cat, token=rtok, properties=props)
+    ents.catalogs.append(cat)
+    ent = entity or f"e{uuid.uuid4().hex[:6]}"
+    ctx = {"catalog": cat, "ns": f"ns-{cat}", "entity": ent}
+    # scaff — full-priv, records first (leak-proof), builds prereqs, then destroyed
+    scaff_hdr, scaff_names = instance_principal(
+        cat, privileges=scaff_privs or ["CATALOG_MANAGE_CONTENT"], suffix="scaff", root=rtok)
+    ents.principals.append(scaff_names[0]); ents.principal_roles.append(scaff_names[1])
+    ents.catalog_roles.append((cat, scaff_names[2]))
+    if build is not None:
+        build(cat, scaff_hdr, ctx)
+    delete_instance_principal(scaff_names, catalog=cat, root=rtok)   # isolation
+    # worker — exactly `footprint`
+    whdr, granted, invalid, wnames = provision_worker_multi(cat, footprint or [], root=rtok)
+    ents.principals.append(wnames[0]); ents.principal_roles.append(wnames[1])
+    ents.catalog_roles.append((cat, wnames[2]))
+    ctx.update(worker_hdr=whdr, granted=granted, invalid=invalid)
+    ents.ctx.update(ctx)
+    return ents
+
+
+def clean(*bundles, root=None):
+    """Common **Cleaner**: delete every entity recorded across the given Entities
+    bundles (suite + during-test). Global objects first (principals, principal-
+    roles), then catalogs last (recursive purge cascades namespaces/tables/views/
+    catalog-roles + MinIO). Deduped and idempotent — safe to call in a `finally`."""
+    rtok = root or root_token()
+    done = set()
+    for b in bundles:
+        for p in b.principals:
+            if p and ("p", p) not in done:
+                done.add(("p", p)); requests.delete(f"{BASE_MGMT}/principals/{p}", headers=h(rtok))
+        for pr in b.principal_roles:
+            if pr and ("pr", pr) not in done:
+                done.add(("pr", pr)); requests.delete(f"{BASE_MGMT}/principal-roles/{pr}", headers=h(rtok))
+    for b in bundles:
+        for cr in b.catalog_roles:
+            cat, name = cr if isinstance(cr, (tuple, list)) else (None, cr)
+            if cat and name and ("cr", cat, name) not in done:
+                done.add(("cr", cat, name))
+                requests.delete(f"{BASE_MGMT}/catalogs/{cat}/catalog-roles/{name}", headers=h(rtok))
+    for b in bundles:
+        for cat in b.catalogs:
+            if cat and ("c", cat) not in done:
+                done.add(("c", cat))
+                try:
+                    _teardown_catalog_selfcontained(cat, root=rtok)
+                except Exception as e:
+                    print(f"  ⚠️ clean catalog {cat}: {e}")
+
+
+def run_case(name, suite_fn, execute_fn, result_fn=None, root=None):
+    """Orchestrate one test case as arrange → act → assert → **guaranteed** cleanup:
+
+        suite_fn(suite_ents, root)                           # arrange
+        resp = execute_fn(suite_ents, created_ents, root)    # act
+        result_fn(name, resp, suite_ents, created_ents)      # assert (pure)
+        clean(suite_ents, created_ents)                      # teardown, ALWAYS
+
+    Returns whatever `result_fn` returns (or the raw response if it is None).
+    Cleanup runs in a `finally`, so it happens even if execute/result raise."""
+    rtok = root or root_token()
+    suite_ents, created = Entities(), Entities()
+    try:
+        suite_fn(suite_ents, rtok)
+        resp = execute_fn(suite_ents, created, rtok)
+        return result_fn(name, resp, suite_ents, created) if result_fn else resp
+    finally:
+        clean(suite_ents, created, root=rtok)
 
 
 def create_catalog(name=TEST_CATALOG, token=None, properties=None):
