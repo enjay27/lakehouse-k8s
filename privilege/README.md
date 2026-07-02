@@ -7,12 +7,16 @@ A measured **authorization truth table** for Apache Polaris 1.3.0: for each name
 Replace assumptions about the privilege tree with facts. The harness scaffolds with a full-privilege master identity, then challenges each action with a single-privilege **worker principal**, classifying every response through a six-way outcome taxonomy instead of a fragile "403 = blocked / 2xx = allowed" binary.
 
 ## Notebooks
-- `polaris_privilege_matrix_test.ipynb` — builds the privilege matrix using `case_scaffold` + `worker_principal` from `../src/polaris_test_utils.py`.
+- `polaris_privilege_matrix_test.ipynb` — builds the **minimum-privilege matrix** (which single fine-grained privilege each action requires) using `case_scaffold` + `worker_principal` from `../src/polaris_test_utils.py`.
+- `polaris_privilege_hierarchy_test.ipynb` — verifies the **privilege hierarchy** (doc §1): the coarse-master → fine-grained *cascade* (`CATALOG_MANAGE_CONTENT` / `CATALOG_MANAGE_METADATA`) and *securable inheritance* (a catalog-scoped grant reaching nested entities). Grants only the master to a worker and checks every action in/out of branch, rendering a cascade truth table that confirms or refutes each claimed edge.
+- `polaris_use_case_roles_test.ipynb` — validates the four **real-world role profiles** (doc §3): Data Engineer, BI Analyst, Auditor, Tenant Admin. Provisions each as a multi-privilege worker and asserts both sides of its boundary (capabilities → `AUTHORIZED`, restrictions → `BLOCKED_PRIV`), plus a cross-catalog isolation test for the Tenant Admin. Footprint privilege names are treated as hypotheses — any the build rejects surface as `GRANT_INVALID`.
+
+All three share the same six-way taxonomy and the `case_scaffold` / single-use-worker lifecycle; root only bootstraps and tears down. They bootstrap with `init_env("local")` + `require_not_prod(...)`, so they refuse to run against company PROD.
 
 ## How to run
-1. Confirm services are reachable per `../src/config/dev.yaml`.
+1. Confirm services are reachable per the active env config (`../src/config/local.yaml`; switch `init_env("dev")` for the shared cluster).
 2. **Restart & Run All**. The first cell bootstraps `../src` and imports the utils.
-3. Review the emitted matrix; `GRANT_INVALID` rows reveal which privilege names this build does **not** accept (a deliverable in itself).
+3. Review the emitted tables: in the matrix, `GRANT_INVALID` rows reveal privilege names this build rejects; in the hierarchy notebook, ❗ cells flag edges that refute the doc's cascade claim; in the roles notebook, each role gets a PASS/FAIL card with its allow/deny assertions.
 
 ## Result / findings (gotchas the harness controls for)
 - **Config gate contaminates DROP tests** — neutralize `drop-with-purge.enabled=true` first, or a correctly-privileged drop is mis-recorded as blocked.
@@ -22,4 +26,4 @@ Replace assumptions about the privilege tree with facts. The harness scaffolds w
 
 ## Reference docs
 - `doc-privilege-matrix-plan.md` — full test plan and the six-way outcome taxonomy.
-- `doc-privilege-test.md` — supporting notes.
+- `doc-privilege-test.md` — the privilege hierarchy tree (§1), minimal-privilege action matrix (§2), and the four real-world role profiles (§3) that the hierarchy/role notebooks verify.

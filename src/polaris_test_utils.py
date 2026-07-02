@@ -552,6 +552,16 @@ def _teardown_catalog_selfcontained(catalog, root=None):
     return requests.get(f"{BASE_MGMT}/catalogs/{catalog}", headers=h(rtok)).status_code == 404
 
 
+def teardown_catalog(catalog, root=None):
+    """Public entry point for a recursive catalog teardown (views/tables →
+    namespaces → non-default catalog-roles → catalog, then sweep instance
+    principals + MinIO). Thin wrapper over `_teardown_catalog_selfcontained` so
+    notebooks don't have to reach a private, underscore-prefixed name —
+    `from polaris_test_utils import *` does NOT export leading-underscore names,
+    so calling the private function directly raises NameError."""
+    return _teardown_catalog_selfcontained(catalog, root=root)
+
+
 def create_catalog(name=TEST_CATALOG, token=None, properties=None):
     """Create an INTERNAL S3/MinIO catalog using the ACTIVE environment's
     endpoints and bucket (from init_env). Pass `properties` to merge/override
@@ -671,21 +681,34 @@ def grant_privilege(catalog=TEST_CATALOG, cr=TEST_CR,
                     return existing   # already granted → no write, no 5s wait
     except Exception:
         pass   # if the check fails, fall through to the PUT (still safe)
-    # 2. issue the grant
-    r = requests.put(
-        grants_url,
-        headers=h(token),
-        json={"grant": {"type": "catalog", "privilege": privilege}},
-    )
-    if r.status_code >= 400:
+    # 2. issue the grant. Retry on a transient 404 "…not found": the catalog-role
+    #    was just created and may not yet be visible on a lagging PG read replica
+    #    (read-after-write lag under PG-HA/PgBouncer). Without this, a perfectly
+    #    valid grant 404s and callers misread it as GRANT_INVALID / BLOCKED_PRIV.
+    r = None
+    _MAX = 7
+    for _attempt in range(_MAX):
+        r = requests.put(
+            grants_url,
+            headers=h(token),
+            json={"grant": {"type": "catalog", "privilege": privilege}},
+        )
+        if r.status_code < 400:
+            return r
         body = r.text.lower()
         if ("already exists" in body or "23505" in body
                 or "duplicate key" in body or "grant_records_pkey" in body):
             # grant already present → treat as success (idempotent)
             return r
-        # otherwise surface the real error
+        if r.status_code == 404 and "not found" in body and _attempt < _MAX - 1:
+            # read-after-write lag on the just-created catalog-role: back off
+            # (capped) and retry — cumulative wait ~9s before giving up.
+            time.sleep(min(0.5 * (_attempt + 1), 2.0))
+            continue
+        # genuine error (e.g. 400 invalid privilege name) → surface and stop
         print(f"  ⚠️ grant_privilege {privilege} on {catalog}/{cr} → "
               f"[{r.status_code}] {r.text[:160]}")
+        return r
     return r
 # ── Cleanup ───────────────────────────────────────────────────
 # System entities — never delete
