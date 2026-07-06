@@ -20,3 +20,5 @@ Verify that Polaris fails *correctly* and observably: the right status code, err
 ## Reference docs
 - `issue-report-postgresql-restore.md` — PostgreSQL restore issue write-up.
 - `opensearch-alerts.md` — OpenSearch alerting notes.
+- `opensearch-monitor-alert-guide.md` — full Monitor+Trigger+Notification setup guide (7 monitors incl. P0 DB Connection Pool); Monitor 7 is also registered in code via `src/opensearch_alert_provisioner.py`.
+- `doc-db-connection-pool-logs.md` — per-case (pgpool down / pool exhausted) log signatures, monitor query strategy, remediation, and alert payload for the DB Connection Pool monitor.
