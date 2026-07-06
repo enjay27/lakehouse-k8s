@@ -77,7 +77,8 @@ Three securables × actions, each candidate privilege tested in isolation, plus 
 | Table | LIST (GET) | `TABLE_LIST` ✓ | `CATALOG_MANAGE_METADATA` |
 | Table | COMMIT (POST snapshot/schema) | `TABLE_WRITE_DATA` | `CATALOG_MANAGE_METADATA` / content master |
 | Table | READ (GET metadata) | `TABLE_READ_DATA` | `CATALOG_MANAGE_METADATA` |
-| Table | DROP (DELETE) | `TABLE_DROP` ✓ | `CATALOG_MANAGE_CONTENT` |
+| Table | DROP, plain (DELETE) | `TABLE_DROP` ✓ | `CATALOG_MANAGE_CONTENT` |
+| Table | DROP **WITH PURGE** (DELETE `?purgeRequested=true`) | ⚠️ `TABLE_DROP` ✓ alone is NOT sufficient — measured 2026-07-06, see `doc-privilege-results.md` §1 addendum and `purge/table_purge_privilege_test.ipynb` | `CATALOG_MANAGE_CONTENT` (confirmed sufficient) |
 | View | CREATE (POST) | `VIEW_CREATE` ✓ | `CATALOG_MANAGE_CONTENT` |
 | View | GET (GET one view) | `VIEW_LIST` ✓ (verify vs a read priv) | `CATALOG_MANAGE_METADATA` |
 | View | DROP (DELETE) | `VIEW_DROP` ✓ | `CATALOG_MANAGE_CONTENT` |
@@ -86,7 +87,7 @@ Three securables × actions, each candidate privilege tested in isolation, plus 
 
 ## 6. Reused invariants (already solved upstream)
 
-- **Non-root rule** — root only bootstraps/destroys; all challenges run as workers.
+- **Non-root rule** — root only bootstraps/destroys; all challenges run as workers. Note (added 2026-07-06): this rule means the original matrix runs never actually tested root against `DROP_TABLE_WITH_PURGE` specifically — turns out root does NOT bypass that one op (unlike every other op tested here, where root would). See `doc-privilege-results.md`.
 - **Scoped token** — `scope=PRINCIPAL_ROLE:{role}` (avoids the OPA "no role activated" 403).
 - **No catalog_admin grant** — service_admin can't `ADD_CATALOG_*` here; workers get grants on their own catalog-roles instead.
 - **Per-catalog namespace** — `ns-{catalog}` via `_ns()` (Vector B).

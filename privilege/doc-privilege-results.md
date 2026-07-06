@@ -1,8 +1,8 @@
 # Polaris Privilege — Measured Results
 
-**Date:** 2026-07-02
+**Date:** 2026-07-02 (table-DROP-WITH-PURGE addendum: 2026-07-06)
 **Build:** Apache Polaris 1.3.0 · env `local` (OrbStack single-node)
-**Source runs:** `polaris_privilege_matrix_test.ipynb`, `polaris_privilege_hierarchy_test.ipynb`, `polaris_use_case_roles_test.ipynb` (all `Restart & Run All`, zero harness-bug flags, zero leaked entities)
+**Source runs:** `polaris_privilege_matrix_test.ipynb`, `polaris_privilege_hierarchy_test.ipynb`, `polaris_use_case_roles_test.ipynb` (all `Restart & Run All`, zero harness-bug flags, zero leaked entities). Table-purge addendum sourced from `purge/table_purge_privilege_test.ipynb` (live run 2026-07-06) and `purge/table_view_purge_privilege_test.ipynb`.
 
 This document records the **empirically measured** authorization behavior of this build. Where it disagrees with the earlier claims in `doc-privilege-test.md` (the privilege tree §1, minimal matrix §2, role profiles §3), the measurement wins — those claims were hypotheses; see [§6 Refutations](#6-refutations-of-the-source-claims).
 
@@ -21,12 +21,28 @@ Each action was challenged with one privilege at a time by a single-privilege wo
 | Table | LIST (GET) | `TABLE_LIST` | `CATALOG_MANAGE_METADATA`, `CATALOG_MANAGE_CONTENT` |
 | Table | READ (GET metadata) | `TABLE_READ_DATA` *or* `TABLE_READ_PROPERTIES` | `CATALOG_MANAGE_METADATA`, `CATALOG_MANAGE_CONTENT` |
 | Table | COMMIT (POST update) | `TABLE_WRITE_DATA` *or* `TABLE_WRITE_PROPERTIES` | `CATALOG_MANAGE_METADATA`, `CATALOG_MANAGE_CONTENT` |
-| Table | DROP (DELETE) | `TABLE_DROP` | `CATALOG_MANAGE_CONTENT` |
+| Table | DROP, plain (DELETE, no `purgeRequested`) | `TABLE_DROP` | `CATALOG_MANAGE_CONTENT` |
+| Table | DROP **WITH PURGE** (DELETE `?purgeRequested=true`) | ⚠️ **NOT** `TABLE_DROP` alone — see below | `CATALOG_MANAGE_CONTENT` |
 | View | CREATE (POST) | `VIEW_CREATE` | `CATALOG_MANAGE_CONTENT` |
 | View | GET (GET one view) | **`VIEW_READ_PROPERTIES`** | `CATALOG_MANAGE_METADATA`, `CATALOG_MANAGE_CONTENT` |
 | View | DROP (DELETE) | `VIEW_DROP` | `CATALOG_MANAGE_METADATA`, `CATALOG_MANAGE_CONTENT` |
 
 **Headline finding — reading a single view:** `VIEW_LIST` does **not** authorize `GET /views/{view}` — it returns `403 BLOCKED_PRIV`. The minimum for reading a view definition is **`VIEW_READ_PROPERTIES`**. (`VIEW_LIST` only authorizes listing views in a namespace.)
+
+**Headline finding — table DROP is not one action, it's two (measured live 2026-07-06, `purge/table_purge_privilege_test.ipynb`):** a *plain* `DELETE` (no `purgeRequested`) and a *purging* `DELETE ?purgeRequested=true` are gated by **different ops** — `DROP_TABLE` vs `DROP_TABLE_WITH_PURGE`. The row above (`TABLE_DROP` minimal) only holds for the plain drop. For the purging drop:
+
+```
+TABLE_DROP alone                    -> 403 "is not authorized for op DROP_TABLE_WITH_PURGE"  (measured, non-root AND root)
+CATALOG_MANAGE_CONTENT              -> 204 (sufficient, measured)
+TABLE_DROP + TABLE_WRITE_DATA        -> not independently re-tested this run; this is the minimal
+                                        granular pair per purge/doc-purge-troubleshooting.md's
+                                        earlier "Layer 2" finding (2026-06-29) -- flagged here as
+                                        an OPEN item, not yet re-confirmed against this measurement
+```
+
+**Also new:** root/`service_admin` does **NOT** bypass `DROP_TABLE_WITH_PURGE` — it must hold `CATALOG_MANAGE_CONTENT` on the catalog like anyone else. This is a genuine difference from `View DROP` (root/service_admin bypasses that one entirely, confirmed in `view_purge_behavior_test.ipynb`'s C9). It also means this matrix's own "Non-root rule" (root only bootstraps, per `doc-privilege-matrix-plan.md` §6) never actually tested root against this specific op — nothing here previously contradicted it, the purge op just wasn't in scope until now.
+
+**Also new — gate precedence:** when BOTH the config gate (`drop-with-purge.enabled=false`) and the privilege gate (missing `CATALOG_MANAGE_CONTENT`) are violated at once, Polaris returns the **PRIVILEGE** 403 (`"is not authorized"`), not the CONFIG one (`"Unable to purge entity"`). Authorization is checked before the config flag. See `purge/table_purge_privilege_test.ipynb` cases P1–P3.
 
 **Necessity (all 11/11 confirmed):** granting an unrelated privilege (`VIEW_LIST`, or `TABLE_LIST` for the view case) blocked every action with `403 BLOCKED_PRIV` — so each minimal privilege above is genuinely *necessary*, not merely sufficient.
 
@@ -99,6 +115,7 @@ Granting **only** a coarse master and probing every action:
 | §2 — reading a single view needs `VIEW_LIST` | Needs **`VIEW_READ_PROPERTIES`**; `VIEW_LIST` → `403`. |
 | §2/matrix-plan §3 — several privilege names may be rejected at grant | **All 16 accepted**; zero `GRANT_INVALID`. |
 | §1 — the cascade tree splits CMC (structure) vs CMM (metadata read) | On this build both masters authorize the full action set tested. |
+| §2 (`doc-privilege-test.md` row "Table DROP ... with or without a file purge") — `TABLE_DROP` covers both a plain drop and a purging drop | Refuted for the purging case: `TABLE_DROP` alone → `403` on `DROP_TABLE_WITH_PURGE` (measured 2026-07-06). Only holds for the plain drop. |
 
 ## 7. Recommended corrections to the role footprints
 

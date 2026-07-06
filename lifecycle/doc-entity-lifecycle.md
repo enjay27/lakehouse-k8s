@@ -426,6 +426,8 @@ Tip: CATALOG_MANAGE_CONTENT bundles create/read/write/drop for
      tables, views, and namespaces — convenient for trusted roles.
 ```
 
+**Re-confirmed live 2026-07-06** (`purge/table_purge_privilege_test.ipynb`): `TABLE_DROP` alone is NOT sufficient for "Drop table+purge" — measured 403. `CATALOG_MANAGE_CONTENT` is sufficient. Also new: root/service_admin does NOT bypass this one op, unlike every other row in this table. This row was already correct here; `privilege/doc-privilege-test.md` had oversimplified it as one "TABLE_DROP" requirement for both plain and purging drops — now corrected there too.
+
 ## Orphaned files note
 
 ```

@@ -122,6 +122,15 @@ grant vs no-grant made no difference at the same config; the param
 ?purgeRequested=true/false/absent made no difference.
 ```
 
+> **TABLE is NOT the same story (measured 2026-07-06, `table_purge_privilege_test.ipynb`).**
+> Root/service_admin **bypasses GATE 2 for views but NOT for a table purge**
+> (`DROP TABLE ?purgeRequested=true` is its own op, `DROP_TABLE_WITH_PURGE`).
+> `TABLE_DROP` alone is not sufficient there; `CATALOG_MANAGE_CONTENT` is. And
+> when both gates are closed at once, the table case returns the PRIVILEGE
+> 403 first, not the CONFIG one — worth checking whether that ordering also
+> holds for views if this matrix is ever re-run. See
+> `privilege/doc-privilege-results.md` and `purge/doc-purge-troubleshooting.md`.
+
 ### 9. VIEW / NAMESPACE CREATE 500 (NullPointerException) — read-after-write lag
 
 > **CONFIRMED 2026-06-29: INTERMITTENT infrastructure issue (PG-Pool / PG-HA

@@ -4,6 +4,8 @@
 
 **Status of findings:** All behavior tables below were verified by direct testing against our cluster (API responses + direct MinIO observation), not assumed. Where a root cause requires cluster access we couldn't reach from Jupyter, it is marked as **needs System Engineer confirmation**.
 
+**2026-07-06 addendum:** the table-privilege claims in "The three-layer purge model" (Layer 2) and the "Privilege requirements table" below were re-confirmed live via the new `purge/table_purge_privilege_test.ipynb` (see also `purge/table_view_purge_privilege_test.ipynb`, which first surfaced the unexpected 403 that led to this). New findings folded in below: root/service_admin does not bypass `DROP_TABLE_WITH_PURGE`, and the privilege gate is checked before the config gate.
+
 Two tracks — read the one that fits your role:
 
 - **👤 System Manager** — you operate Polaris: catalogs, RBAC, configuration via API.
@@ -202,6 +204,9 @@ Error / symptom                              Cause                              
 
 "not authorized for op                       catalog_admin lacks                Grant CATALOG_MANAGE_CONTENT
  DROP_TABLE_WITH_PURGE"                        TABLE_WRITE_DATA                    to catalog_admin
+                                              (root/service_admin is NOT
+                                               exempt from this -- confirmed
+                                               2026-07-06)
 
 403 on view drop —                           purge-view-metadata-on-drop=true   Set drop-with-purge=true,
  "Unable to purge entity"                     + drop-with-purge=false (CONFIG)    OR set metadata-purge=false
@@ -248,6 +253,26 @@ Layer 2 — RBAC Privilege (are you allowed?)
   DROP_TABLE_WITH_PURGE requires TABLE_WRITE_DATA
   → catalog_admin alone does NOT include it
   → CATALOG_MANAGE_CONTENT bundles it
+
+  RE-CONFIRMED LIVE (2026-07-06, purge/table_purge_privilege_test.ipynb):
+  → TABLE_DROP alone is NOT sufficient (403 "is not authorized for op
+    DROP_TABLE_WITH_PURGE") -- this was also assumed true in
+    privilege/doc-privilege-test.md ("with or without a file purge") until
+    this run corrected it.
+  → CATALOG_MANAGE_CONTENT IS sufficient (204) -- confirmed both for a
+    non-root worker AND for root/service_admin.
+  → NEW: root/service_admin does NOT bypass this op. Every other privilege
+    check in this repo (view drop, namespace/table CRUD) is bypassed by
+    root -- this is the one exception found so far. Don't assume root can
+    purge a table just because it can do everything else.
+  → NEW: when BOTH gates are violated (config closed AND privilege missing),
+    Polaris returns the PRIVILEGE 403, not the CONFIG one -- privilege is
+    checked first.
+  → STILL OPEN: whether the granular pair TABLE_DROP + TABLE_WRITE_DATA
+    (without CATALOG_MANAGE_CONTENT) is independently sufficient, as this
+    section originally hypothesized, was not re-tested this run -- only
+    TABLE_DROP-alone (insufficient) and CATALOG_MANAGE_CONTENT (sufficient)
+    were measured.
 
 Layer 3 — API Request (how you ask)
   ?purgeRequested=true on the DELETE
