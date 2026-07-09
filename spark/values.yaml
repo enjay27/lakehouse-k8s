@@ -1,0 +1,147 @@
+# =============================================================================
+# Apache Spark - Helm Values for Polaris Lakehouse Dev Environment
+# Bitnami Spark Chart
+# =============================================================================
+
+image:
+  registry: docker.io
+  repository: bitnamilegacy/spark
+  tag: "3.5.3"
+  pullPolicy: IfNotPresent
+
+global:
+  security:
+    allowInsecureImages: true
+
+# =============================================================================
+# Spark Configuration (written to spark-defaults.conf)
+# =============================================================================
+sparkConf: |-
+  spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+  spark.sql.catalog.polaris=org.apache.iceberg.spark.SparkCatalog
+  spark.sql.catalog.polaris.type=rest
+  spark.sql.catalog.polaris.uri=http://benchmarks-polaris.datahub-hynix.svc.cluster.local:8181/api/catalog
+  spark.sql.catalog.polaris.credential=61f86631c73fcae9:1a55807fd0f5e91ddf1a8b7b239d2e02
+  spark.sql.catalog.polaris.warehouse=test-catalog
+  spark.sql.catalog.polaris.scope=PRINCIPAL_ROLE:ALL
+  spark.sql.defaultCatalog=polaris
+  spark.hadoop.fs.s3a.endpoint=http://benchmarks-minio.datahub-hynix.svc.cluster.local:9000
+  spark.hadoop.fs.s3a.access.key=admin
+  spark.hadoop.fs.s3a.secret.key=bhEenDzTEAVPKbukhuY0tRY4WjpZXzh0
+  spark.hadoop.fs.s3a.path.style.access=true
+  spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem
+  spark.hadoop.fs.s3a.connection.ssl.enabled=false
+  spark.hadoop.hadoop.security.authentication=simple
+
+# =============================================================================
+# Master
+# =============================================================================
+master:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  # extraEnvVars:
+  #   - name: HOME
+  #     value: /tmp
+  #   - name: USER
+  #     value: spark
+  #   - name: HADOOP_USER_NAME
+  #     value: spark
+  #   - name: JAVA_TOOL_OPTIONS
+  #     value: "-Duser.name=spark -Duser.home=/tmp"
+  #   - name: SPARK_EXTRA_CLASSPATH
+  #     value: "/opt/bitnami/spark/jars/extra/iceberg-spark-runtime-3.5_2.12-1.6.1.jar:/opt/bitnami/spark/jars/extra/hadoop-aws-3.3.4.jar:/opt/bitnami/spark/jars/extra/aws-java-sdk-bundle-1.12.262.jar"
+
+  initContainers:
+    - name: download-iceberg-jar
+      image: curlimages/curl:latest
+      command:
+        - sh
+        - -c
+        - |
+          curl -L -o /jars/iceberg-spark-runtime-3.5_2.12-1.6.1.jar \
+            https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.6.1/iceberg-spark-runtime-3.5_2.12-1.6.1.jar && \
+          curl -L -o /jars/hadoop-aws-3.3.4.jar \
+            https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar && \
+          curl -L -o /jars/aws-java-sdk-bundle-1.12.262.jar \
+            https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar && \
+          echo "JARs downloaded successfully" && \
+          ls -la /jars/
+      volumeMounts:
+        - name: jars
+          mountPath: /jars
+
+  extraVolumes:
+    - name: jars
+      emptyDir: {}
+
+  extraVolumeMounts:
+    - name: jars
+      mountPath: /opt/bitnami/spark/jars/extra
+
+# =============================================================================
+# Worker
+# =============================================================================
+worker:
+  replicaCount: 2
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  podSecurityContext:
+    runAsUser: 0
+
+  # extraEnvVars:
+  #   - name: HOME
+  #     value: /tmp
+  #   - name: USER
+  #     value: spark
+  #   - name: HADOOP_USER_NAME
+  #     value: spark
+  #   - name: JAVA_TOOL_OPTIONS
+  #     value: "-Duser.name=spark -Duser.home=/tmp"
+  #   - name: SPARK_EXTRA_CLASSPATH
+  #     value: "/opt/bitnami/spark/jars/extra/iceberg-spark-runtime-3.5_2.12-1.6.1.jar:/opt/bitnami/spark/jars/extra/hadoop-aws-3.3.4.jar:/opt/bitnami/spark/jars/extra/aws-java-sdk-bundle-1.12.262.jar"
+
+  initContainers:
+    - name: download-iceberg-jar
+      image: curlimages/curl:latest
+      command:
+        - sh
+        - -c
+        - |
+          curl -L -o /jars/iceberg-spark-runtime-3.5_2.12-1.6.1.jar \
+            https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.6.1/iceberg-spark-runtime-3.5_2.12-1.6.1.jar && \
+          curl -L -o /jars/hadoop-aws-3.3.4.jar \
+            https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar && \
+          curl -L -o /jars/aws-java-sdk-bundle-1.12.262.jar \
+            https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar && \
+          echo "JARs downloaded successfully" && \
+          ls -la /jars/
+      volumeMounts:
+        - name: jars
+          mountPath: /jars
+
+  extraVolumes:
+    - name: jars
+      emptyDir: {}
+
+  extraVolumeMounts:
+    - name: jars
+      mountPath: /opt/bitnami/spark/jars/extra
+
+# =============================================================================
+# Service
+# =============================================================================
+service:
+  type: LoadBalancer

@@ -1,0 +1,77 @@
+# ============================================================
+# Kafka (Bitnami) — KRaft mode (no Zookeeper)
+# Namespace: datahub-hynix
+# ============================================================
+
+kraft:
+  enabled: true
+
+replicaCount: 1
+
+controller:
+  replicaCount: 1
+  persistence:
+    enabled: true
+    size: 8Gi
+
+broker:
+  replicaCount: 0         # KRaft: controller acts as broker
+
+listeners:
+  client:
+    protocol: PLAINTEXT
+  controller:
+    protocol: PLAINTEXT
+  interbroker:
+    protocol: PLAINTEXT
+
+# Auto-create topics for ingestion testing
+provisioning:
+  enabled: true
+  topics:
+    - name: sensor-events
+      partitions: 3
+      replicationFactor: 1
+      config:
+        retention.ms: "86400000"
+        cleanup.policy: delete
+
+    - name: transaction-events
+      partitions: 3
+      replicationFactor: 1
+      config:
+        retention.ms: "86400000"
+        cleanup.policy: delete
+
+    - name: user-activity
+      partitions: 3
+      replicationFactor: 1
+      config:
+        retention.ms: "86400000"
+        cleanup.policy: delete
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "1000m"
+
+heapOpts: "-Xmx512m -Xms256m"
+
+service:
+  type: ClusterIP
+  ports:
+    client: 9092
+    controller: 9093
+
+metrics:
+  kafka:
+    enabled: true
+  jmx:
+    enabled: true
+
+persistence:
+  enabled: true
+  size: 8Gi

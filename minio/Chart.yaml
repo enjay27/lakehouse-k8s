@@ -1,0 +1,21 @@
+apiVersion: v2
+name: benchmarks-minio
+description: MinIO Object Storage for Apache Polaris - AI Data Platform
+type: application
+version: 1.0.0
+appVersion: "RELEASE.2024-01-01T16-36-33Z"
+home: https://min.io
+icon: https://min.io/resources/img/logo.svg
+sources:
+  - https://github.com/minio/minio
+keywords:
+  - storage
+  - object-storage
+  - s3
+  - iceberg
+  - polaris
+maintainers:
+  - name: AIDP Team
+annotations:
+  category: Storage
+  licenses: Apache-2.0

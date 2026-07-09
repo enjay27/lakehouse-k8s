@@ -1,0 +1,99 @@
+# ============================================================
+# Apache Airflow — DAG orchestration
+# Namespace: datahub-hynix
+# Executor: KubernetesExecutor (each task = K8s pod)
+# ============================================================
+
+# ── Executor ─────────────────────────────────────────────────
+executor: KubernetesExecutor
+
+# ── Image ────────────────────────────────────────────────────
+images:
+  airflow:
+    repository: apache/airflow
+    tag: "2.9.1"
+    pullPolicy: IfNotPresent
+
+# ── Auth ─────────────────────────────────────────────────────
+webserver:
+  defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    email: admin@example.com
+    firstName: Admin
+    lastName: User
+    password: admin        # change in production
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+# ── Scheduler ────────────────────────────────────────────────
+scheduler:
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# ── Metadata DB (reuse existing PostgreSQL HA) ───────────────
+data:
+  metadataConnection:
+    user: airflow
+    pass: airflow
+    host: benchmarks-postgresql-postgresql-ha-pgpool
+    port: 5432
+    db: airflow
+    sslmode: disable
+
+# ── Disable built-in PostgreSQL (use existing) ───────────────
+postgresql:
+  enabled: false
+
+# ── Disable built-in Redis (KubernetesExecutor has no need) ──
+redis:
+  enabled: false
+
+# ── DAGs ─────────────────────────────────────────────────────
+dags:
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClassName: ""
+  gitSync:
+    enabled: false        # set true + git repo for production
+
+# ── Logs ─────────────────────────────────────────────────────
+logs:
+  persistence:
+    enabled: true
+    size: 2Gi
+
+# ── K8s pod template for tasks ───────────────────────────────
+# Each Airflow task runs as a K8s pod
+config:
+  kubernetes:
+    namespace: datahub-hynix
+    worker_pods_creation_batch_size: "4"
+    delete_worker_pods: "True"
+    delete_worker_pods_on_failure: "False"
+
+# ── Environment variables for Spark connection ───────────────
+env:
+  - name: SPARK_MASTER_URL
+    value: "k8s://https://kubernetes.default.svc"
+  - name: POLARIS_URL
+    value: "http://benchmarks-polaris.datahub-hynix.svc.cluster.local:8181"
+  - name: MINIO_ENDPOINT
+    value: "http://benchmarks-minio.datahub-hynix.svc.cluster.local:9000"

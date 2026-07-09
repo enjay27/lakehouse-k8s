@@ -1,0 +1,202 @@
+mode: standalone
+
+replicaCount: 1
+
+image:
+  repository: minio/minio
+  pullPolicy: IfNotPresent
+  tag: "RELEASE.2024-01-01T16-36-33Z"
+
+imagePullSecrets: []
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+  runAsGroup: 1000
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 1000
+
+auth:
+  rootUser: "admin"
+  rootPassword: ""
+  existingSecret: ""
+
+environment:
+  MINIO_REGION: "us-east-1"
+  MINIO_BROWSER_REDIRECT_URL: ""
+  MINIO_SERVER_URL: ""
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 5Gi
+  annotations: {}
+  selectorLabels: {}
+  volumesPerServer: 1
+
+service:
+  type: LoadBalancer
+  port: 9000
+  consolePort: 9001
+  nodePort: ~
+  consoleNodePort: ~
+  annotations: {}
+  clusterIP: ~
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+  hosts:
+    - host: minio.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          servicePort: 9000
+  tls:
+    - secretName: minio-tls
+      hosts:
+        - minio.example.com
+
+consoleIngress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: minio-console.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          servicePort: 9001
+  tls:
+    - secretName: minio-console-tls
+      hosts:
+        - minio-console.example.com
+
+resources:
+  requests:
+    memory: "2Gi"
+    cpu: "500m"
+  limits:
+    memory: "4Gi"
+    cpu: "1000m"
+
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 3
+  httpGet:
+    path: /minio/health/live
+    port: 9000
+    scheme: HTTP
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 3
+  httpGet:
+    path: /minio/health/ready
+    port: 9000
+    scheme: HTTP
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+polaris:
+  enabled: true
+  defaultBucket: "user-catalog-bucket"
+  sts:
+    enabled: true
+    tokenDuration: 3600
+    maxSessionDuration: 43200
+
+buckets:
+  - name: user-catalog-bucket
+    policy: none
+    purge: false
+    versioning: false
+    objectlocking: false
+
+policies:
+  - name: polaris-sts-policy
+    statements:
+      - effect: Allow
+        actions:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+          - s3:ListBucket
+          - s3:GetBucketLocation
+          - s3:ListBucketMultipartUploads
+          - s3:AbortMultipartUpload
+        resources:
+          - arn:aws:s3:::user-catalog-bucket
+          - arn:aws:s3:::user-catalog-bucket/*
+
+users: []
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      release: prometheus
+    metricRelabelings: []
+
+postInstall:
+  enabled: true
+  image:
+    repository: minio/mc
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []

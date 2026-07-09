@@ -1,0 +1,76 @@
+# ============================================================
+# DataHub Prerequisites — Local K8s (OrbStack)
+# Kafka:         KRaft (no Zookeeper)
+# MySQL:         disabled (using existing PostgreSQL)
+# Elasticsearch: disabled (using existing OpenSearch)
+# Neo4j:         disabled (using elasticsearch for lineage)
+# ============================================================
+
+# ── MySQL — disabled (using existing PostgreSQL HA) ──────────
+mysql:
+  enabled: false
+
+# ── Elasticsearch — disabled (using existing OpenSearch) ─────
+elasticsearch:
+  enabled: false
+
+# ── Neo4j — disabled ─────────────────────────────────────────
+neo4j:
+  enabled: false
+
+# ── Kafka — KRaft (no Zookeeper) ─────────────────────────────
+kafka:
+  enabled: true
+
+  kraft:
+    enabled: true   # KRaft mode — no Zookeeper needed
+
+  controller:
+    replicaCount: 1
+    # controller also acts as broker in single-node KRaft
+    controllerOnly: false
+
+  broker:
+    replicaCount: 0  # controller pod serves as broker
+
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+  persistence:
+    enabled: true
+    storageClass: "local-path"
+    size: 5Gi
+
+  # KRaft single-node required settings
+  extraConfig: |
+    offsets.topic.replication.factor=1
+    transaction.state.log.replication.factor=1
+    transaction.state.log.min.isr=1
+    default.replication.factor=1
+    min.insync.replicas=1
+    group.initial.rebalance.delay.ms=0
+
+  # Schema Registry (needed by DataHub)
+  zookeeper:
+    enabled: false  # KRaft — no Zookeeper
+
+# ── Schema Registry (Confluent) ──────────────────────────────
+cp-schema-registry:
+  enabled: true
+  replicaCount: 1
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "300m"
+
+  kafka:
+    bootstrapServers: "prerequisites-kafka:9092"

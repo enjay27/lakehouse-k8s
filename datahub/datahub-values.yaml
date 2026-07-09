@@ -1,0 +1,61 @@
+# ============================================================
+# DataHub v1.5.0 — Minimal override
+# MySQL default + neo4j.password fix + JSON logging
+# ============================================================
+
+global:
+  neo4j:
+    host: "prerequisites-neo4j:7474"
+    uri: "bolt://prerequisites-neo4j"
+    username: "neo4j"
+    password:
+      value: "dummy"
+
+# ── JSON logging via custom logback.xml ───────────────────────
+# Apply ConfigMap first:
+#   kubectl apply -f datahub-logback-configmap.yaml
+
+datahub-gms:
+  extraEnvs:
+    - name: LOGGING_CONFIG
+      value: "/etc/datahub/logback.xml"
+    - name: JAVA_OPTS
+      value: "-Dlogging.config=/etc/datahub/logback.xml"
+  extraVolumes:
+    - name: logback-config
+      configMap:
+        name: datahub-logback
+  extraVolumeMounts:
+    - name: logback-config
+      mountPath: /etc/datahub
+      readOnly: true
+
+datahub-mae-consumer:
+  extraEnvs:
+    - name: LOGGING_CONFIG
+      value: "/etc/datahub/logback.xml"
+    - name: JAVA_OPTS
+      value: "-Dlogging.config=/etc/datahub/logback.xml"
+  extraVolumes:
+    - name: logback-config
+      configMap:
+        name: datahub-logback
+  extraVolumeMounts:
+    - name: logback-config
+      mountPath: /etc/datahub
+      readOnly: true
+
+datahub-mce-consumer:
+  extraEnvs:
+    - name: LOGGING_CONFIG
+      value: "/etc/datahub/logback.xml"
+    - name: JAVA_OPTS
+      value: "-Dlogging.config=/etc/datahub/logback.xml"
+  extraVolumes:
+    - name: logback-config
+      configMap:
+        name: datahub-logback
+  extraVolumeMounts:
+    - name: logback-config
+      mountPath: /etc/datahub
+      readOnly: true

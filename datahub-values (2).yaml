@@ -1,0 +1,221 @@
+# ============================================================
+# DataHub v1.5.0 (chart 0.11.0) — OrbStack K8s
+# PostgreSQL:  existing HA pgpool → datahub database
+# OpenSearch:  existing Docker 192.168.194.1:9200
+# Kafka:       prerequisites-kafka (KRaft)
+# ============================================================
+
+global:
+  graph_service_impl: elasticsearch
+
+  # ── Kafka ─────────────────────────────────────────────────
+  kafka:
+    bootstrap:
+      server: "prerequisites-kafka:9092"
+    schemaregistry:
+      type: INTERNAL
+    partitions: 3
+    replicationFactor: 1
+
+  # ── OpenSearch ────────────────────────────────────────────
+  elasticsearch:
+    host: "192.168.194.1"
+    port: "9200"
+    useSSL: "true"
+    auth:
+      username: "admin"
+      password: "Str0ngP@ssw0rd123!"
+    skipCertificateVerification: true
+    indexPrefix: "datahub"
+
+  # ── PostgreSQL (override MySQL defaults) ──────────────────
+  sql:
+    datasource:
+      host: "benchmarks-postgresql-postgresql-ha-pgpool:5432"
+      hostForpostgresqlClient: "benchmarks-postgresql-postgresql-ha-pgpool"
+      port: "5432"
+      url: "jdbc:postgresql://benchmarks-postgresql-postgresql-ha-pgpool:5432/datahub"
+      driver: "org.postgresql.Driver"
+      database: "datahub"
+      username: "datahub"
+      password:
+        secretRef: datahub-postgresql-secret
+        secretKey: password
+
+  # ── Neo4j disabled — value format prevents template crash ──
+  neo4j:
+    host: "localhost:7474"
+    uri: "bolt://localhost"
+    username: "neo4j"
+    password:
+      value: "dummy"
+
+  datahub:
+    version: "v1.5.0"
+    gms:
+      port: "8080"
+    frontend:
+      port: "9002"
+
+# ── GMS ───────────────────────────────────────────────────────
+datahub-gms:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: acryldata/datahub-gms
+    tag: "v1.5.0"
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "300m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  livenessProbe:
+    initialDelaySeconds: 120
+    periodSeconds: 30
+    failureThreshold: 8
+  readinessProbe:
+    initialDelaySeconds: 120
+    periodSeconds: 30
+    failureThreshold: 8
+  extraEnvs:
+    - name: EBEAN_DATASOURCE_DRIVER
+      value: "org.postgresql.Driver"
+    - name: EBEAN_DATASOURCE_URL
+      value: "jdbc:postgresql://benchmarks-postgresql-postgresql-ha-pgpool:5432/datahub"
+    - name: EBEAN_DATASOURCE_USERNAME
+      value: "datahub"
+    - name: EBEAN_DATASOURCE_PASSWORD
+      value: "datahub"
+    - name: ELASTICSEARCH_USE_SSL
+      value: "true"
+    - name: ELASTICSEARCH_USERNAME
+      value: "admin"
+    - name: ELASTICSEARCH_PASSWORD
+      value: "Str0ngP@ssw0rd123!"
+    - name: ELASTICSEARCH_SKIP_CERT_VERIFICATION
+      value: "true"
+    - name: KAFKA_SCHEMAREGISTRY_TYPE
+      value: "INTERNAL"
+
+# ── Frontend ──────────────────────────────────────────────────
+datahub-frontend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: acryldata/datahub-frontend-react
+    tag: "v1.5.0"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "100m"
+    limits:
+      memory: "1400Mi"
+      cpu: "500m"
+  service:
+    type: LoadBalancer
+    port: 9002
+
+# ── MAE Consumer ─────────────────────────────────────────────
+datahub-mae-consumer:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: acryldata/datahub-mae-consumer
+    tag: "v1.5.0"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  extraEnvs:
+    - name: EBEAN_DATASOURCE_DRIVER
+      value: "org.postgresql.Driver"
+    - name: EBEAN_DATASOURCE_URL
+      value: "jdbc:postgresql://benchmarks-postgresql-postgresql-ha-pgpool:5432/datahub"
+    - name: EBEAN_DATASOURCE_USERNAME
+      value: "datahub"
+    - name: EBEAN_DATASOURCE_PASSWORD
+      value: "datahub"
+
+# ── MCE Consumer ─────────────────────────────────────────────
+datahub-mce-consumer:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: acryldata/datahub-mce-consumer
+    tag: "v1.5.0"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  extraEnvs:
+    - name: EBEAN_DATASOURCE_DRIVER
+      value: "org.postgresql.Driver"
+    - name: EBEAN_DATASOURCE_URL
+      value: "jdbc:postgresql://benchmarks-postgresql-postgresql-ha-pgpool:5432/datahub"
+    - name: EBEAN_DATASOURCE_USERNAME
+      value: "datahub"
+    - name: EBEAN_DATASOURCE_PASSWORD
+      value: "datahub"
+
+# ── Actions ───────────────────────────────────────────────────
+acryl-datahub-actions:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "300m"
+
+# ── System Update ─────────────────────────────────────────────
+datahubSystemUpdate:
+  enabled: true
+  image:
+    repository: acryldata/datahub-upgrade
+    tag: "v1.5.0"
+  sql:
+    setup:
+      enabled: true
+      createTables: true
+      createDatabase: false   # DB already created manually
+      createUser: false       # User already created manually
+  extraEnvs:
+    - name: EBEAN_DATASOURCE_DRIVER
+      value: "org.postgresql.Driver"
+    - name: EBEAN_DATASOURCE_URL
+      value: "jdbc:postgresql://benchmarks-postgresql-postgresql-ha-pgpool:5432/datahub"
+    - name: EBEAN_DATASOURCE_USERNAME
+      value: "datahub"
+    - name: EBEAN_DATASOURCE_PASSWORD
+      value: "datahub"
+    - name: ELASTICSEARCH_USE_SSL
+      value: "true"
+    - name: ELASTICSEARCH_USERNAME
+      value: "admin"
+    - name: ELASTICSEARCH_PASSWORD
+      value: "Str0ngP@ssw0rd123!"
+    - name: ELASTICSEARCH_SKIP_CERT_VERIFICATION
+      value: "true"
+
+# ── Jobs ──────────────────────────────────────────────────────
+kafkaSetupJob:
+  enabled: false
+
+mysqlSetupJob:
+  enabled: false
+
+postgresqlSetupJob:
+  enabled: false
+
+elasticsearchSetupJob:
+  enabled: false   # handled by datahubSystemUpdate

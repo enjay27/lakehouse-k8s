@@ -1,0 +1,60 @@
+# ============================================================
+# Argo Workflows — K8s-native workflow engine
+# Namespace: datahub-hynix
+# ============================================================
+
+# ── Auth ────────────────────────────────────────────────────
+server:
+  extraArgs:
+    - --auth-mode=server  # no auth for dev (use SSO in prod)
+  serviceType: ClusterIP
+  servicePort: 2746
+
+# ── Controller ──────────────────────────────────────────────
+controller:
+  workflowNamespaces:
+    - datahub-hynix
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# ── Workflow defaults ────────────────────────────────────────
+workflow:
+  serviceAccount:
+    create: true
+    name: argo-workflow-sa
+
+  rbac:
+    create: true
+
+# ── Artifact repository (MinIO) ──────────────────────────────
+# Argo stores workflow artifacts (logs, outputs) in MinIO
+artifactRepository:
+  s3:
+    bucket: argo-artifacts
+    endpoint: benchmarks-minio.datahub-hynix.svc.cluster.local:9000
+    insecure: true        # no TLS for dev MinIO
+    accessKeySecret:
+      name: benchmarks-minio-credentials
+      key: access-key
+    secretKeySecret:
+      name: benchmarks-minio-credentials
+      key: secret-key
+
+# ── UI ──────────────────────────────────────────────────────
+useDefaultArtifactRepo: true
+
+# ── Resources ────────────────────────────────────────────────
+executor:
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"

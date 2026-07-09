@@ -1,0 +1,168 @@
+global:
+  postgresql:
+    username: polaris
+    password: "polaris"
+    database: polaris
+    postgresPassword: "polaris"
+    repmgrUsername: repmgr
+    repmgrPassword: "repmgr"
+    repmgrDatabase: repmgr
+    authMethod: scram-sha-256
+    repmgrAuthMethod: scram-sha-256
+  storageClass: ""
+
+volumePermissions:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/os-shell
+    tag: 12-debian-12-r51
+
+postgresql:
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql-repmgr
+    tag: 17.6.0-debian-12-r2
+  replicaCount: 3  # primary 1 + standby 2
+
+  pgHbaConfiguration: |-
+      local   all             all                                     scram-sha-256
+      host    all             all             127.0.0.1/32            scram-sha-256
+      host    all             all             ::1/128                 scram-sha-256
+      host    all             all             0.0.0.0/0               scram-sha-256
+      host    repmgr          repmgr          0.0.0.0/0               scram-sha-256
+      host    replication     all             0.0.0.0/0               scram-sha-256
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  # Polaris 워크로드에 맞춘 튜닝
+  extendedConf: |
+    # === Security & Authentication ===
+    password_encryption = 'scram-sha-256'  # Ensures all new passwords use SCRAM
+
+    # === Connection ===
+    max_connections = 200
+
+    # === Memory (limits 2Gi 기준) ===
+    shared_buffers = 384MB
+    effective_cache_size = 1536MB
+    work_mem = 4MB
+    maintenance_work_mem = 64MB
+
+    # === WAL / Replication ===
+    wal_level = replica
+    max_wal_senders = 10
+    max_replication_slots = 10
+    wal_keep_size = 512MB
+    hot_standby = on
+    hot_standby_feedback = on
+
+    # === Checkpoint ===
+    checkpoint_timeout = 15min
+    checkpoint_completion_target = 0.9
+    max_wal_size = 1GB
+    min_wal_size = 256MB
+
+    # === Query Planner ===
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+
+    # === Logging (트러블슈팅용) ===
+    log_min_duration_statement = 1000
+    log_checkpoints = on
+    log_connections = off
+    log_disconnections = off
+    log_lock_waits = on
+    log_temp_files = 0
+
+    # === Autovacuum ===
+    autovacuum = on
+    autovacuum_max_workers = 2
+    autovacuum_naptime = 30s
+    autovacuum_vacuum_scale_factor = 0.1
+    autovacuum_analyze_scale_factor = 0.05
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+
+  # 단일 노드(Docker Desktop)에서는 soft
+  podAntiAffinityPreset: soft
+
+pgpool:
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/pgpool
+    tag: 4.6.3-debian-12-r0
+  replicaCount: 3
+  adminUsername: admin
+  adminPassword: "CHANGE_ME_PGPOOL"
+
+  # off: write가 있어도 read를 분산 (최대 성능, stale data 가능)
+  # transaction: 명시적 트랜잭션 내에서는 read 분산 안 함 (Default)
+  # always: write 발생 시 세션 끝까지 모든 read를 primary로
+  # trans_transaction:  트랜잭션 종료 후에도 세션 끝까지 read 분산 안 함
+  # dml_adaptive: 테이블 단위로 DML 추적하여 세밀하게 제어
+  disableLoadBalancingOnWrite: always 
+
+  configuration: |
+    statement_level_load_balance = off
+    load_balance_mode = on
+    memory_cache_enabled = off
+    health_check_period = 10
+    health_check_timeout = 20
+    health_check_max_retries = 3
+    connection_life_time = 0
+    client_idle_limit = 0
+
+  numInitChildren: 64
+  maxPool: 4
+  childLifeTime: 300
+  childMaxConnections: 0
+  connectionLifeTime: 0
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  podAntiAffinityPreset: soft
+
+metrics:
+  enabled: false
+
+service:
+  type: ClusterIP
+  ports:
+    postgresql: 5432
+
+postgresql-ha:
+  service:
+    type: LoadBalancer
+    ports:
+      postgresql: 5432
+  postgresql:
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/postgresql-repmgr
+      tag: 17.6.0-debian-12-r2
+  pgpool:
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/pgpool
+      tag: 4.6.3-debian-12-r0
+  volumePermissions:
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/os-shell
+      tag: 12-debian-12-r51
