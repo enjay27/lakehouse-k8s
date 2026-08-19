@@ -335,3 +335,29 @@ def test_grant_privilege_retries_through_404_lag(pc):
         r = pc.grant_privilege("mycat", "worker1-cr", "TABLE_DROP")
         assert attempt_state["n"] == 3
         assert r.status_code == 200
+
+
+# ----------------------------------------------------------------------
+# update_catalog — optimistic-concurrency property update
+# ----------------------------------------------------------------------
+def test_update_catalog_sends_version_and_properties(pc, calls):
+    props = {"default-base-location": "s3a://b/c/", "k": "v"}
+    pc.update_catalog("mycat", props, 7)
+    c = calls[-1]
+    assert c["method"] == "PUT"
+    assert c["url"] == f"{BASE}/api/management/v1/catalogs/mycat"
+    assert c["json"] == {"currentEntityVersion": 7, "properties": props}
+
+
+def test_update_catalog_replaces_rather_than_merges(pc, calls):
+    """The payload is sent verbatim — Polaris REPLACES the property map. Callers
+    must merge themselves or they silently drop default-base-location and the
+    storage config with it. This test pins that contract so nobody 'helpfully'
+    adds a merge inside the client and changes the semantics."""
+    pc.update_catalog("mycat", {"only": "this"}, 1)
+    assert calls[-1]["json"]["properties"] == {"only": "this"}
+
+
+def test_update_catalog_honours_per_call_token(pc, calls):
+    pc.update_catalog("mycat", {}, 1, token="other-tok")
+    assert calls[-1]["headers"]["Authorization"] == "Bearer other-tok"

@@ -21,6 +21,7 @@ Notes:
     * list() returns keys WITHOUT the bucket prefix.
     * Paths may be given as s3a://bucket/key or bucket/key or key — normalized internally.
 """
+
 import hashlib
 import hmac
 import datetime
@@ -46,10 +47,10 @@ class MinioREST:
         p = path
         for scheme in ("s3a://", "s3://"):
             if p.startswith(scheme):
-                p = p[len(scheme):]
+                p = p[len(scheme) :]
                 break
         if p.startswith(self.bucket + "/"):
-            p = p[len(self.bucket) + 1:]
+            p = p[len(self.bucket) + 1 :]
         return p.lstrip("/")
 
     # ---- SigV4 ----
@@ -71,23 +72,35 @@ class MinioREST:
         payload_hash = hashlib.sha256(body).hexdigest()
 
         canonical_querystring = query  # already canonical or empty
-        canonical_headers = (f"host:{self.host}\n"
-                             f"x-amz-content-sha256:{payload_hash}\n"
-                             f"x-amz-date:{amzdate}\n")
+        canonical_headers = (
+            f"host:{self.host}\n"
+            f"x-amz-content-sha256:{payload_hash}\n"
+            f"x-amz-date:{amzdate}\n"
+        )
         signed_headers = "host;x-amz-content-sha256;x-amz-date"
-        canonical_request = (f"{method}\n{canonical_uri}\n{canonical_querystring}\n"
-                             f"{canonical_headers}\n{signed_headers}\n{payload_hash}")
+        canonical_request = (
+            f"{method}\n{canonical_uri}\n{canonical_querystring}\n"
+            f"{canonical_headers}\n{signed_headers}\n{payload_hash}"
+        )
 
         algorithm = "AWS4-HMAC-SHA256"
         cred_scope = f"{datestamp}/{self.region}/s3/aws4_request"
-        string_to_sign = (f"{algorithm}\n{amzdate}\n{cred_scope}\n"
-                          f"{hashlib.sha256(canonical_request.encode()).hexdigest()}")
-        signature = hmac.new(self._signing_key(datestamp),
-                             string_to_sign.encode(), hashlib.sha256).hexdigest()
-        auth = (f"{algorithm} Credential={self.access_key}/{cred_scope}, "
-                f"SignedHeaders={signed_headers}, Signature={signature}")
-        headers = {"Authorization": auth, "x-amz-date": amzdate,
-                   "x-amz-content-sha256": payload_hash}
+        string_to_sign = (
+            f"{algorithm}\n{amzdate}\n{cred_scope}\n"
+            f"{hashlib.sha256(canonical_request.encode()).hexdigest()}"
+        )
+        signature = hmac.new(
+            self._signing_key(datestamp), string_to_sign.encode(), hashlib.sha256
+        ).hexdigest()
+        auth = (
+            f"{algorithm} Credential={self.access_key}/{cred_scope}, "
+            f"SignedHeaders={signed_headers}, Signature={signature}"
+        )
+        headers = {
+            "Authorization": auth,
+            "x-amz-date": amzdate,
+            "x-amz-content-sha256": payload_hash,
+        }
         url = f"{self.endpoint}{canonical_uri}"
         if query:
             url += "?" + query
@@ -174,24 +187,87 @@ class MinioREST:
         amzdate = now.strftime("%Y%m%dT%H%M%SZ")
         datestamp = now.strftime("%Y%m%d")
         payload_hash = hashlib.sha256(b"").hexdigest()
-        canonical_headers = (f"host:{self.host}\n"
-                             f"x-amz-content-sha256:{payload_hash}\n"
-                             f"x-amz-date:{amzdate}\n")
+        canonical_headers = (
+            f"host:{self.host}\n"
+            f"x-amz-content-sha256:{payload_hash}\n"
+            f"x-amz-date:{amzdate}\n"
+        )
         signed_headers = "host;x-amz-content-sha256;x-amz-date"
-        canonical_request = (f"{method}\n{canonical_uri}\n{query}\n"
-                             f"{canonical_headers}\n{signed_headers}\n{payload_hash}")
+        canonical_request = (
+            f"{method}\n{canonical_uri}\n{query}\n"
+            f"{canonical_headers}\n{signed_headers}\n{payload_hash}"
+        )
         algorithm = "AWS4-HMAC-SHA256"
         cred_scope = f"{datestamp}/{self.region}/s3/aws4_request"
-        string_to_sign = (f"{algorithm}\n{amzdate}\n{cred_scope}\n"
-                          f"{hashlib.sha256(canonical_request.encode()).hexdigest()}")
-        signature = hmac.new(self._signing_key(datestamp),
-                             string_to_sign.encode(), hashlib.sha256).hexdigest()
-        auth = (f"{algorithm} Credential={self.access_key}/{cred_scope}, "
-                f"SignedHeaders={signed_headers}, Signature={signature}")
-        headers = {"Authorization": auth, "x-amz-date": amzdate,
-                   "x-amz-content-sha256": payload_hash}
+        string_to_sign = (
+            f"{algorithm}\n{amzdate}\n{cred_scope}\n"
+            f"{hashlib.sha256(canonical_request.encode()).hexdigest()}"
+        )
+        signature = hmac.new(
+            self._signing_key(datestamp), string_to_sign.encode(), hashlib.sha256
+        ).hexdigest()
+        auth = (
+            f"{algorithm} Credential={self.access_key}/{cred_scope}, "
+            f"SignedHeaders={signed_headers}, Signature={signature}"
+        )
+        headers = {
+            "Authorization": auth,
+            "x-amz-date": amzdate,
+            "x-amz-content-sha256": payload_hash,
+        }
         url = f"{self.endpoint}{canonical_uri}?{query}"
         return requests.request(method, url, headers=headers)
+
+    # ---- bucket lifecycle ----
+    def bucket_exists(self):
+        """HEAD the bucket root. True if it exists and these credentials can see it.
+
+        Note a 403 also means "not visible to you", which is indistinguishable
+        from absent at this layer — so a False here can mean either. Check the
+        MinIO credentials before concluding the bucket is missing.
+        """
+        return self._request_bucket("HEAD").status_code == 200
+
+    def make_bucket(self, exist_ok=True):
+        """PUT the bucket root — S3 CreateBucket.
+
+        Args:
+            exist_ok: treat 409 (BucketAlreadyOwnedByYou / BucketAlreadyExists)
+                as success rather than an error.
+
+        Returns:
+            requests.Response.
+
+        Raises:
+            RuntimeError: on any other non-2xx, with the S3 error body attached —
+                the usual causes are wrong credentials (403) or an invalid
+                bucket name, and the raw XML says which.
+        """
+        r = self._request_bucket("PUT")
+        if r.status_code in (200, 204):
+            return r
+        if exist_ok and r.status_code in (409,):
+            return r
+        raise RuntimeError(
+            f"create bucket {self.bucket!r} failed [{r.status_code}]: {r.text[:300]}"
+        )
+
+    def ensure_bucket(self):
+        """Create the bucket if it is not already there. Idempotent.
+
+        Worth calling at the top of any notebook that writes data: a cluster
+        rebuild takes the bucket with it, and the failure surfaces much later as
+        a confusing Polaris error — `The specified bucket does not exist
+        (Service: S3, Status Code: 404)` raised from create-table, which reads
+        like a catalog problem rather than a storage one.
+
+        Returns:
+            True if it created the bucket, False if it already existed.
+        """
+        if self.bucket_exists():
+            return False
+        self.make_bucket()
+        return True
 
     def delete_prefix(self, prefix, min_size=0):
         """Delete every object under prefix, one at a time (no bulk delete → no
@@ -200,7 +276,8 @@ class MinioREST:
         n = 0
         for k in keys:
             try:
-                self.delete(k); n += 1
+                self.delete(k)
+                n += 1
             except Exception as e:
                 print(f"  delete {k} failed: {str(e)[:80]}")
         return n
@@ -208,10 +285,12 @@ class MinioREST:
     # ---- convenience for parquet (optional, needs pyarrow) ----
     def put_parquet_table(self, path, table):
         import pyarrow.parquet as pq
+
         buf = io.BytesIO()
         pq.write_table(table, buf)
         return self.put_bytes(path, buf.getvalue())
 
     def get_parquet_table(self, path):
         import pyarrow.parquet as pq
+
         return pq.read_table(io.BytesIO(self.get_bytes(path)))

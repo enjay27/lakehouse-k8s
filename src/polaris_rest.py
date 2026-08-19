@@ -188,6 +188,46 @@ class PolarisREST:
         in polaris_test_utils.py for the pattern)."""
         return requests.get(f"{self.base_mgmt}/catalogs/{name}", headers=self._h(token))
 
+    def update_catalog(self, name, properties, current_entity_version, token=None):
+        """PUT a catalog's properties — optimistic-concurrency update.
+
+        Polaris requires `currentEntityVersion` to match the catalog's present
+        `entityVersion`, so a stale value returns 409 rather than silently
+        clobbering a concurrent change. Read it from `get_catalog(...)` first:
+
+            cat = pc.get_catalog(name).json()
+            pc.update_catalog(name, {**cat["properties"], "k": "v"},
+                              cat["entityVersion"])
+
+        Args:
+            name: catalog name.
+            properties: the COMPLETE property map to store. This REPLACES the
+                existing map rather than merging into it — merge yourself
+                (`{**cat["properties"], ...}`) or you will drop
+                `default-base-location` and any storage config with it.
+            current_entity_version: `entityVersion` from a fresh `get_catalog`.
+            token: per-call token override.
+
+        Returns:
+            requests.Response — 200 on success, 409 on a version mismatch,
+            404 if the catalog is absent.
+
+        Note:
+            The usual reason to call this is toggling
+            `polaris.config.drop-with-purge.enabled`, which gates
+            `DROP_TABLE_WITH_PURGE`. That flag is a CATALOG property, not a
+            server setting, so it has to be flipped per catalog before a purge
+            test will exercise the purge path at all.
+        """
+        return requests.put(
+            f"{self.base_mgmt}/catalogs/{name}",
+            headers=self._h(token),
+            json={
+                "currentEntityVersion": current_entity_version,
+                "properties": properties,
+            },
+        )
+
     def list_catalogs(self, token=None):
         """GET all catalogs visible to the caller's principal. Response JSON
         has a top-level `catalogs` list."""
