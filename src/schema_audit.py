@@ -456,6 +456,11 @@ def table_stats(conn, schema="polaris_schema"):
     return out
 
 
+# Populated by analyze_tables(): {table: first line of the error}. Empty on
+# a clean run. Read this when a table stays stale despite ANALYZE.
+LAST_ANALYZE_ERRORS = {}
+
+
 def analyze_tables(conn, schema="polaris_schema", tables=None):
     """Run ANALYZE so the planner has fresh statistics.
 
@@ -470,19 +475,36 @@ def analyze_tables(conn, schema="polaris_schema", tables=None):
     Args:
         conn: psycopg2 connection.
         schema: metastore schema.
-        tables: iterable of table names; defaults to EXPECTED_TABLES.
+        tables: iterable of table names. Defaults to every live table in the
+            schema -- NOT EXPECTED_TABLES. `statistics_are_stale` inspects all
+            relations in the schema, so scoping the ANALYZE to the expected set
+            left anything else (notably `events`, created by the persistence
+            event listener) permanently unanalyzed, and the staleness assert
+            could never pass.
 
     Returns:
         list of tables analyzed.
     """
+    if tables is None:
+        try:
+            tables = [t["name"] if isinstance(t, dict) else t
+                      for t in live_tables(conn, schema=schema)]
+        except Exception:  # noqa: BLE001 -- fall back to the known set
+            conn.rollback()
+            tables = EXPECTED_TABLES
     targets = sorted(tables or EXPECTED_TABLES)
     done = []
+    LAST_ANALYZE_ERRORS.clear()
     with conn.cursor() as cur:
         for t in targets:
             try:
                 cur.execute(f'ANALYZE "{schema}"."{t}"')  # noqa: S608
                 done.append(t)
-            except Exception:  # noqa: BLE001 — absent table is not fatal
+            except Exception as exc:  # noqa: BLE001 — absent table is not fatal
+                # Record it. Swallowing this silently is how "ANALYZE ran but
+                # the table is still stale" became impossible to diagnose from
+                # the notebook: the caller saw a short `done` list and no reason.
+                LAST_ANALYZE_ERRORS[t] = str(exc).strip().splitlines()[0][:200]
                 conn.rollback()
     try:
         conn.commit()
