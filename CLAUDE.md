@@ -3,7 +3,7 @@
 ## Tech Stack
 - **Language:** Python 3.11+
 - **Testing Runtimes:** Jupyter Notebooks (`.ipynb`), pytest
-- **Core Integrations:** Apache Polaris (v1.3.0-incubating API), PostgreSQL HA (via PgBouncer pool), OpenSearch (v1.5.0)
+- **Core Integrations:** Apache Polaris (v1.3.0-incubating API), PostgreSQL HA (via **Pgpool-II** pool — NOT PgBouncer; corrected 2026-08-20), OpenSearch (v1.5.0)
 - **Core Libraries:** pandas, numpy, requests, psycopg2, sqlalchemy, matplotlib, seaborn
 
 ## Repository Layout
@@ -53,7 +53,7 @@ Rules:
 ## Jupyter Notebook Best Practices
 - **Linear Execution Required:** Every visualization and integration notebook must execute cleanly from top to bottom (`Restart & Run All`) without out-of-order cell dependencies.
 - **Strict Logic Separation:** Keep notebooks dedicated strictly to visualization, token verification mapping, table printing, and test summaries. Core connectivity code, OAuth engines, and query execution blocks must live in reusable `.py` scripts inside `src/` and be imported into notebooks.
-- **Connection Disposal:** You MUST explicitly close database cursors, clients, and active connection pools (`pool.close()` or `engine.dispose()`) inside a dedicated cleanup/teardown cell at the end of every notebook to avoid overloading the local PgBouncer pooler.
+- **Connection Disposal:** You MUST explicitly close database cursors, clients, and active connection pools (`pool.close()` or `engine.dispose()`) inside a dedicated cleanup/teardown cell at the end of every notebook to avoid overloading the local Pgpool-II pooler.
 - **Memory Release:** Explicitly drop massive retrieved dataframes (`del df`) and trigger garbage collection (`import gc; gc.collect()`) after rendering visual diagnostic tables.
 
 ## Tool Interaction Guardrails (CRITICAL)

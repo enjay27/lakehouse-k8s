@@ -172,7 +172,7 @@ INDEX_HYPOTHESES = [
     {
         "id": "grant_records_delete_or",
         "table": "grant_records",
-        "source_method": "deleteAllEntityGrantRecords",
+        "source_method": "deleteAllEntityGrantRecords", "sql_contains": "delete",
         "predicate": ["realm_id", "grantee_id|securable_id"],
         "claim": (
             "The delete predicate ORs two disjoint column sets "
@@ -193,7 +193,7 @@ INDEX_HYPOTHESES = [
     {
         "id": "entities_row_constructor_in",
         "table": "entities",
-        "source_method": "loadEntitiesChangeTracking",
+        "source_method": "loadEntitiesChangeTracking", "sql_contains": "in (",
         "predicate": ["realm_id", "(catalog_id, id) IN (...)"],
         "claim": (
             "The entity-cache validation query uses a row-constructor IN list. "
@@ -627,6 +627,14 @@ def parse_param_list(params):
             m.group("v").strip().strip("'")
             for m in re.finditer(r"\$\d+\s*=\s*(?P<v>'[^']*'|[^,]+)", s)
         ]
+        if not parts:
+            # Polaris's own log joins parameters as plain comma-separated
+            # VALUES ("POLARIS, 305799478250450321"), with no `$N =` prefix.
+            # Only the PostgreSQL DETAIL form has that prefix, so this branch
+            # previously produced an empty list -- which is falsy, so every
+            # caller read it as "no parameters" and rendered NO_PARAMS. An
+            # empty list and None have to mean different things here.
+            parts = [x.strip() for x in s.split(",")] if s else []
     out = []
     for p in parts:
         p = p.strip().strip("'")
@@ -853,9 +861,22 @@ def enrich_inventory(conn, inventory, realm=None, schema="polaris_schema"):
     cache = {}
     resolved = 0
     for row in inventory:
-        if row.get("params"):
-            resolved += 1
-            continue
+        # "Has params" is not the same as "has USABLE params": a redacted set,
+        # or one that does not parse, or one whose length disagrees with the
+        # placeholder count, is worse than none -- it suppresses sampling and
+        # guarantees NO_PARAMS. Validate before trusting it.
+        existing = row.get("params")
+        if existing:
+            try:
+                parsed = parse_param_list(existing)
+            except Exception:  # noqa: BLE001
+                parsed = None
+            sql = row.get("sql") or ""
+            want = sql.count("?") + sql.count("%s") + len(re.findall(r"\$\d+", sql))
+            if parsed and len(parsed) == want:
+                resolved += 1
+                continue
+            row.pop("params", None)
         p = resolve_params(conn, row.get("sql"), row.get("table"),
                            realm=realm, schema=schema, _cache=cache)
         if p is not None:
@@ -863,6 +884,125 @@ def enrich_inventory(conn, inventory, realm=None, schema="polaris_schema"):
             resolved += 1
     return inventory, resolved
 
+
+
+# `api_trace.normalize_sql` collapses a row-constructor IN list to this marker
+# so that a thousand executions with different id sets group as ONE statement.
+# Necessary for the inventory, fatal for EXPLAIN: the marker is not valid SQL.
+_ROWS_MARKER = "<rows>"
+_ROW_CTOR = re.compile(
+    r"\(\s*(?P<cols>\w+(?:\s*,\s*\w+)*)\s*\)\s+IN\s*\(\s*<rows>\s*\)", re.I
+)
+
+
+def expand_row_constructor(conn, sql, realm=None, schema="polaris_schema",
+                           n_rows=20):
+    """Rebuild a real IN-list for a collapsed row-constructor statement.
+
+    WHY THIS IS NEEDED
+    ------------------
+    The entity-cache validation query
+
+        SELECT ... FROM entities WHERE (catalog_id, id) IN (...) AND realm_id = ?
+
+    is the single most frequently executed statement in Polaris -- every cached
+    request runs exactly one. It cannot be EXPLAINed from the inventory because
+    the id set was replaced by a marker, so it has sat at NO_PARAMS through
+    every audit run: the hottest query in the system, never measured.
+
+    Rather than skip it, sample `n_rows` REAL (catalog_id, id) pairs from the
+    table and substitute them as literals. The row count matters -- PostgreSQL
+    can switch between an index scan per element and a sequential scan as the
+    list grows -- so callers should probe several sizes, not one.
+
+    Values are inlined as literals rather than bound, because a row-constructor
+    IN list has a variable arity that placeholders cannot express. Only integers
+    and quote-escaped strings are emitted, and the pairs come from the database
+    itself, so this is not an injection path.
+
+    Returns:
+        (expanded_sql, n_pairs) or (None, 0) if there is no marker or no data.
+    """
+    if _ROWS_MARKER not in (sql or ""):
+        return None, 0
+    m = _ROW_CTOR.search(sql)
+    if not m:
+        return None, 0
+    cols = [c.strip() for c in m.group("cols").split(",")]
+
+    tm = re.search(r"FROM\s+(?:\w+\.)?(\w+)", sql, re.I)
+    if not tm:
+        return None, 0
+    table = tm.group(1).lower()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'SELECT {", ".join(cols)} FROM "{schema}"."{table}" '  # noqa: S608
+                f"WHERE realm_id = %s LIMIT %s",
+                (realm, n_rows),
+            )
+            rows = cur.fetchall()
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+        return None, 0
+    if not rows:
+        return None, 0
+
+    def lit(v):
+        if v is None:
+            return "NULL"
+        if isinstance(v, bool):
+            return "TRUE" if v else "FALSE"
+        if isinstance(v, int):
+            return str(v)
+        return "'" + str(v).replace("'", "''") + "'"
+
+    tuples = ", ".join("(" + ", ".join(lit(v) for v in r) + ")" for r in rows)
+    expanded = sql[: m.start()] + f'({", ".join(cols)}) IN ({tuples})' + sql[m.end():]
+    return expanded, len(rows)
+
+
+def audit_row_constructor(conn, sql, realm=None, schema="polaris_schema",
+                          sizes=(1, 10, 50, 200)):
+    """EXPLAIN the collapsed IN-list statement at several list lengths.
+
+    One size proves nothing: the planner legitimately changes strategy as the
+    list grows, and the interesting question is whether it degrades at the sizes
+    the entity cache actually produces.
+
+    Returns:
+        list[dict] with {n, verdict, node, plan_ms, sql}.
+    """
+    out = []
+    for n in sizes:
+        expanded, got = expand_row_constructor(
+            conn, sql, realm=realm, schema=schema, n_rows=n)
+        if not expanded:
+            continue
+        params = resolve_params(conn, expanded, None, realm=realm, schema=schema)
+        if params is None:
+            # only realm_id should remain
+            params = (realm,) if "?" in expanded or "%s" in expanded else None
+        try:
+            plan = explain_statement(conn, expanded, params=params, analyze=True)
+        except Exception as exc:  # noqa: BLE001
+            conn.rollback()
+            out.append({"n": got, "verdict": "ERROR", "node": None,
+                        "plan_ms": None, "error": str(exc).splitlines()[0][:160]})
+            continue
+        summ = plan_summary(plan)
+        types = summ.get("node_types") or []
+        seq = summ.get("seq_scans") or []
+        out.append({
+            "n": got,
+            "verdict": "SEQ_SCAN" if seq else "INDEX_SCAN",
+            "node": types[0] if types else None,
+            "indexes": summ.get("index_scans") or [],
+            "plan_ms": summ.get("total_ms"),
+            "rows_removed": summ.get("rows_removed_by_filter"),
+        })
+    return out
 
 def audit_statements(conn, inventory, schema="polaris_schema", analyze=True,
                      min_rows=MIN_ROWS_FOR_VERDICT):
@@ -1007,19 +1147,47 @@ def check_hypotheses(conn, audit_rows, schema="polaris_schema"):
     """
     out = []
     for hyp in INDEX_HYPOTHESES:
-        rows = [r for r in audit_rows if r.get("table") == hyp["table"]]
+        # Match on the PREDICATE, not just the table. Matching by table alone
+        # let unrelated statements stand in as evidence: entities has a dozen
+        # well-indexed lookups, so the row-constructor-IN hypothesis was
+        # reported REFUTED on the strength of queries it says nothing about,
+        # while the statement it IS about sat there unEXPLAINed as NO_PARAMS.
+        # A confident wrong answer is worse than INCONCLUSIVE.
+        cols = [c for c in (hyp.get("predicate") or [])
+                if re.fullmatch(r"\w+", c)]   # skip prose entries like
+                                              # "(catalog_id, id) IN (...)"
+                                              # and alternations "a|b"
+        rows = []
+        for r in audit_rows:
+            if r.get("table") != hyp["table"]:
+                continue
+            sql = (r.get("sql") or "").lower()
+            if cols and not all(re.search(rf"\b{re.escape(c)}\b", sql) for c in cols):
+                continue
+            if hyp.get("sql_contains") and hyp["sql_contains"].lower() not in sql:
+                continue
+            rows.append(r)
         bad = [r for r in rows if r.get("verdict") in ("SEQ_SCAN", "FILTER_HEAVY")]
         small = [r for r in rows if r.get("verdict") == "TOO_SMALL"]
         good = [r for r in rows if r.get("verdict") == "INDEX_SCAN"]
 
+        unexplained = [r for r in rows if r.get("verdict") in ("NO_PARAMS", "ERROR")]
         if bad:
             status, evidence = "CONFIRMED", [r["sql"] for r in bad]
+        elif unexplained and not good:
+            # The statement this hypothesis is about exists but was never
+            # planned, so nothing has been measured either way.
+            status = "INCONCLUSIVE"
+            evidence = [
+                f"matching statement was not EXPLAINed "
+                f"({unexplained[0].get('verdict')}): {unexplained[0].get('sql','')[:120]}"
+            ]
         elif small or not rows:
             status = "INCONCLUSIVE"
             evidence = (
                 ["table too small for a verdict — seed more data"]
                 if small
-                else ["no statement against this table was captured"]
+                else ["no captured statement matched this hypothesis's predicate"]
             )
         elif good:
             status, evidence = "REFUTED", [r["sql"] for r in good]
