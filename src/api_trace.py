@@ -497,6 +497,144 @@ def extract_verb(sql):
     return m.group("verb").upper() if m else None
 
 
+# ----------------------------------------------------------------------
+# entity-access shape (cache discrimination)
+# ----------------------------------------------------------------------
+#: WHERE-shape classes for a SELECT against `entities`.
+ENTITY_BATCH_VALIDATE = "BATCH_VALIDATE"
+ENTITY_BY_ID = "BY_ID"
+ENTITY_BY_NAME = "BY_NAME"
+ENTITY_LIST_CHILDREN = "LIST_CHILDREN"
+
+_ENTITY_FROM = re.compile(r"\bFROM\s+[\w.]*\bentities\b", re.IGNORECASE)
+#: The row-constructor cache-validation predicate. Matches the raw form
+#: `(catalog_id, id) IN ((?,?),(?,?))` and the `normalize_sql` form
+#: `(catalog_id, id) IN (<rows>)` alike.
+_ENTITY_IN_ROWS = re.compile(r"\(\s*catalog_id\s*,\s*id\s*\)\s+IN\s*\(", re.IGNORECASE)
+_WHERE_SPLIT = re.compile(r"\bWHERE\b", re.IGNORECASE)
+
+
+def entity_access_shape(sql):
+    """Classify an `entities` SELECT by the shape of its WHERE clause.
+
+    Returns one of ENTITY_BATCH_VALIDATE / ENTITY_BY_ID / ENTITY_BY_NAME /
+    ENTITY_LIST_CHILDREN, or None when `sql` is not a SELECT against `entities`.
+
+    **Why the WHERE clause and not the projection.** `SqlStatement.is_version_check`
+    looks for a version-only projection (`entity_version, grant_records_version`),
+    on the documented assumption that the entity cache validates with a narrow
+    SELECT. Polaris 1.3.0 does not do that: measured against a real 75.7 MB
+    capture, every `entities` SELECT it emits -- INCLUDING the row-constructor
+    cache-validation query, the highest-volume statement in the system at 1,662
+    calls -- projects the same full column list. So `is_version_check` is always
+    False, and `TraceRecord.cache_verdict`, which needs it to be True, can only
+    ever return MISS or N/A. That is why the Phase 1 matrix reported
+    `cache: MISS` for all 43 APIs: not a sampling artifact, an unreachable branch.
+
+    The WHERE clause does carry the signal. The resolver's deferred bulk
+    validation asks for many entities at once by `(catalog_id, id)`; a genuine
+    miss loads them one at a time, by id or by name.
+    """
+    if not sql:
+        return None
+    s = " ".join(str(sql).split())
+    if not s[:6].upper().startswith("SELECT") or not _ENTITY_FROM.search(s):
+        return None
+    parts = _WHERE_SPLIT.split(s, 1)
+    where = parts[1] if len(parts) > 1 else ""
+    if _ENTITY_IN_ROWS.search(where):
+        return ENTITY_BATCH_VALIDATE
+    if re.search(r"\bname\s*=", where, re.IGNORECASE):
+        return ENTITY_BY_NAME
+    if re.search(r"(?<!parent_)\bid\s*=", where, re.IGNORECASE):
+        return ENTITY_BY_ID
+    if re.search(r"\bparent_id\s*=", where, re.IGNORECASE):
+        return ENTITY_LIST_CHILDREN
+    return ENTITY_LIST_CHILDREN
+
+
+def entity_access_profile(statements):
+    """Break one request's `entities` reads down by access shape.
+
+    Args:
+        statements: iterable of SqlStatement (e.g. `TraceRecord.sql`).
+
+    Returns:
+        dict with per-shape counts, plus:
+          per_entity     -- BY_ID + BY_NAME, i.e. loads the cache could not serve
+          entity_reads   -- per_entity + batch_validate (list queries excluded;
+                            the entity cache does not serve them)
+          batched_share  -- batch_validate / entity_reads, or None when there
+                            were no entity reads at all
+          verdict        -- WARM / MIXED / COLD / N/A (see below)
+
+    **Why a share and not a boolean.** The first shape-based classifier here
+    scored a request MISS if it contained ANY per-entity load, and measured
+    100% MISS across all 703 requests in the reference capture -- which looked
+    like a confirmation of the old projection-based result but was the same
+    mistake twice: an unreachable HIT branch. Any API that resolves a path
+    (catalog -> namespace -> table) must look the first entity up BY NAME,
+    because a name is all the caller supplied. So a warm request is not one
+    with zero per-entity loads; it is one where the *proportion* served by
+    batched validation has risen.
+
+    Measured on that capture: 628 of 703 requests (89.3%) contain at least one
+    batched validation, median batched share 0.33, modal shape 2 batched to 4
+    per-entity. The cache is plainly working -- the binary verdict just could
+    not see it.
+
+    verdict:
+        WARM  -- batched validation only, no per-entity load
+        MIXED -- both (the normal steady state for path-resolving APIs)
+        COLD  -- per-entity loads only, nothing revalidated
+        N/A   -- no entity reads (e.g. `GET /v1/config`, or list-only requests)
+    """
+    counts = {
+        ENTITY_BATCH_VALIDATE: 0,
+        ENTITY_BY_ID: 0,
+        ENTITY_BY_NAME: 0,
+        ENTITY_LIST_CHILDREN: 0,
+    }
+    for st in statements or []:
+        shape = entity_access_shape(getattr(st, "sql", st))
+        if shape:
+            counts[shape] += 1
+
+    batch = counts[ENTITY_BATCH_VALIDATE]
+    per_entity = counts[ENTITY_BY_ID] + counts[ENTITY_BY_NAME]
+    reads = batch + per_entity
+
+    if not reads:
+        verdict = "N/A"
+    elif not per_entity:
+        verdict = "WARM"
+    elif not batch:
+        verdict = "COLD"
+    else:
+        verdict = "MIXED"
+
+    return {
+        "batch_validate": batch,
+        "by_id": counts[ENTITY_BY_ID],
+        "by_name": counts[ENTITY_BY_NAME],
+        "list_children": counts[ENTITY_LIST_CHILDREN],
+        "per_entity": per_entity,
+        "entity_reads": reads,
+        "batched_share": (batch / reads) if reads else None,
+        "verdict": verdict,
+    }
+
+
+def cache_shape_verdict(statements):
+    """WARM / MIXED / COLD / N/A for one request. See `entity_access_profile`.
+
+    Replaces `TraceRecord.cache_verdict` for Polaris 1.3.0, which cannot return
+    HIT at all -- see `entity_access_shape`. Kept separate rather than fixed in
+    place so nothing already reading `cache_verdict` changes underneath it.
+    """
+    return entity_access_profile(statements)["verdict"]
+
+
 def normalize_sql(sql):
     """Canonicalize a statement so the same query groups across sources/calls.
 

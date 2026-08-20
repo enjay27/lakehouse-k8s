@@ -1,0 +1,150 @@
+{
+  "notebook": "02_index_audit.ipynb",
+  "generated_at": "2026-08-20 15:28",
+  "polaris_url": "http://192.168.139.2:8181",
+  "realm": "POLARIS",
+  "postgres": {
+    "host": "192.168.139.2",
+    "port": 5432,
+    "dbname": "polaris"
+  },
+  "schema": "polaris_schema",
+  "statement_logging": "off (see capture.sh pgoff)",
+  "index": {
+    "name": "idx_grant_records_grantee",
+    "ddl": "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_grant_records_grantee\n    ON polaris_schema.grant_records (realm_id, grantee_catalog_id, grantee_id)\n    INCLUDE (securable_catalog_id, securable_id, privilege_code)",
+    "left_in_place": true,
+    "state_at_write": {
+      "present": true,
+      "valid": true,
+      "ready": true
+    }
+  },
+  "fixture": {
+    "n_users": 1000,
+    "create_tables": false,
+    "prefix": "user",
+    "exact_counts": {
+      "entities": 7273,
+      "grant_records": 30009,
+      "principal_authentication_data": 1002
+    },
+    "n_live_tup": {
+      "entities": 7273,
+      "grant_records": 30009
+    }
+  },
+  "grantee_distribution": {
+    "grantees": 4002,
+    "min": 1,
+    "p50": 1,
+    "p95": 25,
+    "max": 1006
+  },
+  "explain_n": 10,
+  "measurements": {
+    "explain_n": 10,
+    "grants_for_hottest_grantee": 1006,
+    "grants_for_median_grantee": 1,
+    "distribution": {
+      "grantees": 4002,
+      "min": 1,
+      "p50": 1,
+      "p95": 25,
+      "max": 1006
+    },
+    "s4_hot_before": {
+      "label": "hottest (1006 rows)",
+      "path": "Seq Scan",
+      "node": "Seq Scan",
+      "ms": 2.6935000000000002,
+      "min": 2.427,
+      "max": 3.552,
+      "rows": 1006,
+      "filtered": 29003
+    },
+    "s4_hot_after": {
+      "label": "hottest (1006 rows)",
+      "path": "Index Only Scan",
+      "node": "Index Only Scan",
+      "ms": 0.2585,
+      "min": 0.231,
+      "max": 0.749,
+      "rows": 1006,
+      "filtered": null
+    },
+    "s4_med_before": {
+      "label": "median  (1 rows)",
+      "path": "Seq Scan",
+      "node": "Seq Scan",
+      "ms": 1.4515,
+      "min": 1.338,
+      "max": 1.559,
+      "rows": 1,
+      "filtered": 30008
+    },
+    "s4_med_after": {
+      "label": "median  (1 rows)",
+      "path": "Index Only Scan",
+      "node": "Index Only Scan",
+      "ms": 0.0155,
+      "min": 0.013,
+      "max": 0.025,
+      "rows": 1,
+      "filtered": null
+    },
+    "s13_before": {
+      "label": "delete-arm count",
+      "path": "Aggregate > Seq Scan",
+      "node": "Aggregate",
+      "ms": 2.2685,
+      "min": 1.941,
+      "max": 2.655,
+      "rows": 1,
+      "filtered": null
+    },
+    "s13_after": {
+      "label": "delete-arm count",
+      "path": "Aggregate > Bitmap Heap Scan > BitmapOr > Bitmap Index Scan",
+      "node": "Aggregate",
+      "ms": 0.387,
+      "min": 0.247,
+      "max": 0.556,
+      "rows": 1,
+      "filtered": null
+    },
+    "speedup_hot": 10.4,
+    "speedup_med": 93.6,
+    "speedup_s13": 5.9,
+    "plan_shape_changed": true,
+    "s13_uses_bitmap": true
+  },
+  "wall_clock": {
+    "before": {
+      "POST /oauth/tokens (floor)": 4.069832997629419,
+      "GET  /principal-roles": 15.920082994853146,
+      "GET  /catalogs (payload-heavy)": 46.98050000297371,
+      "GET  /catalogs/{name}": 5.515332995855715
+    },
+    "after": {
+      "POST /oauth/tokens (floor)": 4.626082998584025,
+      "GET  /principal-roles": 14.58591599657666,
+      "GET  /catalogs (payload-heavy)": 46.34816700126976,
+      "GET  /catalogs/{name}": 4.125457999180071
+    }
+  },
+  "hypotheses": {
+    "grant_records_by_grantee": "CONFIRMED",
+    "grant_records_delete_or": "CONFIRMED",
+    "entities_row_constructor_in": "INCONCLUSIVE"
+  },
+  "schema_drift": {
+    "verdict": "OK",
+    "version_found": 3,
+    "missing_indexes": []
+  },
+  "capture_dir": "/Users/kade/hynix/polaris-practice/polaris-learning/diagnostics/api-sql-profile/capture-seeded",
+  "report": "reports/doc-index-measurement-20260820-152803.md",
+  "run_id": "20260820-152803",
+  "written_at": "2026-08-20T15:28:09"
+}
