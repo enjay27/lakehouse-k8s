@@ -172,7 +172,8 @@ INDEX_HYPOTHESES = [
     {
         "id": "grant_records_delete_or",
         "table": "grant_records",
-        "source_method": "deleteAllEntityGrantRecords", "sql_contains": "delete",
+        "source_method": "deleteAllEntityGrantRecords",
+        "sql_contains": "delete",
         "predicate": ["realm_id", "grantee_id|securable_id"],
         "claim": (
             "The delete predicate ORs two disjoint column sets "
@@ -193,7 +194,8 @@ INDEX_HYPOTHESES = [
     {
         "id": "entities_row_constructor_in",
         "table": "entities",
-        "source_method": "loadEntitiesChangeTracking", "sql_contains": "in (",
+        "source_method": "loadEntitiesChangeTracking",
+        "sql_contains": "in (",
         "predicate": ["realm_id", "(catalog_id, id) IN (...)"],
         "claim": (
             "The entity-cache validation query uses a row-constructor IN list. "
@@ -232,9 +234,7 @@ def read_schema_version(conn, schema="polaris_schema"):
         means the metastore is not an initialized Polaris JDBC store).
     """
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT to_regclass(%s)", (f"{schema}.version",)
-        )
+        cur.execute("SELECT to_regclass(%s)", (f"{schema}.version",))
         if cur.fetchone()[0] is None:
             return None
         cur.execute(f"SELECT version_value FROM {schema}.version LIMIT 1")  # noqa: S608
@@ -245,9 +245,7 @@ def read_schema_version(conn, schema="polaris_schema"):
 def live_tables(conn, schema="polaris_schema"):
     """Return the set of table names present in the metastore schema."""
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT tablename FROM pg_tables WHERE schemaname = %s", (schema,)
-        )
+        cur.execute("SELECT tablename FROM pg_tables WHERE schemaname = %s", (schema,))
         return {r[0].lower() for r in cur.fetchall()}
 
 
@@ -400,9 +398,7 @@ def compare_schema(snapshot, expected_version=SCHEMA_VERSION_EXPECTED):
             "timer, so they are attributed separately during tracing."
         )
     if not notes:
-        notes.append(
-            f"Live schema (v{version_found}) matches the expected definition."
-        )
+        notes.append(f"Live schema (v{version_found}) matches the expected definition.")
 
     drift = bool(missing_tables or missing_indexes or not version_ok)
     return {
@@ -448,8 +444,16 @@ def table_stats(conn, schema="polaris_schema"):
         cur.execute(sql, (schema,))
         for row in cur.fetchall():
             (
-                relname, seq_scan, seq_tup_read, idx_scan, idx_tup_fetch,
-                live, ins, upd, dele, hot,
+                relname,
+                seq_scan,
+                seq_tup_read,
+                idx_scan,
+                idx_tup_fetch,
+                live,
+                ins,
+                upd,
+                dele,
+                hot,
             ) = row
             scans = (seq_scan or 0) + (idx_scan or 0)
             out.append(
@@ -465,7 +469,9 @@ def table_stats(conn, schema="polaris_schema"):
                     "n_tup_del": dele or 0,
                     "n_tup_hot_upd": hot or 0,
                     "hot_update_ratio": round(hot / upd, 3) if upd else None,
-                    "seq_scan_ratio": round((seq_scan or 0) / scans, 3) if scans else None,
+                    "seq_scan_ratio": (
+                        round((seq_scan or 0) / scans, 3) if scans else None
+                    ),
                 }
             )
     return out
@@ -502,8 +508,10 @@ def analyze_tables(conn, schema="polaris_schema", tables=None):
     """
     if tables is None:
         try:
-            tables = [t["name"] if isinstance(t, dict) else t
-                      for t in live_tables(conn, schema=schema)]
+            tables = [
+                t["name"] if isinstance(t, dict) else t
+                for t in live_tables(conn, schema=schema)
+            ]
         except Exception:  # noqa: BLE001 -- fall back to the known set
             conn.rollback()
             tables = EXPECTED_TABLES
@@ -647,8 +655,9 @@ def parse_param_list(params):
     return out
 
 
-def explain_statement(conn, sql, params=None, analyze=True, buffers=True,
-                      allow_write_analyze=False):
+def explain_statement(
+    conn, sql, params=None, analyze=True, buffers=True, allow_write_analyze=False
+):
     """EXPLAIN one statement and return the plan as parsed JSON.
 
     Args:
@@ -768,12 +777,10 @@ def plan_summary(plan):
     }
 
 
-
 _EQ_PREDICATE = re.compile(r"(\w+)\s*=\s*(?:\?|%s|\$\d+)", re.I)
 
 
-def resolve_params(conn, sql, table, realm=None, schema="polaris_schema",
-                   _cache=None):
+def resolve_params(conn, sql, table, realm=None, schema="polaris_schema", _cache=None):
     """Derive representative bind values for a captured statement.
 
     WHY THIS EXISTS
@@ -817,9 +824,7 @@ def resolve_params(conn, sql, table, realm=None, schema="polaris_schema",
 
     where = re.split(r"\sWHERE\s", sql, maxsplit=1, flags=re.I)[-1]
     cols = [m.group(1).lower() for m in _EQ_PREDICATE.finditer(where)]
-    n_placeholders = sql.count("?") + sql.count("%s") + len(
-        re.findall(r"\$\d+", sql)
-    )
+    n_placeholders = sql.count("?") + sql.count("%s") + len(re.findall(r"\$\d+", sql))
     if not cols or len(cols) != n_placeholders:
         return None
 
@@ -877,13 +882,18 @@ def enrich_inventory(conn, inventory, realm=None, schema="polaris_schema"):
                 resolved += 1
                 continue
             row.pop("params", None)
-        p = resolve_params(conn, row.get("sql"), row.get("table"),
-                           realm=realm, schema=schema, _cache=cache)
+        p = resolve_params(
+            conn,
+            row.get("sql"),
+            row.get("table"),
+            realm=realm,
+            schema=schema,
+            _cache=cache,
+        )
         if p is not None:
             row["params"] = p
             resolved += 1
     return inventory, resolved
-
 
 
 # `api_trace.normalize_sql` collapses a row-constructor IN list to this marker
@@ -895,8 +905,7 @@ _ROW_CTOR = re.compile(
 )
 
 
-def expand_row_constructor(conn, sql, realm=None, schema="polaris_schema",
-                           n_rows=20):
+def expand_row_constructor(conn, sql, realm=None, schema="polaris_schema", n_rows=20):
     """Rebuild a real IN-list for a collapsed row-constructor statement.
 
     WHY THIS IS NEEDED
@@ -959,12 +968,13 @@ def expand_row_constructor(conn, sql, realm=None, schema="polaris_schema",
         return "'" + str(v).replace("'", "''") + "'"
 
     tuples = ", ".join("(" + ", ".join(lit(v) for v in r) + ")" for r in rows)
-    expanded = sql[: m.start()] + f'({", ".join(cols)}) IN ({tuples})' + sql[m.end():]
+    expanded = sql[: m.start()] + f'({", ".join(cols)}) IN ({tuples})' + sql[m.end() :]
     return expanded, len(rows)
 
 
-def audit_row_constructor(conn, sql, realm=None, schema="polaris_schema",
-                          sizes=(1, 10, 50, 200)):
+def audit_row_constructor(
+    conn, sql, realm=None, schema="polaris_schema", sizes=(1, 10, 50, 200)
+):
     """EXPLAIN the collapsed IN-list statement at several list lengths.
 
     One size proves nothing: the planner legitimately changes strategy as the
@@ -977,7 +987,8 @@ def audit_row_constructor(conn, sql, realm=None, schema="polaris_schema",
     out = []
     for n in sizes:
         expanded, got = expand_row_constructor(
-            conn, sql, realm=realm, schema=schema, n_rows=n)
+            conn, sql, realm=realm, schema=schema, n_rows=n
+        )
         if not expanded:
             continue
         params = resolve_params(conn, expanded, None, realm=realm, schema=schema)
@@ -988,24 +999,39 @@ def audit_row_constructor(conn, sql, realm=None, schema="polaris_schema",
             plan = explain_statement(conn, expanded, params=params, analyze=True)
         except Exception as exc:  # noqa: BLE001
             conn.rollback()
-            out.append({"n": got, "verdict": "ERROR", "node": None,
-                        "plan_ms": None, "error": str(exc).splitlines()[0][:160]})
+            out.append(
+                {
+                    "n": got,
+                    "verdict": "ERROR",
+                    "node": None,
+                    "plan_ms": None,
+                    "error": str(exc).splitlines()[0][:160],
+                }
+            )
             continue
         summ = plan_summary(plan)
         types = summ.get("node_types") or []
         seq = summ.get("seq_scans") or []
-        out.append({
-            "n": got,
-            "verdict": "SEQ_SCAN" if seq else "INDEX_SCAN",
-            "node": types[0] if types else None,
-            "indexes": summ.get("index_scans") or [],
-            "plan_ms": summ.get("total_ms"),
-            "rows_removed": summ.get("rows_removed_by_filter"),
-        })
+        out.append(
+            {
+                "n": got,
+                "verdict": "SEQ_SCAN" if seq else "INDEX_SCAN",
+                "node": types[0] if types else None,
+                "indexes": summ.get("index_scans") or [],
+                "plan_ms": summ.get("total_ms"),
+                "rows_removed": summ.get("rows_removed_by_filter"),
+            }
+        )
     return out
 
-def audit_statements(conn, inventory, schema="polaris_schema", analyze=True,
-                     min_rows=MIN_ROWS_FOR_VERDICT):
+
+def audit_statements(
+    conn,
+    inventory,
+    schema="polaris_schema",
+    analyze=True,
+    min_rows=MIN_ROWS_FOR_VERDICT,
+):
     """EXPLAIN every captured statement and render an access-path verdict.
 
     Args:
@@ -1153,10 +1179,11 @@ def check_hypotheses(conn, audit_rows, schema="polaris_schema"):
         # reported REFUTED on the strength of queries it says nothing about,
         # while the statement it IS about sat there unEXPLAINed as NO_PARAMS.
         # A confident wrong answer is worse than INCONCLUSIVE.
-        cols = [c for c in (hyp.get("predicate") or [])
-                if re.fullmatch(r"\w+", c)]   # skip prose entries like
-                                              # "(catalog_id, id) IN (...)"
-                                              # and alternations "a|b"
+        cols = [
+            c for c in (hyp.get("predicate") or []) if re.fullmatch(r"\w+", c)
+        ]  # skip prose entries like
+        # "(catalog_id, id) IN (...)"
+        # and alternations "a|b"
         rows = []
         for r in audit_rows:
             if r.get("table") != hyp["table"]:

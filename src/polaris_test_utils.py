@@ -3,15 +3,18 @@ polaris_test_utils.py
 =====================
 Shared utilities for all Polaris error case notebooks.
 """
-import requests
+
 import json
-import time
 import os
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from opensearchpy import OpenSearch
+
+import requests
 import urllib3
+from opensearchpy import OpenSearch
+
 urllib3.disable_warnings()
 
 try:
@@ -29,6 +32,7 @@ except ImportError:
 
 _CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
 
+
 def _load_config(env):
     if yaml is None:
         raise RuntimeError("pyyaml not installed: pip install pyyaml")
@@ -41,36 +45,52 @@ def _load_config(env):
     if not os.path.exists(envfile):
         raise FileNotFoundError(
             f"Config not found: {envfile}\n"
-            f"  → copy config/{env}.example.yaml to config/{env}.yaml and fill it in.")
+            f"  → copy config/{env}.example.yaml to config/{env}.yaml and fill it in."
+        )
     with open(envfile) as f:
         cfg.update(yaml.safe_load(f) or {})
     return cfg
 
+
 # Test resource names (env-independent)
-TEST_CATALOG    = "test-error-catalog"
-TEST_NAMESPACE  = "test-ns"
-TEST_TABLE      = "test-table"
-TEST_PRINCIPAL  = "test-principal"
-TEST_PR         = "test-principal-role"
-TEST_CR         = "test-catalog-role"
+TEST_CATALOG = "test-error-catalog"
+TEST_NAMESPACE = "test-ns"
+TEST_TABLE = "test-table"
+TEST_PRINCIPAL = "test-principal"
+TEST_PR = "test-principal-role"
+TEST_CR = "test-catalog-role"
 WATCHDOG_PRINCIPAL = "watchdog-principal"
-WATCHDOG_PR        = "watchdog-principal-role"
-WATCHDOG_CR        = "watchdog-catalog-role"
-WATCHDOG_CATALOG   = "watchdog-catalog"
+WATCHDOG_PR = "watchdog-principal-role"
+WATCHDOG_CR = "watchdog-catalog-role"
+WATCHDOG_CATALOG = "watchdog-catalog"
 WATCHDOG_NAMESPACE = "watchdog-ns"
-WATCHDOG_TABLE     = "watchdog-table"
+WATCHDOG_TABLE = "watchdog-table"
 
 # Globals populated by init_env() — declared here so they always exist.
-ENV = None; CFG = {}
+ENV = None
+CFG = {}
 POLARIS_URL = REALM = ROOT_CLIENT = ROOT_SECRET = None
-OPENSEARCH_HOST = None; OPENSEARCH_PORT = 9200; OPENSEARCH_USER = None; OPENSEARCH_PASS = None
-LOG_INDEX = None; POLARIS_CONTAINER = None
-MINIO_ENDPOINT = MINIO_ENDPOINT_INTERNAL = MINIO_ACCESS_KEY = MINIO_SECRET_KEY = BUCKET = None
-PG_HOST = None; PG_PORT = 5432; PG_DB = "polaris"; PG_USER = "polaris"; PG_PASSWORD = None
-PG_URL = None; PG_CONFIG = {}
+OPENSEARCH_HOST = None
+OPENSEARCH_PORT = 9200
+OPENSEARCH_USER = None
+OPENSEARCH_PASS = None
+LOG_INDEX = None
+POLARIS_CONTAINER = None
+MINIO_ENDPOINT = MINIO_ENDPOINT_INTERNAL = MINIO_ACCESS_KEY = MINIO_SECRET_KEY = (
+    BUCKET
+) = None
+PG_HOST = None
+PG_PORT = 5432
+PG_DB = "polaris"
+PG_USER = "polaris"
+PG_PASSWORD = None
+PG_URL = None
+PG_CONFIG = {}
 BASE_MGMT = BASE_CAT = None
-PURGE_DELETES_FILES = None; POLARIS_VERSION = None
-mc = None   # MinioREST client (built by init_env)
+PURGE_DELETES_FILES = None
+POLARIS_VERSION = None
+mc = None  # MinioREST client (built by init_env)
+
 
 def init_env(env=None):
     """Initialize or switch the active environment. Call once at the top of a
@@ -91,7 +111,7 @@ def init_env(env=None):
     CFG = _load_config(ENV)
 
     POLARIS_URL = CFG["polaris_url"]
-    REALM       = CFG.get("realm", "POLARIS")
+    REALM = CFG.get("realm", "POLARIS")
     ROOT_CLIENT = CFG.get("root_client", "root")
     ROOT_SECRET = os.environ.get("POLARIS_ROOT_SECRET", CFG.get("root_secret"))
 
@@ -99,37 +119,46 @@ def init_env(env=None):
     OPENSEARCH_PORT = CFG.get("opensearch_port", 9200)
     OPENSEARCH_USER = CFG.get("opensearch_user", "admin")
     OPENSEARCH_PASS = os.environ.get("OPENSEARCH_PASS", CFG.get("opensearch_pass"))
-    LOG_INDEX       = CFG.get("log_index", "k8s-logs-*")
+    LOG_INDEX = CFG.get("log_index", "k8s-logs-*")
     POLARIS_CONTAINER = CFG.get("polaris_container_name", "benchmarks-polaris")
 
-    MINIO_ENDPOINT          = CFG["minio_endpoint"]
+    MINIO_ENDPOINT = CFG["minio_endpoint"]
     MINIO_ENDPOINT_INTERNAL = CFG.get("minio_endpoint_internal", MINIO_ENDPOINT)
     MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", CFG.get("minio_access_key"))
     MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", CFG.get("minio_secret_key"))
-    BUCKET           = CFG.get("bucket", "data-catalog-bucket")
+    BUCKET = CFG.get("bucket", "data-catalog-bucket")
 
     # PostgreSQL metastore (used by diagnostics notebooks). Password may be
     # overridden by the POSTGRES_PASSWORD env var. PG_URL / PG_CONFIG are ready-made
     # for sqlalchemy.create_engine(PG_URL) and psycopg2.connect(**PG_CONFIG).
-    PG_HOST     = CFG.get("postgres_host")
-    PG_PORT     = CFG.get("postgres_port", 5432)
-    PG_DB       = CFG.get("postgres_db", "polaris")
-    PG_USER     = CFG.get("postgres_user", "polaris")
+    PG_HOST = CFG.get("postgres_host")
+    PG_PORT = CFG.get("postgres_port", 5432)
+    PG_DB = CFG.get("postgres_db", "polaris")
+    PG_USER = CFG.get("postgres_user", "polaris")
     PG_PASSWORD = os.environ.get("POSTGRES_PASSWORD", CFG.get("postgres_password"))
-    PG_URL = (f"postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DB}"
-              if PG_HOST else None)
-    PG_CONFIG = {"host": PG_HOST, "port": PG_PORT, "dbname": PG_DB,
-                 "user": PG_USER, "password": PG_PASSWORD}
+    PG_URL = (
+        f"postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DB}"
+        if PG_HOST
+        else None
+    )
+    PG_CONFIG = {
+        "host": PG_HOST,
+        "port": PG_PORT,
+        "dbname": PG_DB,
+        "user": PG_USER,
+        "password": PG_PASSWORD,
+    }
 
     PURGE_DELETES_FILES = CFG.get("purge_deletes_files", False)
-    POLARIS_VERSION     = CFG.get("polaris_version", "unknown")
+    POLARIS_VERSION = CFG.get("polaris_version", "unknown")
 
     BASE_MGMT = f"{POLARIS_URL}/api/management/v1"
-    BASE_CAT  = f"{POLARIS_URL}/api/catalog/v1"
+    BASE_CAT = f"{POLARIS_URL}/api/catalog/v1"
 
     # Build the MinIO REST client (pure requests + SigV4; no s3fs/boto3)
     try:
         from minio_rest import MinioREST
+
         if MINIO_ACCESS_KEY and MINIO_SECRET_KEY:
             mc = MinioREST(MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, BUCKET)
         else:
@@ -147,12 +176,15 @@ def init_env(env=None):
     print(f"   purge_deletes_files={PURGE_DELETES_FILES}")
     return CFG
 
+
 def require_not_prod(action="this destructive action"):
     """Guard: raise on prod unless POLARIS_ALLOW_PROD=1 is set. Use in
     destructive helpers (cleanup, purge) to prevent accidental prod damage."""
     if ENV == "prod" and os.environ.get("POLARIS_ALLOW_PROD") != "1":
         raise RuntimeError(
-            f"Refusing {action} on PROD. Set POLARIS_ALLOW_PROD=1 to override.")
+            f"Refusing {action} on PROD. Set POLARIS_ALLOW_PROD=1 to override."
+        )
+
 
 # Auto-initialize from POLARIS_ENV (default dev) so a bare `import *` works.
 # A notebook can re-run init_env("prod") afterwards to switch.
@@ -161,12 +193,15 @@ try:
 except Exception as _e:
     print(f"[polaris_test_utils] init_env deferred: {_e}")
 
+
 # ── Token ─────────────────────────────────────────────────────
-def get_token(client_id=None, client_secret=None, realm=None, scope="PRINCIPAL_ROLE:ALL"):
+def get_token(
+    client_id=None, client_secret=None, realm=None, scope="PRINCIPAL_ROLE:ALL"
+):
     # Read config globals at CALL time (init_env sets them); None = use active env
-    client_id     = client_id     if client_id     is not None else ROOT_CLIENT
+    client_id = client_id if client_id is not None else ROOT_CLIENT
     client_secret = client_secret if client_secret is not None else ROOT_SECRET
-    realm         = realm         if realm         is not None else REALM
+    realm = realm if realm is not None else REALM
     # NOTE on scope: root (service_admin) can request PRINCIPAL_ROLE:ALL. A NON-ROOT
     # principal generally CANNOT — requesting ALL yields a token with no effective
     # role, which downstream policy (OPA) / Polaris then denies (403). Non-root
@@ -176,27 +211,30 @@ def get_token(client_id=None, client_secret=None, realm=None, scope="PRINCIPAL_R
         f"{POLARIS_URL}/api/catalog/v1/oauth/tokens",
         headers={"Polaris-Realm": realm},
         data={
-            "grant_type":    "client_credentials",
-            "client_id":     client_id,
+            "grant_type": "client_credentials",
+            "client_id": client_id,
             "client_secret": client_secret,
-            "scope":         scope,
+            "scope": scope,
         },
     )
     return r
+
 
 def root_token():
     r = get_token()
     assert r.status_code == 200, f"Root token failed: {r.text}"
     return r.json()["access_token"]
 
+
 def h(token=None, realm=None):
     tok = token or root_token()
     realm = realm if realm is not None else REALM
     return {
-        "Authorization":  f"Bearer {tok}",
-        "Polaris-Realm":  realm,
-        "Content-Type":   "application/json",
+        "Authorization": f"Bearer {tok}",
+        "Polaris-Realm": realm,
+        "Content-Type": "application/json",
     }
+
 
 # ── Watchdog bootstrap ──────────────────────────────────────────
 def ensure_watchdog_setup():
@@ -218,7 +256,11 @@ def ensure_watchdog_setup():
     print("🔧 Checking watchdog setup (realm: POLARIS)...")
 
     # 1. Principal
-    principals = requests.get(f"{BASE_MGMT}/principals", headers=h(tok)).json().get("principals", [])
+    principals = (
+        requests.get(f"{BASE_MGMT}/principals", headers=h(tok))
+        .json()
+        .get("principals", [])
+    )
     existing = next((p for p in principals if p["name"] == WATCHDOG_PRINCIPAL), None)
 
     client_secret = None
@@ -227,7 +269,10 @@ def ensure_watchdog_setup():
         client_id = existing.get("clientId", WATCHDOG_PRINCIPAL)
     else:
         r = create_principal(name=WATCHDOG_PRINCIPAL, token=tok)
-        assert r.status_code in (200, 201), f"create_principal failed: {r.status_code} {r.text}"
+        assert r.status_code in (
+            200,
+            201,
+        ), f"create_principal failed: {r.status_code} {r.text}"
         body = r.json()
         client_id = body.get("principal", {}).get("clientId", WATCHDOG_PRINCIPAL)
         client_secret = body.get("credentials", {}).get("clientSecret")
@@ -237,44 +282,74 @@ def ensure_watchdog_setup():
         print("     ⚠️  Save this secret — Polaris will not show it again.")
 
     # 2. Principal role
-    pr_list = requests.get(f"{BASE_MGMT}/principal-roles", headers=h(tok)).json().get("roles", [])
+    pr_list = (
+        requests.get(f"{BASE_MGMT}/principal-roles", headers=h(tok))
+        .json()
+        .get("roles", [])
+    )
     if any(pr["name"] == WATCHDOG_PR for pr in pr_list):
         print(f"  ✅ principal role exists: {WATCHDOG_PR}")
     else:
         r = create_principal_role(name=WATCHDOG_PR, token=tok)
-        assert r.status_code in (200, 201), f"create_principal_role failed: {r.status_code} {r.text}"
+        assert r.status_code in (
+            200,
+            201,
+        ), f"create_principal_role failed: {r.status_code} {r.text}"
         print(f"  ✅ principal role created: {WATCHDOG_PR}")
 
     # 3. Assign principal role to principal (idempotent — PUT is safe to repeat)
-    r = assign_principal_role_to_principal(principal=WATCHDOG_PRINCIPAL, pr=WATCHDOG_PR, token=tok)
+    r = assign_principal_role_to_principal(
+        principal=WATCHDOG_PRINCIPAL, pr=WATCHDOG_PR, token=tok
+    )
     print(f"  ✅ principal role assigned ({r.status_code})")
 
     # 4. Catalog
-    catalogs = requests.get(f"{BASE_MGMT}/catalogs", headers=h(tok)).json().get("catalogs", [])
+    catalogs = (
+        requests.get(f"{BASE_MGMT}/catalogs", headers=h(tok)).json().get("catalogs", [])
+    )
     if any(c["name"] == WATCHDOG_CATALOG for c in catalogs):
         print(f"  ✅ catalog exists: {WATCHDOG_CATALOG}")
     else:
         r = create_catalog(name=WATCHDOG_CATALOG, token=tok)
-        assert r.status_code in (200, 201), f"create_catalog failed: {r.status_code} {r.text}"
+        assert r.status_code in (
+            200,
+            201,
+        ), f"create_catalog failed: {r.status_code} {r.text}"
         print(f"  ✅ catalog created: {WATCHDOG_CATALOG}")
 
     # 5. Catalog role
-    cr_list = requests.get(f"{BASE_MGMT}/catalogs/{WATCHDOG_CATALOG}/catalog-roles", headers=h(tok)).json().get("roles", [])
+    cr_list = (
+        requests.get(
+            f"{BASE_MGMT}/catalogs/{WATCHDOG_CATALOG}/catalog-roles", headers=h(tok)
+        )
+        .json()
+        .get("roles", [])
+    )
     if any(cr["name"] == WATCHDOG_CR for cr in cr_list):
         print(f"  ✅ catalog role exists: {WATCHDOG_CR}")
     else:
         r = create_catalog_role(catalog=WATCHDOG_CATALOG, name=WATCHDOG_CR, token=tok)
-        assert r.status_code in (200, 201), f"create_catalog_role failed: {r.status_code} {r.text}"
+        assert r.status_code in (
+            200,
+            201,
+        ), f"create_catalog_role failed: {r.status_code} {r.text}"
         print(f"  ✅ catalog role created: {WATCHDOG_CR}")
 
     # 6. Grant + assign (idempotent — safe to repeat)
-    grant_privilege(catalog=WATCHDOG_CATALOG, cr=WATCHDOG_CR,
-                     privilege="CATALOG_MANAGE_CONTENT", token=tok)
-    assign_catalog_role_to_principal_role(catalog=WATCHDOG_CATALOG, pr=WATCHDOG_PR, cr=WATCHDOG_CR, token=tok)
+    grant_privilege(
+        catalog=WATCHDOG_CATALOG,
+        cr=WATCHDOG_CR,
+        privilege="CATALOG_MANAGE_CONTENT",
+        token=tok,
+    )
+    assign_catalog_role_to_principal_role(
+        catalog=WATCHDOG_CATALOG, pr=WATCHDOG_PR, cr=WATCHDOG_CR, token=tok
+    )
     print(f"  ✅ grants verified")
 
     print("🔧 Watchdog setup complete (realm: POLARIS)\n")
     return client_id, client_secret
+
 
 def reset_watchdog_principal():
     """
@@ -293,9 +368,12 @@ def reset_watchdog_principal():
 
     # Recreate
     r = create_principal(name=WATCHDOG_PRINCIPAL, token=tok)
-    assert r.status_code in (200, 201), f"create_principal failed: {r.status_code} {r.text}"
+    assert r.status_code in (
+        200,
+        201,
+    ), f"create_principal failed: {r.status_code} {r.text}"
     body = r.json()
-    client_id     = body.get("principal", {}).get("clientId", WATCHDOG_PRINCIPAL)
+    client_id = body.get("principal", {}).get("clientId", WATCHDOG_PRINCIPAL)
     client_secret = body.get("credentials", {}).get("clientSecret")
     print(f"  ✅ principal recreated")
     print(f"     clientId:     {client_id}")
@@ -303,10 +381,13 @@ def reset_watchdog_principal():
     print("     ⚠️  Save this secret — Polaris will not show it again.")
 
     # Re-assign principal role (catalog role already exists)
-    r = assign_principal_role_to_principal(principal=WATCHDOG_PRINCIPAL, pr=WATCHDOG_PR, token=tok)
+    r = assign_principal_role_to_principal(
+        principal=WATCHDOG_PRINCIPAL, pr=WATCHDOG_PR, token=tok
+    )
     print(f"  ✅ principal role re-assigned ({r.status_code})")
 
     return client_id, client_secret
+
 
 def get_watchdog_token(client_id, client_secret):
     """
@@ -321,14 +402,15 @@ def get_watchdog_token(client_id, client_secret):
         f"{POLARIS_URL}/api/catalog/v1/oauth/tokens",
         headers={"Polaris-Realm": REALM},
         data={
-            "grant_type":    "client_credentials",
-            "client_id":     client_id,
+            "grant_type": "client_credentials",
+            "client_id": client_id,
             "client_secret": client_secret,
-            "scope":         f"PRINCIPAL_ROLE:{WATCHDOG_PR}",
+            "scope": f"PRINCIPAL_ROLE:{WATCHDOG_PR}",
         },
     )
     assert r.status_code == 200, f"Watchdog token failed: {r.status_code} {r.text}"
     return r.json()["access_token"]
+
 
 # ── Management API helpers ────────────────────────────────────
 # Instance principal (run tests as a dedicated non-root principal)
@@ -349,6 +431,7 @@ def get_watchdog_token(client_id, client_secret):
 # touch any other catalog or management resource (watchdog T05 proves this).
 INSTANCE_PRINCIPAL_PRIVS = ["CATALOG_MANAGE_CONTENT"]
 
+
 def instance_principal(catalog, privileges=None, suffix="inst", root=None):
     """Create (idempotently) a dedicated instance principal for `catalog` and
     return (auth_header, names) where auth_header authenticates AS THE INSTANCE
@@ -360,7 +443,7 @@ def instance_principal(catalog, privileges=None, suffix="inst", root=None):
     INSTANCE_PRINCIPAL_PRIVS; pass a narrower list to test least-privilege."""
     rtok = root or root_token()
     privs = privileges if privileges is not None else INSTANCE_PRINCIPAL_PRIVS
-    P  = f"{catalog}-{suffix}-prin"
+    P = f"{catalog}-{suffix}-prin"
     PR = f"{catalog}-{suffix}-prole"
     CR = f"{catalog}-{suffix}-crole"
 
@@ -371,7 +454,7 @@ def instance_principal(catalog, privileges=None, suffix="inst", root=None):
     # Extract credentials exactly as the production-verified watchdog setup does:
     #   clientId    is under  body["principal"]["clientId"]
     #   clientSecret is under body["credentials"]["clientSecret"]
-    cid  = rp.get("principal", {}).get("clientId")     or rp.get("clientId")
+    cid = rp.get("principal", {}).get("clientId") or rp.get("clientId")
     csec = rp.get("credentials", {}).get("clientSecret") or rp.get("clientSecret")
 
     create_principal_role(PR, token=rtok)
@@ -381,10 +464,16 @@ def instance_principal(catalog, privileges=None, suffix="inst", root=None):
     for pv in privs:
         grant_privilege(catalog=catalog, cr=CR, privilege=pv, token=rtok)
 
-    itok = get_token(client_id=cid, client_secret=csec,
-                     scope=f"PRINCIPAL_ROLE:{PR}").json().get("access_token")
-    header = {"Authorization": f"Bearer {itok}",
-              "Polaris-Realm": REALM, "Content-Type": "application/json"}
+    itok = (
+        get_token(client_id=cid, client_secret=csec, scope=f"PRINCIPAL_ROLE:{PR}")
+        .json()
+        .get("access_token")
+    )
+    header = {
+        "Authorization": f"Bearer {itok}",
+        "Polaris-Realm": REALM,
+        "Content-Type": "application/json",
+    }
     return header, (P, PR, CR)
 
 
@@ -392,6 +481,7 @@ def instance_principal(catalog, privileges=None, suffix="inst", root=None):
 # default plus the ones the view-purge probe and the scaff/worker pattern use).
 # Cleanup sweeps all of them.
 INSTANCE_PRINCIPAL_SUFFIXES = ("inst", "full", "scaffold", "scaff", "worker")
+
 
 def delete_instance_principal(names, catalog=None, root=None):
     """Delete ONE instance principal + its principal-role (and catalog-role if a
@@ -404,9 +494,14 @@ def delete_instance_principal(names, catalog=None, root=None):
     requests.delete(f"{BASE_MGMT}/principals/{P}", headers=h(rtok))
     requests.delete(f"{BASE_MGMT}/principal-roles/{PR}", headers=h(rtok))
     if catalog:
-        requests.delete(f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles/{CR}", headers=h(rtok))
+        requests.delete(
+            f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles/{CR}", headers=h(rtok)
+        )
 
-def delete_instance_principals_for(catalog, suffixes=INSTANCE_PRINCIPAL_SUFFIXES, root=None):
+
+def delete_instance_principals_for(
+    catalog, suffixes=INSTANCE_PRINCIPAL_SUFFIXES, root=None
+):
     """Delete every instance principal + principal-role created for `catalog` by
     naming convention ({catalog}-{suffix}-prin / -prole). Called from catalog
     teardown so each test cleans up its own instance principals (they are
@@ -414,31 +509,48 @@ def delete_instance_principals_for(catalog, suffixes=INSTANCE_PRINCIPAL_SUFFIXES
     rtok = root or root_token()
     for sfx in suffixes:
         requests.delete(f"{BASE_MGMT}/principals/{catalog}-{sfx}-prin", headers=h(rtok))
-        requests.delete(f"{BASE_MGMT}/principal-roles/{catalog}-{sfx}-prole", headers=h(rtok))
+        requests.delete(
+            f"{BASE_MGMT}/principal-roles/{catalog}-{sfx}-prole", headers=h(rtok)
+        )
 
-def sweep_instance_principals(prefixes=None, suffixes=INSTANCE_PRINCIPAL_SUFFIXES, root=None):
+
+def sweep_instance_principals(
+    prefixes=None, suffixes=INSTANCE_PRINCIPAL_SUFFIXES, root=None
+):
     """Safety sweep: delete ALL leftover instance principals/principal-roles
     matching the test naming convention (…-{suffix}-prin / -prole). Use to clear
     accumulation from earlier runs. `prefixes` optionally restricts to names
     starting with one of the given strings (e.g. ['vptest-','vpprobe-'])."""
     rtok = root or root_token()
+
     def _match(name, tail):
         if not any(name.endswith(f"-{sfx}-{tail}") for sfx in suffixes):
             return False
         if prefixes and not any(name.startswith(p) for p in prefixes):
             return False
         return True
-    prins = requests.get(f"{BASE_MGMT}/principals", headers=h(rtok)).json().get("principals", [])
+
+    prins = (
+        requests.get(f"{BASE_MGMT}/principals", headers=h(rtok))
+        .json()
+        .get("principals", [])
+    )
     n = 0
     for p in prins:
         nm = p["name"] if isinstance(p, dict) else p
         if nm != "root" and _match(nm, "prin"):
-            requests.delete(f"{BASE_MGMT}/principals/{nm}", headers=h(rtok)); n += 1
-    roles = requests.get(f"{BASE_MGMT}/principal-roles", headers=h(rtok)).json().get("roles", [])
+            requests.delete(f"{BASE_MGMT}/principals/{nm}", headers=h(rtok))
+            n += 1
+    roles = (
+        requests.get(f"{BASE_MGMT}/principal-roles", headers=h(rtok))
+        .json()
+        .get("roles", [])
+    )
     for r in roles:
         nm = r["name"] if isinstance(r, dict) else r
         if _match(nm, "prole"):
-            requests.delete(f"{BASE_MGMT}/principal-roles/{nm}", headers=h(rtok)); n += 1
+            requests.delete(f"{BASE_MGMT}/principal-roles/{nm}", headers=h(rtok))
+            n += 1
     print(f"🧹 swept {n} leftover instance principal/role objects")
     return n
 
@@ -479,33 +591,46 @@ class case_scaffold:
             r = requests.delete(view_url, headers=whdr)
         # teardown ran here, no leaks
     """
-    def __init__(self, catalog, build=None, teardown=None, root=None,
-                 destroy_scaff=True, scaff_privs=None):
-        self.catalog       = catalog
-        self.build         = build
-        self.teardown      = teardown
-        self.root          = root or root_token()
+
+    def __init__(
+        self,
+        catalog,
+        build=None,
+        teardown=None,
+        root=None,
+        destroy_scaff=True,
+        scaff_privs=None,
+    ):
+        self.catalog = catalog
+        self.build = build
+        self.teardown = teardown
+        self.root = root or root_token()
         self.destroy_scaff = destroy_scaff
-        self.scaff_privs   = scaff_privs or ["CATALOG_MANAGE_CONTENT"]
-        self.scaff_hdr     = None
-        self.scaff_names   = None
-        self._workers      = []   # names of worker principals to clean up
+        self.scaff_privs = scaff_privs or ["CATALOG_MANAGE_CONTENT"]
+        self.scaff_hdr = None
+        self.scaff_names = None
+        self._workers = []  # names of worker principals to clean up
 
     def __enter__(self):
         # Phase 1: setup with a full-priv scaff principal
         self.scaff_hdr, self.scaff_names = instance_principal(
-            self.catalog, privileges=self.scaff_privs, suffix="scaff", root=self.root)
+            self.catalog, privileges=self.scaff_privs, suffix="scaff", root=self.root
+        )
         if self.build is not None:
             self.build(self.scaff_hdr)
         # Phase 2: destroy scaff (strict isolation) — the entity it built remains
         if self.destroy_scaff:
-            delete_instance_principal(self.scaff_names, catalog=self.catalog, root=self.root)
+            delete_instance_principal(
+                self.scaff_names, catalog=self.catalog, root=self.root
+            )
             self.scaff_names = None
         return self
 
     def worker(self, privileges, suffix="worker"):
         """Phase 3: provision the challenge principal with only `privileges`."""
-        hdr, names = worker_principal(self.catalog, privileges, suffix=suffix, root=self.root)
+        hdr, names = worker_principal(
+            self.catalog, privileges, suffix=suffix, root=self.root
+        )
         self._workers.append(names)
         return hdr, names
 
@@ -514,7 +639,9 @@ class case_scaffold:
         for names in self._workers:
             delete_instance_principal(names, catalog=self.catalog, root=self.root)
         if self.scaff_names is not None:
-            delete_instance_principal(self.scaff_names, catalog=self.catalog, root=self.root)
+            delete_instance_principal(
+                self.scaff_names, catalog=self.catalog, root=self.root
+            )
         if self.teardown is not None:
             try:
                 self.teardown(self.catalog)
@@ -522,7 +649,7 @@ class case_scaffold:
                 print(f"   ⚠️ teardown({self.catalog}) raised: {e}")
         else:
             _teardown_catalog_selfcontained(self.catalog, root=self.root)
-        return False   # never suppress exceptions
+        return False  # never suppress exceptions
 
 
 def _teardown_catalog_selfcontained(catalog, root=None):
@@ -530,28 +657,68 @@ def _teardown_catalog_selfcontained(catalog, root=None):
     drop views/tables → namespaces (deepest first) → non-default catalog-roles →
     catalog, then sweep instance principals and MinIO objects. Best-effort."""
     rtok = root or root_token()
-    if requests.get(f"{BASE_MGMT}/catalogs/{catalog}", headers=h(rtok)).status_code == 404:
+    if (
+        requests.get(f"{BASE_MGMT}/catalogs/{catalog}", headers=h(rtok)).status_code
+        == 404
+    ):
         delete_instance_principals_for(catalog, root=rtok)
         return True
-    nss = requests.get(f"{BASE_CAT}/{catalog}/namespaces", headers=h(rtok)).json().get("namespaces", [])
-    nss = sorted(nss, key=lambda n: len(n if isinstance(n, list) else [n]), reverse=True)
+    nss = (
+        requests.get(f"{BASE_CAT}/{catalog}/namespaces", headers=h(rtok))
+        .json()
+        .get("namespaces", [])
+    )
+    nss = sorted(
+        nss, key=lambda n: len(n if isinstance(n, list) else [n]), reverse=True
+    )
     for ns in nss:
         nsn = "\x1f".join(ns) if isinstance(ns, list) else ns
-        for t in requests.get(f"{BASE_CAT}/{catalog}/namespaces/{nsn}/tables", headers=h(rtok)).json().get("identifiers", []):
-            requests.delete(f"{BASE_CAT}/{catalog}/namespaces/{nsn}/tables/{t['name']}", headers=h(rtok))
-        for v in requests.get(f"{BASE_CAT}/{catalog}/namespaces/{nsn}/views", headers=h(rtok)).json().get("identifiers", []):
-            requests.delete(f"{BASE_CAT}/{catalog}/namespaces/{nsn}/views/{v['name']}", headers=h(rtok))
+        for t in (
+            requests.get(
+                f"{BASE_CAT}/{catalog}/namespaces/{nsn}/tables", headers=h(rtok)
+            )
+            .json()
+            .get("identifiers", [])
+        ):
+            requests.delete(
+                f"{BASE_CAT}/{catalog}/namespaces/{nsn}/tables/{t['name']}",
+                headers=h(rtok),
+            )
+        for v in (
+            requests.get(
+                f"{BASE_CAT}/{catalog}/namespaces/{nsn}/views", headers=h(rtok)
+            )
+            .json()
+            .get("identifiers", [])
+        ):
+            requests.delete(
+                f"{BASE_CAT}/{catalog}/namespaces/{nsn}/views/{v['name']}",
+                headers=h(rtok),
+            )
         requests.delete(f"{BASE_CAT}/{catalog}/namespaces/{nsn}", headers=h(rtok))
-    for cr in requests.get(f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles", headers=h(rtok)).json().get("roles", []):
+    for cr in (
+        requests.get(f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles", headers=h(rtok))
+        .json()
+        .get("roles", [])
+    ):
         crn = cr["name"] if isinstance(cr, dict) else cr
         if crn != "catalog_admin":
-            requests.delete(f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles/{crn}", headers=h(rtok))
-    requests.delete(f"{BASE_MGMT}/catalogs/{catalog}?purgeRequested=true", headers=h(rtok))
+            requests.delete(
+                f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles/{crn}", headers=h(rtok)
+            )
+    requests.delete(
+        f"{BASE_MGMT}/catalogs/{catalog}?purgeRequested=true", headers=h(rtok)
+    )
     delete_instance_principals_for(catalog, root=rtok)
     if mc is not None:
-        try: mc.delete_prefix(f"{catalog}/", min_size=0)
-        except Exception: pass
-    return requests.get(f"{BASE_MGMT}/catalogs/{catalog}", headers=h(rtok)).status_code == 404
+        try:
+            mc.delete_prefix(f"{catalog}/", min_size=0)
+        except Exception:
+            pass
+    return (
+        requests.get(f"{BASE_MGMT}/catalogs/{catalog}", headers=h(rtok)).status_code
+        == 404
+    )
 
 
 def teardown_catalog(catalog, root=None):
@@ -583,10 +750,13 @@ class Entities:
     catalogs, principals, principal-roles — because a catalog purge cascades its
     namespaces/tables/views/catalog-roles + MinIO objects. `ctx` carries the
     working handles Execute/Result need (catalog, ns, entity, worker_hdr, …)."""
+
     catalogs: list = field(default_factory=list)
     principals: list = field(default_factory=list)
     principal_roles: list = field(default_factory=list)
-    catalog_roles: list = field(default_factory=list)   # (catalog, name); usually cascade-cleaned
+    catalog_roles: list = field(
+        default_factory=list
+    )  # (catalog, name); usually cascade-cleaned
     ctx: dict = field(default_factory=dict)
 
 
@@ -597,13 +767,13 @@ def provision_worker_multi(catalog, privileges, suffix="worker", root=None):
     reflects the full footprint), and reports which names the build rejected.
     Returns (header_or_None, granted, invalid, (P, PR, CR))."""
     rtok = root or root_token()
-    P  = f"{catalog}-{suffix}-prin"
+    P = f"{catalog}-{suffix}-prin"
     PR = f"{catalog}-{suffix}-prole"
     CR = f"{catalog}-{suffix}-crole"
     requests.delete(f"{BASE_MGMT}/principals/{P}", headers=h(rtok))
     requests.delete(f"{BASE_MGMT}/principal-roles/{PR}", headers=h(rtok))
-    rp   = create_principal(P, token=rtok).json()
-    cid  = rp.get("principal", {}).get("clientId")      or rp.get("clientId")
+    rp = create_principal(P, token=rtok).json()
+    cid = rp.get("principal", {}).get("clientId") or rp.get("clientId")
     csec = rp.get("credentials", {}).get("clientSecret") or rp.get("clientSecret")
     create_principal_role(PR, token=rtok)
     create_catalog_role(catalog=catalog, name=CR, token=rtok)
@@ -611,9 +781,13 @@ def provision_worker_multi(catalog, privileges, suffix="worker", root=None):
     assign_principal_role_to_principal(principal=P, pr=PR, token=rtok)
     # wait for the catalog-role to be visible before granting
     for _ in range(6):
-        lr = requests.get(f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles", headers=h(rtok))
-        names = [(c.get("name") if isinstance(c, dict) else c)
-                 for c in (lr.json().get("roles", []) if lr.status_code == 200 else [])]
+        lr = requests.get(
+            f"{BASE_MGMT}/catalogs/{catalog}/catalog-roles", headers=h(rtok)
+        )
+        names = [
+            (c.get("name") if isinstance(c, dict) else c)
+            for c in (lr.json().get("roles", []) if lr.status_code == 200 else [])
+        ]
         if CR in names:
             break
         time.sleep(0.5)
@@ -622,20 +796,36 @@ def provision_worker_multi(catalog, privileges, suffix="worker", root=None):
     for pv in privs:
         gr = grant_privilege(catalog=catalog, cr=CR, privilege=pv, token=rtok)
         gb = gr.text.lower()
-        ok = (gr.status_code < 400 or "already exists" in gb
-              or "23505" in gb or "duplicate key" in gb)
+        ok = (
+            gr.status_code < 400
+            or "already exists" in gb
+            or "23505" in gb
+            or "duplicate key" in gb
+        )
         (granted if ok else invalid).append(pv)
     tr = get_token(client_id=cid, client_secret=csec, scope=f"PRINCIPAL_ROLE:{PR}")
     if tr.status_code != 200:
         return None, granted, invalid, (P, PR, CR)
     wtok = tr.json().get("access_token")
-    hdr = {"Authorization": f"Bearer {wtok}", "Polaris-Realm": REALM,
-           "Content-Type": "application/json"}
+    hdr = {
+        "Authorization": f"Bearer {wtok}",
+        "Polaris-Realm": REALM,
+        "Content-Type": "application/json",
+    }
     return hdr, granted, invalid, (P, PR, CR)
 
 
-def build_suite(ents, root=None, *, prefix="case-", build=None, footprint=None,
-                drop_gate=False, entity=None, scaff_privs=None):
+def build_suite(
+    ents,
+    root=None,
+    *,
+    prefix="case-",
+    build=None,
+    footprint=None,
+    drop_gate=False,
+    entity=None,
+    scaff_privs=None,
+):
     """Common **Suite** (arrange): fresh catalog (+optional drop-with-purge gate)
     → scaffold prereqs via a full-privilege scaff principal that is then destroyed
     (so the worker's single grant is the only thing under test) → provision a
@@ -646,23 +836,37 @@ def build_suite(ents, root=None, *, prefix="case-", build=None, footprint=None,
     ctx)` creates any prerequisite namespace/table/view."""
     rtok = root or root_token()
     cat = f"{prefix}{uuid.uuid4().hex[:6]}"
-    props = ({"polaris.config.drop-with-purge.enabled": "true",
-              "polaris.config.purge-view-metadata-on-drop": "false"} if drop_gate else {})
+    props = (
+        {
+            "polaris.config.drop-with-purge.enabled": "true",
+            "polaris.config.purge-view-metadata-on-drop": "false",
+        }
+        if drop_gate
+        else {}
+    )
     create_catalog(cat, token=rtok, properties=props)
     ents.catalogs.append(cat)
     ent = entity or f"e{uuid.uuid4().hex[:6]}"
     ctx = {"catalog": cat, "ns": f"ns-{cat}", "entity": ent}
     # scaff — full-priv, records first (leak-proof), builds prereqs, then destroyed
     scaff_hdr, scaff_names = instance_principal(
-        cat, privileges=scaff_privs or ["CATALOG_MANAGE_CONTENT"], suffix="scaff", root=rtok)
-    ents.principals.append(scaff_names[0]); ents.principal_roles.append(scaff_names[1])
+        cat,
+        privileges=scaff_privs or ["CATALOG_MANAGE_CONTENT"],
+        suffix="scaff",
+        root=rtok,
+    )
+    ents.principals.append(scaff_names[0])
+    ents.principal_roles.append(scaff_names[1])
     ents.catalog_roles.append((cat, scaff_names[2]))
     if build is not None:
         build(cat, scaff_hdr, ctx)
-    delete_instance_principal(scaff_names, catalog=cat, root=rtok)   # isolation
+    delete_instance_principal(scaff_names, catalog=cat, root=rtok)  # isolation
     # worker — exactly `footprint`
-    whdr, granted, invalid, wnames = provision_worker_multi(cat, footprint or [], root=rtok)
-    ents.principals.append(wnames[0]); ents.principal_roles.append(wnames[1])
+    whdr, granted, invalid, wnames = provision_worker_multi(
+        cat, footprint or [], root=rtok
+    )
+    ents.principals.append(wnames[0])
+    ents.principal_roles.append(wnames[1])
     ents.catalog_roles.append((cat, wnames[2]))
     ctx.update(worker_hdr=whdr, granted=granted, invalid=invalid)
     ents.ctx.update(ctx)
@@ -679,16 +883,20 @@ def clean(*bundles, root=None):
     for b in bundles:
         for p in b.principals:
             if p and ("p", p) not in done:
-                done.add(("p", p)); requests.delete(f"{BASE_MGMT}/principals/{p}", headers=h(rtok))
+                done.add(("p", p))
+                requests.delete(f"{BASE_MGMT}/principals/{p}", headers=h(rtok))
         for pr in b.principal_roles:
             if pr and ("pr", pr) not in done:
-                done.add(("pr", pr)); requests.delete(f"{BASE_MGMT}/principal-roles/{pr}", headers=h(rtok))
+                done.add(("pr", pr))
+                requests.delete(f"{BASE_MGMT}/principal-roles/{pr}", headers=h(rtok))
     for b in bundles:
         for cr in b.catalog_roles:
             cat, name = cr if isinstance(cr, (tuple, list)) else (None, cr)
             if cat and name and ("cr", cat, name) not in done:
                 done.add(("cr", cat, name))
-                requests.delete(f"{BASE_MGMT}/catalogs/{cat}/catalog-roles/{name}", headers=h(rtok))
+                requests.delete(
+                    f"{BASE_MGMT}/catalogs/{cat}/catalog-roles/{name}", headers=h(rtok)
+                )
     for b in bundles:
         for cat in b.catalogs:
             if cat and ("c", cat) not in done:
@@ -729,40 +937,51 @@ def create_catalog(name=TEST_CATALOG, token=None, properties=None):
     }
     if properties:
         props.update(properties)
-    return requests.post(f"{BASE_MGMT}/catalogs", headers=h(token), json={
-        "catalog": {
-            "name": name,
-            "type": "INTERNAL",
-            "properties": props,
-            "storageConfigInfo": {
-                "storageType": "S3",
-                "allowedLocations": [f"s3a://{BUCKET}/"],
-                "pathStyleAccess": True,
-                "endpoint": MINIO_ENDPOINT,
-                "endpointInternal": MINIO_ENDPOINT_INTERNAL,
-            },
-        }
-    })
+    return requests.post(
+        f"{BASE_MGMT}/catalogs",
+        headers=h(token),
+        json={
+            "catalog": {
+                "name": name,
+                "type": "INTERNAL",
+                "properties": props,
+                "storageConfigInfo": {
+                    "storageType": "S3",
+                    "allowedLocations": [f"s3a://{BUCKET}/"],
+                    "pathStyleAccess": True,
+                    "endpoint": MINIO_ENDPOINT,
+                    "endpointInternal": MINIO_ENDPOINT_INTERNAL,
+                },
+            }
+        },
+    )
+
 
 def create_catalog_no_endpoint(name=TEST_CATALOG, token=None):
-    return requests.post(f"{BASE_MGMT}/catalogs", headers=h(token), json={
-        "catalog": {
-            "name": name,
-            "type": "INTERNAL",
-            "properties": {
-                "default-base-location": f"s3a://data-catalog-bucket/{name}/",
-            },
-            "storageConfigInfo": {
-                "storageType": "S3",
-                "allowedLocations": ["s3a://data-catalog-bucket/"],
-                "pathStyleAccess": True,
-                "endpoint": "http://192.168.139.2:9000",
-            },
-        }
-    })
+    return requests.post(
+        f"{BASE_MGMT}/catalogs",
+        headers=h(token),
+        json={
+            "catalog": {
+                "name": name,
+                "type": "INTERNAL",
+                "properties": {
+                    "default-base-location": f"s3a://data-catalog-bucket/{name}/",
+                },
+                "storageConfigInfo": {
+                    "storageType": "S3",
+                    "allowedLocations": ["s3a://data-catalog-bucket/"],
+                    "pathStyleAccess": True,
+                    "endpoint": "http://192.168.139.2:9000",
+                },
+            }
+        },
+    )
+
 
 def delete_catalog(name=TEST_CATALOG, token=None):
     return requests.delete(f"{BASE_MGMT}/catalogs/{name}", headers=h(token))
+
 
 def create_namespace(catalog=TEST_CATALOG, ns=TEST_NAMESPACE, token=None):
     return requests.post(
@@ -771,27 +990,40 @@ def create_namespace(catalog=TEST_CATALOG, ns=TEST_NAMESPACE, token=None):
         json={"namespace": [ns], "properties": {}},
     )
 
+
 def delete_namespace(catalog=TEST_CATALOG, ns=TEST_NAMESPACE, token=None):
     return requests.delete(
         f"{BASE_CAT}/{catalog}/namespaces/{ns}",
         headers=h(token),
     )
 
+
 def create_principal(name=TEST_PRINCIPAL, token=None):
-    return requests.post(f"{BASE_MGMT}/principals", headers=h(token), json={
-        "principal": {"name": name, "type": "SERVICE"},
-        "credentialRotationRequired": False,
-    })
+    return requests.post(
+        f"{BASE_MGMT}/principals",
+        headers=h(token),
+        json={
+            "principal": {"name": name, "type": "SERVICE"},
+            "credentialRotationRequired": False,
+        },
+    )
+
 
 def delete_principal(name=TEST_PRINCIPAL, token=None):
     return requests.delete(f"{BASE_MGMT}/principals/{name}", headers=h(token))
 
+
 def create_principal_role(name=TEST_PR, token=None):
-    return requests.post(f"{BASE_MGMT}/principal-roles", headers=h(token),
-        json={"principalRole": {"name": name}})
+    return requests.post(
+        f"{BASE_MGMT}/principal-roles",
+        headers=h(token),
+        json={"principalRole": {"name": name}},
+    )
+
 
 def delete_principal_role(name=TEST_PR, token=None):
     return requests.delete(f"{BASE_MGMT}/principal-roles/{name}", headers=h(token))
+
 
 def create_catalog_role(catalog=TEST_CATALOG, name=TEST_CR, token=None):
     return requests.post(
@@ -800,22 +1032,30 @@ def create_catalog_role(catalog=TEST_CATALOG, name=TEST_CR, token=None):
         json={"catalogRole": {"name": name}},
     )
 
-def assign_catalog_role_to_principal_role(catalog=TEST_CATALOG, pr=TEST_PR, cr=TEST_CR, token=None):
+
+def assign_catalog_role_to_principal_role(
+    catalog=TEST_CATALOG, pr=TEST_PR, cr=TEST_CR, token=None
+):
     return requests.put(
         f"{BASE_MGMT}/principal-roles/{pr}/catalog-roles/{catalog}",
         headers=h(token),
         json={"catalogRole": {"name": cr}},
     )
 
-def assign_principal_role_to_principal(principal=TEST_PRINCIPAL, pr=TEST_PR, token=None):
+
+def assign_principal_role_to_principal(
+    principal=TEST_PRINCIPAL, pr=TEST_PR, token=None
+):
     return requests.put(
         f"{BASE_MGMT}/principals/{principal}/principal-roles",
         headers=h(token),
         json={"principalRole": {"name": pr}},
     )
 
-def grant_privilege(catalog=TEST_CATALOG, cr=TEST_CR,
-                    privilege="CATALOG_MANAGE_CONTENT", token=None):
+
+def grant_privilege(
+    catalog=TEST_CATALOG, cr=TEST_CR, privilege="CATALOG_MANAGE_CONTENT", token=None
+):
     """Grant a catalog privilege to a catalog-role, idempotently and CHEAPLY.
 
     Polaris implements the grant PUT as an INSERT. If the grant already exists it
@@ -834,10 +1074,13 @@ def grant_privilege(catalog=TEST_CATALOG, cr=TEST_CR,
         existing = requests.get(grants_url, headers=h(token))
         if existing.status_code == 200:
             for g in existing.json().get("grants", []):
-                if g.get("privilege") == privilege and g.get("type", "catalog") == "catalog":
-                    return existing   # already granted → no write, no 5s wait
+                if (
+                    g.get("privilege") == privilege
+                    and g.get("type", "catalog") == "catalog"
+                ):
+                    return existing  # already granted → no write, no 5s wait
     except Exception:
-        pass   # if the check fails, fall through to the PUT (still safe)
+        pass  # if the check fails, fall through to the PUT (still safe)
     # 2. issue the grant. Retry on a transient 404 "…not found": the catalog-role
     #    was just created and may not yet be visible on a lagging PG read replica
     #    (read-after-write lag under PG-HA/PgBouncer). Without this, a perfectly
@@ -853,8 +1096,12 @@ def grant_privilege(catalog=TEST_CATALOG, cr=TEST_CR,
         if r.status_code < 400:
             return r
         body = r.text.lower()
-        if ("already exists" in body or "23505" in body
-                or "duplicate key" in body or "grant_records_pkey" in body):
+        if (
+            "already exists" in body
+            or "23505" in body
+            or "duplicate key" in body
+            or "grant_records_pkey" in body
+        ):
             # grant already present → treat as success (idempotent)
             return r
         if r.status_code == 404 and "not found" in body and _attempt < _MAX - 1:
@@ -863,22 +1110,28 @@ def grant_privilege(catalog=TEST_CATALOG, cr=TEST_CR,
             time.sleep(min(0.5 * (_attempt + 1), 2.0))
             continue
         # genuine error (e.g. 400 invalid privilege name) → surface and stop
-        print(f"  ⚠️ grant_privilege {privilege} on {catalog}/{cr} → "
-              f"[{r.status_code}] {r.text[:160]}")
+        print(
+            f"  ⚠️ grant_privilege {privilege} on {catalog}/{cr} → "
+            f"[{r.status_code}] {r.text[:160]}"
+        )
         return r
     return r
+
+
 # ── Cleanup ───────────────────────────────────────────────────
 # System entities — never delete
-_SKIP_PRINCIPALS      = {'root'}
-_SKIP_PRINCIPAL_ROLES = {'service_admin'}
-_SKIP_CATALOG_ROLES   = {'catalog_admin'}
+_SKIP_PRINCIPALS = {"root"}
+_SKIP_PRINCIPAL_ROLES = {"service_admin"}
+_SKIP_CATALOG_ROLES = {"catalog_admin"}
+
 
 def _delete(url, tok, label):
     """Delete a resource, print result."""
     r = requests.delete(url, headers=h(tok))
-    icon = '✅' if r.status_code in [200, 204] else '⚠️ '
+    icon = "✅" if r.status_code in [200, 204] else "⚠️ "
     print(f"  {icon} [{r.status_code}] {label}")
     return r.status_code
+
 
 def cleanup(token=None):
     """
@@ -897,29 +1150,33 @@ def cleanup(token=None):
     print("🧹 Cleaning up all test resources...")
 
     # ── Fetch current state ───────────────────────────────────
-    catalogs = requests.get(
-        f"{BASE_MGMT}/catalogs", headers=h(tok)
-    ).json().get("catalogs", [])
+    catalogs = (
+        requests.get(f"{BASE_MGMT}/catalogs", headers=h(tok)).json().get("catalogs", [])
+    )
 
-    principals = requests.get(
-        f"{BASE_MGMT}/principals", headers=h(tok)
-    ).json().get("principals", [])
+    principals = (
+        requests.get(f"{BASE_MGMT}/principals", headers=h(tok))
+        .json()
+        .get("principals", [])
+    )
 
-    principal_roles = requests.get(
-        f"{BASE_MGMT}/principal-roles", headers=h(tok)
-    ).json().get("roles", [])
+    principal_roles = (
+        requests.get(f"{BASE_MGMT}/principal-roles", headers=h(tok))
+        .json()
+        .get("roles", [])
+    )
 
     # ── Step 1+2: Tables + Views + Namespaces (recursive) ───────
     def _ns_to_url(ns):
         """Convert namespace list to URL-safe string."""
         if isinstance(ns, list):
-            return '%1F'.join(ns)
+            return "%1F".join(ns)
         return ns
 
     def _ns_to_label(ns):
         """Convert namespace list to readable string."""
         if isinstance(ns, list):
-            return '.'.join(ns)
+            return ".".join(ns)
         return ns
 
     def _delete_ns(cname, ns_url, ns_label, tok):
@@ -928,47 +1185,46 @@ def cleanup(token=None):
         child_r = requests.get(
             f"{BASE_CAT}/{cname}/namespaces",
             headers=h(tok),
-            params={"parent": ns_label}
+            params={"parent": ns_label},
         )
         for child in child_r.json().get("namespaces", []):
             _delete_ns(cname, _ns_to_url(child), _ns_to_label(child), tok)
 
         # Delete tables in this namespace
         t_r = requests.get(
-            f"{BASE_CAT}/{cname}/namespaces/{ns_url}/tables",
-            headers=h(tok)
+            f"{BASE_CAT}/{cname}/namespaces/{ns_url}/tables", headers=h(tok)
         )
         for t in t_r.json().get("identifiers", []):
             tname = t.get("name", str(t))
             _delete(
                 f"{BASE_CAT}/{cname}/namespaces/{ns_url}/tables/{tname}",
-                tok, f"table: {cname}.{ns_label}.{tname}"
+                tok,
+                f"table: {cname}.{ns_label}.{tname}",
             )
 
         # Delete views in this namespace
         v_r = requests.get(
-            f"{BASE_CAT}/{cname}/namespaces/{ns_url}/views",
-            headers=h(tok)
+            f"{BASE_CAT}/{cname}/namespaces/{ns_url}/views", headers=h(tok)
         )
         for v in v_r.json().get("identifiers", []):
             vname = v.get("name", str(v))
             _delete(
                 f"{BASE_CAT}/{cname}/namespaces/{ns_url}/views/{vname}",
-                tok, f"view: {cname}.{ns_label}.{vname}"
+                tok,
+                f"view: {cname}.{ns_label}.{vname}",
             )
 
         # Delete namespace itself (now empty)
         _delete(
             f"{BASE_CAT}/{cname}/namespaces/{ns_url}",
-            tok, f"namespace: {cname}.{ns_label}"
+            tok,
+            f"namespace: {cname}.{ns_label}",
         )
 
     # Process all top-level namespaces recursively
     for c in catalogs:
         cname = c["name"]
-        ns_r = requests.get(
-            f"{BASE_CAT}/{cname}/namespaces", headers=h(tok)
-        )
+        ns_r = requests.get(f"{BASE_CAT}/{cname}/namespaces", headers=h(tok))
         for ns in ns_r.json().get("namespaces", []):
             _delete_ns(cname, _ns_to_url(ns), _ns_to_label(ns), tok)
 
@@ -984,26 +1240,21 @@ def cleanup(token=None):
                 continue
             _delete(
                 f"{BASE_MGMT}/catalogs/{cname}/catalog-roles/{crname}",
-                tok, f"catalog-role: {cname}/{crname}"
+                tok,
+                f"catalog-role: {cname}/{crname}",
             )
 
     # ── Step 4: Catalogs ──────────────────────────────────────
     for c in catalogs:
         cname = c["name"]
-        _delete(
-            f"{BASE_MGMT}/catalogs/{cname}",
-            tok, f"catalog: {cname}"
-        )
+        _delete(f"{BASE_MGMT}/catalogs/{cname}", tok, f"catalog: {cname}")
 
     # ── Step 5: Principals ────────────────────────────────────
     for p in principals:
         pname = p["name"]
         if pname in _SKIP_PRINCIPALS:
             continue
-        _delete(
-            f"{BASE_MGMT}/principals/{pname}",
-            tok, f"principal: {pname}"
-        )
+        _delete(f"{BASE_MGMT}/principals/{pname}", tok, f"principal: {pname}")
 
     # ── Step 6: Principal Roles ───────────────────────────────
     for pr in principal_roles:
@@ -1011,11 +1262,11 @@ def cleanup(token=None):
         if prname in _SKIP_PRINCIPAL_ROLES:
             continue
         _delete(
-            f"{BASE_MGMT}/principal-roles/{prname}",
-            tok, f"principal-role: {prname}"
+            f"{BASE_MGMT}/principal-roles/{prname}", tok, f"principal-role: {prname}"
         )
 
     print("✅ Cleanup done")
+
 
 # ── OpenSearch ────────────────────────────────────────────────
 def os_client():
@@ -1027,14 +1278,14 @@ def os_client():
         ssl_show_warn=False,
     )
 
-def search_logs(request_id=None, level=None, message=None,
-                minutes_ago=10, size=20):
+
+def search_logs(request_id=None, level=None, message=None, minutes_ago=10, size=20):
     """Search Polaris logs in OpenSearch."""
     client = os_client()
     must = [
         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
         # Only Polaris container logs
-        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}}
+        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
     ]
     if request_id:
         # requestId is nested in mdc object
@@ -1049,19 +1300,18 @@ def search_logs(request_id=None, level=None, message=None,
         body={
             "query": {"bool": {"must": must}},
             "sort": [{"@timestamp": {"order": "desc"}}],
-            "size": size
+            "size": size,
         },
     )
     return result["hits"]["hits"]
 
+
 def search_logs_raw(query_dict, size=5):
     """Raw OpenSearch query for debugging."""
     client = os_client()
-    result = client.search(
-        index=LOG_INDEX,
-        body={**query_dict, "size": size}
-    )
+    result = client.search(index=LOG_INDEX, body={**query_dict, "size": size})
     return result["hits"]["hits"]
+
 
 def debug_opensearch(minutes_ago=5):
     """
@@ -1084,13 +1334,10 @@ def debug_opensearch(minutes_ago=5):
             "size": 0,
             "aggs": {
                 "containers": {
-                    "terms": {
-                        "field": "kubernetes.container_name.keyword",
-                        "size": 10
-                    }
+                    "terms": {"field": "kubernetes.container_name.keyword", "size": 10}
                 }
-            }
-        }
+            },
+        },
     )
     print("\nContainer names in index:")
     for b in result["aggregations"]["containers"]["buckets"]:
@@ -1104,13 +1351,13 @@ def debug_opensearch(minutes_ago=5):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"match": {"kubernetes.pod_name": "polaris"}}
+                        {"match": {"kubernetes.pod_name": "polaris"}},
                     ]
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
-            "size": 3
-        }
+            "size": 3,
+        },
     )
     total = result["hits"]["total"]["value"]
     print(f"\nPolaris logs last {minutes_ago}m: {total} docs")
@@ -1121,7 +1368,10 @@ def debug_opensearch(minutes_ago=5):
         print(f"  level:      {src.get('level', 'NOT FOUND')}")
         print(f"  message:    {src.get('message', src.get('log', 'NOT FOUND'))[:100]}")
         print(f"  mdc:        {src.get('mdc', 'NOT FOUND')}")
-        print(f"  container:  {src.get('kubernetes', {}).get('container_name', 'NOT FOUND')}")
+        print(
+            f"  container:  {src.get('kubernetes', {}).get('container_name', 'NOT FOUND')}"
+        )
+
 
 def print_logs(hits, show_debug_on_empty=True):
     """Pretty print OpenSearch log hits."""
@@ -1135,16 +1385,17 @@ def print_logs(hits, show_debug_on_empty=True):
     print(f"Found {len(hits)} log entries:\n")
     for hit in hits:
         src = hit["_source"]
-        ts      = src.get("@timestamp", "")
-        level   = src.get("level", "INFO")
-        msg     = src.get("message", src.get("log", ""))
-        mdc     = src.get("mdc", {})
-        req_id  = mdc.get("requestId", "") if isinstance(mdc, dict) else ""
-        realm   = mdc.get("realmId", "") if isinstance(mdc, dict) else ""
-        logger  = src.get("loggerName", "")
+        ts = src.get("@timestamp", "")
+        level = src.get("level", "INFO")
+        msg = src.get("message", src.get("log", ""))
+        mdc = src.get("mdc", {})
+        req_id = mdc.get("requestId", "") if isinstance(mdc, dict) else ""
+        realm = mdc.get("realmId", "") if isinstance(mdc, dict) else ""
+        logger = src.get("loggerName", "")
 
-        icon = {"ERROR": "❌", "WARN": "⚠️ ",
-                "INFO": "ℹ️ ", "DEBUG": "🔍"}.get(level, "  ")
+        icon = {"ERROR": "❌", "WARN": "⚠️ ", "INFO": "ℹ️ ", "DEBUG": "🔍"}.get(
+            level, "  "
+        )
         print(f"{icon} [{ts}] {level}")
         print(f"   logger    : {logger}")
         print(f"   requestId : {req_id}")
@@ -1152,9 +1403,11 @@ def print_logs(hits, show_debug_on_empty=True):
         print(f"   message   : {msg[:200]}")
         print()
 
+
 def get_request_id(response):
     """Extract Polaris-Request-Id from response headers."""
     return response.headers.get("Polaris-Request-Id", "not found")
+
 
 def print_response(r, label="Response"):
     """Pretty print API response."""
@@ -1166,10 +1419,12 @@ def print_response(r, label="Response"):
     except:
         print(f"  Body: {r.text[:500]}")
 
+
 def wait_for_logs(seconds=10):
     """Wait for Fluent Bit to ship logs to OpenSearch."""
     print(f"⏳ Waiting {seconds}s for logs to reach OpenSearch...")
     time.sleep(seconds)
+
 
 def search_and_debug(request_id, minutes_ago=10):
     """
@@ -1199,9 +1454,11 @@ def search_and_debug(request_id, minutes_ago=10):
     debug_opensearch(minutes_ago=minutes_ago)
     return []
 
+
 # ── General error search functions ───────────────────────────
 # Use these instead of search_and_debug(request_id)
 # minutes_ago=1 → only current run logs
+
 
 def search_401_errors(minutes_ago=1):
     """Find 401 unauthorized errors — general pattern, no requestId needed."""
@@ -1213,24 +1470,28 @@ def search_401_errors(minutes_ago=1):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                        {
+                            "term": {
+                                "kubernetes.container_name.keyword": "benchmarks-polaris"
+                            }
+                        },
                     ],
                     "should": [
                         # HTTP access log shows 401 status
-                        {"match": {"message": "\" 401"}},
+                        {"match": {"message": '" 401'}},
                         # Auth failures
                         {"match": {"message": "Failed to resolve principal"}},
                         {"match": {"message": "unauthorized_client"}},
                         {"match": {"message": "getToken API with status code 401"}},
                         {"match": {"message": "not authorized"}},
                     ],
-                    "minimum_should_match": 1
+                    "minimum_should_match": 1,
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
-            "size": 10
-        }
+            "size": 10,
+        },
     )
     return result["hits"]["hits"]
 
@@ -1245,22 +1506,26 @@ def search_403_errors(minutes_ago=1):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                        {
+                            "term": {
+                                "kubernetes.container_name.keyword": "benchmarks-polaris"
+                            }
+                        },
                     ],
                     "should": [
-                        {"match": {"message": "\" 403"}},
+                        {"match": {"message": '" 403'}},
                         {"match": {"message": "ForbiddenException"}},
                         {"match": {"message": "lacks privilege"}},
                         {"match": {"message": "is not authorized"}},
                         {"match": {"message": "drop-with-purge"}},
                     ],
-                    "minimum_should_match": 1
+                    "minimum_should_match": 1,
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
-            "size": 10
-        }
+            "size": 10,
+        },
     )
     return result["hits"]["hits"]
 
@@ -1275,21 +1540,25 @@ def search_404_errors(minutes_ago=1):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                        {
+                            "term": {
+                                "kubernetes.container_name.keyword": "benchmarks-polaris"
+                            }
+                        },
                     ],
                     "should": [
-                        {"match": {"message": "\" 404"}},
+                        {"match": {"message": '" 404'}},
                         {"match": {"message": "not found"}},
                         {"match": {"message": "NoSuch"}},
                         {"match": {"message": "does not exist"}},
                     ],
-                    "minimum_should_match": 1
+                    "minimum_should_match": 1,
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
-            "size": 10
-        }
+            "size": 10,
+        },
     )
     return result["hits"]["hits"]
 
@@ -1304,23 +1573,27 @@ def search_409_errors(minutes_ago=1):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                        {
+                            "term": {
+                                "kubernetes.container_name.keyword": "benchmarks-polaris"
+                            }
+                        },
                     ],
                     "should": [
-                        {"match": {"message": "\" 409"}},
+                        {"match": {"message": '" 409'}},
                         {"match": {"message": "already exists"}},
                         {"match": {"message": "not empty"}},
                         {"match": {"message": "NamespaceNotEmpty"}},
                         {"match": {"message": "AlreadyExists"}},
                         {"match": {"message": "duplicate key"}},
                     ],
-                    "minimum_should_match": 1
+                    "minimum_should_match": 1,
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
-            "size": 10
-        }
+            "size": 10,
+        },
     )
     return result["hits"]["hits"]
 
@@ -1335,22 +1608,26 @@ def search_400_errors(minutes_ago=1):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                        {
+                            "term": {
+                                "kubernetes.container_name.keyword": "benchmarks-polaris"
+                            }
+                        },
                     ],
                     "should": [
-                        {"match": {"message": "\" 400"}},
+                        {"match": {"message": '" 400'}},
                         {"match": {"message": "Bad Request"}},
                         {"match": {"message": "validation"}},
                         {"match": {"message": "malformed"}},
                         {"match": {"message": "invalid"}},
                     ],
-                    "minimum_should_match": 1
+                    "minimum_should_match": 1,
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
-            "size": 10
-        }
+            "size": 10,
+        },
     )
     return result["hits"]["hits"]
 
@@ -1365,10 +1642,14 @@ def search_500_errors(minutes_ago=1):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                        {
+                            "term": {
+                                "kubernetes.container_name.keyword": "benchmarks-polaris"
+                            }
+                        },
                     ],
                     "should": [
-                        {"match": {"message": "\" 500"}},
+                        {"match": {"message": '" 500'}},
                         {"match": {"message": "NullPointerException"}},
                         {"match": {"message": "getRawLeafEntity"}},
                         {"match": {"message": "Internal Server Error"}},
@@ -1376,13 +1657,13 @@ def search_500_errors(minutes_ago=1):
                         {"match": {"message": "duplicate key"}},
                         {"match": {"message": "grant_records_pkey"}},
                     ],
-                    "minimum_should_match": 1
+                    "minimum_should_match": 1,
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
-            "size": 10
-        }
+            "size": 10,
+        },
     )
     return result["hits"]["hits"]
 
@@ -1397,7 +1678,11 @@ def search_db_errors(minutes_ago=1):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                        {
+                            "term": {
+                                "kubernetes.container_name.keyword": "benchmarks-polaris"
+                            }
+                        },
                     ],
                     "should": [
                         {"match": {"message": "connection"}},
@@ -1409,13 +1694,13 @@ def search_db_errors(minutes_ago=1):
                         {"match": {"message": "postmaster is accepting"}},
                         {"match": {"loggerName": "io.agroal.pool"}},
                     ],
-                    "minimum_should_match": 1
+                    "minimum_should_match": 1,
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
-            "size": 10
-        }
+            "size": 10,
+        },
     )
     return result["hits"]["hits"]
 
@@ -1430,15 +1715,19 @@ def search_all_errors(minutes_ago=1):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
-                        {"terms": {"level.keyword": ["ERROR", "WARN"]}}
+                        {
+                            "term": {
+                                "kubernetes.container_name.keyword": "benchmarks-polaris"
+                            }
+                        },
+                        {"terms": {"level.keyword": ["ERROR", "WARN"]}},
                     ]
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
-            "size": 20
-        }
+            "size": 20,
+        },
     )
     return result["hits"]["hits"]
 
@@ -1456,7 +1745,11 @@ def search_entity_version_errors(minutes_ago=5):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                        {
+                            "term": {
+                                "kubernetes.container_name.keyword": "benchmarks-polaris"
+                            }
+                        },
                     ],
                     "should": [
                         {"match": {"message": "EntityVersionMismatch"}},
@@ -1465,15 +1758,16 @@ def search_entity_version_errors(minutes_ago=5):
                         {"match": {"message": "optimistic lock"}},
                         {"match": {"message": "concurrent modification"}},
                     ],
-                    "minimum_should_match": 1
+                    "minimum_should_match": 1,
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
-            "size": 10
-        }
+            "size": 10,
+        },
     )
     return result["hits"]["hits"]
+
 
 def search_blocked_thread_errors(minutes_ago=2):
     """
@@ -1489,26 +1783,37 @@ def search_blocked_thread_errors(minutes_ago=2):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"term": {"kubernetes.container_name.keyword": "benchmarks-polaris"}},
+                        {
+                            "term": {
+                                "kubernetes.container_name.keyword": "benchmarks-polaris"
+                            }
+                        },
                     ],
                     "should": [
                         {"match": {"message": "has been blocked"}},
                         {"match": {"message": "BlockedThreadChecker"}},
-                        {"match": {"loggerName": "io.vertx.core.impl.BlockedThreadChecker"}},
+                        {
+                            "match": {
+                                "loggerName": "io.vertx.core.impl.BlockedThreadChecker"
+                            }
+                        },
                         {"match": {"message": "Thread blocked"}},
                     ],
-                    "minimum_should_match": 1
+                    "minimum_should_match": 1,
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "collapse": {"field": "sequence"},
-            "size": 10
-        }
+            "size": 10,
+        },
     )
     return result["hits"]["hits"]
+
+
 # ── Test result helper ────────────────────────────────────────
 class TestResult:
     """Lightweight pass/fail tracker for notebook test runs."""
+
     def __init__(self):
         self.results = {}
 
@@ -1518,7 +1823,7 @@ class TestResult:
         print(f"  {icon} {name}: {detail}")
 
     def summary(self):
-        total  = len(self.results)
+        total = len(self.results)
         passed = sum(1 for v in self.results.values() if v["passed"])
         failed = [k for k, v in self.results.items() if not v["passed"]]
         print(f"\n{'='*50}")
@@ -1526,5 +1831,6 @@ class TestResult:
         if failed:
             print(f"Failed: {', '.join(failed)}")
         return passed == total
+
 
 # (env banner is printed by init_env)

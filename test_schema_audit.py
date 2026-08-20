@@ -18,18 +18,10 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from schema_audit import (  # noqa: E402
-    EXPECTED_INDEXES,
-    INDEX_HYPOTHESES,
-    MIN_ROWS_FOR_VERDICT,
-    audit_statements,
-    check_hypotheses,
-    compare_schema,
-    explain_statement,
-    parse_param_list,
-    plan_summary,
-    rank_statements,
-)
+from schema_audit import (EXPECTED_INDEXES, INDEX_HYPOTHESES,  # noqa: E402
+                          MIN_ROWS_FOR_VERDICT, audit_statements,
+                          check_hypotheses, compare_schema, explain_statement,
+                          parse_param_list, plan_summary, rank_statements)
 
 
 # ----------------------------------------------------------------------

@@ -22,13 +22,14 @@ Notes:
     * Paths may be given as s3a://bucket/key or bucket/key or key — normalized internally.
 """
 
+import datetime
 import hashlib
 import hmac
-import datetime
+import io
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
+
 import requests
-import io
 
 
 class MinioREST:

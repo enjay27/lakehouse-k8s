@@ -18,19 +18,10 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from polaris_seed import (  # noqa: E402
-    COARSE_CATALOG_PRIVILEGES,
-    FULL_CATALOG_PRIVILEGES,
-    OWNER_ROLE_NAME,
-    Ledger,
-    SeedResult,
-    SeedSpec,
-    find_strays,
-    require_local,
-    seed,
-    teardown,
-    verify_counts,
-)
+from polaris_seed import (COARSE_CATALOG_PRIVILEGES,  # noqa: E402
+                          FULL_CATALOG_PRIVILEGES, OWNER_ROLE_NAME, Ledger,
+                          SeedResult, SeedSpec, find_strays, require_local,
+                          seed, teardown, verify_counts)
 
 
 # ----------------------------------------------------------------------

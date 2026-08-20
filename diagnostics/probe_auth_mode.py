@@ -125,7 +125,9 @@ def classify_issuer(iss, polaris_url):
 
 
 # ── probes ────────────────────────────────────────────────────
-def probe_internal_token_endpoint(token_endpoint, realm, client_id, client_secret, scope):
+def probe_internal_token_endpoint(
+    token_endpoint, realm, client_id, client_secret, scope
+):
     """POST client_credentials. Returns (response|None, error_string|None).
 
     A non-200 here is a RESULT, not a failure: if Polaris is configured for
@@ -331,7 +333,10 @@ def probe_rejected_token(polaris_url, realm):
     challenge = r.headers.get("WWW-Authenticate")
     kv("WWW-Authenticate", challenge or "<none>")
     if challenge and "realm" in challenge.lower():
-        kv("READING", "the challenge names a realm -- often identifies the external IdP")
+        kv(
+            "READING",
+            "the challenge names a realm -- often identifies the external IdP",
+        )
     kv("body", r.text[:200])
 
 
@@ -385,16 +390,22 @@ def probe_expiry_enforcement(polaris_url, realm, token, exp):
 
 # ── main ──────────────────────────────────────────────────────
 def main():
-    ap = argparse.ArgumentParser(description="Probe Polaris's authentication mode (read-only).")
+    ap = argparse.ArgumentParser(
+        description="Probe Polaris's authentication mode (read-only)."
+    )
     ap.add_argument("--env", default="local", help="init_env target (default: local)")
     ap.add_argument("--token-endpoint", help="override; e.g. Keycloak's token endpoint")
     ap.add_argument("--client-id", help="override; secret via PROBE_CLIENT_SECRET")
     ap.add_argument("--scope", default="PRINCIPAL_ROLE:ALL")
     ap.add_argument(
-        "--no-realm-header", action="store_true", help="omit Polaris-Realm (external IdP)"
+        "--no-realm-header",
+        action="store_true",
+        help="omit Polaris-Realm (external IdP)",
     )
     ap.add_argument(
-        "--expiry-check", action="store_true", help="sleep past exp and retry (needs short TTL)"
+        "--expiry-check",
+        action="store_true",
+        help="sleep past exp and retry (needs short TTL)",
     )
     args = ap.parse_args()
 
@@ -410,7 +421,9 @@ def main():
         None if args.client_id else ptu.ROOT_SECRET
     )
     if not client_secret:
-        sys.exit("ERROR: --client-id given without PROBE_CLIENT_SECRET in the environment.")
+        sys.exit(
+            "ERROR: --client-id given without PROBE_CLIENT_SECRET in the environment."
+        )
 
     token_endpoint = args.token_endpoint or f"{polaris_url}/api/catalog/v1/oauth/tokens"
 
@@ -429,7 +442,9 @@ def main():
     probe_rejected_token(polaris_url, realm)
 
     if args.expiry_check and payload and r is not None and r.status_code == 200:
-        probe_expiry_enforcement(polaris_url, realm, r.json()["access_token"], payload.get("exp"))
+        probe_expiry_enforcement(
+            polaris_url, realm, r.json()["access_token"], payload.get("exp")
+        )
 
     head("SUMMARY -- what to record before designing the Spark test")
     if r is None or err:
@@ -447,7 +462,9 @@ def main():
         print(f"  Issuer : {iss}")
         print(f"  Verdict: {classify_issuer(iss, polaris_url)}")
         print("  If INTERNAL and production is Keycloak, local does NOT mirror prod --")
-        print("  add a local Keycloak before test 1/2, or accept non-transferable results.")
+        print(
+            "  add a local Keycloak before test 1/2, or accept non-transferable results."
+        )
     print()
 
 

@@ -171,6 +171,7 @@ def parse_mdc(line):
     tid = _MDC_TRACE_ID.search(line)
     return (rid.group("v") if rid else None, tid.group("v") if tid else None)
 
+
 #: PostgreSQL log lines. `execute <unnamed>:` is the extended-query-protocol
 #: form the JDBC driver produces; `statement:` is the simple-protocol form.
 #: Both appear in practice -- the driver switches after `prepareThreshold`
@@ -864,8 +865,12 @@ def parse_pg_log(text, start_seq=0):
         # grant_records OR-delete arrived as the unparseable fragment
         # "DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE (" and then failed
         # EXPLAIN with "syntax error at end of input".
-        if (line[:1] in ("\t", " ") and line.strip()
-                and not _PG_PID.search(line) and last_by_pid.get(pid) is not None):
+        if (
+            line[:1] in ("\t", " ")
+            and line.strip()
+            and not _PG_PID.search(line)
+            and last_by_pid.get(pid) is not None
+        ):
             cont = last_by_pid[pid]
             cont.sql = cont.sql + " " + line.strip()
             cont.table = extract_table(cont.sql) or cont.table

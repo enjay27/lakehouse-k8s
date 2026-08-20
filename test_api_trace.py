@@ -17,28 +17,13 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from api_trace import (  # noqa: E402
-    REDACTED,
-    MinioOp,
-    SqlStatement,
-    StringStream,
-    Tracer,
-    TraceRecord,
-    api_minio_matrix,
-    api_table_matrix,
-    extract_table,
-    extract_verb,
-    normalize_sql,
-    parse_minio_trace,
-    parse_pg_log,
-    parse_polaris_log,
-    records_to_rows,
-    redact_params,
-    scrub_text,
-    split_query_message,
-    statement_inventory,
-    unknown_tables,
-)
+from api_trace import (REDACTED, MinioOp, SqlStatement,  # noqa: E402
+                       StringStream, Tracer, TraceRecord, api_minio_matrix,
+                       api_table_matrix, extract_table, extract_verb,
+                       normalize_sql, parse_minio_trace, parse_pg_log,
+                       parse_polaris_log, records_to_rows, redact_params,
+                       scrub_text, split_query_message, statement_inventory,
+                       unknown_tables)
 
 # ----------------------------------------------------------------------
 # fixtures — real line shapes

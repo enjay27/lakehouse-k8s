@@ -864,9 +864,15 @@ def build_assert_table_uuid_requirement(uuid):
     return {"type": "assert-table-uuid", "uuid": uuid}
 
 
-def build_scan_report(table_name, snapshot_id, schema_id=0,
-                      field_ids=(1, 2), field_names=("id", "val"),
-                      metrics=None, metadata=None):
+def build_scan_report(
+    table_name,
+    snapshot_id,
+    schema_id=0,
+    field_ids=(1, 2),
+    field_names=("id", "val"),
+    metrics=None,
+    metadata=None,
+):
     """Build a spec-valid ScanReport for POST .../tables/{table}/metrics.
 
     Verified against apache/iceberg open-api/rest-catalog-open-api.yaml. SEVEN
@@ -900,9 +906,11 @@ def build_scan_report(table_name, snapshot_id, schema_id=0,
         "schema-id": schema_id,
         "projected-field-ids": list(field_ids),
         "projected-field-names": list(field_names),
-        "metrics": metrics or {
+        "metrics": metrics
+        or {
             "total-planning-duration": {
-                "time-unit": "nanoseconds", "count": 1,
+                "time-unit": "nanoseconds",
+                "count": 1,
                 "total-duration": 1_000_000,
             },
             "result-data-files": {"unit": "count", "value": 0},
@@ -912,8 +920,9 @@ def build_scan_report(table_name, snapshot_id, schema_id=0,
     }
 
 
-def build_commit_report(table_name, snapshot_id, sequence_number,
-                        operation="append", metrics=None):
+def build_commit_report(
+    table_name, snapshot_id, sequence_number, operation="append", metrics=None
+):
     """Build a spec-valid CommitReport (the other report-type).
 
     Required: table-name, snapshot-id, sequence-number, operation, metrics.
@@ -924,9 +933,11 @@ def build_commit_report(table_name, snapshot_id, sequence_number,
         "snapshot-id": snapshot_id,
         "sequence-number": sequence_number,
         "operation": operation,
-        "metrics": metrics or {
+        "metrics": metrics
+        or {
             "total-duration": {
-                "time-unit": "nanoseconds", "count": 1,
+                "time-unit": "nanoseconds",
+                "count": 1,
                 "total-duration": 1_000_000,
             },
             "added-data-files": {"unit": "count", "value": 0},

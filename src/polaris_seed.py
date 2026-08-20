@@ -357,9 +357,9 @@ def _attempt(call, what, result, exists=None, accept=(409,), retries=6):
     """
     delay = 0.25
     resp = None
-    first_fail = None          # the status that TRIGGERED the retry, not the
-                               # 201 that ended it -- the transient code is the
-                               # diagnostic signal worth keeping.
+    first_fail = None  # the status that TRIGGERED the retry, not the
+    # 201 that ended it -- the transient code is the
+    # diagnostic signal worth keeping.
     for attempt in range(retries + 1):
         resp = call()
         result.calls += 1
@@ -374,8 +374,12 @@ def _attempt(call, what, result, exists=None, accept=(409,), retries=6):
         # attempt). Success, and retrying would loop forever against the PK.
         if _is_duplicate(resp):
             result.lag_recovered.append(
-                {"what": what, "status": resp.status_code,
-                 "retries": attempt, "reason": "duplicate"}
+                {
+                    "what": what,
+                    "status": resp.status_code,
+                    "retries": attempt,
+                    "reason": "duplicate",
+                }
             )
             return True, resp
 
@@ -391,8 +395,7 @@ def _attempt(call, what, result, exists=None, accept=(409,), retries=6):
             try:
                 if exists():
                     result.lag_recovered.append(
-                        {"what": what, "status": resp.status_code,
-                         "retries": attempt}
+                        {"what": what, "status": resp.status_code, "retries": attempt}
                     )
                     return True, resp
             except Exception:  # noqa: BLE001 -- the check can hit the lag too
@@ -465,8 +468,7 @@ def _ensure_catalog(pc, catalog, bucket, minio_endpoint, result, attempts=3):
         result.calls += 1
         if not _ok(c, 409) and not _is_duplicate(c):
             if attempt == attempts - 1:
-                raise RuntimeError(
-                    f"create_catalog {c.status_code}: {c.text[:200]}")
+                raise RuntimeError(f"create_catalog {c.status_code}: {c.text[:200]}")
             time.sleep(0.5 * (attempt + 1))
             continue
         # Give the grant bootstrap a moment to become visible before judging it.
@@ -475,7 +477,8 @@ def _ensure_catalog(pc, catalog, bucket, minio_endpoint, result, attempts=3):
     if not _catalog_is_complete(pc, catalog):
         raise RuntimeError(
             f"catalog {catalog} still has no catalog_admin after {attempts} "
-            "create attempts")
+            "create attempts"
+        )
 
 
 def seed_user(pc, ic, spec, i, result, bucket=None, minio_endpoint=None):
@@ -499,56 +502,80 @@ def seed_user(pc, ic, spec, i, result, bucket=None, minio_endpoint=None):
         return r
 
     try:
-        step(lambda: pc.create_principal(n["principal"]),
-             "create_principal",
-             lambda: pc.get_principal(n["principal"]).status_code < 300)
+        step(
+            lambda: pc.create_principal(n["principal"]),
+            "create_principal",
+            lambda: pc.get_principal(n["principal"]).status_code < 300,
+        )
 
-        step(lambda: pc.create_principal_role(n["principal_role"]),
-             "create_principal_role",
-             lambda: pc.get_principal_role(n["principal_role"]).status_code < 300)
+        step(
+            lambda: pc.create_principal_role(n["principal_role"]),
+            "create_principal_role",
+            lambda: pc.get_principal_role(n["principal_role"]).status_code < 300,
+        )
 
-        step(lambda: pc.assign_principal_role_to_principal(
-                 n["principal"], n["principal_role"]),
-             "assign_principal_role")
+        step(
+            lambda: pc.assign_principal_role_to_principal(
+                n["principal"], n["principal_role"]
+            ),
+            "assign_principal_role",
+        )
 
         # NOT a plain `step`: existence is not sufficient evidence that a
         # catalog was created properly. See _ensure_catalog.
         _ensure_catalog(pc, n["catalog"], bucket, minio_endpoint, result)
 
-        step(lambda: pc.create_catalog_role(n["catalog"], n["catalog_role"]),
-             "create_catalog_role",
-             lambda: any(x.get("name") == n["catalog_role"] for x in
-                         pc.list_catalog_roles(n["catalog"]).json().get("roles", [])))
+        step(
+            lambda: pc.create_catalog_role(n["catalog"], n["catalog_role"]),
+            "create_catalog_role",
+            lambda: any(
+                x.get("name") == n["catalog_role"]
+                for x in pc.list_catalog_roles(n["catalog"]).json().get("roles", [])
+            ),
+        )
 
-        step(lambda: pc.assign_catalog_role_to_principal_role(
-                 n["catalog"], n["principal_role"], n["catalog_role"]),
-             "assign_catalog_role")
+        step(
+            lambda: pc.assign_catalog_role_to_principal_role(
+                n["catalog"], n["principal_role"], n["catalog_role"]
+            ),
+            "assign_catalog_role",
+        )
 
         for priv in spec.privileges:
             ok, r = _attempt(
                 lambda priv=priv: pc.grant_privilege(
-                    n["catalog"], n["catalog_role"], priv),
-                f"grant_privilege {priv}", result)
+                    n["catalog"], n["catalog_role"], priv
+                ),
+                f"grant_privilege {priv}",
+                result,
+            )
             if not ok:
                 # A rejected privilege NAME is data, not a fatal error -- record
                 # it and keep going rather than losing the whole run.
                 result.invalid_privileges.append(priv)
 
         for ns in n["namespaces"]:
-            step(lambda ns=ns: ic.create_namespace(n["catalog"], ns),
-                 f"create_namespace {ns}",
-                 lambda ns=ns: ic.namespace_exists(n["catalog"], ns))
+            step(
+                lambda ns=ns: ic.create_namespace(n["catalog"], ns),
+                f"create_namespace {ns}",
+                lambda ns=ns: ic.namespace_exists(n["catalog"], ns),
+            )
 
             if not spec.create_tables:
                 continue
             for tbl in n["tables"]:
-                step(lambda ns=ns, tbl=tbl: ic.create_table(
-                         n["catalog"], ns, _table_payload(tbl)),
-                     f"create_table {ns}.{tbl}",
-                     lambda ns=ns, tbl=tbl: ic.table_exists(n["catalog"], ns, tbl))
+                step(
+                    lambda ns=ns, tbl=tbl: ic.create_table(
+                        n["catalog"], ns, _table_payload(tbl)
+                    ),
+                    f"create_table {ns}.{tbl}",
+                    lambda ns=ns, tbl=tbl: ic.table_exists(n["catalog"], ns, tbl),
+                )
         return True
     except Exception as exc:  # noqa: BLE001 -- one bad user must not kill the seed
-        result.failed_users.append({"index": i, "error": f"{type(exc).__name__}: {exc}"})
+        result.failed_users.append(
+            {"index": i, "error": f"{type(exc).__name__}: {exc}"}
+        )
         return False
 
 
@@ -572,9 +599,17 @@ def _table_payload(name):
     }
 
 
-def seed(pc, ic, spec=None, ledger_path="seed_ledger.json", bucket=None,
-         minio_endpoint=None, progress_every=25, on_progress=None,
-         extra_allowed_hosts=()):
+def seed(
+    pc,
+    ic,
+    spec=None,
+    ledger_path="seed_ledger.json",
+    bucket=None,
+    minio_endpoint=None,
+    progress_every=25,
+    on_progress=None,
+    extra_allowed_hosts=(),
+):
     """Build the fixture. Resumable — re-run with the same ledger to continue.
 
     Args:
@@ -658,8 +693,15 @@ def teardown_user(pc, spec, i, result):
     return True
 
 
-def teardown(pc, ledger_path="seed_ledger.json", spec=None, progress_every=25,
-             on_progress=None, extra_allowed_hosts=(), keep_ledger=False):
+def teardown(
+    pc,
+    ledger_path="seed_ledger.json",
+    spec=None,
+    progress_every=25,
+    on_progress=None,
+    extra_allowed_hosts=(),
+    keep_ledger=False,
+):
     """Delete everything the ledger records, then clear it.
 
     Works from the LEDGER, not from a name sweep — see `Ledger`. Users are
@@ -756,6 +798,7 @@ def find_strays(pc, prefix="user"):
     Returns:
         dict: {principals, principal_roles, catalogs} of matching names.
     """
+
     def _names(resp, key):
         if resp.status_code >= 300:
             return []

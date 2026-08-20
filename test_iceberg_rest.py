@@ -20,14 +20,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from iceberg_rest import (  # noqa: E402
-    DELEGATION_VENDED_CREDENTIALS,
-    IcebergREST,
-    build_assert_table_uuid_requirement,
-    build_create_table_payload,
-    build_schema,
-    build_set_properties_update,
-)
+from iceberg_rest import (DELEGATION_VENDED_CREDENTIALS,  # noqa: E402
+                          IcebergREST, build_assert_table_uuid_requirement,
+                          build_create_table_payload, build_schema,
+                          build_set_properties_update)
 
 BASE = "http://192.168.139.2:8181"
 CAT_BASE = f"{BASE}/api/catalog/v1"

@@ -113,13 +113,13 @@ def test_diff_live_flags_invalid_index():
 
 
 def test_diff_live_flags_row_drift_and_reports_the_delta():
-    conn = _Conn((True, True), {**COUNTS, 'entities': 7280})
+    conn = _Conn((True, True), {**COUNTS, "entities": 7280})
     problems = rm.diff_live(conn, _manifest())
     assert any("+7" in p and "entities" in p for p in problems)
 
 
 def test_tolerance_absorbs_small_drift():
-    conn = _Conn((True, True), {**COUNTS, 'entities': 7280})
+    conn = _Conn((True, True), {**COUNTS, "entities": 7280})
     assert rm.diff_live(conn, _manifest(), tolerance=10) == []
 
 
@@ -131,7 +131,7 @@ def test_index_not_checked_when_not_left_in_place():
 
 
 def test_require_live_match_raises_listing_every_problem():
-    conn = _Conn(None, {**COUNTS, 'entities': 9999})
+    conn = _Conn(None, {**COUNTS, "entities": 9999})
     with pytest.raises(AssertionError) as e:
         rm.require_live_match(conn, _manifest())
     msg = str(e.value)

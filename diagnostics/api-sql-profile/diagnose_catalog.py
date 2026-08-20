@@ -44,11 +44,11 @@ while not (REPO / "src").is_dir() and REPO != REPO.parent:
     REPO = REPO.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from polaris_rest import PolarisREST                       # noqa: E402
-from polaris_seed import SeedSpec                          # noqa: E402
+from polaris_rest import PolarisREST  # noqa: E402
+from polaris_seed import SeedSpec  # noqa: E402
 
 POLARIS_URL = os.environ.get("POLARIS_URL", "http://192.168.139.2:8181")
-REALM       = os.environ.get("POLARIS_REALM", "POLARIS")
+REALM = os.environ.get("POLARIS_REALM", "POLARIS")
 ROOT_CLIENT = os.environ.get("POLARIS_ROOT_CLIENT", "root")
 ROOT_SECRET = os.environ.get("POLARIS_ROOT_SECRET", "polaris-secret")
 
@@ -91,8 +91,9 @@ def probe(pc, spec, i, label):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("indices", nargs="+", type=int, help="failing user indices")
-    ap.add_argument("--good", type=int, default=1,
-                    help="index of a known-good user for comparison")
+    ap.add_argument(
+        "--good", type=int, default=1, help="index of a known-good user for comparison"
+    )
     ap.add_argument("--prefix", default="user")
     args = ap.parse_args()
 

@@ -3,44 +3,51 @@
 # GMS: http://192.168.139.2:8080
 # ============================================================
 
-import requests
 import json
-import time
 import subprocess
+import time
+
+import requests
 
 # ── Connection ───────────────────────────────────────────────
-DATAHUB_URL   = "http://192.168.139.2:8080"
-FRONTEND_URL  = "http://192.168.139.2:9002"
-DATAHUB_ES    = "http://192.168.139.2:9200"   # opensearch-cluster-master-lb
-NAMESPACE     = "datahub-hynix"
+DATAHUB_URL = "http://192.168.139.2:8080"
+FRONTEND_URL = "http://192.168.139.2:9002"
+DATAHUB_ES = "http://192.168.139.2:9200"  # opensearch-cluster-master-lb
+NAMESPACE = "datahub-hynix"
 
 # ── Default credentials ───────────────────────────────────────
-DEFAULT_USER  = "datahub"
-DEFAULT_PASS  = "datahub"
+DEFAULT_USER = "datahub"
+DEFAULT_PASS = "datahub"
 
 # ── DataHub internal Elasticsearch ───────────────────────────
 # DataHub uses opensearch-cluster-master via LoadBalancer
 # DATAHUB_ES defined above in Connection section
 
+
 def datahub_es_indices():
     """List DataHub Elasticsearch indices."""
-    r = requests.get(f"{DATAHUB_ES}/_cat/indices?h=index,health,status,docs.count&s=index")
+    r = requests.get(
+        f"{DATAHUB_ES}/_cat/indices?h=index,health,status,docs.count&s=index"
+    )
     return r.text
+
 
 def datahub_es_health():
     """Check DataHub Elasticsearch cluster health."""
     r = requests.get(f"{DATAHUB_ES}/_cluster/health")
     return r.json()
 
+
 # ── OpenSearch ────────────────────────────────────────────────
 import opensearchpy
 from opensearchpy import OpenSearch
 
-OS_HOST   = "192.168.194.1"
-OS_PORT   = 9200
-OS_USER   = "admin"
-OS_PASS   = "Str0ngP@ssw0rd123!"
+OS_HOST = "192.168.194.1"
+OS_PORT = 9200
+OS_USER = "admin"
+OS_PASS = "Str0ngP@ssw0rd123!"
 LOG_INDEX = "k8s-logs-*"
+
 
 def os_client():
     return OpenSearch(
@@ -50,6 +57,7 @@ def os_client():
         verify_certs=False,
         ssl_show_warn=False,
     )
+
 
 # ── Auth ──────────────────────────────────────────────────────
 def get_session(username=DEFAULT_USER, password=DEFAULT_PASS):
@@ -65,12 +73,14 @@ def get_session(username=DEFAULT_USER, password=DEFAULT_PASS):
     assert r.status_code == 200, f"Login failed: {r.status_code} {r.text}"
     return session
 
+
 def get_token(username=DEFAULT_USER, password=DEFAULT_PASS):
     """Login via frontend — returns raw response (for status check)."""
     return requests.post(
         f"{FRONTEND_URL}/logIn",
         json={"username": username, "password": password},
     )
+
 
 def graphql(query, variables=None, session=None):
     """
@@ -85,6 +95,7 @@ def graphql(query, variables=None, session=None):
         json={"query": query, "variables": variables or {}},
     )
     return r
+
 
 def get_access_token(username=DEFAULT_USER, password=DEFAULT_PASS):
     """
@@ -105,8 +116,7 @@ def get_access_token(username=DEFAULT_USER, password=DEFAULT_PASS):
             "Content-Type": "application/json",
             "X-RestLi-Protocol-Version": "2.0.0",
         },
-        json={
-            "query": """
+        json={"query": """
                 mutation {
                     createAccessToken(input: {
                         type: PERSONAL,
@@ -117,8 +127,7 @@ def get_access_token(username=DEFAULT_USER, password=DEFAULT_PASS):
                         accessToken
                     }
                 }
-            """
-        }
+            """},
     )
     if r.status_code == 200:
         data = r.json()
@@ -128,12 +137,14 @@ def get_access_token(username=DEFAULT_USER, password=DEFAULT_PASS):
     # Fallback: use session cookie directly on GMS
     return session_cookie
 
+
 def gms_headers(token):
     """Return GMS API headers with Bearer token."""
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+
 
 def frontend_headers(username=DEFAULT_USER, password=DEFAULT_PASS):
     """Return frontend session headers (cookie-based)."""
@@ -145,12 +156,14 @@ def frontend_headers(username=DEFAULT_USER, password=DEFAULT_PASS):
         "Content-Type": "application/json",
     }
 
+
 def auth_headers(token):
     """Return headers with Bearer token."""
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+
 
 # ── GraphQL helper ────────────────────────────────────────────
 def gql(query, variables=None, token=None):
@@ -163,15 +176,18 @@ def gql(query, variables=None, token=None):
     )
     return r
 
+
 # ── Health check ──────────────────────────────────────────────
 def health_check():
     """Check DataHub GMS health. Endpoint: /health"""
     return requests.get(f"{DATAHUB_URL}/health", timeout=5)
 
+
 # ── OpenSearch search functions ───────────────────────────────
 def wait_for_logs(seconds=10):
     print(f"⏳ Waiting {seconds}s for logs to reach OpenSearch...")
     time.sleep(seconds)
+
 
 def print_logs(hits):
     if not hits:
@@ -180,7 +196,7 @@ def print_logs(hits):
     print(f"✅ Found {len(hits)} log entries:\n")
     for h in hits:
         s = h["_source"]
-        ts  = s.get("@timestamp", "")[:19]
+        ts = s.get("@timestamp", "")[:19]
         lvl = s.get("level", "?")
         lgr = s.get("logger", s.get("loggerName", "?"))
         msg = s.get("message", "")[:120]
@@ -188,6 +204,7 @@ def print_logs(hits):
         print(f"  [{ts}] {lvl:5} | {ctr} | {lgr}")
         print(f"         {msg}")
         print()
+
 
 def search_datahub_errors(minutes_ago=2, container="datahub-gms"):
     """Find all ERROR/WARN logs from DataHub container."""
@@ -206,9 +223,10 @@ def search_datahub_errors(minutes_ago=2, container="datahub-gms"):
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "size": 10,
-        }
+        },
     )
     return result["hits"]["hits"]
+
 
 def search_datahub_auth_errors(minutes_ago=2):
     """Find DataHub auth failure logs."""
@@ -234,9 +252,10 @@ def search_datahub_auth_errors(minutes_ago=2):
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "size": 10,
-        }
+        },
     )
     return result["hits"]["hits"]
+
 
 def search_datahub_kafka_errors(minutes_ago=5):
     """Find DataHub Kafka consumer errors."""
@@ -248,22 +267,33 @@ def search_datahub_kafka_errors(minutes_ago=5):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"bool": {
-                            "should": [
-                                {"term": {"kubernetes.container_name.keyword": "datahub-mae-consumer"}},
-                                {"term": {"kubernetes.container_name.keyword": "datahub-mce-consumer"}},
-                            ],
-                            "minimum_should_match": 1,
-                        }},
+                        {
+                            "bool": {
+                                "should": [
+                                    {
+                                        "term": {
+                                            "kubernetes.container_name.keyword": "datahub-mae-consumer"
+                                        }
+                                    },
+                                    {
+                                        "term": {
+                                            "kubernetes.container_name.keyword": "datahub-mce-consumer"
+                                        }
+                                    },
+                                ],
+                                "minimum_should_match": 1,
+                            }
+                        },
                         {"term": {"level.keyword": "ERROR"}},
                     ]
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "size": 10,
-        }
+        },
     )
     return result["hits"]["hits"]
+
 
 def search_datahub_ingestion_errors(minutes_ago=5):
     """Find DataHub ingestion failure logs."""
@@ -288,9 +318,10 @@ def search_datahub_ingestion_errors(minutes_ago=5):
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "size": 10,
-        }
+        },
     )
     return result["hits"]["hits"]
+
 
 def search_datahub_all_errors(minutes_ago=2):
     """Find ALL DataHub errors across all components."""
@@ -302,42 +333,60 @@ def search_datahub_all_errors(minutes_ago=2):
                 "bool": {
                     "must": [
                         {"range": {"@timestamp": {"gte": f"now-{minutes_ago}m"}}},
-                        {"bool": {
-                            "should": [
-                                {"term": {"kubernetes.container_name.keyword": "datahub-gms"}},
-                                {"term": {"kubernetes.container_name.keyword": "datahub-mae-consumer"}},
-                                {"term": {"kubernetes.container_name.keyword": "datahub-mce-consumer"}},
-                            ],
-                            "minimum_should_match": 1,
-                        }},
+                        {
+                            "bool": {
+                                "should": [
+                                    {
+                                        "term": {
+                                            "kubernetes.container_name.keyword": "datahub-gms"
+                                        }
+                                    },
+                                    {
+                                        "term": {
+                                            "kubernetes.container_name.keyword": "datahub-mae-consumer"
+                                        }
+                                    },
+                                    {
+                                        "term": {
+                                            "kubernetes.container_name.keyword": "datahub-mce-consumer"
+                                        }
+                                    },
+                                ],
+                                "minimum_should_match": 1,
+                            }
+                        },
                         {"terms": {"level.keyword": ["ERROR", "WARN"]}},
                     ]
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "size": 20,
-        }
+        },
     )
     return result["hits"]["hits"]
+
 
 def kubectl(cmd):
     """Run kubectl command and return output."""
     result = subprocess.run(
-        f"kubectl {cmd}",
-        shell=True, capture_output=True, text=True
+        f"kubectl {cmd}", shell=True, capture_output=True, text=True
     )
     print(result.stdout)
     if result.returncode != 0:
         print(f"stderr: {result.stderr}")
     return result
 
+
 def gms_pod():
     """Get current GMS pod name."""
     result = subprocess.run(
         "kubectl get pods -n datahub-hynix | grep datahub-gms | grep Running | awk '{print $1}'",
-        shell=True, capture_output=True, text=True
+        shell=True,
+        capture_output=True,
+        text=True,
     )
     return result.stdout.strip()
+
 
 print("✅ DataHub test utils loaded")
 print(f"   GMS: {DATAHUB_URL}")

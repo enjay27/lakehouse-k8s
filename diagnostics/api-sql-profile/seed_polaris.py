@@ -51,25 +51,26 @@ while not (REPO / "src").is_dir() and REPO != REPO.parent:
     REPO = REPO.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from iceberg_rest import IcebergREST                      # noqa: E402
-from polaris_rest import PolarisREST                      # noqa: E402
-from polaris_seed import (                                # noqa: E402
-    SeedSpec, find_strays, seed, teardown, verify_counts,
-)
+from iceberg_rest import IcebergREST  # noqa: E402
+from polaris_rest import PolarisREST  # noqa: E402
+from polaris_seed import (SeedSpec, find_strays, seed, teardown,  # noqa: E402
+                          verify_counts)
 
 # --- local cluster; secrets from env with visible defaults -------------------
-POLARIS_URL    = os.environ.get("POLARIS_URL", "http://192.168.139.2:8181")
-REALM          = os.environ.get("POLARIS_REALM", "POLARIS")
-ROOT_CLIENT    = os.environ.get("POLARIS_ROOT_CLIENT", "root")
-ROOT_SECRET    = os.environ.get("POLARIS_ROOT_SECRET", "polaris-secret")
+POLARIS_URL = os.environ.get("POLARIS_URL", "http://192.168.139.2:8181")
+REALM = os.environ.get("POLARIS_REALM", "POLARIS")
+ROOT_CLIENT = os.environ.get("POLARIS_ROOT_CLIENT", "root")
+ROOT_SECRET = os.environ.get("POLARIS_ROOT_SECRET", "polaris-secret")
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://192.168.139.2:9000")
-BUCKET         = os.environ.get("MINIO_BUCKET", "data-catalog-bucket")
+BUCKET = os.environ.get("MINIO_BUCKET", "data-catalog-bucket")
 
 
 def ledger_path():
     """The same file the notebooks use, wherever their capture dir landed."""
-    for c in (HERE / "capture" / "seed_ledger.json",
-              REPO / "capture" / "seed_ledger.json"):
+    for c in (
+        HERE / "capture" / "seed_ledger.json",
+        REPO / "capture" / "seed_ledger.json",
+    ):
         if c.exists():
             return c
     d = HERE / "capture"
@@ -99,18 +100,26 @@ def make_progress(total):
         el = time.time() - t0
         rate = done / el if el else 0
         eta = (total - done) / rate if rate else 0
-        print(f"  {done:>5}/{total}  {el:6.0f}s elapsed  ~{eta:5.0f}s left  "
-              f"{result.calls / max(el, 0.001):5.0f} calls/s", flush=True)
+        print(
+            f"  {done:>5}/{total}  {el:6.0f}s elapsed  ~{eta:5.0f}s left  "
+            f"{result.calls / max(el, 0.001):5.0f} calls/s",
+            flush=True,
+        )
 
     return on_progress
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--users", type=int, default=1000)
-    ap.add_argument("--tables", dest="tables", action="store_true",
-                    help="also create 10,000 Iceberg tables (slow)")
+    ap.add_argument(
+        "--tables",
+        dest="tables",
+        action="store_true",
+        help="also create 10,000 Iceberg tables (slow)",
+    )
     ap.add_argument("--no-tables", dest="tables", action="store_false")
     ap.set_defaults(tables=False)
     ap.add_argument("--prefix", default="user")
@@ -118,9 +127,13 @@ def main():
     ap.add_argument("--verify", action="store_true")
     args = ap.parse_args()
 
-    spec = SeedSpec(n_users=args.users, namespaces_per_catalog=2,
-                    tables_per_namespace=5, create_tables=args.tables,
-                    prefix=args.prefix)
+    spec = SeedSpec(
+        n_users=args.users,
+        namespaces_per_catalog=2,
+        tables_per_namespace=5,
+        create_tables=args.tables,
+        prefix=args.prefix,
+    )
     lp = ledger_path()
     pc, ic = connect()
 
@@ -134,8 +147,13 @@ def main():
         sys.exit(verify(pc, spec, args))
 
     if args.teardown:
-        res = teardown(pc, ledger_path=str(lp), spec=spec,
-                       progress_every=25, on_progress=make_progress(args.users))
+        res = teardown(
+            pc,
+            ledger_path=str(lp),
+            spec=spec,
+            progress_every=25,
+            on_progress=make_progress(args.users),
+        )
         print(res.summary())
         return
 
@@ -145,12 +163,16 @@ def main():
     # needs a storage config (default-base-location + allowedLocations) whether
     # or not any table is ever created inside it. Passing None when --no-tables
     # was my error and produced 50 identical TypeErrors.
-    res = seed(pc, ic, spec,
-               ledger_path=str(lp),
-               bucket=BUCKET,
-               minio_endpoint=MINIO_ENDPOINT,
-               progress_every=25,
-               on_progress=make_progress(args.users))
+    res = seed(
+        pc,
+        ic,
+        spec,
+        ledger_path=str(lp),
+        bucket=BUCKET,
+        minio_endpoint=MINIO_ENDPOINT,
+        progress_every=25,
+        on_progress=make_progress(args.users),
+    )
     print()
     print(res.summary())
     print(f"wall: {time.time() - t0:.0f}s")
@@ -162,6 +184,7 @@ def main():
         # buried the fact that two thirds of namespace creates were affected,
         # because 25 privilege grants per user diluted the denominator.
         from collections import Counter
+
         per_op = Counter(e["what"].split()[0] for e in res.lag_recovered)
         per_status = Counter(e["status"] for e in res.lag_recovered)
         attempted = {
@@ -173,8 +196,10 @@ def main():
             "assign_principal_role": args.users,
             "assign_catalog_role": args.users,
         }
-        print(f"\nrecovered from {len(res.lag_recovered)} lag failures "
-              f"(entity was there, or the retry succeeded):")
+        print(
+            f"\nrecovered from {len(res.lag_recovered)} lag failures "
+            f"(entity was there, or the retry succeeded):"
+        )
         for op, k in per_op.most_common():
             tot = attempted.get(op)
             rate = f"{100.0 * k / tot:5.1f}% of {tot}" if tot else ""
@@ -186,8 +211,10 @@ def main():
             # attempt of this same script. Counted as success, not failure.
             print(f"    of which {dups} were duplicate-key (already written,")
             print("      treated as done rather than retried into the PK)")
-        worst = max((100.0 * k / attempted[o] for o, k in per_op.items()
-                     if o in attempted), default=0)
+        worst = max(
+            (100.0 * k / attempted[o] for o, k in per_op.items() if o in attempted),
+            default=0,
+        )
         if worst > 25:
             print(f"    NOTE: {worst:.0f}% on the worst operation is high enough")
             print("    to distort timing measurements. Consider routing reads to")
@@ -197,8 +224,10 @@ def main():
         # Catalogs that existed but had no catalog_admin -- the entity write
         # committed while the grant bootstrap did not. Deleted and recreated,
         # because there is no endpoint that can add the missing role.
-        print(f"\nrepaired {len(res.repaired_catalogs)} half-created catalogs "
-              "(deleted + recreated):")
+        print(
+            f"\nrepaired {len(res.repaired_catalogs)} half-created catalogs "
+            "(deleted + recreated):"
+        )
         for c in res.repaired_catalogs[:10]:
             print(f"    {c}")
         if len(res.repaired_catalogs) > 10:
@@ -250,6 +279,7 @@ def _load_metastore(realm):
     finishes in under a second instead of several minutes.
     """
     import psycopg2
+
     conn = psycopg2.connect(**PG)
     conn.autocommit = True
     with conn.cursor() as cur:
@@ -260,11 +290,15 @@ def _load_metastore(realm):
         _load_metastore.node = f"{addr}{' (standby)' if standby else ' (primary)'}"
         cur.execute(
             f"SELECT id, catalog_id, parent_id, type_code, name "  # noqa: S608
-            f"FROM {SCHEMA}.entities WHERE realm_id = %s", (realm,))
+            f"FROM {SCHEMA}.entities WHERE realm_id = %s",
+            (realm,),
+        )
         ents = cur.fetchall()
         cur.execute(
             f"SELECT securable_catalog_id, count(*) FROM {SCHEMA}.grant_records "  # noqa: S608
-            f"WHERE realm_id = %s GROUP BY 1", (realm,))
+            f"WHERE realm_id = %s GROUP BY 1",
+            (realm,),
+        )
         grants = dict(cur.fetchall())
     conn.close()
     return ents, grants
@@ -283,15 +317,19 @@ def verify(pc, spec, args):
     realm = REALM
     try:
         ents, grants = _load_metastore(realm)
-        source = (f"PostgreSQL {PG['host']}:{PG['port']} -> "
-                  f"{getattr(_load_metastore, 'node', '?')}")
+        source = (
+            f"PostgreSQL {PG['host']}:{PG['port']} -> "
+            f"{getattr(_load_metastore, 'node', '?')}"
+        )
     except Exception as e:  # noqa: BLE001
         print(f"cannot reach PostgreSQL ({str(e).splitlines()[0][:90]})")
         print(f"  expected the Pgpool LoadBalancer at {PG['host']}:{PG['port']}")
         print("  override with PG_HOST / PG_PORT / PG_USER / PG_PASSWORD")
         print("\nfalling back to REST stray listing only:")
-        print("strays by prefix:", {k: len(v) for k, v in
-                                    find_strays(pc, prefix=args.prefix).items()})
+        print(
+            "strays by prefix:",
+            {k: len(v) for k, v in find_strays(pc, prefix=args.prefix).items()},
+        )
         return 1
 
     # Index by PARENT, not just by catalog. Every descendant of a catalog
@@ -299,8 +337,8 @@ def verify(pc, spec, args):
     # single per-catalog name set cannot tell ns1/tbl1 from ns2/tbl1. Table
     # names repeat in every namespace, so parent_id is the only thing that
     # distinguishes them.
-    by_name = {}                      # top-level entities, keyed by name
-    by_parent = {}                    # parent_id -> {name: id}
+    by_name = {}  # top-level entities, keyed by name
+    by_parent = {}  # parent_id -> {name: id}
     for _id, cat_id, parent, _tc, name in ents:
         by_name.setdefault(name, []).append((_id, cat_id))
         by_parent.setdefault(parent, {})[name] = _id
@@ -311,9 +349,19 @@ def verify(pc, spec, args):
         if hit:
             cat_ids[i] = hit[0][0]
 
-    missing = {k: [] for k in
-               ("principal", "principal_role", "catalog", "catalog_admin",
-                "owner_role", "namespaces", "tables", "grants")}
+    missing = {
+        k: []
+        for k in (
+            "principal",
+            "principal_role",
+            "catalog",
+            "catalog_admin",
+            "owner_role",
+            "namespaces",
+            "tables",
+            "grants",
+        )
+    }
     tables_found = 0
 
     for i in range(spec.start_index, spec.start_index + spec.n_users):
@@ -359,22 +407,33 @@ def verify(pc, spec, args):
     total_users = spec.n_users
     exp = spec.expected_counts()
     print(f"source  : {source}")
-    print(f"realm   : {realm}   users {spec.start_index}.."
-          f"{spec.start_index + total_users - 1}")
-    print(f"entities: {len(ents)} rows   grant_records: {sum(grants.values())} "
-          f"(expected ~{exp['entities_total']} / ~{exp['grant_records']})")
-    exp_tables = (total_users * spec.namespaces_per_catalog
-                  * spec.tables_per_namespace) if spec.create_tables else 0
-    print(f"tables  : {tables_found} found under seeded namespaces "
-          f"(expected {exp_tables})")
+    print(
+        f"realm   : {realm}   users {spec.start_index}.."
+        f"{spec.start_index + total_users - 1}"
+    )
+    print(
+        f"entities: {len(ents)} rows   grant_records: {sum(grants.values())} "
+        f"(expected ~{exp['entities_total']} / ~{exp['grant_records']})"
+    )
+    exp_tables = (
+        (total_users * spec.namespaces_per_catalog * spec.tables_per_namespace)
+        if spec.create_tables
+        else 0
+    )
+    print(
+        f"tables  : {tables_found} found under seeded namespaces "
+        f"(expected {exp_tables})"
+    )
     if not spec.create_tables:
         # State it rather than showing a silent zero: a metadata-only fixture is
         # a deliberate choice, and "0 tables" should not read as a failure.
         print("          fixture is metadata-only (--no-tables); tables are not")
         print("          expected. Re-run with --tables to build and check them.")
         if tables_found:
-            print(f"          NOTE: {tables_found} table(s) present anyway — "
-                  "left over from an earlier --tables run or the probe fixture.")
+            print(
+                f"          NOTE: {tables_found} table(s) present anyway — "
+                "left over from an earlier --tables run or the probe fixture."
+            )
     print()
     print(f"  {'check':<16} {'ok':>6} {'missing':>8}")
     ok_all = True
