@@ -626,6 +626,14 @@ def seed(
     Returns:
         SeedResult.
     """
+    # Order matters: the safety guard runs FIRST. Both checks raise before any
+    # work happens, so ordering cannot change what gets written -- but it does
+    # change which mistake the caller is told about, and pointing this at a
+    # shared company cluster is the more dangerous one. Validating arguments
+    # first meant a seed() aimed at dev/prod with an incomplete storage config
+    # reported the missing bucket, saying nothing about the wrong host.
+    require_local(pc.base_url, extra_allowed_hosts)
+
     # Fail once, before any work, rather than once per user. A missing storage
     # config is a caller mistake, not a per-user failure, and reporting it 1,000
     # times buries it.
@@ -637,7 +645,6 @@ def seed(
         )
 
     spec = spec or SeedSpec()
-    require_local(pc.base_url, extra_allowed_hosts)
 
     ledger = Ledger(ledger_path)
     if ledger.spec() is None:

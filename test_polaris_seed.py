@@ -18,10 +18,42 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from polaris_seed import (COARSE_CATALOG_PRIVILEGES,  # noqa: E402
-                          FULL_CATALOG_PRIVILEGES, OWNER_ROLE_NAME, Ledger,
-                          SeedResult, SeedSpec, find_strays, require_local,
-                          seed, teardown, verify_counts)
+from polaris_seed import COARSE_CATALOG_PRIVILEGES  # noqa: E402
+from polaris_seed import (
+    FULL_CATALOG_PRIVILEGES,
+    OWNER_ROLE_NAME,
+    Ledger,
+    SeedResult,
+    SeedSpec,
+    find_strays,
+    require_local,
+)
+from polaris_seed import seed as _seed  # noqa: E402
+from polaris_seed import teardown, verify_counts
+
+#: Storage config for the fake cluster. `seed()` requires a bucket and a MinIO
+#: endpoint even when `create_tables` is False, because every catalog carries a
+#: storage config regardless -- see the guard at the top of `seed()`. The fakes
+#: never dereference these, so any well-formed values do.
+FAKE_BUCKET = "test-bucket"
+FAKE_MINIO_ENDPOINT = "http://minio.local:9000"
+
+
+def seed(pc, ic, spec=None, ledger_path="seed_ledger.json", **kw):
+    """Call the real `seed()` with this suite's fake storage config.
+
+    A thin shim, not a reimplementation: it defaults `bucket` and
+    `minio_endpoint` and forwards everything else untouched, so a test can
+    still override either one, and any argument the real `seed()` grows in
+    future passes straight through.
+
+    It exists because the storage config is uninteresting to all but one of
+    these tests, and threading two identical literals through eighteen call
+    sites would bury what each test is actually asserting.
+    """
+    kw.setdefault("bucket", FAKE_BUCKET)
+    kw.setdefault("minio_endpoint", FAKE_MINIO_ENDPOINT)
+    return _seed(pc, ic, spec, ledger_path, **kw)
 
 
 # ----------------------------------------------------------------------
@@ -40,13 +72,24 @@ class Resp:
 class FakePolaris:
     """Stateful fake of the PolarisREST surface the seeder uses."""
 
-    def __init__(self, base_url="http://localhost:8181", reject_privs=(), fail_on=None):
+    def __init__(
+        self,
+        base_url="http://localhost:8181",
+        reject_privs=(),
+        fail_on=None,
+        half_create=(),
+    ):
         self.base_url = base_url
         self.principals, self.principal_roles, self.catalogs = set(), set(), set()
         self.catalog_roles, self.grants = set(), set()
         self.assignments = []
         self.reject_privs = set(reject_privs)
         self.fail_on = fail_on or {}
+        #: Catalog names whose `catalog_admin` bootstrap is skipped on the FIRST
+        #: create, reproducing the non-atomic catalog creation seen live (25 of
+        #: 1,000 under load): the entity commits, its admin role does not. The
+        #: recreate then succeeds, so `_ensure_catalog` can actually repair it.
+        self.half_create = set(half_create)
 
     def _maybe_fail(self, op, name):
         if self.fail_on.get(op) == name:
@@ -79,7 +122,29 @@ class FakePolaris:
         if name in self.catalogs:
             return Resp(409)
         self.catalogs.add(name)
+        # Real Polaris bootstraps `catalog_admin` as part of catalog creation.
+        # It is a SECOND write, and under load it can fail to commit while the
+        # entity write succeeds -- which is exactly what `half_create` models.
+        if name in self.half_create:
+            self.half_create.discard(name)  # only the first attempt is broken
+        else:
+            self.catalog_roles.add((name, "catalog_admin"))
         return Resp(200)
+
+    def get_catalog(self, name):
+        if name not in self.catalogs:
+            return Resp(404)
+        return Resp(200, {"name": name})
+
+    def list_catalog_roles(self, catalog):
+        if catalog not in self.catalogs:
+            return Resp(404)
+        roles = sorted(n for (c, n) in self.catalog_roles if c == catalog)
+        if "catalog_admin" not in roles:
+            # The live signature of a half-created catalog: the entity answers
+            # GET 200, but the caller holds no grant on it, so this 403s.
+            return Resp(403, {"error": "not authorized"})
+        return Resp(200, {"roles": [{"name": n} for n in roles]})
 
     def create_catalog_role(self, catalog, name):
         if catalog not in self.catalogs:
@@ -213,6 +278,20 @@ def test_seed_refuses_to_run_against_remote(small_spec, ledger_path):
         seed(p, FakeIceberg(p), small_spec, ledger_path)
 
 
+def test_remote_guard_beats_argument_validation(small_spec, ledger_path):
+    """A remote host is reported as such even when the call is ALSO malformed.
+
+    Both checks raise before any work, so ordering cannot change what gets
+    written -- but it decides which mistake the caller hears about, and the
+    wrong host is the more dangerous one. When the argument check ran first,
+    this call raised ValueError about the missing bucket and said nothing about
+    pointing at a company cluster.
+    """
+    p = FakePolaris(base_url="http://polaris.prod.company:8181")
+    with pytest.raises(AssertionError):
+        _seed(p, FakeIceberg(p), small_spec, ledger_path)  # no storage config
+
+
 def test_teardown_refuses_to_run_against_remote(ledger_path):
     p = FakePolaris(base_url="http://polaris.prod.company:8181")
     with pytest.raises(AssertionError):
@@ -265,10 +344,38 @@ def test_seed_creates_the_full_shape(small_spec, ledger_path):
     assert p.principals == {f"user{i}_principal" for i in (1, 2, 3)}
     assert p.principal_roles == {f"user{i}_principal_role" for i in (1, 2, 3)}
     assert p.catalogs == {f"user{i}_catalog" for i in (1, 2, 3)}
-    assert all(r[1] == OWNER_ROLE_NAME for r in p.catalog_roles)
+    # Each catalog carries exactly the role the seeder makes plus the
+    # `catalog_admin` Polaris bootstraps itself. This once asserted that every
+    # role was the owner role, which only held because the fake did not model
+    # the bootstrap at all.
+    assert p.catalog_roles == {
+        (f"user{i}_catalog", name)
+        for i in (1, 2, 3)
+        for name in (OWNER_ROLE_NAME, "catalog_admin")
+    }
     assert len(ic.namespaces) == 6
     assert len(ic.tables) == 12
     assert len(p.grants) == 3 * len(FULL_CATALOG_PRIVILEGES)
+
+
+def test_half_created_catalog_is_detected_and_rebuilt(small_spec, ledger_path):
+    """`_ensure_catalog`'s reason for existing, exercised end to end.
+
+    A catalog whose entity committed but whose `catalog_admin` bootstrap did
+    not answers GET 200 while `list_catalog_roles` 403s. Checking existence --
+    what this module did before -- records it as a success, and it is then
+    permanently unusable: nothing can be created inside it and no retry helps.
+    The only remedy is delete and recreate, which is what should happen here.
+    """
+    p = FakePolaris(half_create={"user2_catalog"})
+    res = seed(p, FakeIceberg(p), small_spec, ledger_path)
+
+    assert res.completed_users == 3
+    assert not res.failed_users
+    assert res.repaired_catalogs == ["user2_catalog"]
+    # Repaired means usable, not merely present.
+    assert ("user2_catalog", "catalog_admin") in p.catalog_roles
+    assert ("user2_catalog", OWNER_ROLE_NAME) in p.catalog_roles
 
 
 def test_owner_role_is_wired_to_the_users_principal_role(small_spec, ledger_path):

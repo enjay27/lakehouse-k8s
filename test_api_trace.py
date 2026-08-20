@@ -17,13 +17,28 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from api_trace import (REDACTED, MinioOp, SqlStatement,  # noqa: E402
-                       StringStream, Tracer, TraceRecord, api_minio_matrix,
-                       api_table_matrix, extract_table, extract_verb,
-                       normalize_sql, parse_minio_trace, parse_pg_log,
-                       parse_polaris_log, records_to_rows, redact_params,
-                       scrub_text, split_query_message, statement_inventory,
-                       unknown_tables)
+from api_trace import SqlStatement  # noqa: E402
+from api_trace import (
+    REDACTED,
+    MinioOp,
+    StringStream,
+    Tracer,
+    TraceRecord,
+    api_minio_matrix,
+    api_table_matrix,
+    extract_table,
+    extract_verb,
+    normalize_sql,
+    parse_minio_trace,
+    parse_pg_log,
+    parse_polaris_log,
+    records_to_rows,
+    redact_params,
+    scrub_text,
+    split_query_message,
+    statement_inventory,
+    unknown_tables,
+)
 
 # ----------------------------------------------------------------------
 # fixtures — real line shapes
@@ -279,14 +294,75 @@ def test_malformed_json_line_is_skipped_not_fatal():
 
 
 def test_split_query_message_handles_both_forms():
-    sql, params = split_query_message("SELECT 1 FROM t\n    a\n    b")
-    assert sql == "SELECT 1 FROM t" and params == "a, b"
+    # Parameters are newline-separated and four-space indented, and the split
+    # is decided by PLACEHOLDER COUNT: the trailing k lines are the parameters
+    # exactly when the SQL above them holds k `?`. The old fixture here was
+    # `"SELECT 1 FROM t\n    a\n    b"` -- zero placeholders but two parameter
+    # lines, a shape Polaris cannot emit -- and it asserted the first-line rule
+    # that the placeholder-count algorithm replaced.
+    sql, params = split_query_message(
+        "SELECT 1 FROM t WHERE a = ? AND b = ?\n    a\n    b"
+    )
+    assert sql == "SELECT 1 FROM t WHERE a = ? AND b = ?" and params == "a, b"
 
     sql, params = split_query_message("SELECT 1 FROM t [a, b]")
-    assert sql == "SELECT 1 FROM t" and params == "[a, b]"
+    assert sql == "SELECT 1 FROM t [a, b]".split(" [")[0] and params == "[a, b]"
 
     sql, params = split_query_message("COMMIT")
     assert sql == "COMMIT" and params is None
+
+
+def test_split_query_message_keeps_multiline_sql_intact():
+    """The regression the placeholder-count rule exists to prevent.
+
+    Polaris indents continuation lines of the SQL itself by four spaces --
+    exactly like parameter lines -- so indentation cannot separate them. Taking
+    only the first line truncated the grant_records OR-delete to
+    `DELETE FROM ... WHERE (`, which EXPLAIN then rejected with "syntax error
+    at end of input", and the statement was recorded as ERROR rather than
+    measured.
+    """
+    body = (
+        "DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE (\n"
+        "    realm_id = ? AND securable_catalog_id = ?)\n"
+        "    OR (realm_id = ? AND grantee_catalog_id = ?)\n"
+        "    POLARIS\n"
+        "    0\n"
+        "    POLARIS\n"
+        "    0"
+    )
+    sql, params = split_query_message(body)
+    assert sql.endswith("OR (realm_id = ? AND grantee_catalog_id = ?)")
+    assert sql.count("?") == 4
+    assert params == "POLARIS, 0, POLARIS, 0"
+
+
+def test_split_query_message_falls_through_rather_than_missplitting():
+    """No split satisfies the placeholder count -- so it must not invent one.
+
+    Self-checking by design: a shape never seen before falls back to the old
+    first-line rule rather than being confidently mis-split. Three placeholders
+    with a single trailing line satisfies no k, since dropping that line still
+    leaves three.
+    """
+    body = "SELECT 1 FROM t WHERE a = ? AND b = ? AND c = ?\n    x"
+    sql, params = split_query_message(body)
+    assert sql == "SELECT 1 FROM t WHERE a = ? AND b = ? AND c = ?"
+    assert params == "x"
+
+
+def test_split_query_message_resolves_ambiguity_toward_sql():
+    """Where two readings are possible, the placeholder count decides.
+
+    One placeholder and two trailing lines could be read as one parameter with
+    a stray line, or as SQL continuation plus one parameter. The rule picks the
+    largest k that balances, so `x` is treated as part of the statement. Worth
+    pinning: it is the behaviour that keeps multi-line SQL intact, and the same
+    behaviour would mis-read a parameter value that contained a newline.
+    """
+    sql, params = split_query_message("SELECT 1 FROM t WHERE a = ?\n    x\n    y")
+    assert sql == "SELECT 1 FROM t WHERE a = ?\n    x"
+    assert params == "y"
 
 
 def test_require_logger_false_is_more_permissive():

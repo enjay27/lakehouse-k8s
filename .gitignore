@@ -18,4 +18,4 @@ wheels/
 # Only common.yaml and *.example.yaml are tracked.
 src/config/*.yaml
 !src/config/common.yaml
-!src/config/*.example.yaml
+!src/config/*.example.yamlrbac/lib/

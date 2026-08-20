@@ -18,10 +18,19 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from schema_audit import (EXPECTED_INDEXES, INDEX_HYPOTHESES,  # noqa: E402
-                          MIN_ROWS_FOR_VERDICT, audit_statements,
-                          check_hypotheses, compare_schema, explain_statement,
-                          parse_param_list, plan_summary, rank_statements)
+from schema_audit import INDEX_HYPOTHESES  # noqa: E402
+from schema_audit import (
+    EXPECTED_INDEXES,
+    MIN_ROWS_FOR_VERDICT,
+    SCHEMA_VERSIONS_ACCEPTED,
+    audit_statements,
+    check_hypotheses,
+    compare_schema,
+    explain_statement,
+    parse_param_list,
+    plan_summary,
+    rank_statements,
+)
 
 
 # ----------------------------------------------------------------------
@@ -185,11 +194,29 @@ def test_index_matched_by_columns_not_name():
     assert r["missing_indexes"] == []
 
 
-def test_wrong_schema_version_flagged():
-    r = compare_schema(full_snapshot(version=3))
+def test_both_verified_schema_versions_are_accepted():
+    """v2 and v3 differ only by the `events` table.
+
+    Every index on `entities` and `grant_records` is byte-identical between
+    them, so both are valid baselines for an index audit and neither is drift.
+    This test used to assert that v3 WAS drift, from when the module pinned
+    version 2 -- which is the false DRIFT the pin produced on a real v3
+    deployment, now encoded as the expectation.
+    """
+    for version in SCHEMA_VERSIONS_ACCEPTED:
+        r = compare_schema(full_snapshot(version=version))
+        assert r["version_ok"] is True, version
+        assert r["verdict"] != "DRIFT", version
+
+
+def test_unverified_schema_version_flagged():
+    """An version outside the verified set is drift, because the index
+    expectations below it have not been checked against that version's DDL."""
+    unverified = max(SCHEMA_VERSIONS_ACCEPTED) + 1
+    r = compare_schema(full_snapshot(version=unverified))
     assert r["version_ok"] is False
     assert r["verdict"] == "DRIFT"
-    assert any("schema-v2" in n for n in r["notes"])
+    assert any(str(unverified) in n and "verified" in n for n in r["notes"])
 
 
 def test_events_table_recognised_as_event_listener_not_drift():
@@ -390,29 +417,57 @@ def test_explain_error_becomes_error_verdict():
 # ----------------------------------------------------------------------
 # hypotheses
 # ----------------------------------------------------------------------
-def test_grant_records_hypothesis_confirmed_by_seq_scan():
-    audit = [{"table": "grant_records", "verdict": "SEQ_SCAN", "sql": "SELECT ..."}]
+#: The real `loadAllGrantRecordsOnGrantee` statement, as captured.
+#:
+#: These tests used to pass a `"SELECT ..."` placeholder, which worked while
+#: `check_hypotheses` matched on the table name alone. It now also requires the
+#: statement to mention the hypothesis's predicate columns, because matching by
+#: table let unrelated statements stand in as evidence -- `entities` has a dozen
+#: well-indexed lookups, and the row-constructor-IN hypothesis was reported
+#: REFUTED on the strength of queries that say nothing about it. A placeholder
+#: matches no predicate, so these now have to carry the real SQL.
+GRANTEE_LOOKUP_SQL = (
+    "SELECT securable_catalog_id, securable_id, privilege_code "
+    "FROM POLARIS_SCHEMA.grant_records "
+    "WHERE realm_id = ? AND grantee_catalog_id = ? AND grantee_id = ?"
+)
+
+
+def _grantee_hypothesis(verdict, sql=GRANTEE_LOOKUP_SQL):
+    audit = [{"table": "grant_records", "verdict": verdict, "sql": sql}]
     res = check_hypotheses(None, audit)
-    grantee = next(h for h in res if h["id"] == "grant_records_by_grantee")
+    return next(h for h in res if h["id"] == "grant_records_by_grantee")
+
+
+def test_grant_records_hypothesis_confirmed_by_seq_scan():
+    grantee = _grantee_hypothesis("SEQ_SCAN")
     assert grantee["status"] == "CONFIRMED"
     assert grantee["severity"] == "high"
     assert "CREATE INDEX" in grantee["remedy"]
 
 
 def test_hypothesis_refuted_when_index_used():
-    audit = [{"table": "grant_records", "verdict": "INDEX_SCAN", "sql": "SELECT ..."}]
-    res = check_hypotheses(None, audit)
-    assert next(h for h in res if h["id"] == "grant_records_by_grantee")["status"] == (
-        "REFUTED"
-    )
+    assert _grantee_hypothesis("INDEX_SCAN")["status"] == "REFUTED"
 
 
 def test_hypothesis_inconclusive_when_table_too_small():
-    audit = [{"table": "grant_records", "verdict": "TOO_SMALL", "sql": "SELECT ..."}]
-    res = check_hypotheses(None, audit)
-    h = next(h for h in res if h["id"] == "grant_records_by_grantee")
+    h = _grantee_hypothesis("TOO_SMALL")
     assert h["status"] == "INCONCLUSIVE"
     assert "seed more data" in h["evidence"][0]
+
+
+def test_hypothesis_inconclusive_when_no_statement_matches_the_predicate():
+    """The guard the placeholder SQL above was silently tripping.
+
+    A `grant_records` statement that is not the grantee lookup is not evidence
+    about the grantee lookup, however damning its verdict looks.
+    """
+    h = _grantee_hypothesis(
+        "SEQ_SCAN",
+        sql="SELECT * FROM POLARIS_SCHEMA.grant_records WHERE securable_id = ?",
+    )
+    assert h["status"] == "INCONCLUSIVE"
+    assert "no captured statement matched" in h["evidence"][0]
 
 
 def test_hypothesis_inconclusive_when_no_statement_captured():
