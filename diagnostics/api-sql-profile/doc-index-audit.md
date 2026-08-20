@@ -1,6 +1,6 @@
 # Index Audit
 
-Generated 2026-08-19 17:35. Schema version 3, verdict **DRIFT**.
+Generated 2026-08-20 12:05. Schema version 3, verdict **DRIFT**.
 
 ## Schema drift
 
@@ -35,24 +35,52 @@ Generated 2026-08-19 17:35. Schema version 3, verdict **DRIFT**.
 
 | Verdict | Table | Verb | Calls | Rows | ms | Detail |
 |---|---|---|---|---|---|---|
-| ERROR | grant_records | DELETE | 6 | 40 | — |  |
-| NO_PARAMS | entities | SELECT | 129 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | SELECT | 112 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | SELECT | 70 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | grant_records | SELECT | 59 | 40 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | SELECT | 47 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | grant_records | SELECT | 23 | 40 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | UPDATE | 13 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | INSERT | 9 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | SELECT | 6 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | DELETE | 6 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | SELECT | 3 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | SELECT | 3 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | grant_records | INSERT | 3 | 40 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | policy_mapping_record | SELECT | 2 | 0 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| ERROR | grant_records | DELETE | 6 | 30013 | — |  |
+| ERROR | — | — | 504 | None | — |  |
+| ERROR | nodes | SELECT | 3 | 0 | — |  |
+| ERROR | — | SET | 35 | None | — |  |
+| ERROR | — | SELECT | 14 | None | — |  |
+| ERROR | nodes | SELECT | 12 | 0 | — |  |
+| ERROR | nodes | SELECT | 12 | 0 | — |  |
+| ERROR | nodes | SELECT | 4 | 0 | — |  |
+| ERROR | — | SELECT | 15 | None | — |  |
+| ERROR | nodes | SELECT | 5 | 0 | — |  |
+| ERROR | nodes | SELECT | 4 | 0 | — |  |
+| ERROR | nodes | SELECT | 3 | 0 | — |  |
+| ERROR | — | SET | 12 | None | — |  |
+| ERROR | — | — | 12 | None | — |  |
+| ERROR | nodes | SELECT | 7 | 0 | — |  |
+| ERROR | — | SELECT | 12 | None | — |  |
+| ERROR | — | SELECT | 12 | None | — |  |
+| ERROR | — | SELECT | 12 | None | — |  |
+| ERROR | — | SELECT | 12 | None | — |  |
+| INDEX_SCAN | — | SELECT | 83 | None | 0.02 | Index scan via []. |
+| INDEX_SCAN | — | SELECT | 24 | None | 0.01 | Index scan via []. |
+| INDEX_SCAN | — | SELECT | 11 | None | 0.00 | Index scan via []. |
+| INDEX_SCAN | — | SELECT | 16 | None | 0.01 | Index scan via []. |
+| INDEX_SCAN | — | SELECT | 4 | None | 0.03 | Index scan via []. |
+| INDEX_SCAN | — | SELECT | 2 | None | 0.01 | Index scan via []. |
+| NO_PARAMS | grant_records | SELECT | 59 | 30013 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | SELECT | 1 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | SELECT | 129 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | SELECT | 112 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | SELECT | 70 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | SELECT | 3 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | SELECT | 47 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | UPDATE | 13 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | INSERT | 9 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | grant_records | SELECT | 23 | 30013 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | DELETE | 6 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | SELECT | 6 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | grant_records | INSERT | 3 | 30013 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | principal_authentication_data | DELETE | 2 | 1002 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | principal_authentication_data | INSERT | 2 | 1002 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | SELECT | 3 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | principal_authentication_data | SELECT | 2 | 1002 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
 | NO_PARAMS | policy_mapping_record | DELETE | 2 | 0 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | principal_authentication_data | SELECT | 2 | 7 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | principal_authentication_data | INSERT | 2 | 7 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | principal_authentication_data | DELETE | 2 | 7 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | SELECT | 1 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
-| NO_PARAMS | entities | SELECT | 1 | 53 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | policy_mapping_record | SELECT | 2 | 0 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| NO_PARAMS | entities | SELECT | 1 | 7256 | — | Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative paramete |
+| TOO_SMALL | pg_stat_replication | SELECT | 4 | 0 | 0.53 | pg_stat_replication holds ~0 rows (< 5000). PostgreSQL prefers a sequential scan on small tables because it is genuinely cheaper — no conclu |
+| TOO_SMALL | pg_stat_replication | SELECT | 5 | 0 | 0.16 | pg_stat_replication holds ~0 rows (< 5000). PostgreSQL prefers a sequential scan on small tables because it is genuinely cheaper — no conclu |
+| TOO_SMALL | pg_stat_replication | SELECT | 9 | 0 | 0.47 | pg_stat_replication holds ~0 rows (< 5000). PostgreSQL prefers a sequential scan on small tables because it is genuinely cheaper — no conclu |
+| TOO_SMALL | replay_lag | SELECT | 2 | 0 | 0.08 | replay_lag holds ~0 rows (< 5000). PostgreSQL prefers a sequential scan on small tables because it is genuinely cheaper — no conclusion can  |

@@ -1,0 +1,4 @@
+# Generated reports from 01_api_access_map / 02_index_audit.
+# Managed by hand -- add rules as you see fit, e.g.:
+*.md
+!doc-*-latest.md

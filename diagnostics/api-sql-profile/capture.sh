@@ -242,10 +242,12 @@ do_preflight() {
       else
         ok "$pod -> in-container file $sink (kubectl exec tail -F)"
       fi
-      local st
-      st=$(kubectl -n "$NS" exec "$pod" -c postgresql -- \
-             env PGPASSWORD="${PGPASSWORD:-polaris}" psql -U postgres -Atc \
-             "select current_setting('log_statement')" 2>/dev/null | tr -d '\r')
+      # Use the same four-source lookup as pgon, not a hardcoded guess.
+      local st pw
+      pw="${PGPASSWORD:-}"
+      [[ -z "$pw" ]] && pw=$(pg_superpass "$pod" 2>/dev/null) || true
+      st=$(_psql1 "$pod" "$pw" "select current_setting('log_statement')" \
+           | tr -d '\r' | tail -1)
       if [[ "$st" == "all" ]]; then
         ok "$pod log_statement = all"
       else
@@ -291,6 +293,16 @@ do_stop() {
 # ------------------------------------------------------------------- start ---
 do_start() {
   mkdir -p "$DIR" || { bad "cannot create $DIR"; exit 1; }
+
+  # Captures hold raw request logs and MinIO traces -- never committable, and a
+  # rotate into a NEW directory would otherwise arrive untracked-but-unignored.
+  # `!.gitignore` matters: a bare `*` also ignores this file, so the rule never
+  # reaches anyone who clones the repo.
+  if [[ ! -f "$DIR/.gitignore" ]]; then
+    printf '%s\n' '*' '!.gitignore' > "$DIR/.gitignore"
+    ok "wrote $DIR/.gitignore (ignores everything but itself)"
+  fi
+
   local pf="$DIR/$PIDF"
   if [[ -f "$pf" ]]; then
     while read -r pid label; do
@@ -396,27 +408,99 @@ do_status() {
 }
 
 # ----------------------------------------------------------- pg superuser ---
-# Bitnami keeps TWO passwords: the app user's (POSTGRESQL_PASSWORD, what you
-# put in the Polaris JDBC URL) and the superuser's (POSTGRESQL_POSTGRES_PASSWORD).
-# ALTER SYSTEM needs the superuser one, and they are usually different — which
-# is why a perfectly correct app password gets rejected here. Read it from the
-# pod's own env so there is nothing to guess.
+# Bitnami keeps TWO passwords: the app user's (POSTGRESQL_PASSWORD -- what is in
+# the Polaris JDBC URL) and the superuser's. ALTER SYSTEM needs the superuser.
+#
+# v4 only read POSTGRESQL_POSTGRES_PASSWORD from the pod env and gave up when it
+# was empty. On a chart using an existing/mounted secret the value is NOT in the
+# environment at all -- Bitnami exports POSTGRESQL_POSTGRES_PASSWORD_FILE and
+# mounts the value as a file. So the lookup now walks four sources, cheapest
+# first, and reports what it actually found instead of a dead end.
+#
+# 0. no password at all: psql over the container's unix socket, which Bitnami's
+#    pg_hba usually trusts for local connections. If this works nothing else is
+#    needed.
+# 1. the plain env vars.
+# 2. any *_PASSWORD_FILE env var -> read that file inside the pod.
+# 3. the Kubernetes secret, auto-discovered by looking for a key named
+#    postgres-password rather than guessing the secret's name.
+PG_NOPASS=""          # set to 1 by pg_superpass when socket auth works
+
 pg_superpass() {
-  local pod="$1" p
-  p=$(kubectl -n "$NS" exec "$pod" -c postgresql -- \
-        sh -c 'printf %s "$POSTGRESQL_POSTGRES_PASSWORD"' 2>/dev/null | tr -d '\r')
-  [[ -n "$p" ]] && { echo "$p"; return 0; }
-  p=$(kubectl -n "$NS" exec "$pod" -c postgresql -- \
-        sh -c 'printf %s "$POSTGRES_PASSWORD"' 2>/dev/null | tr -d '\r')
-  [[ -n "$p" ]] && { echo "$p"; return 0; }
+  local pod="$1" p f secret
+
+  # 0 -- socket trust
+  if kubectl -n "$NS" exec "$pod" -c postgresql -- \
+       psql -U postgres -Atc "select 1" >/dev/null 2>&1; then
+    PG_NOPASS=1
+    echo ""
+    return 0
+  fi
+  PG_NOPASS=""
+
+  # 1 -- plain env
+  for v in POSTGRESQL_POSTGRES_PASSWORD POSTGRES_POSTGRES_PASSWORD POSTGRES_PASSWORD; do
+    p=$(kubectl -n "$NS" exec "$pod" -c postgresql -- \
+          sh -c "printf %s \"\$$v\"" 2>/dev/null | tr -d '\r')
+    [[ -n "$p" ]] && { echo "$p"; return 0; }
+  done
+
+  # 2 -- *_PASSWORD_FILE env -> read the mounted file
+  for v in POSTGRESQL_POSTGRES_PASSWORD_FILE POSTGRES_POSTGRES_PASSWORD_FILE \
+           POSTGRES_PASSWORD_FILE; do
+    f=$(kubectl -n "$NS" exec "$pod" -c postgresql -- \
+          sh -c "printf %s \"\$$v\"" 2>/dev/null | tr -d '\r')
+    [[ -z "$f" ]] && continue
+    p=$(kubectl -n "$NS" exec "$pod" -c postgresql -- \
+          sh -c "cat '$f' 2>/dev/null" 2>/dev/null | tr -d '\r\n')
+    [[ -n "$p" ]] && { echo "$p"; return 0; }
+  done
+
+  # 2b -- the conventional mount point, even if no env var points at it
+  for f in /opt/bitnami/postgresql/secrets/postgres-password \
+           /opt/bitnami/postgresql/secrets/postgresql-postgres-password; do
+    p=$(kubectl -n "$NS" exec "$pod" -c postgresql -- \
+          sh -c "cat '$f' 2>/dev/null" 2>/dev/null | tr -d '\r\n')
+    [[ -n "$p" ]] && { echo "$p"; return 0; }
+  done
+
+  # 3 -- the secret itself, found by KEY not by guessed name
+  secret=$(kubectl -n "$NS" get secret -o \
+    'jsonpath={range .items[*]}{.metadata.name}{" "}{.data.postgres-password}{"\n"}{end}' \
+    2>/dev/null | awk 'NF==2 {print $1; exit}')
+  if [[ -n "$secret" ]]; then
+    p=$(kubectl -n "$NS" get secret "$secret" \
+          -o jsonpath='{.data.postgres-password}' 2>/dev/null | base64 -d 2>/dev/null)
+    [[ -n "$p" ]] && { echo "$p"; return 0; }
+  fi
   return 1
+}
+
+# Print what IS available, so a failure is actionable rather than a dead end.
+pg_password_debug() {
+  local pod="$1"
+  echo "        password-bearing env vars in $pod:"
+  kubectl -n "$NS" exec "$pod" -c postgresql -- \
+    sh -c 'env | grep -i pass | sed "s/=.*/=<redacted>/"' 2>/dev/null \
+    | sed 's/^/          /' || echo "          <none readable>"
+  echo "        secrets in $NS carrying a postgres-password key:"
+  kubectl -n "$NS" get secret -o \
+    'jsonpath={range .items[*]}{.metadata.name}{" "}{.data.postgres-password}{"\n"}{end}' \
+    2>/dev/null | awk 'NF==2 {print "          " $1}' || true
 }
 
 # Run ONE statement. Each psql -c is its own implicit transaction.
 _psql1() {
   local pod="$1" pw="$2" sql="$3"
-  kubectl -n "$NS" exec "$pod" -c postgresql -- \
-    env PGPASSWORD="$pw" psql -U postgres -v ON_ERROR_STOP=1 -Atc "$sql" 2>&1
+  if [[ -z "$pw" ]]; then
+    # socket-trust path: passing an empty PGPASSWORD would force a password
+    # prompt on some builds, so omit the variable entirely.
+    kubectl -n "$NS" exec "$pod" -c postgresql -- \
+      psql -U postgres -v ON_ERROR_STOP=1 -Atc "$sql" 2>&1
+  else
+    kubectl -n "$NS" exec "$pod" -c postgresql -- \
+      env PGPASSWORD="$pw" psql -U postgres -v ON_ERROR_STOP=1 -Atc "$sql" 2>&1
+  fi
 }
 
 # -------------------------------------------------------------------- pgon ---
@@ -457,11 +541,14 @@ _pgapply() {
     pw="${PGPASSWORD:-}"
     if [[ -z "$pw" ]]; then
       if ! pw=$(pg_superpass "$pod"); then
-        bad "$pod: could not read the superuser password from the pod env."
-        echo "        Try:  PGPASSWORD=\$(kubectl -n $NS get secret ${PG_STS%-postgresql} \\"
-        echo "                -o jsonpath='{.data.postgres-password}' | base64 -d) ./capture.sh pgon"
+        bad "$pod: no usable superuser credential found."
+        echo "        Tried: socket trust, env vars, *_PASSWORD_FILE mounts, and"
+        echo "        every secret in $NS carrying a postgres-password key."
+        pg_password_debug "$pod"
+        echo "        Then re-run as:  PGPASSWORD=<value> ./capture.sh pgon"
         rc=1; continue
       fi
+      [[ -z "$pw" ]] && ok "$pod: using socket trust (no password needed)"
     fi
 
     local podfail=0

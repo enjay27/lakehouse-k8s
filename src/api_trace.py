@@ -648,6 +648,27 @@ def split_query_message(body):
             return body[: pm.start()].strip(), pm.group(1)
         return body.strip(), None
 
+    # The SQL itself can be MULTI-LINE, and Polaris indents its continuation
+    # lines by four spaces -- exactly like the parameter lines. Taking only the
+    # first line as SQL (what this did) truncated the grant_records OR-delete to
+    #     DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE (
+    # and fed that to EXPLAIN, which failed with "syntax error at end of input".
+    # Indentation cannot separate the two blocks, but the PLACEHOLDER COUNT can:
+    # the trailing k lines are the parameters exactly when the remaining SQL
+    # contains k `?` placeholders. Self-checking, so a shape we have not seen
+    # falls through rather than being mis-split.
+    lines = body.split("\n")
+    for k in range(len(lines)):
+        sql = "\n".join(lines[: len(lines) - k]).strip()
+        if not sql:
+            continue
+        if sql.count("?") == k:
+            values = [v.strip() for v in lines[len(lines) - k :] if v.strip()]
+            return sql, (", ".join(values) if values else None)
+
+    # No split satisfies the placeholder count (a parameter value containing a
+    # newline, say). Fall back to the original first-line rule, which is wrong
+    # for multi-line SQL but no worse than before.
     first, _, rest = body.partition("\n")
     values = [v.strip() for v in rest.split("\n") if v.strip()]
     return first.strip(), (", ".join(values) if values else None)
@@ -674,9 +695,16 @@ def parse_pg_log(text, start_seq=0):
     out = []
     seq = start_seq
     last_by_pid = {}
+    last_pid = "-"
     for line in text.splitlines():
         pidm = _PG_PID.search(line)
-        pid = pidm.group("pid") if pidm else "-"
+        if pidm:
+            pid = last_pid = pidm.group("pid")
+        else:
+            # A continuation line carries no log prefix and therefore no pid.
+            # Falling back to "-" would look up the wrong backend and silently
+            # drop the rest of a wrapped statement.
+            pid = last_pid
 
         dm = _PG_DURATION.search(line)
         if dm:
@@ -690,6 +718,20 @@ def parse_pg_log(text, start_seq=0):
             stmt = last_by_pid.get(pid)
             if stmt is not None:
                 stmt.params = redact_params(stmt.sql, pm.group("params"))
+            continue
+
+        # A statement that wraps across lines is logged with the continuation
+        # lines INDENTED and carrying no log prefix. Without this, a multi-line
+        # statement is truncated at the first newline -- which is why the
+        # grant_records OR-delete arrived as the unparseable fragment
+        # "DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE (" and then failed
+        # EXPLAIN with "syntax error at end of input".
+        if (line[:1] in ("\t", " ") and line.strip()
+                and not _PG_PID.search(line) and last_by_pid.get(pid) is not None):
+            cont = last_by_pid[pid]
+            cont.sql = cont.sql + " " + line.strip()
+            cont.table = extract_table(cont.sql) or cont.table
+            cont.verb = extract_verb(cont.sql) or cont.verb
             continue
 
         sm = _PG_STATEMENT.search(line)
@@ -1023,6 +1065,43 @@ def records_to_rows(records):
     return [r.to_row() for r in records]
 
 
+# Statements that are NOT Polaris's. `log_statement='all'` records every
+# statement the server executes, so the pg log also carries repmgr's monitoring
+# daemon (repmgr.nodes, repmgr.get_local_node_id()), Pgpool's health checks and
+# connection handoff (SET, DISCARD ALL, pg_stat_replication), and psql's own
+# chatter. None of it is issued by Polaris, none of it can be EXPLAINed as
+# written, and including it produced 19 ERROR rows that buried the real
+# verdicts.
+_FOREIGN_SCHEMA = re.compile(
+    r"\brepmgr\.|\bpg_catalog\.|\bpg_stat_|\binformation_schema\.", re.I
+)
+# Not EXPLAINable at all: session/transaction control, not queries.
+_NON_QUERY = re.compile(
+    r"^\s*(SET|SHOW|DISCARD|BEGIN|COMMIT|ROLLBACK|RESET|DEALLOCATE|LISTEN|"
+    r"CHECKPOINT|VACUUM|ANALYZE|START\s+TRANSACTION)\b",
+    re.I,
+)
+
+
+def is_polaris_statement(sql):
+    """True if this statement is one Polaris issued against its own metastore.
+
+    Positive identification, not exclusion: a statement counts only if it names
+    the Polaris schema or one of its tables. Anything else -- another schema's
+    query, a SET, a health check -- is someone else's traffic sharing the same
+    server log.
+    """
+    if not sql or _NON_QUERY.match(sql):
+        return False
+    if _FOREIGN_SCHEMA.search(sql):
+        return False
+    low = sql.lower()
+    if "polaris_schema" in low:
+        return True
+    known = POLARIS_TABLES_V2 | EVENT_LISTENER_TABLES
+    return any(re.search(rf"\b{t}\b", low) for t in known)
+
+
 def statement_inventory(records):
     """Group every statement seen across all records by normalized SQL.
 
@@ -1037,8 +1116,12 @@ def statement_inventory(records):
         max_ms.
     """
     groups = {}
+    skipped_foreign = 0
     for rec in records:
         for s in rec.sql:
+            if not is_polaris_statement(s.sql):
+                skipped_foreign += 1
+                continue
             key = normalize_sql(s.sql)
             g = groups.setdefault(
                 key,
@@ -1064,6 +1147,7 @@ def statement_inventory(records):
         g["max_ms"] = round(max(d), 3) if d else None
         out.append(g)
     out.sort(key=lambda r: (r["total_ms"] is None, -(r["total_ms"] or 0), -r["calls"]))
+    statement_inventory.skipped_foreign = skipped_foreign
     return out
 
 

@@ -53,6 +53,7 @@ cluster.
 
 import json
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
 
@@ -203,13 +204,20 @@ class SeedResult:
     invalid_privileges: list = field(default_factory=list)
     elapsed_s: float = 0.0
     calls: int = 0
+    lag_recovered: list = field(default_factory=list)
+    repaired_catalogs: list = field(default_factory=list)
 
     def summary(self):
+        rec = ""
+        if self.lag_recovered:
+            rec = f" lag_recovered={len(self.lag_recovered)}"
+        if self.repaired_catalogs:
+            rec += f" repaired_catalogs={len(self.repaired_catalogs)}"
         return (
             f"seeded={self.completed_users} skipped={self.skipped_users} "
             f"failed={len(self.failed_users)} calls={self.calls} "
             f"elapsed={self.elapsed_s:.1f}s "
-            f"invalid_privileges={sorted(set(self.invalid_privileges))}"
+            f"invalid_privileges={sorted(set(self.invalid_privileges))}{rec}"
         )
 
 
@@ -279,82 +287,267 @@ def _ok(resp, *accept):
     return resp.status_code < 300 or resp.status_code in accept
 
 
-def seed_user(pc, ic, spec, i, result, bucket=None, minio_endpoint=None):
-    """Create one complete user{i} set. Idempotent — 409s are tolerated.
+# A write that violated a PRIMARY KEY or unique constraint did not fail --
+# it already happened. Polaris has no upsert path (see the note in
+# `polaris_rest.grant_privilege`: the grant PUT is a bare INSERT), so a
+# retried write that committed the first time comes back as 23505 wrapped in
+# a 500. Retrying that can never succeed, and treating it as failure loses a
+# user whose data is fully present.
+_DUPLICATE = re.compile(
+    r"duplicate key value"
+    r"|violates unique constraint"
+    r"|already exists"
+    r"|\b23505\b",
+    re.I,
+)
 
-    Order matters: catalog before catalog-role, catalog-role and
-    principal-role before their assignment, and the grant last, because the
-    role must be visible before it can be granted to. This mirrors the
-    read-after-write ordering the existing suite already learned the hard way
-    under PG-HA.
+
+def _is_duplicate(resp):
+    """True when a non-2xx response means 'this was already written'."""
+    try:
+        return bool(_DUPLICATE.search(resp.text or ""))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _attempt(call, what, result, exists=None, accept=(409,), retries=6):
+    """Issue one seeding call, tolerating read-after-write lag on PG-HA.
+
+    THE PROBLEM THIS SOLVES
+    -----------------------
+    Under load, Polaris on a replicated PostgreSQL rejects operations whose
+    prerequisite was written milliseconds earlier: the write lands on the
+    primary, the confirming read is load-balanced onto a replica that has not
+    caught up, and the miss surfaces as one of THREE different statuses
+    depending on which code path handles it:
+
+        500  the write itself committed, but the read-back failed
+             (`create_namespace`, `create_catalog`)
+        403  authorization resolved the just-created catalog's grants from a
+             lagging replica, found none, and called it Forbidden
+             (`create_catalog_role`)
+        404  the just-created entity is not visible yet
+             (`assign_principal_role`, and the case `polaris_rest.
+             grant_privilege` already retries around)
+
+    All three are the same fault. Handling only 5xx -- which is what this
+    module did first -- left 403 and 404 to fail 29 users out of 1,000.
+
+    Two different remedies are needed, because the states differ:
+      * 5xx: the entity usually EXISTS already. Re-issuing is safe (409 is
+        tolerated) and `exists` settles it without another write.
+      * 403/404: the operation did NOT happen. It must be re-issued once the
+        replica catches up.
+    Retrying the call covers both, so that is what this does.
+
+    A 4xx that is NOT 403/404 is a genuine client error -- a bad privilege
+    name, a malformed payload -- and returns immediately. Retrying those would
+    turn a real bug into a slow one.
+
+    Args:
+        call: zero-arg callable issuing the request, returning a Response.
+        what: label recorded against any recovery.
+        result: SeedResult, for call counting and recovery recording.
+        exists: optional zero-arg bool callable, checked after a 5xx.
+        accept: extra tolerated statuses (409 for idempotent re-creates).
+        retries: attempts after the first (~0.25s doubling to 2s, ~8s total).
+
+    Returns:
+        (ok: bool, resp: Response) -- resp is the LAST response seen.
+    """
+    delay = 0.25
+    resp = None
+    first_fail = None          # the status that TRIGGERED the retry, not the
+                               # 201 that ended it -- the transient code is the
+                               # diagnostic signal worth keeping.
+    for attempt in range(retries + 1):
+        resp = call()
+        result.calls += 1
+        if _ok(resp, *accept):
+            if attempt:
+                result.lag_recovered.append(
+                    {"what": what, "status": first_fail, "retries": attempt}
+                )
+            return True, resp
+
+        # Duplicate key => the write landed (very likely on OUR own earlier
+        # attempt). Success, and retrying would loop forever against the PK.
+        if _is_duplicate(resp):
+            result.lag_recovered.append(
+                {"what": what, "status": resp.status_code,
+                 "retries": attempt, "reason": "duplicate"}
+            )
+            return True, resp
+
+        if first_fail is None:
+            first_fail = resp.status_code
+
+        # Genuine client error: do not retry.
+        if resp.status_code < 500 and resp.status_code not in (403, 404):
+            return False, resp
+
+        # 5xx often means "committed, but I could not read it back".
+        if resp.status_code >= 500 and exists is not None:
+            try:
+                if exists():
+                    result.lag_recovered.append(
+                        {"what": what, "status": resp.status_code,
+                         "retries": attempt}
+                    )
+                    return True, resp
+            except Exception:  # noqa: BLE001 -- the check can hit the lag too
+                pass
+
+        if attempt < retries:
+            time.sleep(delay)
+            delay = min(delay * 2, 2.0)
+    return False, resp
+
+
+def _catalog_is_complete(pc, catalog):
+    """True only if the catalog is USABLE, not merely present.
+
+    Creating a catalog is two writes: the entity, and the bootstrap of its
+    `catalog_admin` role plus the grants that make the creator an admin of it.
+    Under load the first commits and the second does not, leaving a catalog
+    that answers GET /catalogs/{name} with 200 -- correct storage config,
+    entityVersion 1, everything -- while `list_catalog_roles` returns 403
+    because the caller has no grant on it. Nothing can then be created inside
+    it, permanently: `create_catalog_role` 403s forever, and no retry helps
+    because there is no lag to wait out.
+
+    "Does the entity exist" was the check this module used after a 5xx, and it
+    is what let those half-created catalogs be recorded as successes.
+    """
+    r = pc.get_catalog(catalog)
+    if r.status_code >= 300:
+        return False
+    r = pc.list_catalog_roles(catalog)
+    if r.status_code >= 300:
+        # 403 here IS the signature: the entity exists but carries no grants.
+        return False
+    try:
+        roles = [x.get("name") for x in r.json().get("roles", [])]
+    except Exception:  # noqa: BLE001
+        return False
+    return "catalog_admin" in roles
+
+
+def _ensure_catalog(pc, catalog, bucket, minio_endpoint, result, attempts=3):
+    """Create the catalog, and guarantee it is administrable before returning.
+
+    A half-created catalog cannot be repaired in place -- there is no endpoint
+    to bootstrap a missing catalog_admin role, and the caller has no grant that
+    would let it use one anyway. The only remedy is to delete and recreate.
+
+    Raises:
+        RuntimeError if the catalog cannot be made complete.
+    """
+    for attempt in range(attempts):
+        if _catalog_is_complete(pc, catalog):
+            return
+
+        r = pc.get_catalog(catalog)
+        if r.status_code < 300:
+            # Present but incomplete -- remove it so the recreate is clean.
+            d = pc.delete_catalog(catalog, purge=True)
+            result.calls += 1
+            if d.status_code >= 300 and d.status_code != 404:
+                raise RuntimeError(
+                    f"catalog {catalog} is half-created (entity present, no "
+                    f"catalog_admin) and delete returned {d.status_code}: "
+                    f"{d.text[:160]}. It cannot be repaired over REST -- remove "
+                    f"the row directly in PostgreSQL, or drop the realm."
+                )
+            result.repaired_catalogs.append(catalog)
+
+        c = pc.create_catalog(catalog, bucket=bucket, minio_endpoint=minio_endpoint)
+        result.calls += 1
+        if not _ok(c, 409) and not _is_duplicate(c):
+            if attempt == attempts - 1:
+                raise RuntimeError(
+                    f"create_catalog {c.status_code}: {c.text[:200]}")
+            time.sleep(0.5 * (attempt + 1))
+            continue
+        # Give the grant bootstrap a moment to become visible before judging it.
+        time.sleep(0.4)
+
+    if not _catalog_is_complete(pc, catalog):
+        raise RuntimeError(
+            f"catalog {catalog} still has no catalog_admin after {attempts} "
+            "create attempts")
+
+
+def seed_user(pc, ic, spec, i, result, bucket=None, minio_endpoint=None):
+    """Create one complete user{i} set. Idempotent -- 409s are tolerated.
+
+    Order matters: catalog before catalog-role, catalog-role and principal-role
+    before their assignment, and grants last, because the role must be visible
+    before it can be granted to. Every step goes through `_attempt`, which
+    absorbs the PG-HA read-after-write lag described there.
 
     Returns:
         True on success; on failure the user index is appended to
         `result.failed_users` and False is returned.
     """
     n = spec.names(i)
+
+    def step(call, what, exists=None):
+        ok, r = _attempt(call, what, result, exists=exists)
+        if not ok:
+            raise RuntimeError(f"{what} {r.status_code}: {r.text[:200]}")
+        return r
+
     try:
-        r = pc.create_principal(n["principal"])
-        result.calls += 1
-        if not _ok(r, 409):
-            raise RuntimeError(f"create_principal {r.status_code}: {r.text[:200]}")
+        step(lambda: pc.create_principal(n["principal"]),
+             "create_principal",
+             lambda: pc.get_principal(n["principal"]).status_code < 300)
 
-        r = pc.create_principal_role(n["principal_role"])
-        result.calls += 1
-        if not _ok(r, 409):
-            raise RuntimeError(f"create_principal_role {r.status_code}")
+        step(lambda: pc.create_principal_role(n["principal_role"]),
+             "create_principal_role",
+             lambda: pc.get_principal_role(n["principal_role"]).status_code < 300)
 
-        r = pc.assign_principal_role_to_principal(n["principal"], n["principal_role"])
-        result.calls += 1
-        if not _ok(r, 409):
-            raise RuntimeError(f"assign_principal_role {r.status_code}")
+        step(lambda: pc.assign_principal_role_to_principal(
+                 n["principal"], n["principal_role"]),
+             "assign_principal_role")
 
-        kwargs = {}
-        if bucket:
-            kwargs["bucket"] = bucket
-        if minio_endpoint:
-            kwargs["minio_endpoint"] = minio_endpoint
-        r = pc.create_catalog(n["catalog"], **kwargs)
-        result.calls += 1
-        if not _ok(r, 409):
-            raise RuntimeError(f"create_catalog {r.status_code}: {r.text[:200]}")
+        # NOT a plain `step`: existence is not sufficient evidence that a
+        # catalog was created properly. See _ensure_catalog.
+        _ensure_catalog(pc, n["catalog"], bucket, minio_endpoint, result)
 
-        r = pc.create_catalog_role(n["catalog"], n["catalog_role"])
-        result.calls += 1
-        if not _ok(r, 409):
-            raise RuntimeError(f"create_catalog_role {r.status_code}")
+        step(lambda: pc.create_catalog_role(n["catalog"], n["catalog_role"]),
+             "create_catalog_role",
+             lambda: any(x.get("name") == n["catalog_role"] for x in
+                         pc.list_catalog_roles(n["catalog"]).json().get("roles", [])))
 
-        r = pc.assign_catalog_role_to_principal_role(
-            n["catalog"], n["principal_role"], n["catalog_role"]
-        )
-        result.calls += 1
-        if not _ok(r, 409):
-            raise RuntimeError(f"assign_catalog_role {r.status_code}")
+        step(lambda: pc.assign_catalog_role_to_principal_role(
+                 n["catalog"], n["principal_role"], n["catalog_role"]),
+             "assign_catalog_role")
 
         for priv in spec.privileges:
-            r = pc.grant_privilege(n["catalog"], n["catalog_role"], priv)
-            result.calls += 1
-            if not _ok(r, 409):
-                # A rejected privilege NAME is data, not a fatal error — record
+            ok, r = _attempt(
+                lambda priv=priv: pc.grant_privilege(
+                    n["catalog"], n["catalog_role"], priv),
+                f"grant_privilege {priv}", result)
+            if not ok:
+                # A rejected privilege NAME is data, not a fatal error -- record
                 # it and keep going rather than losing the whole run.
                 result.invalid_privileges.append(priv)
 
         for ns in n["namespaces"]:
-            r = ic.create_namespace(n["catalog"], ns)
-            result.calls += 1
-            if not _ok(r, 409):
-                raise RuntimeError(f"create_namespace {ns} {r.status_code}")
+            step(lambda ns=ns: ic.create_namespace(n["catalog"], ns),
+                 f"create_namespace {ns}",
+                 lambda ns=ns: ic.namespace_exists(n["catalog"], ns))
 
             if not spec.create_tables:
                 continue
             for tbl in n["tables"]:
-                payload = _table_payload(tbl)
-                r = ic.create_table(n["catalog"], ns, payload)
-                result.calls += 1
-                if not _ok(r, 409):
-                    raise RuntimeError(f"create_table {ns}.{tbl} {r.status_code}")
+                step(lambda ns=ns, tbl=tbl: ic.create_table(
+                         n["catalog"], ns, _table_payload(tbl)),
+                     f"create_table {ns}.{tbl}",
+                     lambda ns=ns, tbl=tbl: ic.table_exists(n["catalog"], ns, tbl))
         return True
-    except Exception as exc:  # noqa: BLE001 — one bad user must not kill the seed
+    except Exception as exc:  # noqa: BLE001 -- one bad user must not kill the seed
         result.failed_users.append({"index": i, "error": f"{type(exc).__name__}: {exc}"})
         return False
 
@@ -398,6 +591,16 @@ def seed(pc, ic, spec=None, ledger_path="seed_ledger.json", bucket=None,
     Returns:
         SeedResult.
     """
+    # Fail once, before any work, rather than once per user. A missing storage
+    # config is a caller mistake, not a per-user failure, and reporting it 1,000
+    # times buries it.
+    if not bucket or not minio_endpoint:
+        raise ValueError(
+            "seed() requires bucket and minio_endpoint even when "
+            "spec.create_tables is False: every catalog needs a storage config. "
+            f"got bucket={bucket!r} minio_endpoint={minio_endpoint!r}"
+        )
+
     spec = spec or SeedSpec()
     require_local(pc.base_url, extra_allowed_hosts)
 
@@ -570,3 +773,15 @@ def find_strays(pc, prefix="user"):
         "principal_roles": _names(pc.list_principal_roles(), "roles"),
         "catalogs": _names(pc.list_catalogs(), "catalogs"),
     }
+
+
+# ---------------------------------------------------------------------------
+# public aliases
+# ---------------------------------------------------------------------------
+# The notebooks build probe fixtures against the same cluster and hit the same
+# read-after-write lag, so they need this logic too. Exposed under non-private
+# names rather than having each notebook re-implement it slightly differently
+# -- three subtly different retry policies is how a fixture bug becomes an
+# audit finding.
+call_with_lag_retry = _attempt
+ensure_catalog = _ensure_catalog

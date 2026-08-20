@@ -49,7 +49,13 @@ import re
 # expected schema — Polaris 1.3.0 / schema-v2
 # ----------------------------------------------------------------------
 
-SCHEMA_VERSION_EXPECTED = 2
+# The deployed cluster reports version 3. v3 differs from v2 ONLY by adding the
+# `events` table and bumping the version value -- verified by diffing upstream
+# postgres/schema-v2.sql against schema-v3.sql at apache-polaris-1.3.0-incubating.
+# Every index on entities/grant_records is byte-identical between them, so index
+# findings carry across unchanged. Pinning this to 2 produced a false DRIFT.
+SCHEMA_VERSION_EXPECTED = 3
+SCHEMA_VERSIONS_ACCEPTED = (2, 3)
 
 #: Tables defined by schema-v2.
 EXPECTED_TABLES = {
@@ -60,7 +66,7 @@ EXPECTED_TABLES = {
     "policy_mapping_record",
 }
 
-TABLES_ADDED_IN_V3 = set()
+TABLES_ADDED_IN_V3 = {"events"}
 
 #: `events` is created and written by Polaris 1.3.0 whenever a persistence-backed
 #: event listener is configured (`eventListener.type: persistence-in-memory-buffer`
@@ -350,7 +356,10 @@ def compare_schema(snapshot, expected_version=SCHEMA_VERSION_EXPECTED):
     ]
 
     version_found = snapshot.get("version")
-    version_ok = version_found == expected_version
+    # Accept any version whose index definitions we have actually verified as
+    # equivalent, not just one exact number. v2 and v3 differ only by the
+    # `events` table, so both are valid baselines for an INDEX audit.
+    version_ok = version_found in SCHEMA_VERSIONS_ACCEPTED
 
     notes = []
     if version_found is None:
@@ -360,17 +369,21 @@ def compare_schema(snapshot, expected_version=SCHEMA_VERSION_EXPECTED):
         )
     elif not version_ok:
         notes.append(
-            f"Schema version is {version_found}, expected {expected_version}. "
-            "Every expectation in this module is written for schema-v2 "
-            "(Polaris 1.3.0); treat index findings as unverified until the "
-            "expected set is updated for the deployed version."
+            f"Schema version is {version_found}; this module has verified index "
+            f"expectations only for {list(SCHEMA_VERSIONS_ACCEPTED)}. Treat index "
+            "findings as unverified until the expected set is checked against "
+            "the deployed version's DDL."
         )
     if unexpected_tables:
         v3 = sorted(set(unexpected_tables) & TABLES_ADDED_IN_V3)
-        if v3:
+        if v3 and version_found and version_found >= 3:
+            # Expected at this version: not drift, not a mismatch.
+            unexpected_tables = [t for t in unexpected_tables if t not in v3]
+            notes.append(f"Tables {v3} are part of schema-v{version_found}.")
+        elif v3:
             notes.append(
                 f"Tables {v3} exist only in schema-v3+, so the deployed schema "
-                "is NEWER than 1.3.0's. This is a version mismatch, not a bug."
+                "is NEWER than the reported version. Version mismatch, not a bug."
             )
     if missing_indexes:
         notes.append(
@@ -387,7 +400,9 @@ def compare_schema(snapshot, expected_version=SCHEMA_VERSION_EXPECTED):
             "timer, so they are attributed separately during tracing."
         )
     if not notes:
-        notes.append("Live schema matches the expected schema-v2 definition.")
+        notes.append(
+            f"Live schema (v{version_found}) matches the expected definition."
+        )
 
     drift = bool(missing_tables or missing_indexes or not version_ok)
     return {
@@ -592,6 +607,15 @@ def parse_param_list(params):
     """
     if not params:
         return None
+
+    # Already a sequence of bound values -- which is what
+    # `resolve_params`/`enrich_inventory` produce, since they read values
+    # straight out of a live row rather than out of a log line. Only log-derived
+    # parameters arrive as text needing a parse. Assuming a string here is what
+    # raised "'tuple' object has no attribute 'strip'".
+    if isinstance(params, (list, tuple)):
+        return list(params)
+
     s = params.strip()
     if "<redacted>" in s:
         return None
@@ -734,6 +758,110 @@ def plan_summary(plan):
         "shared_hit": hit,
         "shared_read": read,
     }
+
+
+
+_EQ_PREDICATE = re.compile(r"(\w+)\s*=\s*(?:\?|%s|\$\d+)", re.I)
+
+
+def resolve_params(conn, sql, table, realm=None, schema="polaris_schema",
+                   _cache=None):
+    """Derive representative bind values for a captured statement.
+
+    WHY THIS EXISTS
+    ---------------
+    Polaris logs bind parameters as `?` and `api_trace.redact_params` strips the
+    values, so a captured inventory arrives with no parameters at all.
+    `audit_statements` then -- correctly -- refuses to EXPLAIN and returns
+    NO_PARAMS. The consequence is that an entire audit run comes back with no
+    verdicts and reads like a clean bill of health when in fact nothing was
+    measured. That is the worst possible failure mode for this module.
+
+    The fix is to read the equality columns out of the statement's WHERE clause
+    in order, then take those column values from a REAL row of that table. The
+    plan is then measured against parameters that actually select something,
+    rather than invented ones that make every lookup look free.
+
+    Returns None -- deliberately leaving the statement as NO_PARAMS -- when the
+    values cannot be resolved honestly:
+      * `normalize_sql` collapsed a row-constructor IN list to a marker, which
+        is not valid SQL and must never reach EXPLAIN;
+      * there is no WHERE clause (INSERTs), so the placeholders are VALUES and
+        sampling a row would produce a meaningless plan;
+      * the placeholder count and the parsed column count disagree (ORs,
+        functions, LIKE), which means the parse is not trustworthy.
+
+    Args:
+        conn: psycopg2 connection.
+        sql: normalized statement text.
+        table: table the statement targets.
+        realm: value to bind for `realm_id`; sampled from the row if omitted.
+        schema: metastore schema.
+        _cache: optional dict reused across calls to avoid re-sampling.
+
+    Returns:
+        tuple of bind values in placeholder order, or None.
+    """
+    if not table or not sql:
+        return None
+    if "<" in sql or not re.search(r"\sWHERE\s", sql, re.I):
+        return None
+
+    where = re.split(r"\sWHERE\s", sql, maxsplit=1, flags=re.I)[-1]
+    cols = [m.group(1).lower() for m in _EQ_PREDICATE.finditer(where)]
+    n_placeholders = sql.count("?") + sql.count("%s") + len(
+        re.findall(r"\$\d+", sql)
+    )
+    if not cols or len(cols) != n_placeholders:
+        return None
+
+    cache = _cache if _cache is not None else {}
+    if table not in cache:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f'SELECT * FROM "{schema}"."{table}" LIMIT 1')  # noqa: S608
+                if cur.description is None:
+                    cache[table] = {}
+                else:
+                    names = [d[0].lower() for d in cur.description]
+                    row = cur.fetchone()
+                    cache[table] = dict(zip(names, row)) if row else {}
+        except Exception:  # noqa: BLE001
+            conn.rollback()
+            cache[table] = {}
+    row = cache[table]
+    if not row:
+        return None
+
+    out = []
+    for c in cols:
+        if c == "realm_id" and realm is not None:
+            out.append(realm)
+        elif c in row:
+            out.append(row[c])
+        else:
+            return None
+    return tuple(out)
+
+
+def enrich_inventory(conn, inventory, realm=None, schema="polaris_schema"):
+    """Attach `params` to every statement that can be resolved honestly.
+
+    Returns:
+        (inventory, resolved_count) -- the same list, mutated in place.
+    """
+    cache = {}
+    resolved = 0
+    for row in inventory:
+        if row.get("params"):
+            resolved += 1
+            continue
+        p = resolve_params(conn, row.get("sql"), row.get("table"),
+                           realm=realm, schema=schema, _cache=cache)
+        if p is not None:
+            row["params"] = p
+            resolved += 1
+    return inventory, resolved
 
 
 def audit_statements(conn, inventory, schema="polaris_schema", analyze=True,

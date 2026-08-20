@@ -862,3 +862,73 @@ def build_assert_table_uuid_requirement(uuid):
         dict — one entry for a CommitTableRequest's `requirements` list.
     """
     return {"type": "assert-table-uuid", "uuid": uuid}
+
+
+def build_scan_report(table_name, snapshot_id, schema_id=0,
+                      field_ids=(1, 2), field_names=("id", "val"),
+                      metrics=None, metadata=None):
+    """Build a spec-valid ScanReport for POST .../tables/{table}/metrics.
+
+    Verified against apache/iceberg open-api/rest-catalog-open-api.yaml. SEVEN
+    fields are required, and omitting any of them is a 400:
+
+        table-name, snapshot-id, filter, schema-id,
+        projected-field-ids, projected-field-names, metrics
+
+    Two easy mistakes, both of which produce a 400 with no useful detail:
+      * the field is `projected-field-names`, NOT `projection`;
+      * `filter` is a Predicate. The scan-everything value is the bare boolean
+        `True` -- the {"type": "true"} object form is deprecated upstream,
+        though still accepted.
+
+    `metrics` values are CounterResult {unit, value} or TimerResult
+    {time-unit, count, total-duration}; the two shapes are not interchangeable.
+
+    Args:
+        snapshot_id: must be a REAL snapshot of the table. A table that has
+            never been committed to has current-snapshot-id -1, and a report
+            against a snapshot that does not exist can be rejected.
+
+    Returns:
+        dict suitable for `IcebergREST.report_metrics`.
+    """
+    return {
+        "report-type": "scan-report",
+        "table-name": table_name,
+        "snapshot-id": snapshot_id,
+        "filter": True,
+        "schema-id": schema_id,
+        "projected-field-ids": list(field_ids),
+        "projected-field-names": list(field_names),
+        "metrics": metrics or {
+            "total-planning-duration": {
+                "time-unit": "nanoseconds", "count": 1,
+                "total-duration": 1_000_000,
+            },
+            "result-data-files": {"unit": "count", "value": 0},
+            "result-delete-files": {"unit": "count", "value": 0},
+        },
+        **({"metadata": metadata} if metadata else {}),
+    }
+
+
+def build_commit_report(table_name, snapshot_id, sequence_number,
+                        operation="append", metrics=None):
+    """Build a spec-valid CommitReport (the other report-type).
+
+    Required: table-name, snapshot-id, sequence-number, operation, metrics.
+    """
+    return {
+        "report-type": "commit-report",
+        "table-name": table_name,
+        "snapshot-id": snapshot_id,
+        "sequence-number": sequence_number,
+        "operation": operation,
+        "metrics": metrics or {
+            "total-duration": {
+                "time-unit": "nanoseconds", "count": 1,
+                "total-duration": 1_000_000,
+            },
+            "added-data-files": {"unit": "count", "value": 0},
+        },
+    }
