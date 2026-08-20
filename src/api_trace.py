@@ -68,12 +68,14 @@ Usage:
         r = ic.load_table("cat", "ns", "t")
         t.status = r.status_code
 
-    print(t.tables_touched, t.sql_count, t.minio_count, t.cache_verdict)
+    print(t.tables_touched, t.sql_count, t.minio_count, t.cache_shape)
 """
 
 import json
 import os
+import pathlib
 import re
+import statistics
 import time
 from dataclasses import dataclass, field
 
@@ -373,15 +375,55 @@ class TraceRecord:
         return self.wall_ms - (self.sql_total_ms or 0) - (self.minio_total_ms or 0)
 
     @property
-    def cache_verdict(self):
-        """MISS / HIT / N/A, inferred from SQL shape.
+    def entity_access(self):
+        """Per-shape breakdown of this request's `entities` reads.
 
-        MISS -- a full-column SELECT against `entities` was issued, so the
-                resolver had to load entities from the metastore.
-        HIT  -- only the batched version-check query appeared; everything else
-                came from the entity cache.
-        N/A  -- no entity reads at all (e.g. `GET /v1/config`), so the question
-                does not apply.
+        See `entity_access_profile` for the shapes and for why this is a share
+        rather than a verdict.
+        """
+        return entity_access_profile(self.sql)
+
+    @property
+    def cache_shape(self):
+        """WARM / MIXED / COLD / N/A for this request.
+
+        **Use this, not `cache_verdict`.** See `entity_access_shape` for why
+        the older property cannot answer the question on Polaris 1.3.0.
+        """
+        return self.entity_access["verdict"]
+
+    @property
+    def batched_share(self):
+        """Fraction of this request's entity reads served by batched validation.
+
+        None when the request read no entities. This is the number that should
+        move as a cache warms: a path-resolving API always loads its first
+        entity BY NAME, because a name is all the caller supplied, so a warm
+        request is not one with zero per-entity loads -- it is one where the
+        proportion revalidated in a batch has risen.
+        """
+        return self.entity_access["batched_share"]
+
+    @property
+    def cache_verdict(self):
+        """MISS / HIT / N/A, inferred from SQL shape. **Superseded.**
+
+        Prefer `cache_shape`. Kept because removing it would silently change
+        anything still reading it, but be aware of what it can actually return:
+
+        MISS -- a full-column SELECT against `entities` was issued.
+        HIT  -- only the batched version-check query appeared.
+        N/A  -- no entity reads at all (e.g. `GET /v1/config`).
+
+        **HIT is unreachable on Polaris 1.3.0.** It requires every entity read
+        to satisfy `is_version_check`, which matches a projection of just
+        `entity_version, grant_records_version`. Measured against a real 75.7 MB
+        capture, this build never emits that: every `entities` SELECT --
+        including the row-constructor cache-validation query, the highest-volume
+        statement in the system -- projects the full column list. So this
+        returns MISS or N/A and nothing else, which is why the Phase 1 matrix
+        reported `cache: MISS` for all 43 APIs. That was not evidence about the
+        cache; it was the classifier's only reachable answer.
 
         Note this is inference from observed statements, not introspection:
         Polaris exposes no cache metrics (neither cache calls Caffeine's
@@ -423,7 +465,15 @@ class TraceRecord:
                 if self.unaccounted_ms is not None
                 else None
             ),
-            "cache_verdict": self.cache_verdict,
+            # `cache_shape` and `batched_share` REPLACE the old `cache_verdict`
+            # column here. That column could only ever read MISS or N/A on this
+            # build, so every report carrying it was stating the classifier's
+            # limitation as a finding. The property is still on the record for
+            # anything that asks for it by name.
+            "cache_shape": self.cache_shape,
+            "batched_share": (
+                round(self.batched_share, 2) if self.batched_share is not None else None
+            ),
             "error": self.error,
         }
 
@@ -1014,6 +1064,148 @@ class StringStream:
     def append(self, more):
         """Test helper: simulate the server writing more log output."""
         self.text += more
+
+
+# ----------------------------------------------------------------------
+# locating a capture
+# ----------------------------------------------------------------------
+def find_capture_dir(roots=None, env_var="CAPTURE_DIR", verbose=True):
+    """Locate the capture directory that actually holds a run's logs.
+
+    Resolve by CONTENT, never by name. Three things have to line up, and each
+    one has silently gone wrong here at least once:
+
+      * a notebook's cwd is its OWN directory, so a relative `"capture"`
+        resolves under `diagnostics/api-sql-profile/` while the log may sit at
+        the repo root;
+      * `capture.sh rotate <dir>` writes to a NEW directory (`capture-seeded`,
+        say), which no hardcoded `"capture"` would ever find -- it would
+        analyse the stale pre-rotation logs instead, which is worse than
+        failing;
+      * an explicit choice must beat both.
+
+    **The failure this exists to prevent.** Notebook 02 once picked the first
+    directory whose `polaris.log` merely `.exists()`, in a fixed order that put
+    `capture/` ahead of `capture-seeded/`. `capture/polaris.log` was a 0-byte
+    leftover, so 02 parsed 0 records, built an empty inventory and reported all
+    three index hypotheses INCONCLUSIVE -- while 01, reading the same cluster,
+    had already CONFIRMED two. Nothing raised. Hence: non-empty is part of the
+    predicate, and ties are broken by mtime rather than by sort order.
+
+    Args:
+        roots: iterable of directories to search. Defaults to the current
+            directory and the repo root two levels up, evaluated at CALL time
+            because a notebook's cwd is what makes them meaningful.
+        env_var: environment variable that overrides the search entirely.
+        verbose: print a note when more than one candidate exists, so a run
+            that silently had a choice to make says so.
+
+    Returns:
+        pathlib.Path, or **None** when no candidate holds a non-empty
+        `polaris.log`. None rather than a plausible-looking default: a consumer
+        should assert and stop, and a producer that intends to CREATE the
+        directory can spell that fallback out at the call site.
+    """
+    env = os.environ.get(env_var)
+    if env:
+        return pathlib.Path(env)
+
+    if roots is None:
+        cwd = pathlib.Path.cwd()
+        roots = [pathlib.Path("."), cwd.parents[1] if len(cwd.parents) > 1 else cwd]
+
+    cands = []
+    for root in roots:
+        for d in sorted(pathlib.Path(root).glob("capture*")):
+            log = d / "polaris.log"
+            if d.is_dir() and log.exists() and log.stat().st_size > 0:
+                cands.append((log.stat().st_mtime, d))
+    if not cands:
+        return None
+
+    cands.sort(key=lambda t: t[0], reverse=True)
+    chosen = cands[0][1]
+    if verbose and len(cands) > 1:
+        others = ", ".join(str(d) for _, d in cands[1:])
+        print(
+            f"note: several capture dirs hold logs; using the newest "
+            f"({chosen}). Others: {others}"
+        )
+    return chosen
+
+
+# ----------------------------------------------------------------------
+# measurement helpers
+# ----------------------------------------------------------------------
+#: Prevents Pgpool from routing a statement to a replica. Every EXPLAIN must
+#: carry it: a replica can hold different statistics and would silently plan
+#: differently, so a measurement taken there describes a node nobody asked
+#: about. Assert `pg_is_in_recovery() = False` as well -- this hint is a
+#: request to the pooler, not a guarantee from the server.
+NO_LOAD_BALANCE = "/*NO LOAD BALANCE*/ "
+
+#: Default repeats for `explain_n`, one of which is discarded as warm-up.
+#:
+#: Across two full runs the SAME plan -- Total Cost 810.16, 285 shared hits, 0
+#: disk reads, 29,003 rows discarded by filter -- measured 7.523 / 3.289 /
+#: 4.571 / 1.622 ms. A 4.6x spread with nothing structural changing, which
+#: moved a reported speedup 11.6x -> 6.3x on noise alone. Plan SHAPE is
+#: deterministic here; execution time is not.
+EXPLAIN_N = 11
+
+
+def explain(conn, sql, params=None, analyze=True, no_lb=True):
+    """Run one EXPLAIN and return the plan dict.
+
+    Args:
+        conn: a psycopg2 connection. Pass the PRIMARY, or rely on `no_lb`.
+        analyze: False issues a plan-only EXPLAIN. **Use False for writes** --
+            `EXPLAIN ANALYZE` on an INSERT/UPDATE/DELETE really performs it.
+    """
+    mode = "(ANALYZE, BUFFERS, FORMAT JSON)" if analyze else "(FORMAT JSON)"
+    pre = (NO_LOAD_BALANCE if no_lb else "") + f"EXPLAIN {mode} "
+    with conn.cursor() as cur:
+        cur.execute(pre + sql, params)
+        return cur.fetchone()[0][0]
+
+
+def explain_n(conn, sql, params=None, k=None, analyze=True, no_lb=True):
+    """EXPLAIN k times, drop the first, return (median, min, max, last_plan, times).
+
+    The discarded first run absorbs backend warm-up, which is not a rounding
+    error: the first EXPLAIN in a fresh kernel has measured **25.2 ms against a
+    1.3 ms steady-state median here -- 19x**. Any n=1 timing from a cold kernel
+    is worthless, and reporting one as a result is how a measurement becomes an
+    argument about noise.
+    """
+    k = k or EXPLAIN_N
+    plans = [explain(conn, sql, params, analyze, no_lb) for _ in range(k)]
+    times = sorted(p.get("Execution Time") for p in plans[1:])
+    mid = len(times) // 2
+    med = times[mid] if len(times) % 2 else (times[mid - 1] + times[mid]) / 2
+    return med, times[0], times[-1], plans[-1], times
+
+
+def timeit(fn, k=15, warmup=2):
+    """Median wall-clock ms over k calls, discarding the first `warmup`.
+
+    Warm-up is discarded for the same reason EXPLAIN drops its first run, and
+    then some: the first call pays Polaris's `InMemoryEntityCache` miss AND
+    pgjdbc's `prepareThreshold=5` promotion to a server-side prepared
+    statement. Those are two distinct knees in the warm curve, both inside the
+    first few iterations, and neither is what a schema change is about.
+
+    Returns:
+        (median, min, max) in milliseconds, over the k measured calls only.
+    """
+    xs = []
+    for i in range(k + warmup):
+        t0 = time.perf_counter()
+        fn()
+        dt = (time.perf_counter() - t0) * 1000
+        if i >= warmup:
+            xs.append(dt)
+    return statistics.median(xs), min(xs), max(xs)
 
 
 # ----------------------------------------------------------------------

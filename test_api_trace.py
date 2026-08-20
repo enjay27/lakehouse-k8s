@@ -17,6 +17,9 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
+import os  # noqa: E402
+import time  # noqa: E402
+
 from api_trace import SqlStatement  # noqa: E402
 from api_trace import (
     REDACTED,
@@ -26,8 +29,11 @@ from api_trace import (
     TraceRecord,
     api_minio_matrix,
     api_table_matrix,
+    explain,
+    explain_n,
     extract_table,
     extract_verb,
+    find_capture_dir,
     normalize_sql,
     parse_minio_trace,
     parse_pg_log,
@@ -37,6 +43,7 @@ from api_trace import (
     scrub_text,
     split_query_message,
     statement_inventory,
+    timeit,
     unknown_tables,
 )
 
@@ -385,6 +392,13 @@ def test_full_column_select_is_not_a_version_check():
 
 
 def test_cache_verdict_hit_miss_and_na():
+    """The superseded property, pinned as-is.
+
+    Note what the HIT case needs: `POLARIS_LOG_CACHE_HIT` is a version-only
+    projection, and **Polaris 1.3.0 never emits one**. So this branch is
+    reachable only from a synthetic fixture -- see the test below, which is the
+    reason `cache_shape` exists.
+    """
     hit = TraceRecord(api="a", sql=parse_polaris_log(POLARIS_LOG_CACHE_HIT))
     assert hit.cache_verdict == "HIT"
 
@@ -393,6 +407,48 @@ def test_cache_verdict_hit_miss_and_na():
 
     na = TraceRecord(api="a", sql=[])
     assert na.cache_verdict == "N/A"
+
+
+#: The real cache-validation statement, as captured: a row-constructor IN over
+#: `(catalog_id, id)` projecting the FULL column list -- not the narrow
+#: `entity_version, grant_records_version` projection the old classifier
+#: assumed. 1,662 calls in the reference capture, the highest-volume statement
+#: in the system.
+REAL_VALIDATION_LOG = """\
+2026-08-18 10:00:05,100 DEBUG [org.apa.pol.per.rel.jdb.DatasourceOperations] (executor-thread-1) query: SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp FROM POLARIS_SCHEMA.entities WHERE (catalog_id, id) IN ((?,?),(?,?)) AND realm_id = ? [0, 1, 0, 2, POLARIS]
+"""
+
+
+def test_cache_verdict_cannot_see_a_real_batched_validation():
+    """The bug, pinned so it cannot be reintroduced by "fixing" cache_shape back.
+
+    Fed the genuine validation query, the old property answers MISS -- the same
+    answer it gives a cold request. That is why the Phase 1 matrix read
+    `cache: MISS` on all 43 APIs: not a sampling artifact, an unreachable
+    branch.
+    """
+    rec = TraceRecord(api="a", sql=parse_polaris_log(REAL_VALIDATION_LOG))
+    assert rec.cache_verdict == "MISS"
+    assert rec.cache_shape == "WARM"
+    assert rec.batched_share == 1.0
+
+
+def test_cache_shape_grades_a_mixed_request_rather_than_failing_it():
+    """A path-resolving API MUST look its first entity up by name, because a
+    name is all the caller supplied. Scoring any per-entity load as a miss
+    measured 100% MISS across all 703 captured requests -- the same mistake in
+    a new place. The share is what moves."""
+    rec = TraceRecord(
+        api="load_table",
+        sql=parse_polaris_log(REAL_VALIDATION_LOG) + parse_polaris_log(POLARIS_LOG),
+    )
+    assert rec.cache_shape == "MIXED"
+    assert 0 < rec.batched_share < 1
+
+
+def test_batched_share_is_none_when_no_entities_were_read():
+    assert TraceRecord(api="a", sql=[]).batched_share is None
+    assert TraceRecord(api="a", sql=[]).cache_shape == "N/A"
 
 
 def test_cache_verdict_na_when_only_non_entity_tables_read():
@@ -577,7 +633,9 @@ def test_records_to_rows_shape():
     assert rows[0]["api"] == "load_table"
     assert rows[0]["sql_count"] == 2
     assert rows[0]["minio_count"] == 2
-    assert rows[0]["cache_verdict"] == "MISS"
+    # The row carries the graded shape now, not the dead MISS/N-A column.
+    assert rows[0]["cache_shape"] in ("WARM", "MIXED", "COLD", "N/A")
+    assert "cache_verdict" not in rows[0]
     assert rows[0]["wall_ms"] == pytest.approx(50.0, rel=0.01)
 
 
@@ -661,3 +719,143 @@ def test_event_writes_excluded_from_the_api_table_matrix():
         ),
     ]
     assert api_table_matrix([rec])["load_table"] == {"entities": "R"}
+
+
+# ----------------------------------------------------------------------
+# promoted helpers — find_capture_dir / explain_n / timeit
+# ----------------------------------------------------------------------
+def _capture(root, name, content, mtime=None):
+    d = root / name
+    d.mkdir()
+    log = d / "polaris.log"
+    log.write_text(content, encoding="utf-8")
+    if mtime is not None:
+        os.utime(log, (mtime, mtime))
+    return d
+
+
+def test_find_capture_dir_prefers_a_non_empty_log_over_sort_order(
+    tmp_path, monkeypatch
+):
+    """The exact silent failure this function exists to prevent.
+
+    `capture/` sorts before `capture-seeded/` and once held a 0-byte
+    polaris.log. Picking it made notebook 02 parse 0 records and report every
+    index hypothesis INCONCLUSIVE, while notebook 01 had already CONFIRMED two
+    from the same cluster. Nothing raised.
+    """
+    monkeypatch.delenv("CAPTURE_DIR", raising=False)
+    _capture(tmp_path, "capture", "")  # the 0-byte leftover
+    seeded = _capture(tmp_path, "capture-seeded", "query: SELECT 1")
+
+    assert find_capture_dir(roots=[tmp_path]) == seeded
+
+
+def test_find_capture_dir_breaks_ties_by_mtime_not_name(tmp_path, monkeypatch):
+    monkeypatch.delenv("CAPTURE_DIR", raising=False)
+    _capture(tmp_path, "capture-a", "query: SELECT 1", mtime=1_000_000)
+    newer = _capture(tmp_path, "capture-b", "query: SELECT 2", mtime=2_000_000)
+
+    assert find_capture_dir(roots=[tmp_path], verbose=False) == newer
+
+
+def test_find_capture_dir_env_var_beats_everything(tmp_path, monkeypatch):
+    _capture(tmp_path, "capture-seeded", "query: SELECT 1")
+    monkeypatch.setenv("CAPTURE_DIR", str(tmp_path / "somewhere-else"))
+
+    assert find_capture_dir(roots=[tmp_path]) == Path(tmp_path / "somewhere-else")
+
+
+def test_find_capture_dir_returns_none_rather_than_a_plausible_default(
+    tmp_path, monkeypatch
+):
+    """None, not `Path("capture")`.
+
+    A consumer must be able to assert and stop. Returning a path that looks
+    usable is what let an empty capture be analysed as if it were real.
+    """
+    monkeypatch.delenv("CAPTURE_DIR", raising=False)
+    _capture(tmp_path, "capture", "")
+
+    assert find_capture_dir(roots=[tmp_path]) is None
+
+
+def test_timeit_discards_warmup_iterations():
+    """Warm-up is not a rounding error: the first EXPLAIN in a fresh kernel has
+    measured 25.2 ms against a 1.3 ms steady state. If warm-up leaked into the
+    sample it would dominate."""
+    calls = []
+
+    def fn():
+        calls.append(len(calls))
+        # First two calls are pathologically slow, like a cold cache.
+        time.sleep(0.02 if len(calls) <= 2 else 0)
+
+    med, lo, hi = timeit(fn, k=5, warmup=2)
+
+    assert len(calls) == 7, "k + warmup calls must actually be made"
+    assert hi < 10, "a discarded warm-up leaked into the reported spread"
+
+
+def test_timeit_reports_the_median_not_the_mean():
+    """One pathological call must not move the headline. A mean over these
+    would report ~20 ms for an operation that takes ~0."""
+    seq = iter([0, 0, 0.05, 0, 0])
+
+    med, lo, hi = timeit(lambda: time.sleep(next(seq)), k=5, warmup=0)
+
+    assert med < 10 <= hi
+
+
+class _ExplainCursor:
+    """Returns a plan whose Execution Time is scripted per call."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        self.conn.executed.append(sql)
+
+    def fetchone(self):
+        t = self.conn.times[len(self.conn.executed) - 1]
+        return [[{"Plan": {"Node Type": "Seq Scan"}, "Execution Time": t}]]
+
+
+class _ExplainConn:
+    def __init__(self, times):
+        self.times, self.executed = times, []
+
+    def cursor(self):
+        return _ExplainCursor(self)
+
+
+def test_explain_n_discards_the_first_run_and_returns_the_median():
+    # A 19x cold first run, then a steady state.
+    conn = _ExplainConn([25.2, 1.3, 1.4, 1.2, 1.5])
+
+    med, lo, hi, plan, times = explain_n(conn, "SELECT 1", k=5)
+
+    assert len(conn.executed) == 5, "all k runs are executed"
+    assert times == [1.2, 1.3, 1.4, 1.5], "the cold first run is not in the sample"
+    assert med == pytest.approx(1.35)
+    assert hi == 1.5
+
+
+def test_explain_pins_to_the_primary_and_refuses_analyze_on_request():
+    """Every EXPLAIN carries the Pgpool hint: a replica can hold different
+    statistics and would silently plan differently."""
+    conn = _ExplainConn([1.0])
+    explain(conn, "SELECT 1")
+    assert conn.executed[0].startswith("/*NO LOAD BALANCE*/ ")
+    assert "ANALYZE" in conn.executed[0]
+
+    # ANALYZE on a write really performs it, so plan-only must be reachable.
+    conn = _ExplainConn([1.0])
+    explain(conn, "DELETE FROM t", analyze=False)
+    assert "ANALYZE" not in conn.executed[0]

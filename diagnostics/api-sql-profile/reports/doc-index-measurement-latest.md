@@ -1,13 +1,13 @@
 # Index Audit — `grant_records` grantee access path
 
-Generated 2026-08-20 15:28 against a locally seeded fixture. Timings are the **median of 10** EXPLAIN (ANALYZE, BUFFERS) runs, first run discarded as warm-up, with PostgreSQL statement logging OFF.
+Generated 2026-08-20 17:09 against a locally seeded fixture. Timings are the **median of 10** EXPLAIN (ANALYZE, BUFFERS) runs, first run discarded as warm-up, with PostgreSQL statement logging OFF.
 
 ## Fixture
 
 - principals / catalogs / principal-roles / catalog-roles: **1000** each
 - Iceberg tables created: **no (create_tables=False)**
 - `grant_records` rows: **30009**
-- `entities` rows: **7273**
+- `entities` rows: **7277**
 
 ### Grants per grantee
 
@@ -21,11 +21,11 @@ Generated 2026-08-20 15:28 against a locally seeded fixture. Timings are the **m
 
 | statement | plan before | ms before | plan after | ms after | speedup |
 |---|---|---:|---|---:|---:|
-| S4 grantee lookup — median grantee (1 row) | `Seq Scan` | 1.452 | `Index Only Scan` | 0.015 | 93.6x |
-| S4 grantee lookup — fattest grantee (1006 rows) | `Seq Scan` | 2.694 | `Index Only Scan` | 0.259 | 10.4x |
-| S13 delete arm | `Aggregate > Seq Scan` | 2.268 | `Aggregate > Bitmap Heap Scan > BitmapOr > Bitmap Index Scan` | 0.387 | 5.9x |
+| S4 grantee lookup — median grantee (1 row) | `Seq Scan` | 3.197 | `Index Only Scan` | 0.017 | 188.1x |
+| S4 grantee lookup — fattest grantee (1006 rows) | `Seq Scan` | 2.980 | `Index Only Scan` | 0.249 | 12.0x |
+| S13 delete arm | `Aggregate > Seq Scan` | 1.903 | `Aggregate > Bitmap Heap Scan > BitmapOr > Bitmap Index Scan` | 0.655 | 2.9x |
 
-Spread across the 10 runs: S4 median before 1.338–1.559 ms; S4 median after 0.013–0.025 ms; S13 before 1.941–2.655 ms. S4 holds a ~15% band; S13's is wider, so quote it with its range.
+Spread across the 10 runs: S4 median before 0.964–4.915 ms; S4 median after 0.014–0.027 ms; S13 before 1.754–5.194 ms. S4 holds a ~124% band; S13's is wider, so quote it with its range.
 
 - Plan shape changed as predicted: **True**
 - S13 now uses a BitmapOr rather than a Seq Scan: **True** — this is the `grant_records_delete_or` remedy's own acceptance test.
@@ -73,10 +73,10 @@ Still absent from upstream `schema-v3.sql`, so a version upgrade does not supply
 
 | api | before ms | after ms | delta | |
 |---|---:|---:|---:|---|
-| `POST /oauth/tokens (floor)` | 4.1 | 4.6 | +0.6 | **control — resolves no grants** |
-| `GET  /principal-roles` | 15.9 | 14.6 | -1.3 |  |
-| `GET  /catalogs (payload-heavy)` | 47.0 | 46.3 | -0.6 |  |
-| `GET  /catalogs/{name}` | 5.5 | 4.1 | -1.4 |  |
+| `POST /oauth/tokens (floor)` | 4.3 | 6.1 | +1.7 | **control — resolves no grants** |
+| `GET  /principal-roles` | 18.2 | 13.7 | -4.5 |  |
+| `GET  /catalogs (payload-heavy)` | 46.2 | 51.3 | +5.1 |  |
+| `GET  /catalogs/{name}` | 5.7 | 4.8 | -0.9 |  |
 
 Medians of 15 calls, first 2 discarded (Polaris's entity cache and pgjdbc's `prepareThreshold=5` are two separate knees inside the first few iterations).
 
