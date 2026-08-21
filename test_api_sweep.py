@@ -564,3 +564,74 @@ def test_restart_refuses_if_the_controller_never_observes_it():
 
     with pytest.raises(TimeoutError, match="never observed"):
         sweep.restart_polaris(runner=runner, timeout=0.05)
+
+
+# ----------------------------------------------------------------------
+# noise floor and cell integrity
+# ----------------------------------------------------------------------
+def _cell_ns(clones, index, ms, lo, hi, scan=None, rows=64):
+    return {
+        "clones": clones,
+        "index": index,
+        "volume": {"rows": {"entities": 20, "grant_records": rows}},
+        "scan": scan or {"plan": "Index Only Scan", "probe_is_clone": False},
+        "restart": {},
+        "cold": {},
+        "warm": {
+            API: {"surface": "mgmt", "ms": ms, "min": lo, "max": hi, "n": 15},
+            sweep.CONTROL: {
+                "surface": "auth",
+                "ms": 6.8,
+                "min": 6.7,
+                "max": 7.3,
+                "n": 15,
+            },
+        },
+    }
+
+
+def test_noise_floor_is_within_cell_spread_not_between_medians():
+    """Measured 2026-08-22: control spread between medians was 0.60 ms while
+    within-cell spreads were 35-60 ms. Bounding a 2 ms claim with 0.6 ms was
+    two orders of magnitude wrong."""
+    cells = [_cell_ns(0, False, 7.0, 6.5, 66.9), _cell_ns(0, True, 7.2, 6.6, 40.0)]
+    assert sweep.noise_floor(cells, API) == pytest.approx(60.4)
+    assert sweep.control_drift(cells)["spread_ms"] < 1.0  # the misleading number
+
+
+def test_a_delta_below_the_floor_is_labelled_noise():
+    cells = [_cell_ns(0, False, 7.0, 6.5, 66.9), _cell_ns(0, True, 9.5, 6.6, 40.0)]
+    md = sweep.render_report(cells, {})
+    assert "NOISE" in md
+    assert "noise" in md
+
+
+def test_an_index_absent_cell_that_planned_an_index_scan_is_flagged():
+    """The whole contrast is void if the planner never stopped using an index."""
+    problems = sweep.cell_integrity(_cell_ns(0, False, 7.0, 6.5, 8.0))
+    assert any("did NOT measure the unindexed path" in p for p in problems)
+
+
+def test_a_real_seq_scan_cell_at_volume_is_not_flagged_for_the_plan():
+    cell = _cell_ns(
+        10000,
+        False,
+        40.0,
+        38.0,
+        42.0,
+        scan={"plan": "Gather > Parallel Seq Scan", "probe_is_clone": False},
+        rows=580_000,
+    )
+    assert sweep.cell_integrity(cell) == []
+
+
+def test_too_few_rows_to_be_informative_is_stated_not_left_implicit():
+    problems = sweep.cell_integrity(_cell_ns(100, True, 7.0, 6.5, 8.0, rows=3064))
+    assert any("uninformative" in p for p in problems)
+
+
+def test_the_report_leads_with_the_integrity_warning():
+    cells = [_cell_ns(0, False, 7.0, 6.5, 66.9), _cell_ns(0, True, 7.2, 6.6, 40.0)]
+    md = sweep.render_report(cells, {})
+    assert "DOES NOT MEASURE WHAT THE TABLES SAY" in md
+    assert md.index("DOES NOT MEASURE") < md.index("## Index effect")

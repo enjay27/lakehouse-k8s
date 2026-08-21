@@ -198,7 +198,11 @@ the notebook should say so rather than reporting "no effect".
 VOLUMES = [int(x) for x in os.environ.get("SWEEP_VOLUMES", "0,1000,10000").split(",")]
 INDEX_STATES = [False, True]
 K = int(os.environ.get("SWEEP_K", "15"))
-WARMUP = int(os.environ.get("SWEEP_WARMUP", "2"))
+# Raised from 2 after the 2026-08-22 smoke run: within-cell min/max spreads of
+# 35-60 ms against ~7 ms medians, i.e. a handful of enormous outliers surviving
+# inside k=15. Two discarded calls do not settle a ZGC-collected JVM that has
+# just started; the outliers are JIT and GC, not the index.
+WARMUP = int(os.environ.get("SWEEP_WARMUP", "10"))
 
 per_e, per_g = len(tmpl["entities"]), len(tmpl["grants"])
 print(f"{'clones':>8} {'entities':>12} {'grant_records':>15}")
@@ -307,13 +311,15 @@ def apply_volume(n):
     repl = api_sweep.wait_for_replicas(conn)
     print(f"  replicas caught up: {repl['standbys']} standby(s) in "
           f"{repl['seconds']:.1f}s")
-    # Recorded per cell, not just printed. Measured 2026-08-21: this cluster
-    # has THREE postgresql pods and ZERO streaming standbys -- pg_stat_replication
-    # on the primary is empty. So the load-balanced-read concern this gate was
-    # built for does not currently apply, and every number below comes from the
-    # primary. That is good for measurement cleanliness and it is exactly the
-    # kind of fact a report must state rather than assume, because it silently
-    # stops being true the moment a replica reattaches.
+    # Recorded per cell, not just printed.
+    #
+    # CORRECTION 2026-08-22: a one-off `pg_stat_replication` query returned no
+    # rows and I concluded this cluster had zero streaming standbys. The sweep
+    # itself recorded **standbys=2** in all four cells. The empty read was a
+    # transient or came from a pod that was not the primary at that moment --
+    # either way, one snapshot was treated as a property of the cluster. This
+    # is why the gate records the count per cell instead: replication state is
+    # something a report must carry, not something anyone should recall.
     print(f"  volume {n:,}: removed {removed['entities']:,}e, "
           f"inserted {inserted['entities']:,}e/{inserted['grants']:,}g -> {rows}")
     return {"clones": n, "removed": removed, "inserted": inserted, "rows": rows,

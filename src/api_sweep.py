@@ -451,6 +451,62 @@ def run_sweep(
 # ----------------------------------------------------------------------
 # reading the result
 # ----------------------------------------------------------------------
+def noise_floor(cells, api):
+    """The worst WITHIN-CELL spread for this API. The real noise floor.
+
+    `render_report` used to bound its claims with the CONTROL's spread across
+    cells, and that was badly wrong. Measured 2026-08-22: the control's
+    cross-cell spread was 0.60 ms while within-cell spreads ran 35-60 ms
+    against medians of ~7 ms. Deltas of 0.02-2.58 ms were reported against a
+    floor two orders of magnitude too low.
+
+    The mistake was comparing medians to medians. A median of 15 calls is
+    stable by construction -- that is what a median is for -- so the spread
+    BETWEEN medians says nothing about whether any single median is
+    trustworthy. min/max within a cell says exactly that, and `measure_warm`
+    has been recording it all along.
+    """
+    spreads = [
+        c["warm"][api]["max"] - c["warm"][api]["min"]
+        for c in cells
+        if api in c["warm"] and "max" in c["warm"][api]
+    ]
+    return max(spreads) if spreads else None
+
+
+def cell_integrity(cell):
+    """Did this cell actually exercise the condition its label claims?
+
+    A cell labelled `index=False` is only measuring the unindexed path if the
+    planner actually stopped using an index. Measured 2026-08-22 at 3,064
+    `grant_records`: every cell -- index present AND absent -- planned an
+    **Index Only Scan**, because the primary key covers the grantee query and
+    at that size scanning the whole PK beats a heap scan. The Seq Scan the
+    entire audit is about never appeared, so the index contrast was void while
+    the table said `without` and `with` in confident columns.
+
+    Returns a list of reasons the cell does not measure what it says.
+    """
+    problems = []
+    scan = (cell.get("scan") or {}).get("plan") or ""
+    if cell.get("index") is False and "Seq Scan" not in scan:
+        problems.append(
+            f"labelled index-absent but planned {scan!r} -- the PK still covers "
+            "the grantee lookup at this row count, so this cell did NOT measure "
+            "the unindexed path"
+        )
+    if (cell.get("scan") or {}).get("probe_is_clone"):
+        problems.append("the plan probe landed on a CLONE grantee, not a real one")
+    rows = (cell.get("volume") or {}).get("rows") or {}
+    if rows.get("grant_records", 0) < 30_000:
+        problems.append(
+            f"{rows.get('grant_records', 0):,} grant_records -- below the 30,009 "
+            "at which notebook 02 first measured an index effect, so an absence "
+            "of effect here is uninformative"
+        )
+    return problems
+
+
 def index_effect(cells, api):
     """Index-absent minus index-present, per volume. The GRANT axis.
 
@@ -565,19 +621,54 @@ def render_report(cells, meta):
             f"spread {drift['spread_ms']:.2f} ms "
             f"({drift['min_ms']:.2f} .. {drift['max_ms']:.2f}).",
             "",
-            "It resolves no grants, so it should not move. Any effect reported",
-            "below that is smaller than this spread is noise.",
+            "It resolves no grants, so it should not move -- and it did not.",
+            "",
+            "**But do NOT use this spread as the noise floor.** It is a spread",
+            "between MEDIANS, and a median of 15 calls is stable by",
+            "construction; it says nothing about whether any one median is",
+            "trustworthy. The `noise` column below carries the within-cell",
+            "min/max spread, which does. An earlier version of this report made",
+            "exactly that substitution and bounded 2 ms claims with a 0.6 ms",
+            "figure while the true spread was 60 ms.",
         ]
 
     apis = sorted({a for c in cells for a in c["warm"] if a != CONTROL})
 
+    flawed = [(c, cell_integrity(c)) for c in cells]
+    flawed = [(c, p) for c, p in flawed if p]
+    if flawed:
+        lines += ["", "## THIS RUN DOES NOT MEASURE WHAT THE TABLES SAY", ""]
+        for c, probs in flawed:
+            lines.append(f"- **clones={c['clones']:,}, index={c['index']}**")
+            for pr in probs:
+                lines.append(f"  - {pr}")
+        lines += [
+            "",
+            "Read the tables below as a proof that the harness runs, not as a",
+            "result. Fixing the labels would not help: the cells have to be",
+            "re-measured at a volume where the planner behaves differently.",
+        ]
+
     lines += ["", "## Index effect (isolates GRANT volume)", ""]
-    lines += ["| API | clones | without | with | delta |", "|---|---:|---:|---:|---:|"]
+    lines += [
+        "`noise` is the worst within-cell min/max spread for that API -- the",
+        "real floor. A delta smaller than it is not a measurement.",
+        "",
+        "| API | clones | without | with | delta | noise | verdict |",
+        "|---|---:|---:|---:|---:|---:|:--|",
+    ]
     for api in apis:
+        floor = noise_floor(cells, api)
         for row in index_effect(cells, api):
+            verdict = (
+                "NOISE"
+                if floor is not None and abs(row["delta_ms"]) < floor
+                else "above floor"
+            )
             lines.append(
                 f"| `{api}` | {row['clones']:,} | {row['without_ms']:.2f} | "
-                f"{row['with_ms']:.2f} | {row['delta_ms']:+.2f} |"
+                f"{row['with_ms']:.2f} | {row['delta_ms']:+.2f} | "
+                f"{'-' if floor is None else f'{floor:.2f}'} | {verdict} |"
             )
 
     lines += ["", "## Volume effect at index-present (isolates ENTITY volume)", ""]
