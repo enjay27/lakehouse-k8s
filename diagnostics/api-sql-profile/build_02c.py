@@ -237,9 +237,19 @@ def scan_shape():
     survives even when the clock does not.\"\"\"
     probe = grant_scale.resolve_probes(conn, SCHEMA, REALM, targets=("max",))[0]
     m = grant_scale.measure(conn, SCHEMA, REALM, probe)
+    # `resolve_probes` excludes filler by `grantee_id >= 0`, which was enough
+    # when the only synthetic rows were negative. Clones are POSITIVE, so it
+    # cannot tell one from a real grantee and will happily label a cloned
+    # owner_principal "the fattest identity in the realm". The plan shape is
+    # unaffected — but the label would be a fabricated fact about the fixture,
+    # which is the specific failure this directory keeps catching.
+    clone_grantee = probe["grantee_id"] in set(
+        entity_replay.clone_ids(conn, SCHEMA, REALM)
+    )
     return {"label": m["label"], "plan": m["path"], "cost": m["total_cost"],
             "buffers": m["shared_hit"], "rows_filtered": m["rows_filtered"],
-            "parallel": m["parallel"]}
+            "parallel": m["parallel"], "probe_is_clone": clone_grantee,
+            "probe_rows": probe["rows"]}
 """),
     md("""
 ## 3. The four callbacks

@@ -150,6 +150,7 @@ def install_fakes(ns_env):
     entity_replay.delete_clones = guard(
         entity_replay.delete_clones, lambda *a, **kw: {"entities": 0, "grants": 0}
     )
+    entity_replay.clone_ids = guard(entity_replay.clone_ids, lambda *a, **kw: [])
 
     # --- grant_scale ---
     grant_scale.set_index = guard(
