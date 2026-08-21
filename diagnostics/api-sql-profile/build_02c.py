@@ -106,6 +106,26 @@ with conn.cursor() as cur:
     cur.execute(api_trace.NO_LOAD_BALANCE + "SELECT version(), pg_is_in_recovery()")
     ver, standby = cur.fetchone()
 assert not standby, "routed to a STANDBY — every DDL and count here needs the primary"
+
+# A STALE KERNEL LOOKS EXACTLY LIKE A BROKEN CLUSTER.
+#
+# Twice on 2026-08-21 a ConnectionError was diagnosed as a cluster fault when
+# the real cause was that `src/api_sweep.py` had been fixed on disk and this
+# kernel was still running the version imported an hour earlier. The traceback
+# named a line number that no longer existed in the file — which is the only
+# reason it was caught.
+#
+# `importlib.reload` does NOT fix this: names other cells already resolved stay
+# bound to the old module. Restarting the kernel is the fix. This asserts on a
+# marker rather than trusting anyone to remember.
+for _mod, _need in ((api_sweep, "wait_for_replicas"), (entity_replay, "find_clone_band")):
+    assert hasattr(_mod, _need), (
+        f"{_mod.__name__} in this kernel has no {_need!r} — you are running a "
+        "STALE import. Restart the kernel (Kernel > Restart & Run All). Do not "
+        "diagnose the cluster until this passes; a stale module produces "
+        "connection errors that look exactly like an outage."
+    )
+print("module freshness: ok")
 print(ver.split(",")[0])
 print(f"polaris {POLARIS_URL}   mgmt {MGMT_URL}   deploy {K8S_NS}/{K8S_DEPLOY}")
 """),
@@ -297,24 +317,70 @@ def apply_index(present):
 
 
 def polaris_is_serving():
-    r = requests.get(f"{MGMT_URL}/q/health/ready", timeout=5)
-    return r.status_code == 200
+    \"\"\"Probe THE PORT THE SWEEP ACTUALLY USES.
+
+    This polled `/q/health/ready` on the MANAGEMENT port (8182) and then sent
+    the first real request to 8181. Those are different listeners on different
+    Services -- `benchmarks-polaris-mgmt` and `benchmarks-polaris` -- so a green
+    readiness check said nothing about whether 8181 was accepting yet. Result:
+    ConnectionError [Errno 61] on /oauth/tokens, twice, with the cluster healthy
+    by the time anyone looked.
+
+    A readiness signal that is not the thing you are about to use is a guess.
+    Ask 8181 for a token: success means the port is open, Polaris is up, the
+    metastore is reachable AND root can authenticate -- every precondition the
+    next line depends on, proven rather than inferred.
+    \"\"\"
+    r = requests.post(
+        f"{POLARIS_URL}/api/catalog/v1/oauth/tokens",
+        headers={"Polaris-Realm": REALM},
+        data={
+            "grant_type": "client_credentials",
+            "client_id": ROOT_CLIENT,
+            "client_secret": ROOT_SECRET,
+            "scope": "PRINCIPAL_ROLE:ALL",
+        },
+        timeout=5,
+    )
+    return r.status_code < 300
 
 
 def restart():
     out = api_sweep.restart_polaris(namespace=K8S_NS, deployment=K8S_DEPLOY)
-    out["serving"] = api_sweep.wait_until_serving(polaris_is_serving)
+    # wait_until_serving swallows connection errors and keeps polling -- a
+    # refused socket during a restart is expected, not exceptional. What is NOT
+    # acceptable is proceeding while it is still refused, which is why this
+    # raises on timeout instead of returning.
+    out["serving"] = api_sweep.wait_until_serving(polaris_is_serving, timeout=300)
     print(f"  restarted in {out['seconds']:.1f}s, serving after "
           f"{out['serving']['seconds']:.1f}s more")
     return out
 
 
-def connect_polaris():
-    pc = PolarisREST(POLARIS_URL, REALM)
-    r = pc.get_token(ROOT_CLIENT, ROOT_SECRET)
-    assert r.status_code < 300, f"auth failed [{r.status_code}]: {r.text[:200]}"
-    pc.token = r.json()["access_token"]
-    return pc
+def connect_polaris(attempts=5):
+    \"\"\"Authenticate, retrying a REFUSED connection but never a rejected one.
+
+    The distinction matters. A refused socket is a timing artifact of the
+    restart and retrying is correct. A 401 is a real answer -- retrying it four
+    more times just delays the report of a credentials problem.
+    \"\"\"
+    last = None
+    for i in range(attempts):
+        try:
+            pc = PolarisREST(POLARIS_URL, REALM)
+            r = pc.get_token(ROOT_CLIENT, ROOT_SECRET)
+            assert r.status_code < 300, f"auth failed [{r.status_code}]: {r.text[:200]}"
+            pc.token = r.json()["access_token"]
+            return pc
+        except requests.exceptions.ConnectionError as exc:
+            last = exc
+            wait = 2 ** i
+            print(f"  connect refused, retrying in {wait}s ({i + 1}/{attempts})")
+            time.sleep(wait)
+    raise RuntimeError(
+        f"Polaris refused {attempts} connection attempts after reporting "
+        f"itself ready. Last error: {last}"
+    )
 
 
 def ops_for(pc):
