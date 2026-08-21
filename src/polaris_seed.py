@@ -287,14 +287,24 @@ class SeedSpec:
     start_index: int = 1
     create_tables: bool = True
 
-    #: OBSERVED on the 1,000-user fixture, not derived from Polaris source:
-    #: 30,009 actual - 25,000 granted = 5,009, which decomposes exactly as
-    #: 5 per user + 9 realm-level. The 5 are believed to be the two role
-    #: assignments (principal -> principal-role, principal-role -> catalog-role)
-    #: plus three `catalog_admin` bootstrap grants, and the 9 to belong to
-    #: `root`/`service_admin`. Believed, NOT measured per privilege_code —
-    #: `verify_counts` reports the residual separately so a wrong constant
-    #: shows up as an unexplained surplus instead of silently absorbing one.
+    #: MEASURED from the grants-per-grantee histogram, 2026-08-21. 30,009
+    #: actual - 25,000 granted = 5,009 = 5 per user + 9 realm-level, and the
+    #: 5 decompose as:
+    #:     1  the principal, grantee of its principal-role assignment
+    #:     1  the principal-role, grantee of its catalog-role assignment
+    #:     2  `catalog_admin`, which Polaris bootstraps with two grants
+    #:     1  `service_admin`, which gains ONE GRANT PER CATALOG
+    #:
+    #: The total was right before this was measured; the story was not. The
+    #: earlier guess ("two role assignments plus three catalog_admin grants")
+    #: reached the same 5 by a different and wrong route, and it mattered:
+    #: service_admin's share is per-catalog, so it belongs in the per-user term
+    #: and NOT in a fixed realm constant. Confirmed by the fattest grantee
+    #: tracking the catalog count exactly -- 1,006 at 1,000 catalogs, 1,007 the
+    #: moment a probe catalog was added.
+    #:
+    #: The histogram is the check, not the total: 2,001 grantees holding 1 row,
+    #: 1,000 holding 2, 1,000 holding 25, one holding 1,006.
     grant_overhead_per_user: int = 5
     grant_overhead_realm: int = 9
 
@@ -1136,6 +1146,56 @@ def revert_grants(
         ledger.clear_upgrades()
     result.elapsed_s = time.time() - t0
     return result
+
+
+def delete_catalog_fully(pc, catalog, result=None, purge=True):
+    """Delete a catalog, clearing the catalog-roles that can block it first.
+
+    WHY THIS IS NOT JUST `delete_catalog`
+    -------------------------------------
+    Measured 2026-08-21: `--probe-privileges` created a catalog, granted 51
+    privileges to a `probe_role` on it, and its teardown -- a bare
+    `delete_catalog(purge=True)` -- came back **400**, stranding the catalog,
+    its role and 51 grant_records rows on the cluster. The failure was reported
+    as a bare status code, so the cause was thrown away with the body.
+
+    This deletes every catalog-role except the built-in `catalog_admin` before
+    dropping the catalog, which is the ordering the rest of this repo uses, and
+    **returns the failing response** rather than a status, so the next failure
+    explains itself. It does not assume role residue was the cause -- that is
+    still unconfirmed -- it removes one candidate and preserves the evidence for
+    the other.
+
+    Returns:
+        (ok, resp) -- `ok` is True when the catalog is gone or was already
+        absent. `resp` is the final delete response, or the listing response
+        when the roles could not even be read.
+    """
+    r = pc.list_catalog_roles(catalog)
+    if result is not None:
+        result.calls += 1
+    if r.status_code == 404:
+        return True, r  # already gone; nothing to do
+    if r.status_code < 300:
+        try:
+            roles = [x.get("name") for x in (r.json() or {}).get("roles", [])]
+        except Exception:  # noqa: BLE001
+            roles = []
+        for name in roles:
+            # Never catalog_admin: it is bootstrapped with the catalog and
+            # deleting it is what produces an unusable, unrepairable catalog.
+            if not name or name == "catalog_admin":
+                continue
+            d = pc.delete_catalog_role(catalog, name)
+            if result is not None:
+                result.calls += 1
+            if d.status_code >= 300 and d.status_code != 404:
+                return False, d
+
+    d = pc.delete_catalog(catalog, purge=purge)
+    if result is not None:
+        result.calls += 1
+    return (d.status_code < 300 or d.status_code == 404), d
 
 
 def probe_privileges(pc, catalog, catalog_role, candidates=None):

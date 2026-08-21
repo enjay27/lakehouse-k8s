@@ -84,6 +84,7 @@ from polaris_seed import (
     SeedSpec,
     call_with_lag_retry,
     catalog_privileges,
+    delete_catalog_fully,
     ensure_catalog,
     find_strays,
     probe_privileges,
@@ -176,6 +177,12 @@ def main():
         "baseline, undoing --upgrade-grants.",
     )
     ap.add_argument(
+        "--cleanup-probes",
+        action="store_true",
+        help="delete any privprobe-* catalog left behind by a failed probe "
+        "teardown. Run before taking a baseline.",
+    )
+    ap.add_argument(
         "--probe-privileges",
         action="store_true",
         help="find out which privilege names THIS build accepts, on one "
@@ -227,6 +234,9 @@ def main():
     )
     print(f"expected: {spec.expected_counts()}")
     print()
+
+    if args.cleanup_probes:
+        sys.exit(cleanup_probes(pc))
 
     if args.probe_privileges:
         sys.exit(probe(pc))
@@ -363,6 +373,7 @@ def probe(pc):
     result = SeedResult()
     name = f"privprobe-{int(time.time())}"
     print(f"probing {len(CATALOG_PRIVILEGES)} candidate names on {name}\n")
+    res = None
     try:
         ensure_catalog(pc, name, BUCKET, MINIO_ENDPOINT, result)
         ok, r = call_with_lag_retry(
@@ -375,11 +386,18 @@ def probe(pc):
             return 1
         res = probe_privileges(pc, name, "probe_role")
     finally:
-        # Always: a leftover probe catalog is exactly the residue the entities
-        # count is being watched for.
-        d = pc.delete_catalog(name, purge=True)
-        if d.status_code >= 300 and d.status_code != 404:
-            print(f"WARNING: probe catalog {name} not deleted ({d.status_code}).")
+        # Always, and thoroughly. The first version of this called
+        # `delete_catalog(purge=True)` directly, got a 400, printed the status
+        # code and threw the body away -- leaving the catalog, its role and 51
+        # grant_records rows on the cluster, where they showed up in the next
+        # baseline as a 51-row grantee that nobody would have remembered.
+        ok, d = delete_catalog_fully(pc, name, result)
+        if not ok:
+            print(f"\nWARNING: probe catalog {name} NOT deleted [{d.status_code}]")
+            print(f"  {(d.text or '')[:400]}")
+            print("  It holds real grant_records rows and will contaminate the")
+            print("  next baseline. Remove it before measuring anything:")
+            print("      python3 seed_polaris.py --cleanup-probes")
 
     print(f"accepted: {len(res['accepted'])}/{len(CATALOG_PRIVILEGES)}")
     if res["rejected"]:
@@ -392,6 +410,46 @@ def probe(pc):
         print("will look like a Polaris behaviour.")
         return 1
     print("every candidate accepted; CATALOG_PRIVILEGES is safe to use in full.")
+    return 0
+
+
+def cleanup_probes(pc):
+    """Remove any `privprobe-*` catalog stranded by a failed probe teardown.
+
+    Prefix-scoped and local-only, like everything else here. Read the list it
+    prints before answering yes to anything -- this deletes catalogs.
+
+    Returns a process exit code: 0 = nothing left behind.
+    """
+    result = SeedResult()
+    r = pc.list_catalogs()
+    if r.status_code >= 300:
+        print(f"cannot list catalogs [{r.status_code}]: {r.text[:200]}")
+        return 1
+    names = sorted(
+        c.get("name")
+        for c in (r.json() or {}).get("catalogs", [])
+        if str(c.get("name", "")).startswith("privprobe-")
+    )
+    if not names:
+        print("no privprobe-* catalogs found; nothing to clean.")
+        return 0
+
+    print(f"found {len(names)} stranded probe catalog(s): {names}")
+    failed = []
+    for n in names:
+        ok, d = delete_catalog_fully(pc, n, result)
+        print(f"  {n}: {'deleted' if ok else f'FAILED [{d.status_code}]'}")
+        if not ok:
+            print(f"    {(d.text or '')[:400]}")
+            failed.append(n)
+    if failed:
+        print("\nStill present:", failed)
+        print("The body above is the thing to read -- the previous attempt")
+        print("reported only a status code, which is why this happened twice.")
+        return 1
+    print("\nclean. Re-take the baseline before measuring anything:")
+    print("      python3 baseline_grants.py")
     return 0
 
 

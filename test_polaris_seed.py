@@ -28,6 +28,7 @@ from polaris_seed import (
     SeedResult,
     SeedSpec,
     catalog_privileges,
+    delete_catalog_fully,
     find_strays,
     require_local,
     revert_grants,
@@ -168,6 +169,14 @@ class FakePolaris:
             return Resp(409)
         self.catalog_roles.add(key)
         return Resp(200)
+
+    def delete_catalog_role(self, catalog, name):
+        key = (catalog, name)
+        if key not in self.catalog_roles:
+            return Resp(404)
+        self.catalog_roles.discard(key)
+        self.grants = {g for g in self.grants if g[:2] != key}
+        return Resp(204)
 
     def assign_catalog_role_to_principal_role(self, catalog, prole, crole):
         self.assignments.append(("cr->pr", catalog, crole, prole))
@@ -847,3 +856,50 @@ def test_ledger_spec_survives_an_unknown_key(ledger_path):
         json.dump({"spec": {"n_users": 4, "invented_later": True}, "users": [1]}, fh)
     spec = Ledger(ledger_path).spec()
     assert spec.n_users == 4
+
+
+def test_delete_catalog_fully_clears_blocking_roles_first(small_spec, ledger_path):
+    """The probe teardown bug, pinned.
+
+    A bare `delete_catalog(purge=True)` on a catalog carrying a non-default
+    catalog-role came back 400 live, stranding the catalog, its role and 51
+    grant_records rows. `catalog_admin` must survive the sweep — deleting it is
+    what produces the unusable, unrepairable catalog `_ensure_catalog` exists to
+    repair.
+    """
+    p = FakePolaris()
+    p.catalogs.add("probe_cat")
+    p.catalog_roles.update(
+        {("probe_cat", "catalog_admin"), ("probe_cat", "probe_role")}
+    )
+    p.grants.add(("probe_cat", "probe_role", "TABLE_DROP"))
+
+    ok, resp = delete_catalog_fully(p, "probe_cat", SeedResult())
+
+    assert ok and resp.status_code < 300
+    assert "probe_cat" not in p.catalogs
+    assert not [r for r in p.catalog_roles if r[0] == "probe_cat"]
+    assert not [g for g in p.grants if g[0] == "probe_cat"]
+
+
+def test_delete_catalog_fully_is_idempotent_on_an_absent_catalog():
+    ok, _ = delete_catalog_fully(FakePolaris(), "never_existed", SeedResult())
+    assert ok, "already gone is the desired end state, not a failure"
+
+
+def test_delete_catalog_fully_returns_the_failing_response(small_spec):
+    """The actual defect was throwing the body away.
+
+    The first version printed a bare status code, so the reason the delete was
+    refused went unrecorded and the same failure had to be provoked again to
+    learn anything. Whatever refuses, the caller gets the response.
+    """
+    p = FakePolaris()
+    p.catalogs.add("stuck")
+    p.catalog_roles.add(("stuck", "catalog_admin"))
+    p.delete_catalog = lambda name, purge=False: Resp(400, {"error": "why it refused"})
+
+    ok, resp = delete_catalog_fully(p, "stuck", SeedResult())
+    assert not ok
+    assert resp.status_code == 400
+    assert "why it refused" in resp.text
