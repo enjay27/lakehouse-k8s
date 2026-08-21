@@ -1,6 +1,6 @@
 # Index Audit
 
-Generated 2026-08-20 17:16. Schema version 3, verdict **OK**.
+Generated 2026-08-20 17:30. Schema version 3, verdict **OK**.
 
 ## Schema drift
 
@@ -8,35 +8,27 @@ Generated 2026-08-20 17:16. Schema version 3, verdict **OK**.
 
 ## Hypotheses
 
-### grant_records_by_grantee — **REFUTED** (severity high)
+### grant_records_by_grantee — **REMEDIED** (severity high)
 
 - Source: `loadAllGrantRecordsOnGrantee` on `grant_records`
 - Claim: grant_records has exactly one index (its PK), which leads with realm_id then the SECURABLE columns. A lookup by GRANTEE cannot use it selectively -- grantee columns sit at positions 4-5 with the securable columns unconstrained in front of them.
 - Impact: loadAllGrantRecordsOnGrantee runs on the authorization path of EVERY authenticated request, so per-request auth cost would grow with the total number of grants in the realm. Invisible with a handful of grants; steadily worse in a shared realm.
 - Remedy: `CREATE INDEX idx_grant_records_grantee ON grant_records (realm_id, grantee_catalog_id, grantee_id);`
 
+> The claim STANDS and the proposed fix is already on this cluster: the winning plan uses idx_grant_records_grantee, which this hypothesis itself proposes. That makes the 'before' state unobservable here — take the verdict from a run where the index is absent (02's section 5 measures exactly that). This is NOT a refutation.
+
 ```sql
 SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_id = ? AND realm_id = ? AND grantee_catalog_id = ?
 ```
 
-```sql
-SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?
-```
-
-```sql
-DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE ( (grantee_id = ? AND grantee_catalog_id = ?) OR (securable_id = ? AND securable_catalog_id = ?) ) AND realm_id = ?
-```
-
-```sql
-INSERT INTO POLARIS_SCHEMA.GRANT_RECORDS (securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code, realm_id) VALUES (?, ?, ?, ?, ?, ?)
-```
-
-### grant_records_delete_or — **REFUTED** (severity medium)
+### grant_records_delete_or — **REMEDIED** (severity medium)
 
 - Source: `deleteAllEntityGrantRecords` on `grant_records`
 - Claim: The delete predicate ORs two disjoint column sets ((grantee_id, grantee_catalog_id) OR (securable_id, securable_catalog_id)), which typically cannot be served by a single index scan.
 - Impact: Runs on every entity deletion, so it shows up in teardown and in any drop-heavy workload rather than on the read path.
 - Remedy: `Covered by the grantee index above plus the existing PK prefix; confirm the planner uses a BitmapOr rather than a Seq Scan.`
+
+> The claim STANDS and the proposed fix is already on this cluster: the winning plan uses idx_grant_records_grantee, which this hypothesis itself proposes. That makes the 'before' state unobservable here — take the verdict from a run where the index is absent (02's section 5 measures exactly that). This is NOT a refutation.
 
 ```sql
 DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE ( (grantee_id = ? AND grantee_catalog_id = ?) OR (securable_id = ? AND securable_catalog_id = ?) ) AND realm_id = ?
@@ -49,6 +41,8 @@ DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE ( (grantee_id = ? AND grantee_cat
 - Impact: This is the single hottest query in the system -- every cached request runs exactly one of these. A poor plan here taxes everything, including the requests the cache was supposed to make cheap.
 - Remedy: `No new index needed if the planner handles it; if not, the fix is upstream (rewrite as an OR-of-equalities or a VALUES join).`
 
+> Served by a pre-existing access path, not by anything this hypothesis proposes (indexes used: n/a).
+
 ```sql
 SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN (<rows>) AND realm_id = ?
 ```
@@ -58,26 +52,26 @@ SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code
 
 | # | Verdict | Table | Verb | Calls | Rows | ms |
 |---|---|---|---|---|---|---|
-| [1](#stmt-1) | INDEX_SCAN | entities | SELECT | 131 | 7285 | — |
-| [2](#stmt-2) | INDEX_SCAN | entities | SELECT | 114 | 7285 | 0.04 |
-| [3](#stmt-3) | INDEX_SCAN | entities | SELECT | 73 | 7285 | 0.03 |
-| [4](#stmt-4) | INDEX_SCAN | grant_records | SELECT | 60 | 30013 | 0.07 |
-| [5](#stmt-5) | INDEX_SCAN | entities | SELECT | 48 | 7285 | 0.06 |
-| [6](#stmt-6) | INDEX_SCAN | grant_records | SELECT | 23 | 30013 | 0.05 |
-| [7](#stmt-7) | INDEX_SCAN | entities | INSERT | 9 | 7285 | — |
-| [8](#stmt-8) | INDEX_SCAN | entities | SELECT | 6 | 7285 | 0.03 |
-| [9](#stmt-9) | INDEX_SCAN | entities | DELETE | 6 | 7285 | — |
+| [1](#stmt-1) | INDEX_SCAN | entities | SELECT | 130 | 7289 | — |
+| [2](#stmt-2) | INDEX_SCAN | entities | SELECT | 113 | 7289 | 0.02 |
+| [3](#stmt-3) | INDEX_SCAN | entities | SELECT | 76 | 7289 | 0.02 |
+| [4](#stmt-4) | INDEX_SCAN | grant_records | SELECT | 60 | 30013 | 0.03 |
+| [5](#stmt-5) | INDEX_SCAN | entities | SELECT | 48 | 7289 | 0.01 |
+| [6](#stmt-6) | INDEX_SCAN | grant_records | SELECT | 24 | 30013 | 0.03 |
+| [7](#stmt-7) | INDEX_SCAN | entities | INSERT | 9 | 7289 | — |
+| [8](#stmt-8) | INDEX_SCAN | entities | SELECT | 6 | 7289 | 0.01 |
+| [9](#stmt-9) | INDEX_SCAN | entities | DELETE | 6 | 7289 | — |
 | [10](#stmt-10) | INDEX_SCAN | grant_records | DELETE | 6 | 30013 | — |
-| [11](#stmt-11) | INDEX_SCAN | entities | SELECT | 3 | 7285 | 0.03 |
-| [12](#stmt-12) | INDEX_SCAN | entities | SELECT | 3 | 7285 | 1.38 |
+| [11](#stmt-11) | INDEX_SCAN | entities | SELECT | 3 | 7289 | 0.01 |
+| [12](#stmt-12) | INDEX_SCAN | entities | SELECT | 3 | 7289 | 0.56 |
 | [13](#stmt-13) | INDEX_SCAN | grant_records | INSERT | 3 | 30013 | — |
-| [14](#stmt-14) | INDEX_SCAN | entities | SELECT | 2 | 7285 | 1.18 |
-| [15](#stmt-15) | INDEX_SCAN | entities | SELECT | 1 | 7285 | 0.02 |
-| [16](#stmt-16) | NO_PARAMS | entities | UPDATE | 13 | 7285 | — |
+| [14](#stmt-14) | INDEX_SCAN | entities | SELECT | 2 | 7289 | 0.59 |
+| [15](#stmt-15) | INDEX_SCAN | entities | SELECT | 1 | 7289 | 0.01 |
+| [16](#stmt-16) | NO_PARAMS | entities | UPDATE | 13 | 7289 | — |
 | [17](#stmt-17) | NO_PARAMS | principal_authentication_data | INSERT | 2 | 1002 | — |
-| [18](#stmt-18) | TOO_SMALL | policy_mapping_record | SELECT | 2 | 0 | 0.01 |
+| [18](#stmt-18) | TOO_SMALL | policy_mapping_record | SELECT | 2 | 0 | 0.00 |
 | [19](#stmt-19) | TOO_SMALL | policy_mapping_record | DELETE | 2 | 0 | — |
-| [20](#stmt-20) | TOO_SMALL | principal_authentication_data | SELECT | 2 | 1002 | 0.03 |
+| [20](#stmt-20) | TOO_SMALL | principal_authentication_data | SELECT | 2 | 1002 | 0.01 |
 | [21](#stmt-21) | TOO_SMALL | principal_authentication_data | DELETE | 2 | 1002 | — |
 
 ## Statement catalogue
@@ -88,7 +82,7 @@ Every audited statement in full — SQL as Polaris emitted it, with the complete
 
 ### 1. `entities` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **131** · table rows: 7285 · no plan timing
+- calls in capture: **130** · table rows: 7289 · no plan timing
 - issued by: `iceberg.commit_table`, `iceberg.create_namespace`, `iceberg.create_table`, `iceberg.create_view`, `iceberg.drop_namespace`, `iceberg.drop_table`, `iceberg.drop_view`, `iceberg.get_config`, `iceberg.head_namespace`, `iceberg.head_table`, `iceberg.head_view`, `iceberg.list_namespaces`, `iceberg.list_tables`, `iceberg.list_views`, `iceberg.load_namespace`, `iceberg.load_table`, `iceberg.load_table[missing]`, `iceberg.load_table[snapshots=refs]`, `iceberg.load_view`, `iceberg.rename_table`, `iceberg.rename_view`, `iceberg.report_metrics`, `iceberg.stage_create_table`, `iceberg.update_namespace_properties`, `mgmt.assign_catalog_role`, `mgmt.assign_principal_role`, `mgmt.create_catalog_role`, `mgmt.create_principal`, `mgmt.create_principal_role`, `mgmt.delete_catalog_role`, `mgmt.delete_principal`, `mgmt.delete_principal_role`, `mgmt.get_catalog`, `mgmt.get_principal`, `mgmt.get_principal_role`, `mgmt.grant_privilege`, `mgmt.list_catalog_roles`, `mgmt.list_catalogs`, `mgmt.list_grants`, `mgmt.list_principal_roles`, `mgmt.list_principals`, `mgmt.list_principals_for_principal_role`, `mgmt.reset_principal_credentials`, `preflight`
 
 row-constructor IN measured at sizes 1, 10, 50, 200, 500; worst plan INDEX_SCAN
@@ -101,7 +95,7 @@ SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code
 
 ### 2. `entities` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **114** · table rows: 7285 · 0.04 ms
+- calls in capture: **113** · table rows: 7289 · 0.02 ms
 - issued by: `iceberg.commit_table`, `iceberg.create_namespace`, `iceberg.create_table`, `iceberg.create_view`, `iceberg.drop_namespace`, `iceberg.drop_table`, `iceberg.drop_view`, `iceberg.get_config`, `iceberg.head_namespace`, `iceberg.head_table`, `iceberg.head_view`, `iceberg.list_namespaces`, `iceberg.list_tables`, `iceberg.list_views`, `iceberg.load_namespace`, `iceberg.load_table`, `iceberg.load_table[missing]`, `iceberg.load_table[snapshots=refs]`, `iceberg.load_view`, `iceberg.rename_table`, `iceberg.rename_view`, `iceberg.report_metrics`, `iceberg.stage_create_table`, `iceberg.update_namespace_properties`, `mgmt.assign_catalog_role`, `mgmt.assign_principal_role`, `mgmt.create_catalog_role`, `mgmt.create_principal`, `mgmt.create_principal_role`, `mgmt.delete_catalog_role`, `mgmt.delete_principal`, `mgmt.delete_principal_role`, `mgmt.get_catalog`, `mgmt.get_principal`, `mgmt.get_principal_role`, `mgmt.grant_privilege`, `mgmt.list_catalog_roles`, `mgmt.list_catalogs`, `mgmt.list_grants`, `mgmt.list_principal_roles`, `mgmt.list_principals`, `mgmt.list_principals_for_principal_role`, `mgmt.reset_principal_credentials`, `preflight`
 - index scans: ['idx_entities']
 
@@ -115,7 +109,7 @@ SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code
 
 ### 3. `entities` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **73** · table rows: 7285 · 0.03 ms
+- calls in capture: **76** · table rows: 7289 · 0.02 ms
 - issued by: `iceberg.commit_table`, `iceberg.create_namespace`, `iceberg.create_table`, `iceberg.create_view`, `iceberg.drop_namespace`, `iceberg.drop_table`, `iceberg.drop_view`, `iceberg.get_config`, `iceberg.head_namespace`, `iceberg.head_table`, `iceberg.head_view`, `iceberg.list_namespaces`, `iceberg.list_tables`, `iceberg.list_views`, `iceberg.load_namespace`, `iceberg.load_table`, `iceberg.load_table[missing]`, `iceberg.load_table[snapshots=refs]`, `iceberg.load_view`, `iceberg.rename_table`, `iceberg.rename_view`, `iceberg.report_metrics`, `iceberg.stage_create_table`, `iceberg.update_namespace_properties`, `mgmt.assign_catalog_role`, `mgmt.assign_principal_role`, `mgmt.create_catalog_role`, `mgmt.create_principal`, `mgmt.create_principal_role`, `mgmt.delete_catalog_role`, `mgmt.delete_principal`, `mgmt.delete_principal_role`, `mgmt.get_catalog`, `mgmt.get_principal`, `mgmt.get_principal_role`, `mgmt.grant_privilege`, `mgmt.list_catalog_roles`, `mgmt.list_catalogs`, `mgmt.list_grants`, `mgmt.list_principal_roles`, `mgmt.list_principals`, `mgmt.list_principals_for_principal_role`, `mgmt.reset_principal_credentials`, `preflight`
 - index scans: ['constraint_name']
 
@@ -129,7 +123,7 @@ SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code
 
 ### 4. `grant_records` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **60** · table rows: 30013 · 0.07 ms
+- calls in capture: **60** · table rows: 30013 · 0.03 ms
 - issued by: `iceberg.commit_table`, `iceberg.create_namespace`, `iceberg.create_table`, `iceberg.create_view`, `iceberg.drop_namespace`, `iceberg.drop_table`, `iceberg.drop_view`, `iceberg.get_config`, `iceberg.head_namespace`, `iceberg.head_table`, `iceberg.head_view`, `iceberg.list_namespaces`, `iceberg.list_tables`, `iceberg.list_views`, `iceberg.load_namespace`, `iceberg.load_table`, `iceberg.load_table[missing]`, `iceberg.load_table[snapshots=refs]`, `iceberg.load_view`, `iceberg.rename_table`, `iceberg.rename_view`, `iceberg.report_metrics`, `iceberg.stage_create_table`, `iceberg.update_namespace_properties`, `mgmt.assign_catalog_role`, `mgmt.assign_principal_role`, `mgmt.create_catalog_role`, `mgmt.create_principal`, `mgmt.create_principal_role`, `mgmt.delete_catalog_role`, `mgmt.delete_principal`, `mgmt.delete_principal_role`, `mgmt.get_catalog`, `mgmt.get_principal`, `mgmt.get_principal_role`, `mgmt.grant_privilege`, `mgmt.list_catalog_roles`, `mgmt.list_catalogs`, `mgmt.list_grants`, `mgmt.list_principal_roles`, `mgmt.list_principals`, `mgmt.list_principals_for_principal_role`, `mgmt.reset_principal_credentials`, `preflight`
 - index scans: ['idx_grant_records_grantee']
 
@@ -143,7 +137,7 @@ SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privi
 
 ### 5. `entities` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **48** · table rows: 7285 · 0.06 ms
+- calls in capture: **48** · table rows: 7289 · 0.01 ms
 - issued by: `iceberg.commit_table`, `iceberg.create_namespace`, `iceberg.create_table`, `iceberg.create_view`, `iceberg.drop_namespace`, `iceberg.drop_table`, `iceberg.drop_view`, `iceberg.get_config`, `iceberg.head_namespace`, `iceberg.head_table`, `iceberg.head_view`, `iceberg.list_namespaces`, `iceberg.list_tables`, `iceberg.list_views`, `iceberg.load_namespace`, `iceberg.load_table`, `iceberg.load_table[missing]`, `iceberg.load_table[snapshots=refs]`, `iceberg.load_view`, `iceberg.rename_table`, `iceberg.rename_view`, `iceberg.report_metrics`, `iceberg.stage_create_table`, `iceberg.update_namespace_properties`, `mgmt.assign_catalog_role`, `mgmt.assign_principal_role`, `mgmt.create_catalog_role`, `mgmt.create_principal`, `mgmt.create_principal_role`, `mgmt.delete_catalog_role`, `mgmt.delete_principal`, `mgmt.delete_principal_role`, `mgmt.get_catalog`, `mgmt.get_principal`, `mgmt.get_principal_role`, `mgmt.grant_privilege`, `mgmt.list_catalog_roles`, `mgmt.list_catalogs`, `mgmt.list_grants`, `mgmt.list_principal_roles`, `mgmt.list_principals`, `mgmt.list_principals_for_principal_role`, `mgmt.reset_principal_credentials`, `preflight`
 - index scans: ['idx_entities']
 
@@ -157,8 +151,8 @@ SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code
 
 ### 6. `grant_records` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **23** · table rows: 30013 · 0.05 ms
-- issued by: `iceberg.create_namespace`, `iceberg.create_table`, `iceberg.create_view`, `iceberg.drop_namespace`, `iceberg.drop_table`, `iceberg.drop_view`, `mgmt.assign_catalog_role`, `mgmt.delete_catalog_role`, `mgmt.delete_principal`, `mgmt.delete_principal_role`, `mgmt.get_principal`, `mgmt.get_principal_role`, `mgmt.grant_privilege`, `mgmt.list_grants`, `mgmt.list_principals_for_principal_role`, `mgmt.reset_principal_credentials`
+- calls in capture: **24** · table rows: 30013 · 0.03 ms
+- issued by: `iceberg.drop_namespace`, `iceberg.drop_table`, `iceberg.drop_view`, `iceberg.load_table`, `iceberg.load_view`, `iceberg.rename_table`, `mgmt.assign_catalog_role`, `mgmt.delete_catalog_role`, `mgmt.delete_principal`, `mgmt.delete_principal_role`, `mgmt.get_principal`, `mgmt.get_principal_role`, `mgmt.grant_privilege`, `mgmt.list_grants`, `mgmt.list_principals_for_principal_role`, `mgmt.reset_principal_credentials`
 - index scans: ['grant_records_pkey']
 
 Index scan via ['grant_records_pkey'].
@@ -171,7 +165,7 @@ SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privi
 
 ### 7. `entities` · INSERT · **INDEX_SCAN**
 
-- calls in capture: **9** · table rows: 7285 · no plan timing
+- calls in capture: **9** · table rows: 7289 · no plan timing
 - issued by: `iceberg.create_namespace`, `iceberg.create_table`, `iceberg.create_view`, `iceberg.drop_view`, `mgmt.create_catalog_role`, `mgmt.create_principal`, `mgmt.create_principal_role`, `mgmt.delete_catalog_role`, `mgmt.delete_principal_role`
 
 Index scan via [].
@@ -184,7 +178,7 @@ INSERT INTO POLARIS_SCHEMA.ENTITIES (id, catalog_id, parent_id, type_code, name,
 
 ### 8. `entities` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **6** · table rows: 7285 · 0.03 ms
+- calls in capture: **6** · table rows: 7289 · 0.01 ms
 - issued by: `iceberg.create_namespace`, `iceberg.create_table`, `iceberg.create_view`, `iceberg.update_namespace_properties`
 - index scans: ['constraint_name']
 
@@ -198,7 +192,7 @@ SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SC
 
 ### 9. `entities` · DELETE · **INDEX_SCAN**
 
-- calls in capture: **6** · table rows: 7285 · no plan timing
+- calls in capture: **6** · table rows: 7289 · no plan timing
 - issued by: `iceberg.drop_namespace`, `iceberg.drop_table`, `iceberg.drop_view`, `mgmt.delete_catalog_role`, `mgmt.delete_principal`, `mgmt.delete_principal_role`
 - index scans: ['idx_entities']
 
@@ -226,7 +220,7 @@ DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE ( (grantee_id = ? AND grantee_cat
 
 ### 11. `entities` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **3** · table rows: 7285 · 0.03 ms
+- calls in capture: **3** · table rows: 7289 · 0.01 ms
 - issued by: `iceberg.list_namespaces`, `iceberg.list_tables`, `iceberg.list_views`
 - index scans: ['constraint_name']
 
@@ -240,7 +234,7 @@ SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SC
 
 ### 12. `entities` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **3** · table rows: 7285 · 1.38 ms
+- calls in capture: **3** · table rows: 7289 · 0.56 ms
 - issued by: `mgmt.list_catalog_roles`, `mgmt.list_principal_roles`, `mgmt.list_principals`
 - index scans: ['constraint_name']
 
@@ -267,7 +261,7 @@ INSERT INTO POLARIS_SCHEMA.GRANT_RECORDS (securable_catalog_id, securable_id, gr
 
 ### 14. `entities` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **2** · table rows: 7285 · 1.18 ms
+- calls in capture: **2** · table rows: 7289 · 0.59 ms
 - issued by: `mgmt.list_catalogs`, `preflight`
 - index scans: ['constraint_name']
 
@@ -281,7 +275,7 @@ SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code
 
 ### 15. `entities` · SELECT · **INDEX_SCAN**
 
-- calls in capture: **1** · table rows: 7285 · 0.02 ms
+- calls in capture: **1** · table rows: 7289 · 0.01 ms
 - issued by: `iceberg.drop_namespace`
 - index scans: ['constraint_name']
 
@@ -295,7 +289,7 @@ SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code
 
 ### 16. `entities` · UPDATE · **NO_PARAMS**
 
-- calls in capture: **13** · table rows: 7285 · no plan timing
+- calls in capture: **13** · table rows: 7289 · no plan timing
 - issued by: `iceberg.commit_table`, `iceberg.rename_table`, `iceberg.rename_view`, `iceberg.update_namespace_properties`, `mgmt.assign_catalog_role`, `mgmt.assign_principal_role`, `mgmt.delete_catalog_role`, `mgmt.delete_principal_role`, `mgmt.grant_privilege`
 
 Statement has placeholders but no usable parameters (absent, or redacted because it touches secret material). Supply representative parameters to audit this one.
@@ -321,7 +315,7 @@ INSERT INTO POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA (principal_id, principa
 
 ### 18. `policy_mapping_record` · SELECT · **TOO_SMALL**
 
-- calls in capture: **2** · table rows: 0 · 0.01 ms
+- calls in capture: **2** · table rows: 0 · 0.00 ms
 - issued by: `iceberg.drop_namespace`, `iceberg.drop_table`
 - seq scans: ['policy_mapping_record']
 
@@ -349,7 +343,7 @@ DELETE FROM POLARIS_SCHEMA.POLICY_MAPPING_RECORD WHERE target_catalog_id = ? AND
 
 ### 20. `principal_authentication_data` · SELECT · **TOO_SMALL**
 
-- calls in capture: **2** · table rows: 1002 · 0.03 ms
+- calls in capture: **2** · table rows: 1002 · 0.01 ms
 - issued by: `mgmt.create_principal`, `mgmt.reset_principal_credentials`
 - index scans: ['principal_authentication_data_pkey']
 

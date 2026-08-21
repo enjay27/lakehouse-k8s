@@ -703,3 +703,43 @@ class PolarisREST:
                 continue
             return r  # genuine error (e.g. 400 invalid privilege name) -> surface, stop
         return r
+
+    def revoke_privilege(
+        self, catalog, catalog_role, privilege, cascade=False, token=None
+    ):
+        """Revoke a catalog privilege from a catalog-role.
+
+        NOTE THE METHOD. Revocation is **POST** to the same `.../grants` URL
+        that `grant_privilege` PUTs to — not DELETE, which is the obvious guess
+        and returns 405. Verified against `spec/polaris-management-service.yml`
+        at tag `apache-polaris-1.3.0-incubating`
+        (`revokeGrantFromCatalogRole`): same `{"grant": {...}}` body as the
+        grant, plus an optional `cascade` query parameter.
+
+        Args:
+            catalog / catalog_role: the role losing the privilege.
+            privilege: a `CatalogPrivilege` name. Note the deployed enum is
+                larger than `polaris_seed.CORE_CATALOG_PRIVILEGES` — see that
+                module's `CATALOG_PRIVILEGES`.
+            cascade: when True, the revocation cascades to all subresources.
+                Defaults to False, which is Polaris's own default; pass True
+                only deliberately, since a cascade can remove grants this call
+                never named.
+            token: bearer token override for this call.
+
+        Returns:
+            requests.Response. **Not raised on** — a 404 here usually means the
+            grant was already absent, which is success for an idempotent
+            teardown and a real error for a caller that expected to find it.
+            Only the caller knows which, so the status is handed back rather
+            than interpreted. There is deliberately no `skip_if_absent` mirror
+            of `grant_privilege`'s `skip_if_present`: that flag exists to dodge
+            a measured ~5 s duplicate-key retry on the INSERT path, and a
+            revoke of a non-existent grant has no equivalent cost.
+        """
+        return requests.post(
+            f"{self.base_mgmt}/catalogs/{catalog}/catalog-roles/{catalog_role}/grants",
+            headers=self._h(token),
+            params={"cascade": "true" if cascade else "false"},
+            json={"grant": {"type": "catalog", "privilege": privilege}},
+        )

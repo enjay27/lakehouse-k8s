@@ -361,3 +361,49 @@ def test_update_catalog_replaces_rather_than_merges(pc, calls):
 def test_update_catalog_honours_per_call_token(pc, calls):
     pc.update_catalog("mycat", {}, 1, token="other-tok")
     assert calls[-1]["headers"]["Authorization"] == "Bearer other-tok"
+
+
+# ----------------------------------------------------------------------
+# revoke_privilege — note the method
+# ----------------------------------------------------------------------
+def test_revoke_privilege_posts_to_the_grants_url(pc, calls):
+    """POST, not DELETE.
+
+    Revocation reuses the grant URL and the grant body, and the obvious guess
+    — DELETE — returns 405. Verified against `revokeGrantFromCatalogRole` in
+    spec/polaris-management-service.yml at tag
+    apache-polaris-1.3.0-incubating. This test exists so nobody "fixes" it into
+    a DELETE on the reasonable-sounding grounds that revoking is a deletion.
+    """
+    pc.revoke_privilege("mycat", "myrole", "TABLE_DROP")
+    c = calls[-1]
+    assert c["method"] == "POST"
+    assert c["url"] == (
+        f"{BASE}/api/management/v1/catalogs/mycat/catalog-roles/myrole/grants"
+    )
+    assert c["json"] == {"grant": {"type": "catalog", "privilege": "TABLE_DROP"}}
+
+
+def test_revoke_privilege_defaults_cascade_off(pc, calls):
+    """Polaris's own default, and the safe one: a cascade can remove grants
+    this call never named."""
+    pc.revoke_privilege("mycat", "myrole", "TABLE_DROP")
+    assert calls[-1]["params"] == {"cascade": "false"}
+    calls.clear()
+    pc.revoke_privilege("mycat", "myrole", "TABLE_DROP", cascade=True)
+    assert calls[-1]["params"] == {"cascade": "true"}
+
+
+def test_revoke_privilege_honours_per_call_token(pc, calls):
+    pc.revoke_privilege("mycat", "myrole", "TABLE_DROP", token="other-tok")
+    assert calls[-1]["headers"]["Authorization"] == "Bearer other-tok"
+
+
+def test_revoke_privilege_returns_the_response_rather_than_interpreting_it(pc):
+    """A 404 means "already absent" — success for an idempotent teardown, a
+    real error for a caller that expected to find the grant. Only the caller
+    knows which, so the status is handed back untouched and nothing raises."""
+    with patch("requests.post") as post:
+        post.return_value = MagicMock(status_code=404, text="not found")
+        r = pc.revoke_privilege("mycat", "myrole", "TABLE_DROP")
+    assert r.status_code == 404

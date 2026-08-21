@@ -433,8 +433,16 @@ GRANTEE_LOOKUP_SQL = (
 )
 
 
-def _grantee_hypothesis(verdict, sql=GRANTEE_LOOKUP_SQL):
-    audit = [{"table": "grant_records", "verdict": verdict, "sql": sql}]
+def _grantee_hypothesis(verdict, sql=GRANTEE_LOOKUP_SQL, verb="SELECT", indexes=()):
+    audit = [
+        {
+            "table": "grant_records",
+            "verdict": verdict,
+            "sql": sql,
+            "verb": verb,
+            "index_scans": list(indexes),
+        }
+    ]
     res = check_hypotheses(None, audit)
     return next(h for h in res if h["id"] == "grant_records_by_grantee")
 
@@ -447,7 +455,12 @@ def test_grant_records_hypothesis_confirmed_by_seq_scan():
 
 
 def test_hypothesis_refuted_when_index_used():
-    assert _grantee_hypothesis("INDEX_SCAN")["status"] == "REFUTED"
+    """Refuted means served by an access path that already existed — name it.
+    An INDEX_SCAN carrying no index name is inconclusive, not a refutation."""
+    h = _grantee_hypothesis("INDEX_SCAN", indexes=["grant_records_pkey"])
+    assert h["status"] == "REFUTED"
+
+    assert _grantee_hypothesis("INDEX_SCAN")["status"] == "INCONCLUSIVE"
 
 
 def test_hypothesis_inconclusive_when_table_too_small():
@@ -596,3 +609,117 @@ def test_statistics_are_stale_lists_unanalyzed_tables():
 
     conn = StatsConn(unanalyzed=["entities", "grant_records"])
     assert statistics_are_stale(conn) == ["entities", "grant_records"]
+
+
+# ----------------------------------------------------------------------
+# hypothesis matching — the four statements the 2026-08-20 report cited
+# ----------------------------------------------------------------------
+#: Verbatim from `doc-index-audit-latest.md`. Only the FIRST is the grantee
+#: lookup; the report cited all four as evidence for
+#: `grant_records_by_grantee`, because the matcher searched the whole
+#: statement and the other three all *mention* the grantee columns somewhere.
+GRANTEE_SELECT = (
+    "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, "
+    "privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS "
+    "WHERE grantee_id = ? AND realm_id = ? AND grantee_catalog_id = ?"
+)
+SECURABLE_SELECT = (
+    "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, "
+    "privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS "
+    "WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?"
+)
+OR_DELETE = (
+    "DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE ( (grantee_id = ? AND "
+    "grantee_catalog_id = ?) OR (securable_id = ? AND securable_catalog_id = ?) ) "
+    "AND realm_id = ?"
+)
+GRANT_INSERT = (
+    "INSERT INTO POLARIS_SCHEMA.GRANT_RECORDS (securable_catalog_id, securable_id, "
+    "grantee_catalog_id, grantee_id, privilege_code, realm_id) VALUES (?, ?, ?, ?, ?, ?)"
+)
+
+
+def _row(sql, verdict, verb, indexes=()):
+    return {
+        "sql": sql,
+        "table": "grant_records",
+        "verb": verb,
+        "verdict": verdict,
+        "calls": 1,
+        "table_rows": 30009,
+        "index_scans": list(indexes),
+        "detail": "",
+    }
+
+
+def _hyp(res, hid="grant_records_by_grantee"):
+    return next(h for h in res if h["id"] == hid)
+
+
+def test_projection_only_statements_are_not_evidence():
+    """A column in the SELECT list is not a column the planner must find.
+
+    The securable lookup PROJECTS grantee_catalog_id and grantee_id while
+    constraining neither, and the INSERT names every column. Both were being
+    admitted as evidence about the grantee access path and voting on the
+    verdict.
+    """
+    audit = [
+        _row(SECURABLE_SELECT, "INDEX_SCAN", "SELECT", ["grant_records_pkey"]),
+        _row(GRANT_INSERT, "INDEX_SCAN", "INSERT"),
+    ]
+    h = _hyp(check_hypotheses(None, audit))
+    assert h["status"] == "INCONCLUSIVE"
+    assert "no captured statement matched" in h["evidence"][0]
+
+
+def test_or_delete_does_not_vote_on_the_grantee_hypothesis():
+    """It genuinely constrains the grantee columns, but it has its own
+    hypothesis. Verb is what separates them."""
+    audit = [_row(OR_DELETE, "SEQ_SCAN", "DELETE")]
+    assert _hyp(check_hypotheses(None, audit))["status"] == "INCONCLUSIVE"
+    assert (
+        _hyp(check_hypotheses(None, audit), "grant_records_delete_or")["status"]
+        == "CONFIRMED"
+    )
+
+
+def test_grantee_lookup_still_matches():
+    audit = [_row(GRANTEE_SELECT, "SEQ_SCAN", "SELECT")]
+    h = _hyp(check_hypotheses(None, audit))
+    assert h["status"] == "CONFIRMED"
+    assert h["evidence"] == [GRANTEE_SELECT]
+
+
+def test_our_own_index_reports_remedied_not_refuted():
+    """The inversion this exists to prevent.
+
+    With idx_grant_records_grantee installed, every grantee lookup is an index
+    scan. Calling that REFUTED told the reader the index was unnecessary — in
+    the same directory as a report measuring ~188x for adding it.
+    """
+    audit = [
+        _row(GRANTEE_SELECT, "INDEX_SCAN", "SELECT", ["idx_grant_records_grantee"])
+    ]
+    h = _hyp(check_hypotheses(None, audit))
+    assert h["status"] == "REMEDIED"
+    assert "claim STANDS" in h["note"]
+    assert "NOT a refutation" in h["note"]
+
+
+def test_a_pre_existing_index_is_a_genuine_refutation():
+    """REMEDIED must not swallow real negative results: served by the PK, which
+    nothing here proposed, the claim really was wrong."""
+    audit = [_row(GRANTEE_SELECT, "INDEX_SCAN", "SELECT", ["grant_records_pkey"])]
+    h = _hyp(check_hypotheses(None, audit))
+    assert h["status"] == "REFUTED"
+    assert "pre-existing" in h["note"]
+
+
+def test_seq_scan_still_wins_over_a_remedied_sibling():
+    """If anything still seq-scans, that is the finding regardless."""
+    audit = [
+        _row(GRANTEE_SELECT, "INDEX_SCAN", "SELECT", ["idx_grant_records_grantee"]),
+        _row(GRANTEE_SELECT, "SEQ_SCAN", "SELECT"),
+    ]
+    assert _hyp(check_hypotheses(None, audit))["status"] == "CONFIRMED"

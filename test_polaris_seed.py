@@ -20,16 +20,20 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 from polaris_seed import COARSE_CATALOG_PRIVILEGES  # noqa: E402
 from polaris_seed import (
+    CATALOG_PRIVILEGES,
+    CORE_CATALOG_PRIVILEGES,
     FULL_CATALOG_PRIVILEGES,
     OWNER_ROLE_NAME,
     Ledger,
     SeedResult,
     SeedSpec,
+    catalog_privileges,
     find_strays,
     require_local,
+    revert_grants,
 )
 from polaris_seed import seed as _seed  # noqa: E402
-from polaris_seed import teardown, verify_counts
+from polaris_seed import teardown, upgrade_grants, verify_counts
 
 #: Storage config for the fake cluster. `seed()` requires a bucket and a MinIO
 #: endpoint even when `create_tables` is False, because every catalog carries a
@@ -78,6 +82,7 @@ class FakePolaris:
         reject_privs=(),
         fail_on=None,
         half_create=(),
+        unreadable_roles=(),
     ):
         self.base_url = base_url
         self.principals, self.principal_roles, self.catalogs = set(), set(), set()
@@ -85,6 +90,15 @@ class FakePolaris:
         self.assignments = []
         self.reject_privs = set(reject_privs)
         self.fail_on = fail_on or {}
+        #: Every call, in order, so a test can assert HOW something was done --
+        #: one GET per role rather than one per privilege is the whole point of
+        #: `upgrade_grants`, and only a call log can show it.
+        self.log = []
+        #: (catalog, role) pairs whose `list_grants` 403s, so the "could not
+        #: read the role" branch can be exercised. That branch matters: reading
+        #: a failure as "holds nothing" would issue 50 duplicate writes per
+        #: role, each paying the measured ~5 s duplicate-key retry.
+        self.unreadable_roles = set(unreadable_roles)
         #: Catalog names whose `catalog_admin` bootstrap is skipped on the FIRST
         #: create, reproducing the non-atomic catalog creation seen live (25 of
         #: 1,000 under load): the entity commits, its admin role does not. The
@@ -159,11 +173,36 @@ class FakePolaris:
         self.assignments.append(("cr->pr", catalog, crole, prole))
         return Resp(200)
 
-    def grant_privilege(self, catalog, crole, priv):
+    def grant_privilege(self, catalog, crole, priv, skip_if_present=True, **kw):
+        # `skip_if_present` is accepted and ignored: the real client's flag
+        # controls a GET-before-PUT optimisation, not the outcome. What the
+        # tests care about is that `upgrade_grants` passes False -- asserted
+        # via `self.log`, not by making the fake behave differently.
+        self.log.append(("grant", catalog, crole, priv, skip_if_present))
         if priv in self.reject_privs:
             return Resp(400, {"error": f"unknown privilege {priv}"})
         self.grants.add((catalog, crole, priv))
         return Resp(200)
+
+    def list_grants(self, catalog, crole):
+        self.log.append(("list_grants", catalog, crole))
+        if (catalog, crole) in self.unreadable_roles:
+            return Resp(403, {"error": "not authorized"})
+        held = sorted(p for (c, r, p) in self.grants if c == catalog and r == crole)
+        return Resp(
+            200, {"grants": [{"type": "catalog", "privilege": p} for p in held]}
+        )
+
+    def revoke_privilege(self, catalog, crole, priv, cascade=False, **kw):
+        self.log.append(("revoke", catalog, crole, priv, cascade))
+        key = (catalog, crole, priv)
+        if key not in self.grants:
+            return Resp(404, {"error": "grant not found"})
+        self.grants.discard(key)
+        return Resp(200)
+
+    def calls_of(self, kind):
+        return [e for e in self.log if e[0] == kind]
 
     def delete_catalog(self, name, purge=False):
         if name not in self.catalogs:
@@ -307,14 +346,35 @@ def test_expected_counts_match_the_specified_fixture():
     assert exp["catalogs"] == 1000
     assert exp["namespaces"] == 2000
     assert exp["tables"] == 10000
-    assert exp["entities_total"] == 1000 * 4 + 2000 + 10000
-    assert exp["grant_records"] == 1000 * len(FULL_CATALOG_PRIVILEGES)
+    # entities is projected in two parts for the same reason grant_records is:
+    # Polaris bootstraps a `catalog_admin` role with every catalog, so there are
+    # TWO catalog-roles per catalog, not one. Pinned against the measured census
+    # of the metadata-only fixture — ROOT 2, PRINCIPAL 1002, PRINCIPAL_ROLE 1002,
+    # CATALOG 1000, CATALOG_ROLE 2000, NAMESPACE 2000 = 7,006.
+    assert exp["entities_seeded"] == 1000 * 4 + 2000 + 10000
+    assert exp["entities_bootstrap"] == 1000 + 6
+    assert SeedSpec(create_tables=False).expected_counts()["entities_total"] == 7006
+    # grant_records is now projected in two parts, because it is two things:
+    # what the seeder grants, and what Polaris writes on its own (the role
+    # assignments and the catalog_admin bootstrap). The observed constant is
+    # pinned here against the measured fixture -- 25,000 granted + 5,009
+    # Polaris-written = the 30,009 counted on the live cluster.
+    assert exp["grant_records_granted"] == 1000 * len(CORE_CATALOG_PRIVILEGES)
+    assert exp["grant_records_overhead"] == 1000 * 5 + 9
+    assert exp["grant_records"] == 30009
 
 
 def test_coarse_privileges_produce_far_fewer_grant_rows():
-    full = SeedSpec().expected_counts()["grant_records"]
+    """Compared on the GRANTED part, not the total.
+
+    The total also carries the rows Polaris writes itself (role assignments,
+    the catalog_admin bootstrap), and those do not shrink when the privilege
+    list does — with 1,000 users they are 5,009 rows either way, enough to
+    swamp the ratio this test is about.
+    """
+    full = SeedSpec().expected_counts()["grant_records_granted"]
     coarse = SeedSpec(privileges=list(COARSE_CATALOG_PRIVILEGES)).expected_counts()[
-        "grant_records"
+        "grant_records_granted"
     ]
     assert coarse * 10 < full
 
@@ -494,7 +554,40 @@ def test_verify_counts_passes_when_rows_match():
     exp = spec.expected_counts()
     v = verify_counts(FakePg(exp["entities_total"], exp["grant_records"]), spec)
     assert v["entities_ok"] and v["grants_ok"]
-    assert "audit-ready" in v["notes"][0]
+    assert v["grant_residual"] == 0
+    assert any("grant_records exact" in n for n in v["notes"])
+
+
+def test_verify_counts_names_an_unexplained_surplus_instead_of_absorbing_it():
+    """The `>=` bug, pinned.
+
+    This printed "Row counts match the spec" for 30,009 actual against a
+    25,000 projection: 5,009 unexplained rows in the table under audit,
+    reported as agreement. A surplus must now be named and quantified.
+    """
+    spec = SeedSpec(n_users=10, namespaces_per_catalog=2, tables_per_namespace=5)
+    exp = spec.expected_counts()
+    v = verify_counts(FakePg(exp["entities_total"], exp["grant_records"] + 40), spec)
+    assert v["grants_ok"], "a surplus is not a shortfall"
+    assert v["grant_residual"] == 40
+    assert any("UNEXPLAINED" in n for n in v["notes"])
+    assert not any("exact" in n for n in v["notes"])
+
+
+def test_verify_counts_accounts_for_task_rows_rather_than_ignoring_them():
+    """The entity surplus has a known name, and must still be named.
+
+    Every drop-with-purge leaves a TASK row in `entities` (measured: 279, none
+    soft-deleted, none ever attempted). So a surplus is expected — but reporting
+    it as "fine" would hide anything ELSE that started accumulating, which would
+    look identical from the count alone.
+    """
+    spec = SeedSpec(n_users=10, create_tables=False)
+    exp = spec.expected_counts()
+    v = verify_counts(FakePg(exp["entities_total"] + 12, exp["grant_records"]), spec)
+    assert v["entities_ok"]
+    assert v["entity_residual"] == 12
+    assert any("TASK rows" in n for n in v["notes"])
 
 
 def test_verify_counts_flags_an_incomplete_seed():
@@ -517,3 +610,240 @@ def test_seed_result_summary_is_readable():
     r = SeedResult(completed_users=5, skipped_users=1, elapsed_s=2.5, calls=100)
     s = r.summary()
     assert "seeded=5" in s and "skipped=1" in s and "calls=100" in s
+
+
+# ----------------------------------------------------------------------
+# grant volume — upgrading an existing fixture to production shape
+# ----------------------------------------------------------------------
+@pytest.fixture
+def no_sleep(monkeypatch):
+    """Collapse `_attempt`'s backoff. Its ~8 s ladder is correct against a
+    lagging replica and pointless against an in-memory fake."""
+    monkeypatch.setattr("polaris_seed.time.sleep", lambda *_: None)
+
+
+@pytest.fixture
+def seeded(small_spec, ledger_path):
+    """A 3-user fixture at the 25-grant baseline — the state to upgrade FROM."""
+    p = FakePolaris()
+    seed(p, FakeIceberg(p), small_spec, ledger_path)
+    p.log.clear()  # the seed's own calls are not what these tests measure
+    return p
+
+
+def test_the_first_25_catalog_privileges_are_exactly_the_core_set():
+    """What makes 25 -> 50 additive rather than a rewrite.
+
+    `catalog_privileges(n)` slices the spec-ordered enum, so every larger n is
+    a superset of every smaller one. If the order in `CATALOG_PRIVILEGES` is
+    ever reshuffled, this fails — and it should, because an upgrade that no
+    longer contains what the roles already hold would leave the fixture
+    holding some grants it was never asked for and missing some it was.
+    """
+    assert set(CATALOG_PRIVILEGES[:25]) == set(CORE_CATALOG_PRIVILEGES)
+    assert set(catalog_privileges(25)) <= set(catalog_privileges(50))
+    assert len(CATALOG_PRIVILEGES) == len(set(CATALOG_PRIVILEGES)), "no duplicates"
+
+
+def test_catalog_privileges_refuses_more_than_the_enum_supplies():
+    """Better than silently returning a short list and a thin fixture."""
+    with pytest.raises(ValueError, match="1.3.0 enum"):
+        catalog_privileges(len(CATALOG_PRIVILEGES) + 1)
+
+
+def test_upgrade_issues_one_get_per_role_and_puts_only_what_is_missing(
+    seeded, small_spec, ledger_path
+):
+    """The optimisation, asserted as behaviour rather than as intent.
+
+    The naive pass costs one GET per privilege (25,000 across the real
+    fixture), none of which can hit, because the grants are new. Turning
+    `skip_if_present` off wholesale removes that cost and idempotence with it.
+    Diffing once per role gets both.
+    """
+    res = upgrade_grants(
+        seeded, small_spec, grants_per_role=30, ledger_path=ledger_path
+    )
+
+    assert len(seeded.calls_of("list_grants")) == 3, "one GET per ROLE"
+    puts = seeded.calls_of("grant")
+    assert len(puts) == 15, "5 missing privileges x 3 roles, and nothing else"
+    assert all(e[4] is False for e in puts), (
+        "the diff already established absence, so skip_if_present must be off "
+        "— leaving it on pays a GET per privilege for a lookup that cannot hit"
+    )
+    assert res.grants_added == 15
+    assert res.completed_users == 3
+    for i in (1, 2, 3):
+        held = {p for (c, r, p) in seeded.grants if c == f"user{i}_catalog"}
+        assert held == set(catalog_privileges(30))
+
+
+def test_upgrade_is_idempotent_and_writes_nothing_on_a_second_pass(
+    seeded, small_spec, ledger_path, tmp_path
+):
+    upgrade_grants(seeded, small_spec, grants_per_role=30, ledger_path=ledger_path)
+    seeded.log.clear()
+
+    # Same ledger: skipped without even reading the roles.
+    again = upgrade_grants(
+        seeded, small_spec, grants_per_role=30, ledger_path=ledger_path
+    )
+    assert again.skipped_users == 3
+    assert not seeded.calls_of("grant")
+    assert not seeded.calls_of("list_grants")
+
+    # Fresh ledger: it must re-read, and still write nothing.
+    fresh = upgrade_grants(
+        seeded, small_spec, grants_per_role=30, ledger_path=str(tmp_path / "new.json")
+    )
+    assert len(seeded.calls_of("list_grants")) == 3
+    assert not seeded.calls_of("grant")
+    assert fresh.grants_added == 0
+
+
+def test_a_changed_target_invalidates_the_recorded_upgrade(
+    seeded, small_spec, ledger_path
+):
+    """Resuming a 35-grant pass from a 30-grant ledger must not skip.
+
+    Those users are done for 30 and five short of 35. Skipping them would
+    leave every role under target, and a fixture that is quietly 15 rows light
+    reads as a Polaris behaviour rather than a resume bug.
+    """
+    upgrade_grants(seeded, small_spec, grants_per_role=30, ledger_path=ledger_path)
+    seeded.log.clear()
+
+    res = upgrade_grants(
+        seeded, small_spec, grants_per_role=35, ledger_path=ledger_path
+    )
+    assert res.skipped_users == 0
+    assert len(seeded.calls_of("list_grants")) == 3
+    assert res.grants_added == 15
+
+
+def test_upgrade_records_a_rejected_privilege_name_and_keeps_going(
+    seeded, small_spec, ledger_path
+):
+    """A name this build does not have is data, not a fault.
+
+    It is also the reason the pass must shout: fewer rows than projected in
+    the table under audit is exactly the shape of a false finding.
+    """
+    seeded.reject_privs = {CATALOG_PRIVILEGES[26]}
+    res = upgrade_grants(
+        seeded, small_spec, grants_per_role=30, ledger_path=ledger_path
+    )
+    assert set(res.invalid_privileges) == {CATALOG_PRIVILEGES[26]}
+    assert res.completed_users == 3, "one bad name must not abort the pass"
+    assert res.grants_added == 12, "4 written per role, not 5"
+
+
+def test_upgrade_does_not_mark_a_role_done_when_a_write_never_landed(
+    seeded, small_spec, ledger_path, no_sleep
+):
+    """The distinction that keeps the pass resumable.
+
+    `_attempt` returns immediately on a 4xx that is not 403/404 (a bad name)
+    and only exhausts its retries on 5xx/403/404 (lag). The first is data; the
+    second is a hole in the fixture. Recording both as "invalid privilege" and
+    marking the role done would leave that hole permanently, since a re-run
+    skips what the ledger calls finished.
+    """
+    seeded.fail_on = {}
+    doomed = CATALOG_PRIVILEGES[27]
+    original = seeded.grant_privilege
+
+    def flaky(catalog, crole, priv, skip_if_present=True, **kw):
+        if priv == doomed:
+            seeded.log.append(("grant", catalog, crole, priv, skip_if_present))
+            return Resp(503, {"error": "replica lag"})
+        return original(catalog, crole, priv, skip_if_present, **kw)
+
+    seeded.grant_privilege = flaky
+    res = upgrade_grants(
+        seeded, small_spec, grants_per_role=30, ledger_path=ledger_path
+    )
+
+    assert res.completed_users == 0
+    assert len(res.failed_users) == 3
+    assert not res.invalid_privileges, "a 503 is lag, not a bad name"
+    assert Ledger(ledger_path).upgraded_users(30) == set(), "must be retried"
+
+
+def test_upgrade_skips_a_role_it_cannot_read_rather_than_granting_blind(
+    seeded, small_spec, ledger_path
+):
+    """ "Could not read" must never be read as "holds nothing".
+
+    Granting the full target to a role that already has most of it means ~50
+    duplicate writes, each paying the measured ~5 s duplicate-key retry, on a
+    role whose state is unknown.
+    """
+    seeded.unreadable_roles = {("user2_catalog", OWNER_ROLE_NAME)}
+    res = upgrade_grants(
+        seeded, small_spec, grants_per_role=30, ledger_path=ledger_path
+    )
+    assert [f["index"] for f in res.failed_users] == [2]
+    assert not [e for e in seeded.calls_of("grant") if e[1] == "user2_catalog"]
+    assert res.grants_added == 10, "the other two roles still upgraded"
+
+
+def test_upgrade_refuses_a_remote_host_before_validating_its_arguments(small_spec):
+    """Same ordering as `seed()`: both raise, but the host is the dangerous
+    mistake and must be the one reported."""
+    remote = FakePolaris(base_url="http://polaris.company.com:8181")
+    with pytest.raises(AssertionError, match="refuses to run against host"):
+        upgrade_grants(remote, small_spec, grants_per_role=9999)
+
+
+def test_upgrade_refuses_to_reduce():
+    """It is additive by construction; asking it to shrink is a caller error,
+    not a silent no-op."""
+    p = FakePolaris()
+    with pytest.raises(ValueError, match="additive"):
+        upgrade_grants(p, SeedSpec(n_users=1), grants_per_role=10)
+
+
+def test_revert_removes_only_what_is_above_the_baseline(
+    seeded, small_spec, ledger_path
+):
+    upgrade_grants(seeded, small_spec, grants_per_role=30, ledger_path=ledger_path)
+    seeded.log.clear()
+
+    res = revert_grants(seeded, small_spec, ledger_path=ledger_path)
+
+    assert res.grants_revoked == 15
+    for i in (1, 2, 3):
+        held = {p for (c, r, p) in seeded.grants if c == f"user{i}_catalog"}
+        assert held == set(CORE_CATALOG_PRIVILEGES)
+    # catalog_admin's own bootstrap grants are never touched.
+    assert not [e for e in seeded.calls_of("revoke") if e[2] == "catalog_admin"]
+
+
+def test_revert_clears_the_upgrade_record(seeded, small_spec, ledger_path):
+    """Otherwise a later upgrade skips every role as done, against a cluster
+    that was just reverted."""
+    upgrade_grants(seeded, small_spec, grants_per_role=30, ledger_path=ledger_path)
+    assert Ledger(ledger_path).upgraded_users(30) == {1, 2, 3}
+
+    revert_grants(seeded, small_spec, ledger_path=ledger_path)
+    assert Ledger(ledger_path).upgraded_users(30) == set()
+
+    res = upgrade_grants(
+        seeded, small_spec, grants_per_role=30, ledger_path=ledger_path
+    )
+    assert res.grants_added == 15, "the revert must be re-doable"
+
+
+def test_ledger_spec_survives_an_unknown_key(ledger_path):
+    """Forward compatibility, in the one place it is unaffordable.
+
+    A ledger written after `SeedSpec` grows a field, read by code that
+    predates it, used to raise `TypeError` inside `teardown()` — the moment
+    when the ledger is the only record of what needs deleting.
+    """
+    with open(ledger_path, "w", encoding="utf-8") as fh:
+        json.dump({"spec": {"n_users": 4, "invented_later": True}, "users": [1]}, fh)
+    spec = Ledger(ledger_path).spec()
+    assert spec.n_users == 4

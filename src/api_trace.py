@@ -565,6 +565,32 @@ _ENTITY_IN_ROWS = re.compile(r"\(\s*catalog_id\s*,\s*id\s*\)\s+IN\s*\(", re.IGNO
 _WHERE_SPLIT = re.compile(r"\bWHERE\b", re.IGNORECASE)
 
 
+def where_clause(sql):
+    """Return everything after the first WHERE, or "" when there is none.
+
+    **Why anything classifying a statement should use this.** Twice now a
+    classifier here has read the whole statement and treated a column named in
+    the SELECT list as though it were constrained:
+
+      * `cache_verdict` matched on the projection, so it could never see a
+        batched cache validation (see `entity_access_shape`);
+      * `schema_audit.check_hypotheses` matched predicate columns anywhere in
+        the text, so the SECURABLE lookup -- which merely *projects*
+        `grantee_catalog_id, grantee_id` -- was admitted as evidence about the
+        GRANTEE hypothesis, along with an INSERT that names every column.
+
+    A projection says what you get back. Only the WHERE says what the planner
+    has to find, which is the thing an index question is about.
+
+    An INSERT has no WHERE and correctly yields "", excluding it from any
+    predicate match.
+    """
+    if not sql:
+        return ""
+    parts = _WHERE_SPLIT.split(" ".join(str(sql).split()), 1)
+    return parts[1] if len(parts) > 1 else ""
+
+
 def entity_access_shape(sql):
     """Classify an `entities` SELECT by the shape of its WHERE clause.
 
@@ -591,8 +617,7 @@ def entity_access_shape(sql):
     s = " ".join(str(sql).split())
     if not s[:6].upper().startswith("SELECT") or not _ENTITY_FROM.search(s):
         return None
-    parts = _WHERE_SPLIT.split(s, 1)
-    where = parts[1] if len(parts) > 1 else ""
+    where = where_clause(s)
     if _ENTITY_IN_ROWS.search(where):
         return ENTITY_BATCH_VALIDATE
     if re.search(r"\bname\s*=", where, re.IGNORECASE):

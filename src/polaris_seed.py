@@ -17,9 +17,17 @@ FIXTURE SHAPE (as specified)
     1,000 x  user{N}_catalog
                +-- catalog role `owner_principal`
                |     assigned to user{N}_principal_role
-               |     granted the FULL explicit privilege set on the catalog
+               |     granted CORE_CATALOG_PRIVILEGES (25) on the catalog
                +-- 2 namespaces
                      +-- 5 tables each  (10 tables per catalog)
+
+PRODUCTION GRANT VOLUME
+-----------------------
+25 grants per role is not a production shape -- a real catalog role holds
+roughly 50. `upgrade_grants()` takes an EXISTING fixture from 25 to 50
+additively (see `CATALOG_PRIVILEGES`: the deployed enum has ~51 names, not the
+25 this module once believed), and `revert_grants()` puts it back. Neither
+touches `entities`; both are resumable from the same ledger.
 
     ~= 16,000 entities rows and ~16,000 grant_records rows at the default
     privilege set. The grant_records volume is the point: it is the table
@@ -55,22 +63,33 @@ import json
 import os
 import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 
 # ----------------------------------------------------------------------
 # privileges
 # ----------------------------------------------------------------------
 
-#: The full explicit catalog-scoped privilege set granted to each owner role.
-#: Granting all of them individually (rather than one coarse master) is
-#: deliberate: it multiplies grant_records volume by ~16x, and grant_records is
-#: the table under audit.
+#: The pre-policy catalog-scoped privilege set — the 25 names the original
+#: 1,000-user fixture was built with, and the baseline `revert_grants` returns
+#: to.
+#:
+#: NOT the complete set. It was called `FULL_CATALOG_PRIVILEGES` until
+#: 2026-08-21 on the belief that Polaris had exactly 25 catalog-scoped
+#: privileges; it has ~51 (see `CATALOG_PRIVILEGES`). This list stops at
+#: `VIEW_FULL_METADATA`, which is precisely where the enum ended before the
+#: policy API landed. The old name is kept as an alias below because it is
+#: recorded in existing seed ledgers, but it is misleading and should not be
+#: used in new code.
+#:
+#: Granting these individually (rather than one coarse master) is deliberate:
+#: it multiplies grant_records volume by ~25x, and grant_records is the table
+#: under audit.
 #:
 #: Names are validated by the server. Any it rejects is REPORTED rather than
 #: raised — an unknown name should not abort a 30-minute seed — and shows up in
 #: `SeedResult.invalid_privileges`. Check that field before trusting the
 #: expected row count.
-FULL_CATALOG_PRIVILEGES = [
+CORE_CATALOG_PRIVILEGES = [
     "CATALOG_MANAGE_ACCESS",
     "CATALOG_MANAGE_CONTENT",
     "CATALOG_MANAGE_METADATA",
@@ -98,13 +117,112 @@ FULL_CATALOG_PRIVILEGES = [
     "VIEW_FULL_METADATA",
 ]
 
+#: Backwards-compatible alias. Existing `seed_ledger.json` files record this
+#: list under `spec.privileges`, and older notebooks import the name.
+FULL_CATALOG_PRIVILEGES = CORE_CATALOG_PRIVILEGES
+
+#: The complete catalog-scoped privilege enum, IN SPEC ORDER, transcribed from
+#: `spec/polaris-management-service.yml` (`CatalogPrivilege`) at tag
+#: `apache-polaris-1.3.0-incubating`.
+#:
+#: THE SPEC IS THE SOURCE, THE DEPLOYED BUILD IS THE AUTHORITY. `POLICY_*` may
+#: be gated behind the policy feature flag and the tail names may post-date a
+#: given build, so probe before trusting this at volume:
+#:
+#:     python3 seed_polaris.py --probe-privileges
+#:
+#: Order matters and is not cosmetic. The first 25 entries are exactly
+#: `CORE_CATALOG_PRIVILEGES` as a set, which is what makes
+#: `CATALOG_PRIVILEGES[:50]` a strict superset of the existing fixture — the
+#: upgrade to 50 grants per role adds rows and rewrites none. There is a test
+#: pinning that; if it ever fails, the upgrade has stopped being additive.
+CATALOG_PRIVILEGES = [
+    # --- the pre-policy 25, in the spec's own order -----------------------
+    "CATALOG_MANAGE_ACCESS",
+    "CATALOG_MANAGE_CONTENT",
+    "CATALOG_MANAGE_METADATA",
+    "CATALOG_READ_PROPERTIES",
+    "CATALOG_WRITE_PROPERTIES",
+    "NAMESPACE_CREATE",
+    "TABLE_CREATE",
+    "VIEW_CREATE",
+    "NAMESPACE_DROP",
+    "TABLE_DROP",
+    "VIEW_DROP",
+    "NAMESPACE_LIST",
+    "TABLE_LIST",
+    "VIEW_LIST",
+    "NAMESPACE_READ_PROPERTIES",
+    "TABLE_READ_PROPERTIES",
+    "VIEW_READ_PROPERTIES",
+    "NAMESPACE_WRITE_PROPERTIES",
+    "TABLE_WRITE_PROPERTIES",
+    "VIEW_WRITE_PROPERTIES",
+    "TABLE_READ_DATA",
+    "TABLE_WRITE_DATA",
+    "NAMESPACE_FULL_METADATA",
+    "TABLE_FULL_METADATA",
+    "VIEW_FULL_METADATA",
+    # --- policy API (Polaris 1.3+) ---------------------------------------
+    "POLICY_CREATE",
+    "POLICY_WRITE",
+    "POLICY_READ",
+    "POLICY_DROP",
+    "POLICY_LIST",
+    "POLICY_FULL_METADATA",
+    "CATALOG_ATTACH_POLICY",
+    "CATALOG_DETACH_POLICY",
+    # --- fine-grained table operations -----------------------------------
+    "TABLE_ASSIGN_UUID",
+    "TABLE_UPGRADE_FORMAT_VERSION",
+    "TABLE_ADD_SCHEMA",
+    "TABLE_SET_CURRENT_SCHEMA",
+    "TABLE_ADD_PARTITION_SPEC",
+    "TABLE_ADD_SORT_ORDER",
+    "TABLE_SET_DEFAULT_SORT_ORDER",
+    "TABLE_ADD_SNAPSHOT",
+    "TABLE_SET_SNAPSHOT_REF",
+    "TABLE_REMOVE_SNAPSHOTS",
+    "TABLE_REMOVE_SNAPSHOT_REF",
+    "TABLE_SET_LOCATION",
+    "TABLE_SET_PROPERTIES",
+    "TABLE_REMOVE_PROPERTIES",
+    "TABLE_SET_STATISTICS",
+    "TABLE_REMOVE_STATISTICS",
+    "TABLE_REMOVE_PARTITION_SPECS",
+    "TABLE_MANAGE_STRUCTURE",
+]
+
 #: Minimal single-grant alternative, for a fast seed when grant volume is not
 #: the object of study. Measured 2026-07-02: CATALOG_MANAGE_CONTENT authorizes
 #: all 11 tested actions, so this is functionally equivalent for access — it
-#: just produces ~16x fewer grant_records rows.
+#: just produces ~25x fewer grant_records rows.
 COARSE_CATALOG_PRIVILEGES = ["CATALOG_MANAGE_CONTENT"]
 
 OWNER_ROLE_NAME = "owner_principal"
+
+
+def catalog_privileges(n):
+    """The first `n` catalog-scoped privileges, in spec order.
+
+    The one supported way to ask for "a role holding N grants". Slicing keeps
+    the result a superset of any smaller N, which is what makes an upgrade
+    additive; picking N names any other way would make 25 -> 50 a rewrite.
+
+    Raises:
+        ValueError: if `n` exceeds what the enum can supply, rather than
+            silently returning a shorter list and producing a fixture with
+            fewer rows than the caller asked for.
+    """
+    if n > len(CATALOG_PRIVILEGES):
+        raise ValueError(
+            f"asked for {n} catalog-scoped privileges but the 1.3.0 enum has "
+            f"{len(CATALOG_PRIVILEGES)}. Reaching more than that per role "
+            "requires namespace- or table-scoped grants, which "
+            "polaris_rest.grant_privilege does not emit."
+        )
+    return list(CATALOG_PRIVILEGES[:n])
+
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
 
@@ -156,15 +274,42 @@ class SeedSpec:
             roles, catalogs, namespaces and grants but no tables. Roughly 10x
             faster and still populates grant_records fully, which is enough for
             the grantee-index hypothesis.
+        grant_overhead_per_user / grant_overhead_realm: grant_records rows the
+            seeder does NOT write but Polaris does — role assignments and the
+            `catalog_admin` bootstrap. See `expected_counts`.
     """
 
     n_users: int = 1000
     namespaces_per_catalog: int = 2
     tables_per_namespace: int = 5
     prefix: str = "user"
-    privileges: list = field(default_factory=lambda: list(FULL_CATALOG_PRIVILEGES))
+    privileges: list = field(default_factory=lambda: list(CORE_CATALOG_PRIVILEGES))
     start_index: int = 1
     create_tables: bool = True
+
+    #: OBSERVED on the 1,000-user fixture, not derived from Polaris source:
+    #: 30,009 actual - 25,000 granted = 5,009, which decomposes exactly as
+    #: 5 per user + 9 realm-level. The 5 are believed to be the two role
+    #: assignments (principal -> principal-role, principal-role -> catalog-role)
+    #: plus three `catalog_admin` bootstrap grants, and the 9 to belong to
+    #: `root`/`service_admin`. Believed, NOT measured per privilege_code —
+    #: `verify_counts` reports the residual separately so a wrong constant
+    #: shows up as an unexplained surplus instead of silently absorbing one.
+    grant_overhead_per_user: int = 5
+    grant_overhead_realm: int = 9
+
+    #: The same idea for `entities`, and MEASURED from the census on 2026-08-21:
+    #: ROOT 2, PRINCIPAL 1002, PRINCIPAL_ROLE 1002, CATALOG 1000,
+    #: CATALOG_ROLE 2000, NAMESPACE 2000 = 7,006 structural rows.
+    #: Per user Polaris writes ONE row the seeder did not ask for -- the
+    #: `catalog_admin` role it bootstraps with every catalog -- so there are two
+    #: catalog-roles per catalog, not one. The realm-level 6 are the two ROOT
+    #: rows plus `root`/`service_admin` and their principal-roles.
+    #: TASK rows are deliberately NOT modelled here: they accumulate with every
+    #: drop-with-purge and are the one number worth watching rather than
+    #: predicting. `verify_counts` reports them as the residual.
+    entity_overhead_per_user: int = 1
+    entity_overhead_realm: int = 6
 
     def names(self, i):
         """Entity names for user index `i`."""
@@ -178,10 +323,23 @@ class SeedSpec:
         }
 
     def expected_counts(self):
-        """Projected entity and grant counts, for a pre-flight sanity check."""
+        """Projected entity and grant counts, for a pre-flight sanity check.
+
+        `grant_records` is reported in three parts rather than one, because it
+        is not one thing. `grant_records_granted` is what this seeder writes and
+        is exact; `grant_records_overhead` is what Polaris writes on its own
+        (role assignments, the `catalog_admin` bootstrap) and is an OBSERVED
+        constant, not a derived one. Splitting them means a mismatch points at
+        which of the two is wrong. The old single `grant_records` key is kept —
+        it is their sum, and callers depend on it.
+        """
         n = self.n_users
         ns = n * self.namespaces_per_catalog
         tbl = ns * self.tables_per_namespace if self.create_tables else 0
+        granted = n * len(self.privileges)
+        overhead = n * self.grant_overhead_per_user + self.grant_overhead_realm
+        seeded = n * 4 + ns + tbl
+        bootstrap = n * self.entity_overhead_per_user + self.entity_overhead_realm
         return {
             "principals": n,
             "principal_roles": n,
@@ -189,8 +347,12 @@ class SeedSpec:
             "catalog_roles": n,
             "namespaces": ns,
             "tables": tbl,
-            "entities_total": n * 4 + ns + tbl,
-            "grant_records": n * len(self.privileges),
+            "entities_seeded": seeded,
+            "entities_bootstrap": bootstrap,
+            "entities_total": seeded + bootstrap,
+            "grant_records_granted": granted,
+            "grant_records_overhead": overhead,
+            "grant_records": granted + overhead,
         }
 
 
@@ -206,6 +368,11 @@ class SeedResult:
     calls: int = 0
     lag_recovered: list = field(default_factory=list)
     repaired_catalogs: list = field(default_factory=list)
+    #: Set by `upgrade_grants` / `revert_grants`. Counted as ROWS, not calls:
+    #: the point of those passes is a row count in grant_records, and a call
+    #: count would include the per-role GET and hide a partial write.
+    grants_added: int = 0
+    grants_revoked: int = 0
 
     def summary(self):
         rec = ""
@@ -213,6 +380,10 @@ class SeedResult:
             rec = f" lag_recovered={len(self.lag_recovered)}"
         if self.repaired_catalogs:
             rec += f" repaired_catalogs={len(self.repaired_catalogs)}"
+        if self.grants_added:
+            rec += f" grants_added={self.grants_added}"
+        if self.grants_revoked:
+            rec += f" grants_revoked={self.grants_revoked}"
         return (
             f"seeded={self.completed_users} skipped={self.skipped_users} "
             f"failed={len(self.failed_users)} calls={self.calls} "
@@ -253,6 +424,39 @@ class Ledger:
     def done_users(self):
         return set(self.data.get("users", []))
 
+    def upgraded_users(self, target):
+        """Users already brought up to `target` grants, per this ledger.
+
+        Returns an EMPTY set when the recorded target differs from the one
+        asked for. A ledger from a 40-grant pass records users that a 50-grant
+        pass has more work to do on; treating those as done would silently
+        leave every role 10 grants short, and the resulting fixture would look
+        like a Polaris behaviour rather than a resume bug.
+        """
+        rec = self.data.get("grant_upgrades") or {}
+        if rec.get("target") != target:
+            return set()
+        return set(rec.get("users", []))
+
+    def mark_upgrade(self, i, target):
+        rec = self.data.get("grant_upgrades") or {}
+        if rec.get("target") != target:
+            rec = {"target": target, "users": []}
+        if i not in rec["users"]:
+            rec["users"].append(i)
+        self.data["grant_upgrades"] = rec
+        self.flush()
+
+    def clear_upgrades(self):
+        """Forget the recorded upgrade — the roles no longer hold those grants.
+
+        Called after a clean `revert_grants`. Leaving the record would make a
+        later `upgrade_grants` skip every role as already done, against a
+        cluster that had just been reverted.
+        """
+        self.data.pop("grant_upgrades", None)
+        self.flush()
+
     def set_spec(self, spec):
         self.data["spec"] = asdict(spec)
         self.flush()
@@ -275,8 +479,21 @@ class Ledger:
         os.replace(tmp, self.path)  # atomic — never a half-written ledger
 
     def spec(self):
+        """The recorded spec, or None.
+
+        Unknown keys are DROPPED rather than passed to `SeedSpec(**d)`. A
+        ledger written after `SeedSpec` grows a field is read by code that
+        predates it — every time this module gains an attribute, every ledger
+        on disk becomes a forward-compatibility problem. Raising `TypeError:
+        unexpected keyword argument` in `teardown()` is the worst possible
+        moment to discover that, since the ledger is the only record of what
+        needs deleting.
+        """
         d = self.data.get("spec")
-        return SeedSpec(**d) if d else None
+        if not d:
+            return None
+        known = {f.name for f in fields(SeedSpec)}
+        return SeedSpec(**{k: v for k, v in d.items() if k in known})
 
 
 # ----------------------------------------------------------------------
@@ -671,6 +888,284 @@ def seed(
 
 
 # ----------------------------------------------------------------------
+# grant volume — bringing an existing fixture to production shape
+# ----------------------------------------------------------------------
+def _held_privileges(pc, catalog, catalog_role, result):
+    """Catalog-scoped privileges a role currently holds.
+
+    Returns:
+        (ok, set_of_names). `ok` is False when the role could not be read at
+        all — the caller must not then conclude "holds nothing" and grant the
+        full target, which would be 50 duplicate writes per role, each paying
+        the ~5 s duplicate-key retry.
+    """
+    r = pc.list_grants(catalog, catalog_role)
+    result.calls += 1
+    if r.status_code >= 300:
+        return False, set()
+    try:
+        grants = (r.json() or {}).get("grants", []) or []
+    except Exception:  # noqa: BLE001
+        return False, set()
+    return True, {
+        g.get("privilege")
+        for g in grants
+        if isinstance(g, dict) and g.get("type", "catalog") == "catalog"
+    }
+
+
+def _is_bad_privilege_name(resp):
+    """True when a failed grant means "no such privilege", not "try again".
+
+    `_attempt` returns immediately on a 4xx that is not 403/404 (a genuine
+    client error) and only exhausts its retries on 5xx/403/404. So the status
+    tells the two apart, and they must be: a rejected NAME is data worth
+    recording that should not stop the pass, while an exhausted retry is a hole
+    in the fixture and the user must NOT be marked done.
+    """
+    if resp is None:
+        return False
+    return 400 <= resp.status_code < 500 and resp.status_code not in (403, 404)
+
+
+def upgrade_grants(
+    pc,
+    spec=None,
+    grants_per_role=50,
+    ledger_path="seed_ledger.json",
+    progress_every=25,
+    on_progress=None,
+    extra_allowed_hosts=(),
+    dry_run=False,
+):
+    """Bring every `owner_principal` role up to `grants_per_role`, additively.
+
+    WHY THIS EXISTS
+    ---------------
+    The 1,000-user fixture holds 25 grants per role, which is not a production
+    shape: a real catalog role holds roughly 50. `grant_records` is the table
+    under audit and the one whose grantee access path is missing an index, so
+    the fixture's row count and its grantee distribution are the measurement,
+    not scenery.
+
+    This UPGRADES the existing fixture rather than rebuilding it. A rebuild
+    costs far more and re-triggers the non-atomic catalog bug (25 of 1,000 last
+    time); the extra grants cost ~25,000 PUTs and touch no entity.
+
+    ONE GET PER ROLE, NOT ONE PER PRIVILEGE
+    ---------------------------------------
+    `grant_privilege(skip_if_present=True)` issues a GET before every PUT to
+    dodge a measured ~5 s duplicate-key retry. Across 1,000 roles x 25 new
+    privileges that is 25,000 GETs, none of which can ever hit, because the
+    grants are new. The obvious fix -- turn `skip_if_present` off -- also
+    removes the idempotence a resumable pass depends on, so an interrupted run
+    resumed against already-granted rows would pay that 5 s retry 25,000 times.
+
+    So the diff is taken ONCE PER ROLE and only genuinely missing privileges
+    are PUT, with `skip_if_present=False` because the diff already established
+    absence. 1,000 GETs instead of 25,000, and a re-run issues zero writes.
+
+    Args:
+        pc: a `polaris_rest.PolarisREST` with a root token.
+        spec: the `SeedSpec` describing the fixture to upgrade (names and user
+            range come from it). Defaults to the standard 1,000-user spec.
+        grants_per_role: target count, taken from `catalog_privileges()` so the
+            result stays a superset of what the roles already hold.
+        ledger_path: the seed ledger. Progress is recorded under a separate
+            `grant_upgrades` key, so this is resumable independently of the
+            seed itself, and a target change invalidates the record rather than
+            skipping under-granted roles.
+        dry_run: read the diff and report it, write nothing, touch no ledger.
+            `grants_added` then carries the PROJECTED count.
+
+    Returns:
+        SeedResult. `completed_users` counts roles brought to target,
+        `skipped_users` those already there, `grants_added` the ROWS written.
+    """
+    # Guard first, exactly as in seed(): both raise before any work, but a pass
+    # aimed at a company cluster is the more dangerous mistake to be told about.
+    require_local(pc.base_url, extra_allowed_hosts)
+
+    if grants_per_role < len(CORE_CATALOG_PRIVILEGES):
+        raise ValueError(
+            f"upgrade_grants is additive: it cannot take a role from "
+            f"{len(CORE_CATALOG_PRIVILEGES)} grants down to {grants_per_role}. "
+            "Use revert_grants() to reduce."
+        )
+    target = catalog_privileges(grants_per_role)
+
+    spec = spec or SeedSpec()
+    ledger = Ledger(ledger_path)
+    already = ledger.upgraded_users(grants_per_role)
+
+    result = SeedResult()
+    t0 = time.time()
+    total = spec.n_users
+    indices = range(spec.start_index, spec.start_index + spec.n_users)
+
+    for count, i in enumerate(indices, start=1):
+        if i in already:
+            result.skipped_users += 1
+        else:
+            _upgrade_one(pc, spec, i, target, result, ledger, grants_per_role, dry_run)
+        if on_progress and (count % progress_every == 0 or count == total):
+            result.elapsed_s = time.time() - t0
+            on_progress(count, total, result)
+
+    result.elapsed_s = time.time() - t0
+    return result
+
+
+def _upgrade_one(pc, spec, i, target, result, ledger, grants_per_role, dry_run):
+    """One role's diff-and-fill. Marks the ledger only on a complete pass."""
+    n = spec.names(i)
+    catalog, role = n["catalog"], n["catalog_role"]
+
+    ok, held = _held_privileges(pc, catalog, role, result)
+    if not ok:
+        result.failed_users.append(
+            {"index": i, "error": f"list_grants failed for {catalog}/{role}"}
+        )
+        return
+
+    missing = [p for p in target if p not in held]
+    if not missing:
+        result.skipped_users += 1
+        return
+
+    if dry_run:
+        result.grants_added += len(missing)
+        result.completed_users += 1
+        return
+
+    incomplete = []
+    for priv in missing:
+        ok, r = _attempt(
+            lambda priv=priv: pc.grant_privilege(
+                catalog, role, priv, skip_if_present=False
+            ),
+            f"grant_privilege {priv}",
+            result,
+        )
+        if ok:
+            result.grants_added += 1
+        elif _is_bad_privilege_name(r):
+            # Data, not a fault: this build does not have the name. Recorded so
+            # the shortfall in grant_records has a stated cause.
+            result.invalid_privileges.append(priv)
+        else:
+            # Retries exhausted against 5xx/403/404 -- a hole in the fixture.
+            incomplete.append(priv)
+
+    if incomplete:
+        result.failed_users.append(
+            {"index": i, "error": f"unwritten grants: {incomplete[:5]}"}
+        )
+        return  # deliberately NOT marked done -- a re-run must retry these
+
+    ledger.mark_upgrade(i, grants_per_role)
+    result.completed_users += 1
+
+
+def revert_grants(
+    pc,
+    spec=None,
+    baseline=None,
+    ledger_path="seed_ledger.json",
+    progress_every=25,
+    on_progress=None,
+    extra_allowed_hosts=(),
+):
+    """Revoke everything above `baseline` from every `owner_principal` role.
+
+    The restore step for `upgrade_grants`, so the sweep's fixture change is
+    reversible rather than one-way. Only `owner_principal` is touched;
+    `catalog_admin` and its bootstrap grants are never read or written.
+
+    Args:
+        baseline: privileges to KEEP. Defaults to `CORE_CATALOG_PRIVILEGES`,
+            the 25 the original fixture was built with.
+
+    Returns:
+        SeedResult, with `grants_revoked` counting rows removed.
+    """
+    require_local(pc.base_url, extra_allowed_hosts)
+    keep = set(baseline if baseline is not None else CORE_CATALOG_PRIVILEGES)
+
+    spec = spec or SeedSpec()
+    ledger = Ledger(ledger_path)
+
+    result = SeedResult()
+    t0 = time.time()
+    total = spec.n_users
+    indices = range(spec.start_index, spec.start_index + spec.n_users)
+
+    for count, i in enumerate(indices, start=1):
+        n = spec.names(i)
+        catalog, role = n["catalog"], n["catalog_role"]
+        ok, held = _held_privileges(pc, catalog, role, result)
+        if not ok:
+            result.failed_users.append(
+                {"index": i, "error": f"list_grants failed for {catalog}/{role}"}
+            )
+        else:
+            extra = [p for p in held if p not in keep]
+            failed = []
+            for priv in extra:
+                ok_r, r = _attempt(
+                    lambda priv=priv: pc.revoke_privilege(catalog, role, priv),
+                    f"revoke_privilege {priv}",
+                    result,
+                    accept=(404,),  # already absent is the desired end state
+                )
+                if ok_r:
+                    result.grants_revoked += 1
+                else:
+                    failed.append(priv)
+            if failed:
+                result.failed_users.append(
+                    {"index": i, "error": f"unrevoked grants: {failed[:5]}"}
+                )
+            else:
+                result.completed_users += 1
+        if on_progress and (count % progress_every == 0 or count == total):
+            result.elapsed_s = time.time() - t0
+            on_progress(count, total, result)
+
+    if not result.failed_users:
+        ledger.clear_upgrades()
+    result.elapsed_s = time.time() - t0
+    return result
+
+
+def probe_privileges(pc, catalog, catalog_role, candidates=None):
+    """Find out which privilege names THIS build actually accepts.
+
+    `CATALOG_PRIVILEGES` is transcribed from the 1.3.0 spec, and a spec is not
+    a running server: `POLICY_*` may be gated behind a feature flag, and the
+    tail of the enum may post-date the deployed build. Granting an unknown name
+    1,000 times and reading the shortfall afterwards is the expensive way to
+    learn that; this is the cheap way.
+
+    Read-ish, but not read-only: it really does grant, on the throwaway role
+    the caller passes in. Never point it at a role that matters.
+
+    Returns:
+        dict: {accepted: [names], rejected: {name: "status: body"}, calls: n}.
+    """
+    candidates = list(candidates if candidates is not None else CATALOG_PRIVILEGES)
+    accepted, rejected, calls = [], {}, 0
+    for priv in candidates:
+        r = pc.grant_privilege(catalog, catalog_role, priv, skip_if_present=False)
+        calls += 1
+        if r.status_code < 400 or _is_duplicate(r):
+            accepted.append(priv)
+        else:
+            rejected[priv] = f"{r.status_code}: {(r.text or '')[:120]}"
+    return {"accepted": accepted, "rejected": rejected, "calls": calls}
+
+
+# ----------------------------------------------------------------------
 # teardown
 # ----------------------------------------------------------------------
 def teardown_user(pc, spec, i, result):
@@ -784,13 +1279,53 @@ def verify_counts(conn, spec, schema="polaris_schema"):
             f"~{expected['grant_records']}. Check SeedResult.invalid_privileges "
             "— rejected privilege names are the usual cause."
         )
-    if not notes:
-        notes.append("Row counts match the spec; the fixture is audit-ready.")
+
+    # The surplus, stated. This used to print "Row counts match the spec" off a
+    # `>=` comparison, so 30,009 actual against a 25,000 projection read as a
+    # clean match -- 5,009 unexplained rows, in the very table the audit is
+    # about, reported as agreement. The projection now models Polaris's own
+    # writes (role assignments + the catalog_admin bootstrap) as an OBSERVED
+    # constant, so what is left over is genuinely unaccounted for and is named
+    # as such rather than absorbed.
+    residual = actual["grant_records"] - expected["grant_records"]
+    if residual == 0:
+        notes.append(
+            f"grant_records exact: {actual['grant_records']} = "
+            f"{expected['grant_records_granted']} granted + "
+            f"{expected['grant_records_overhead']} Polaris-written."
+        )
+    elif grants_ok:
+        notes.append(
+            f"grant_records {actual['grant_records']}: "
+            f"{expected['grant_records_granted']} granted + "
+            f"{expected['grant_records_overhead']} Polaris-written leaves "
+            f"{residual:+d} UNEXPLAINED. Explain it before these numbers go "
+            "upstream — the overhead constant is observed, not derived, so a "
+            "residual most likely means it is wrong for this fixture."
+        )
+    # Same treatment for entities, and the residual has a known name. Every
+    # drop-with-purge leaves a TASK row behind (measured 2026-08-21: 279 of them,
+    # none soft-deleted, none ever attempted), so the surplus is expected — but
+    # it should be ACCOUNTED FOR, not waved through, because a surplus that is
+    # not task rows would mean something else is accumulating.
+    ent_residual = actual["entities_total"] - expected["entities_total"]
+    if entities_ok and ent_residual:
+        notes.append(
+            f"entities {actual['entities_total']}: "
+            f"{expected['entities_seeded']} seeded + "
+            f"{expected['entities_bootstrap']} Polaris-bootstrapped "
+            f"(one catalog_admin per catalog, plus the realm's own rows) "
+            f"leaves {ent_residual:+d}. Expected to be TASK rows from "
+            "drop-with-purge; confirm with find_probe_leak.py rather than "
+            "assuming — anything else accumulating would look identical here."
+        )
     return {
         "expected": expected,
         "actual": actual,
         "entities_ok": entities_ok,
         "grants_ok": grants_ok,
+        "grant_residual": residual,
+        "entity_residual": ent_residual,
         "notes": notes,
     }
 

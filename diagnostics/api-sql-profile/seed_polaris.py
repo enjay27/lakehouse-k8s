@@ -37,6 +37,23 @@ USAGE
     nohup python3 seed_polaris.py > seed.log 2>&1 &
 
 Interrupt it with Ctrl-C at any time; re-run to continue from the ledger.
+
+PRODUCTION GRANT VOLUME
+-----------------------
+25 grants per role is not a production shape; a real catalog role holds ~50.
+These raise an EXISTING fixture rather than rebuilding it (a rebuild costs far
+more and re-triggers the non-atomic catalog bug), and touch grant_records only:
+
+    python3 seed_polaris.py --probe-privileges          # FIRST: what does this
+                                                        # build actually accept?
+    python3 seed_polaris.py --upgrade-grants --dry-run  # the per-role diff
+    python3 seed_polaris.py --upgrade-grants            # ~26,000 calls, ~20 min
+    python3 seed_polaris.py --verify --grants-per-role 50
+    python3 seed_polaris.py --revert-grants             # back to the baseline
+
+Run `ANALYZE grant_records` after any of these. Without it the planner works
+from stale reltuples and may pick a plan the data no longer justifies — which
+looks exactly like a finding.
 """
 
 import argparse
@@ -53,8 +70,29 @@ sys.path.insert(0, str(REPO / "src"))
 
 from iceberg_rest import IcebergREST  # noqa: E402
 from polaris_rest import PolarisREST  # noqa: E402
-from polaris_seed import (SeedSpec, find_strays, seed, teardown,  # noqa: E402
-                          verify_counts)
+
+# noqa: E402 applies to this block too; it is attached to the two imports above
+# rather than inside the parentheses because isort relocates an inline comment
+# on the first name and black then re-wraps it onto that name, which reads as a
+# noqa for CATALOG_PRIVILEGES alone. Neither tool converges on the other's form
+# (no [tool.isort] profile is set), so this block is written for black, which
+# runs last.
+from polaris_seed import (
+    CATALOG_PRIVILEGES,
+    CORE_CATALOG_PRIVILEGES,
+    SeedResult,
+    SeedSpec,
+    call_with_lag_retry,
+    catalog_privileges,
+    ensure_catalog,
+    find_strays,
+    probe_privileges,
+    revert_grants,
+    seed,
+    teardown,
+    upgrade_grants,
+    verify_counts,
+)
 
 # --- local cluster; secrets from env with visible defaults -------------------
 POLARIS_URL = os.environ.get("POLARIS_URL", "http://192.168.139.2:8181")
@@ -125,7 +163,50 @@ def main():
     ap.add_argument("--prefix", default="user")
     ap.add_argument("--teardown", action="store_true")
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument(
+        "--upgrade-grants",
+        action="store_true",
+        help="additively raise every owner_principal role to --grants-per-role "
+        "(default 50). ~26,000 calls, ~15-25 min, writes grant_records only.",
+    )
+    ap.add_argument(
+        "--revert-grants",
+        action="store_true",
+        help=f"revoke everything above the {len(CORE_CATALOG_PRIVILEGES)}-name "
+        "baseline, undoing --upgrade-grants.",
+    )
+    ap.add_argument(
+        "--probe-privileges",
+        action="store_true",
+        help="find out which privilege names THIS build accepts, on one "
+        "throwaway catalog. Run before any bulk grant pass.",
+    )
+    ap.add_argument(
+        "--grants-per-role",
+        type=int,
+        default=None,
+        help="target grants per owner_principal role. Defaults to 50 for "
+        f"--upgrade-grants and to the {len(CORE_CATALOG_PRIVILEGES)}-name "
+        "baseline everywhere else. Pass it with --verify to check counts "
+        "against an upgraded fixture.",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="with --upgrade-grants: report the per-role diff, write nothing.",
+    )
     args = ap.parse_args()
+
+    # One flag, two defaults: the spec keeps today's 25-grant shape unless
+    # asked otherwise, while the upgrade pass targets 50. Resolving both from
+    # `None` here means --verify --grants-per-role 50 checks the upgraded
+    # fixture, instead of reporting a 25,000-row shortfall that is not real.
+    spec_privileges = (
+        catalog_privileges(args.grants_per_role)
+        if args.grants_per_role
+        else list(CORE_CATALOG_PRIVILEGES)
+    )
+    upgrade_target = args.grants_per_role or 50
 
     spec = SeedSpec(
         n_users=args.users,
@@ -133,15 +214,28 @@ def main():
         tables_per_namespace=5,
         create_tables=args.tables,
         prefix=args.prefix,
+        privileges=spec_privileges,
     )
     lp = ledger_path()
     pc, ic = connect()
 
     print(f"polaris : {POLARIS_URL}  realm={REALM}")
     print(f"ledger  : {lp}")
-    print(f"fixture : {args.users} users, tables={args.tables}")
+    print(
+        f"fixture : {args.users} users, tables={args.tables}, "
+        f"{len(spec_privileges)} grants/role"
+    )
     print(f"expected: {spec.expected_counts()}")
     print()
+
+    if args.probe_privileges:
+        sys.exit(probe(pc))
+
+    if args.upgrade_grants:
+        sys.exit(upgrade(pc, spec, lp, upgrade_target, args))
+
+    if args.revert_grants:
+        sys.exit(revert(pc, spec, lp, args))
 
     if args.verify:
         sys.exit(verify(pc, spec, args))
@@ -251,6 +345,119 @@ def main():
     else:
         print("\nNext: in notebook 01 leave RUN_SEED = False (this already seeded),")
         print("      then run it to trace the API surface at real volume.")
+
+
+# ---------------------------------------------------------------------------
+# grant volume
+# ---------------------------------------------------------------------------
+def probe(pc):
+    """Ask the DEPLOYED build which privilege names it accepts.
+
+    `CATALOG_PRIVILEGES` is transcribed from the 1.3.0 spec, and a spec is not
+    a running server. Granting an unknown name 1,000 times and inferring it
+    from the shortfall is the expensive way to find out; this costs one
+    throwaway catalog and ~51 calls.
+
+    Returns a process exit code: 0 = every candidate accepted.
+    """
+    result = SeedResult()
+    name = f"privprobe-{int(time.time())}"
+    print(f"probing {len(CATALOG_PRIVILEGES)} candidate names on {name}\n")
+    try:
+        ensure_catalog(pc, name, BUCKET, MINIO_ENDPOINT, result)
+        ok, r = call_with_lag_retry(
+            lambda: pc.create_catalog_role(name, "probe_role"),
+            "create_catalog_role",
+            result,
+        )
+        if not ok:
+            print(f"could not create the probe role: {r.status_code} {r.text[:160]}")
+            return 1
+        res = probe_privileges(pc, name, "probe_role")
+    finally:
+        # Always: a leftover probe catalog is exactly the residue the entities
+        # count is being watched for.
+        d = pc.delete_catalog(name, purge=True)
+        if d.status_code >= 300 and d.status_code != 404:
+            print(f"WARNING: probe catalog {name} not deleted ({d.status_code}).")
+
+    print(f"accepted: {len(res['accepted'])}/{len(CATALOG_PRIVILEGES)}")
+    if res["rejected"]:
+        print(f"\nREJECTED by this build ({len(res['rejected'])}):")
+        for k, v in res["rejected"].items():
+            print(f"    {k:<32} {v}")
+        print("\nThe measured list is the authority, not the spec. Trim")
+        print("CATALOG_PRIVILEGES to the accepted names, or the upgrade pass")
+        print("will fall short by (rejected x 1,000) rows and the shortfall")
+        print("will look like a Polaris behaviour.")
+        return 1
+    print("every candidate accepted; CATALOG_PRIVILEGES is safe to use in full.")
+    return 0
+
+
+def upgrade(pc, spec, lp, target, args):
+    """Additively raise every owner_principal role to `target` grants."""
+    t0 = time.time()
+    if args.dry_run:
+        print("DRY RUN — reading the per-role diff, writing nothing.\n")
+    res = upgrade_grants(
+        pc,
+        spec,
+        grants_per_role=target,
+        ledger_path=str(lp),
+        progress_every=25,
+        on_progress=make_progress(args.users),
+        dry_run=args.dry_run,
+    )
+    print()
+    print(res.summary())
+    print(f"wall: {time.time() - t0:.0f}s")
+
+    if args.dry_run:
+        print(f"\nwould add {res.grants_added} grant_records rows across")
+        print(f"{res.completed_users} roles ({res.skipped_users} already at target).")
+        print("Re-run without --dry-run to write them.")
+        return 0
+
+    if res.invalid_privileges:
+        # Fewer rows than projected, with a stated cause. Say it loudly: a
+        # quiet shortfall in the table under audit reads as a finding.
+        print("\nWARNING: this build rejected these privilege names:")
+        print("  ", sorted(set(res.invalid_privileges)))
+        print("  grant_records volume is LOWER than projected. Run")
+        print("  --probe-privileges and trim CATALOG_PRIVILEGES before")
+        print("  quoting any count from this fixture.")
+    if res.failed_users:
+        print(f"\n{len(res.failed_users)} roles incomplete; re-run to retry them")
+        print("(the ledger skips the ones that finished).")
+        print("  first 5:", res.failed_users[:5])
+        return 1
+
+    print(f"\nadded {res.grants_added} rows to grant_records.")
+    print("Next: ANALYZE grant_records (the planner is working from stale")
+    print("reltuples until you do), then --verify --grants-per-role", target)
+    return 0
+
+
+def revert(pc, spec, lp, args):
+    """Undo the upgrade: revoke everything above the baseline."""
+    t0 = time.time()
+    res = revert_grants(
+        pc,
+        spec,
+        ledger_path=str(lp),
+        progress_every=25,
+        on_progress=make_progress(args.users),
+    )
+    print()
+    print(res.summary())
+    print(f"wall: {time.time() - t0:.0f}s")
+    if res.failed_users:
+        print(f"\n{len(res.failed_users)} roles incomplete; re-run to retry them.")
+        print("  first 5:", res.failed_users[:5])
+        return 1
+    print(f"\nrevoked {res.grants_revoked} rows. Run ANALYZE grant_records.")
+    return 0
 
 
 # ---------------------------------------------------------------------------

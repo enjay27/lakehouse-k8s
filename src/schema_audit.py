@@ -45,6 +45,11 @@ statement is then wrapped in a transaction that is ALWAYS rolled back.
 import json
 import re
 
+# One implementation of "what does this statement actually constrain", shared
+# with api_trace. A local copy is how the capture-dir resolver ended up with two
+# versions that had drifted apart.
+from api_trace import where_clause
+
 # ----------------------------------------------------------------------
 # expected schema — Polaris 1.3.0 / schema-v2
 # ----------------------------------------------------------------------
@@ -149,6 +154,10 @@ INDEX_HYPOTHESES = [
     {
         "id": "grant_records_by_grantee",
         "table": "grant_records",
+        # loadAllGrantRecordsOnGrantee is a SELECT. Without this the OR-delete
+        # -- which genuinely constrains the grantee columns, but belongs to
+        # grant_records_delete_or -- votes on this hypothesis too.
+        "verb": "SELECT",
         "source_method": "loadAllGrantRecordsOnGrantee",
         "predicate": ["realm_id", "grantee_catalog_id", "grantee_id"],
         "claim": (
@@ -172,6 +181,10 @@ INDEX_HYPOTHESES = [
     {
         "id": "grant_records_delete_or",
         "table": "grant_records",
+        "verb": "DELETE",
+        # Its remedy is prose rather than DDL ("covered by the grantee index
+        # above"), so the index it depends on cannot be parsed out of it.
+        "remedy_indexes": ["idx_grant_records_grantee"],
         "source_method": "deleteAllEntityGrantRecords",
         "sql_contains": "delete",
         "predicate": ["realm_id", "grantee_id|securable_id"],
@@ -194,6 +207,10 @@ INDEX_HYPOTHESES = [
     {
         "id": "entities_row_constructor_in",
         "table": "entities",
+        "verb": "SELECT",
+        # The remedy is an upstream rewrite, not an index -- so a selective
+        # plan here IS a genuine refutation, never REMEDIED.
+        "remedy_indexes": [],
         "source_method": "loadEntitiesChangeTracking",
         "sql_contains": "in (",
         "predicate": ["realm_id", "(catalog_id, id) IN (...)"],
@@ -1162,14 +1179,45 @@ def rank_statements(inventory, top=20):
     return ranked[:top]
 
 
+_REMEDY_INDEX = re.compile(
+    r"CREATE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?" r"([\w.]+)",
+    re.IGNORECASE,
+)
+
+
+def remedy_indexes(hyp):
+    """Index names this hypothesis proposes creating.
+
+    Read from an explicit `remedy_indexes` key when present, otherwise parsed
+    out of the `remedy` DDL. Used to tell a genuine refutation apart from our
+    own fix already being installed.
+    """
+    explicit = hyp.get("remedy_indexes")
+    if explicit:
+        return [x.split(".")[-1].lower() for x in explicit]
+    return [
+        m.group(1).split(".")[-1].lower()
+        for m in _REMEDY_INDEX.finditer(hyp.get("remedy") or "")
+    ]
+
+
 def check_hypotheses(conn, audit_rows, schema="polaris_schema"):
     """Check each documented hypothesis in INDEX_HYPOTHESES against the audit.
 
     Returns:
         list[dict]: the hypothesis plus {status, evidence}, where status is
             CONFIRMED    — a SEQ_SCAN or FILTER_HEAVY verdict on that table
-            REFUTED      — that table's statements all used a selective path
+            REMEDIED     — a selective path, but via an index this hypothesis
+                           itself proposes. The claim stands; the fix is
+                           installed and the "before" state is unobservable.
+            REFUTED      — a selective path via a PRE-EXISTING index, i.e. the
+                           claim was wrong
             INCONCLUSIVE — no matching statement, or the table was too small
+
+    REMEDIED exists because REFUTED was being reported for our own fix. Once
+    `idx_grant_records_grantee` is created locally, every grantee lookup is an
+    index scan — and the audit called that a refutation of the hypothesis that
+    asked for it, in the same directory as a report measuring ~188x.
     """
     out = []
     for hyp in INDEX_HYPOTHESES:
@@ -1189,7 +1237,26 @@ def check_hypotheses(conn, audit_rows, schema="polaris_schema"):
             if r.get("table") != hyp["table"]:
                 continue
             sql = (r.get("sql") or "").lower()
-            if cols and not all(re.search(rf"\b{re.escape(c)}\b", sql) for c in cols):
+
+            # A hypothesis about `loadAllGrantRecordsOnGrantee` is about a
+            # SELECT. Without this, the OR-delete -- which does constrain the
+            # grantee columns, but belongs to its own hypothesis -- is counted
+            # as evidence here too.
+            # Only filters when the row actually declares a verb: if
+            # extract_verb failed, excluding the row would silently drop a
+            # real statement, and the WHERE match below still guards it.
+            _verb = (r.get("verb") or "").upper()
+            if hyp.get("verb") and _verb and _verb != hyp["verb"]:
+                continue
+
+            # Match against the WHERE clause ONLY. Searching the whole
+            # statement counted a column named in the SELECT list as though it
+            # were constrained, which admitted two statements this hypothesis
+            # says nothing about: the SECURABLE lookup (it merely *projects*
+            # grantee_catalog_id, grantee_id) and an INSERT naming every
+            # column. Both then voted on the verdict.
+            where = where_clause(sql)
+            if cols and not all(re.search(rf"\b{re.escape(c)}\b", where) for c in cols):
                 continue
             if hyp.get("sql_contains") and hyp["sql_contains"].lower() not in sql:
                 continue
@@ -1217,12 +1284,55 @@ def check_hypotheses(conn, audit_rows, schema="polaris_schema"):
                 else ["no captured statement matched this hypothesis's predicate"]
             )
         elif good:
-            status, evidence = "REFUTED", [r["sql"] for r in good]
+            # An index scan served by an index THIS HYPOTHESIS PROPOSED is not
+            # a refutation -- it is the remedy already installed, and the
+            # baseline is contaminated. Reporting REFUTED there inverts the
+            # finding: after `idx_grant_records_grantee` was created locally,
+            # this said the index was unnecessary, contradicting the same
+            # run's own before/after measurement of ~188x.
+            _proposed = set(remedy_indexes(hyp))
+            _used = {
+                str(i).split(".")[-1].lower()
+                for r in good
+                for i in (r.get("index_scans") or [])
+            }
+            _by_remedy = sorted(_proposed & _used)
+            if not _used and _proposed:
+                # The plan is selective but does not name the index that made
+                # it so, so REMEDIED and REFUTED cannot be told apart — and
+                # this module's rule is that a confident wrong answer is worse
+                # than INCONCLUSIVE. Guarded because guessing REFUTED here is
+                # exactly the inversion REMEDIED exists to prevent.
+                status = "INCONCLUSIVE"
+                note = (
+                    "A selective plan, but the audit captured no index name for "
+                    "it, so it cannot be attributed to either a pre-existing "
+                    "access path or this hypothesis's own remedy."
+                )
+            elif _by_remedy:
+                status = "REMEDIED"
+                note = (
+                    "The claim STANDS and the proposed fix is already on this "
+                    f"cluster: the winning plan uses {', '.join(_by_remedy)}, "
+                    "which this hypothesis itself proposes. That makes the "
+                    "'before' state unobservable here — take the verdict from "
+                    "a run where the index is absent (02's section 5 measures "
+                    "exactly that). This is NOT a refutation."
+                )
+            else:
+                status = "REFUTED"
+                note = (
+                    "Served by a pre-existing access path, not by anything this "
+                    f"hypothesis proposes (indexes used: {sorted(_used) or 'n/a'})."
+                )
+            evidence = [r["sql"] for r in good]
         else:
             status, evidence = "INCONCLUSIVE", []
 
         entry = dict(hyp)
         entry["status"] = status
         entry["evidence"] = evidence
+        if status in ("REMEDIED", "REFUTED"):
+            entry["note"] = note
         out.append(entry)
     return out
