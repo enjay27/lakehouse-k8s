@@ -3,7 +3,31 @@
 Phase 1 stage 4. Answers "what does each API actually cost, and where does an
 index change that" with wall-clock, not plans.
 
-Status: **awaiting sign-off.** Nothing built.
+Status: **signed off and BUILT (2026-08-21).** `src/api_sweep.py`,
+`02c_api_latency_sweep.ipynb`, `build_02c.py`, `verify_02c.py`. Not yet run live.
+
+Two §7 opens are closed by Kade's call:
+
+- **Both axes together**, not grant-only. Cloned user-sets move `entities` and
+  `grant_records` at once; the grid recovers attribution afterwards via the
+  index toggle (grant axis, volume held) and the volume trend at index-present
+  (entity axis, index held). Report those two contrasts, never the raw
+  cell-to-cell delta.
+- **The notebook drives the restart itself** — `kubectl rollout restart deploy
+  -n datahub-hynix benchmarks-polaris`, then `rollout status`, then poll
+  `/q/health/ready` until Polaris actually serves. Rollout-complete is not
+  serving-ready, and measuring through that window puts startup cost inside the
+  cold sample. So no shell driver is needed and the 5-restart median is
+  reachable from one artifact.
+
+Notebook name settled: `02c_api_latency_sweep.ipynb`, keeping the 02 family
+together and leaving `03` free.
+
+One open remains, deliberately: **§5's `max_parallel_workers_per_gather = 0`
+pin.** Suppressing parallelism for the API path is a server-side `ALTER ROLE`,
+and this repo requires explicit sign-off before touching PostgreSQL config. The
+default is to leave the cluster alone and RECORD the escalation per cell
+(`SWEEP_PIN_PARALLELISM=1` opts in; teardown resets either way).
 
 Flow, as Kade framed it: seed at 100 / 1,000 / 10,000 → call every API → EXPLAIN
 every statement those calls issued → read index requirements off the result.
