@@ -1,0 +1,51 @@
+server:
+  enabled: true
+
+  # Data retention configuration (30 days)
+  retentionPeriod: "30d"
+
+  # Persistent Volume Configuration
+  persistentVolume:
+    enabled: true
+    size: 50Gi
+    accessModes:
+      - ReadWriteOnce
+    # storageClassName: "gp3"
+    # annotations: {}
+
+  # Production Sizing & Protection
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+
+  # Service Configuration (MUST be inside server)
+  service:
+    enabled: true
+    type: LoadBalancer
+    servicePort: 9428
+    # annotations: {}
+
+  # Extra flags passed to VictoriaLogs binary
+  extraArgs:
+    memory.allowedPercent: "60"
+    http.maxGracefulShutdownDuration: "15s"
+
+  # Probes
+  livenessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  # Ingress (Optional: also resides under server in this chart)
+  ingress:
+    enabled: false

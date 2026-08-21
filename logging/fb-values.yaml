@@ -1,0 +1,63 @@
+kind: Deployment
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Mount the shared Polaris log PVC
+extraVolumes:
+  - name: polaris-logs
+    persistentVolumeClaim:
+      claimName: polaris-shared-logs-pvc
+
+extraVolumeMounts:
+  - name: polaris-logs
+    mountPath: /logs
+    readOnly: true
+
+# Fluent Bit Pipeline Configuration
+config:
+  service: |
+    [SERVICE]
+        Flush         1
+        Log_Level     info
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+  inputs: |
+    [INPUT]
+        Name              tail
+        Path              /logs/polaris.log
+        Tag               polaris.vlogs
+        Read_from_Head    true
+        Parser            json
+        Buffer_Max_Size   10MB
+        Skip_Long_Lines   Off
+
+  filters: |
+    [FILTER]
+        Name          modify
+        Match         polaris.vlogs
+        Add           _stream_fields app,level
+        Add           app polaris
+        Rename        message _msg
+        Rename        timestamp _time
+
+  outputs: |
+    [OUTPUT]
+        Name                es
+        Match               polaris.vlogs
+        Host                vlsingle-victoria-logs-single-server.logging.svc.cluster.local
+        Port                9428
+        Path                /insert/elasticsearch
+        Index               polaris
+        Type                _doc
+        Replace_Dots        On
+        Suppress_Type_Name  On
