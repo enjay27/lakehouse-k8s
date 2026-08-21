@@ -497,6 +497,14 @@ def cell_integrity(cell):
         )
     if (cell.get("scan") or {}).get("probe_is_clone"):
         problems.append("the plan probe landed on a CLONE grantee, not a real one")
+    bloat = (cell.get("volume") or {}).get("bloat") or {}
+    grants = bloat.get("grant_records") or {}
+    if grants.get("dead_share", 0) > 0.1:
+        problems.append(
+            f"{grants['dead_tuples']:,} dead tuples ({grants['dead_share']:.0%} "
+            "of the table) -- a Seq Scan reads those pages, so this cell's scan "
+            "cost is partly the PREVIOUS cell's deleted rows"
+        )
     rows = (cell.get("volume") or {}).get("rows") or {}
     if rows.get("grant_records", 0) < 30_000:
         problems.append(
@@ -785,3 +793,63 @@ def wait_for_replicas(conn, timeout=120, interval=1.0, max_bytes=0, sleep=time.s
         "Measuring now would time requests against a table that has not "
         "finished replicating, at a volume the cell label would misstate."
     )
+
+
+# ----------------------------------------------------------------------
+# bloat
+# ----------------------------------------------------------------------
+def table_bloat(conn, schema, table):
+    """Pages, bytes and dead tuples. Recorded per cell, because a Seq Scan
+    reads PAGES, not rows.
+
+    This is the hazard a cheap reset removes, and it is not obvious. Changing
+    volume between cells means deleting the previous cell's clones -- at 10,000
+    clones that is ~550,000 rows -- and `DELETE` reclaims nothing. The tuples
+    are dead but the pages remain, and a sequential scan reads every one of
+    them. `ANALYZE` updates the planner's statistics and moves no data.
+
+    So an ascending grid (0 -> 1,000 -> 10,000) measures its later cells
+    against a table carrying the corpses of its earlier ones. The buffer counts
+    and scan times would rise with volume exactly as predicted, partly for the
+    wrong reason, and nothing in the output would say so.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            api_trace.NO_LOAD_BALANCE + """SELECT pg_relation_size(c.oid) / 8192,
+                        pg_total_relation_size(c.oid),
+                        coalesce(s.n_live_tup, 0), coalesce(s.n_dead_tup, 0)
+                 FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+                 WHERE n.nspname = %s AND c.relname = %s""",
+            (schema, table),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    pages, total_bytes, live, dead = row
+    return {
+        "pages": int(pages),
+        "total_bytes": int(total_bytes),
+        "live_tuples": int(live),
+        "dead_tuples": int(dead),
+        "dead_share": (dead / (live + dead)) if (live + dead) else 0.0,
+    }
+
+
+def compact(conn, schema, table):
+    """`VACUUM (FULL, ANALYZE)` -- rewrite the table so its page count reflects
+    its row count.
+
+    Plain `VACUUM` marks space reusable but does not shrink the relation, so a
+    Seq Scan still reads the same number of pages. FULL rewrites. It takes an
+    ACCESS EXCLUSIVE lock, which is unacceptable in production and completely
+    fine here: nothing else is using this cluster, and a deterministic page
+    count is the whole point of the exercise.
+
+    Requires autocommit -- VACUUM cannot run inside a transaction block.
+    """
+    t0 = time.time()
+    with conn.cursor() as cur:
+        cur.execute(f"VACUUM (FULL, ANALYZE) {schema}.{table}")  # noqa: S608
+    return {"seconds": time.time() - t0, "after": table_bloat(conn, schema, table)}

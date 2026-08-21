@@ -142,6 +142,30 @@ three are cheap to check now and expensive to discover later:
    itself;
 3. nothing is already wearing the clone prefix, because volume changes start
    from a known-empty state.
+
+### Starting from a genuinely fresh realm
+
+Kade's point (2026-08-22): the schema can be dropped and `bootstrap.sql`
+re-run in seconds, so a clean room is cheap. Use it **per run**, not per cell:
+
+    DROP SCHEMA polaris_schema CASCADE;   -- plus whatever recreates it
+    psql -f diagnostics/api-sql-profile/bootstrap.sql
+    kubectl rollout restart deploy/benchmarks-polaris -n datahub-hynix
+    python3 diagnostics/api-sql-profile/triage_realm.py
+    python3 diagnostics/api-sql-profile/seed_polaris.py --users 200 --no-tables
+    python3 diagnostics/api-sql-profile/seed_polaris.py --upgrade-grants --grants-per-role 50
+
+That makes two runs comparable to each other, which nothing else does: the
+realm otherwise accumulates leaked TASK rows, upgraded grants and whatever a
+failed teardown left behind. It also starts index-absent, which is where the
+grid wants to begin.
+
+Per CELL it is the wrong tool -- re-seeding 200 users by API costs minutes per
+volume step where `VACUUM FULL` costs seconds and achieves the thing that
+actually matters, a page count that tracks the row count.
+
+**Restart Polaris after any drop.** `InMemoryEntityCache` holds entities with
+their grants; a running instance keeps serving a realm that no longer exists.
 """),
     code("""
 # --- a real fixture to aim at, and a DIFFERENT one as the decoy ---
@@ -299,9 +323,19 @@ def apply_volume(n):
             conn, SCHEMA, REALM, tmpl, n, band,
             on_progress=lambda line: print(line, flush=True),
         )
-    with conn.cursor() as cur:
-        cur.execute(f"ANALYZE {SCHEMA}.entities")
-        cur.execute(f"ANALYZE {SCHEMA}.grant_records")
+    # VACUUM FULL, not ANALYZE. Changing volume deletes the previous cell's
+    # clones -- 550,000 rows at the top of the grid -- and DELETE reclaims
+    # nothing. The tuples die, the pages stay, and a Seq Scan reads every one
+    # of them. An ascending grid would therefore measure its later cells partly
+    # against the corpses of its earlier ones, with buffer counts rising for
+    # the right reason and the wrong cause. ANALYZE moves no data; only a
+    # rewrite makes page count track row count.
+    for tbl in TABLES:
+        vac = api_sweep.compact(conn, SCHEMA, tbl)
+        print(f"  vacuumed {tbl} in {vac['seconds']:.1f}s "
+              f"-> {vac['after']['pages']:,} pages, "
+              f"{vac['after']['dead_tuples']:,} dead")
+    bloat = {tbl: api_sweep.table_bloat(conn, SCHEMA, tbl) for tbl in TABLES}
     rows = run_manifest.table_counts(conn, SCHEMA, TABLES)
     # Polaris reads through Pgpool, which load-balances SELECTs to standbys.
     # Until this insert has replicated, a request served by a standby scans a
@@ -323,7 +357,7 @@ def apply_volume(n):
     print(f"  volume {n:,}: removed {removed['entities']:,}e, "
           f"inserted {inserted['entities']:,}e/{inserted['grants']:,}g -> {rows}")
     return {"clones": n, "removed": removed, "inserted": inserted, "rows": rows,
-            "replication": repl}
+            "replication": repl, "bloat": bloat}
 
 
 def apply_index(present):

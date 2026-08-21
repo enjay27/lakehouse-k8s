@@ -635,3 +635,77 @@ def test_the_report_leads_with_the_integrity_warning():
     md = sweep.render_report(cells, {})
     assert "DOES NOT MEASURE WHAT THE TABLES SAY" in md
     assert md.index("DOES NOT MEASURE") < md.index("## Index effect")
+
+
+# ----------------------------------------------------------------------
+# bloat
+# ----------------------------------------------------------------------
+class FakeBloatConn:
+    def __init__(self, row):
+        self.row, self.executed = row, []
+
+    def cursor(self):
+        outer = self
+
+        class C:
+            def __enter__(self_):
+                return self_
+
+            def __exit__(self_, *a):
+                return False
+
+            def execute(self_, sql, params=None):
+                outer.executed.append(" ".join(sql.split()))
+
+            def fetchone(self_):
+                return outer.row
+
+        return C()
+
+
+def test_bloat_reports_pages_and_dead_share():
+    b = sweep.table_bloat(
+        FakeBloatConn((1200, 12_000_000, 3000, 7000)), "polaris_schema", "grant_records"
+    )
+    assert b["pages"] == 1200
+    assert b["dead_share"] == pytest.approx(0.7)
+
+
+def test_compact_uses_vacuum_full_because_plain_vacuum_does_not_shrink():
+    """Plain VACUUM marks space reusable; the relation keeps its pages and a
+    Seq Scan keeps reading them. FULL rewrites."""
+    conn = FakeBloatConn((10, 1000, 100, 0))
+    sweep.compact(conn, "polaris_schema", "grant_records")
+    assert any("VACUUM (FULL, ANALYZE)" in s for s in conn.executed)
+
+
+def test_a_cell_measured_over_dead_tuples_is_flagged():
+    """An ascending grid deletes the previous cell's clones. DELETE reclaims
+    nothing, so the next Seq Scan reads the corpses."""
+    cell = _cell_ns(
+        10000,
+        False,
+        40.0,
+        38.0,
+        42.0,
+        scan={"plan": "Gather > Parallel Seq Scan", "probe_is_clone": False},
+        rows=580_000,
+    )
+    cell["volume"]["bloat"] = {
+        "grant_records": {"dead_tuples": 550_000, "dead_share": 0.49}
+    }
+    assert any("PREVIOUS cell's deleted rows" in p for p in sweep.cell_integrity(cell))
+
+
+def test_a_compacted_cell_is_not_flagged():
+    cell = _cell_ns(
+        10000,
+        False,
+        40.0,
+        38.0,
+        42.0,
+        scan={"plan": "Gather > Parallel Seq Scan", "probe_is_clone": False},
+        rows=580_000,
+    )
+    cell["volume"]["bloat"] = {"grant_records": {"dead_tuples": 0, "dead_share": 0.0}}
+    assert sweep.cell_integrity(cell) == []
