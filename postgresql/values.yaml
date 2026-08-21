@@ -1,3 +1,5 @@
+# `global:` DOES propagate to subcharts automatically — this block was, and
+# stays, correct at the top level. It is why authentication works today.
 global:
   postgresql:
     username: polaris
@@ -7,162 +9,201 @@ global:
     repmgrUsername: repmgr
     repmgrPassword: "repmgr"
     repmgrDatabase: repmgr
+    # Set the auth method HERE rather than hand-writing pg_hba (see below).
     authMethod: scram-sha-256
     repmgrAuthMethod: scram-sha-256
   storageClass: ""
 
-volumePermissions:
-  enabled: true
-  image:
-    registry: docker.io
-    repository: bitnamilegacy/os-shell
-    tag: 12-debian-12-r51
-
-postgresql:
-  image:
-    registry: docker.io
-    repository: bitnamilegacy/postgresql-repmgr
-    tag: 17.6.0-debian-12-r2
-  replicaCount: 3  # primary 1 + standby 2
-
-  pgHbaConfiguration: |-
-      local   all             all                                     scram-sha-256
-      host    all             all             127.0.0.1/32            scram-sha-256
-      host    all             all             ::1/128                 scram-sha-256
-      host    all             all             0.0.0.0/0               scram-sha-256
-      host    repmgr          repmgr          0.0.0.0/0               scram-sha-256
-      host    replication     all             0.0.0.0/0               scram-sha-256
-
-  resources:
-    requests:
-      cpu: 250m
-      memory: 512Mi
-    limits:
-      cpu: 1000m
-      memory: 2Gi
-
-  # Polaris 워크로드에 맞춘 튜닝
-  extendedConf: |
-    # === Security & Authentication ===
-    password_encryption = 'scram-sha-256'  # Ensures all new passwords use SCRAM
-
-    # === Connection ===
-    max_connections = 200
-
-    # === Memory (limits 2Gi 기준) ===
-    shared_buffers = 384MB
-    effective_cache_size = 1536MB
-    work_mem = 4MB
-    maintenance_work_mem = 64MB
-
-    # === WAL / Replication ===
-    wal_level = replica
-    max_wal_senders = 10
-    max_replication_slots = 10
-    wal_keep_size = 512MB
-    hot_standby = on
-    hot_standby_feedback = on
-
-    # === Checkpoint ===
-    checkpoint_timeout = 15min
-    checkpoint_completion_target = 0.9
-    max_wal_size = 1GB
-    min_wal_size = 256MB
-
-    # === Query Planner ===
-    random_page_cost = 1.1
-    effective_io_concurrency = 200
-
-    # === Logging (트러블슈팅용) ===
-    log_min_duration_statement = 1000
-    log_checkpoints = on
-    log_connections = off
-    log_disconnections = off
-    log_lock_waits = on
-    log_temp_files = 0
-
-    # === Autovacuum ===
-    autovacuum = on
-    autovacuum_max_workers = 2
-    autovacuum_naptime = 30s
-    autovacuum_vacuum_scale_factor = 0.1
-    autovacuum_analyze_scale_factor = 0.05
-
-  persistence:
-    enabled: true
-    size: 10Gi
-    storageClass: ""
-
-  # 단일 노드(Docker Desktop)에서는 soft
-  podAntiAffinityPreset: soft
-
-pgpool:
-  image:
-    registry: docker.io
-    repository: bitnamilegacy/pgpool
-    tag: 4.6.3-debian-12-r0
-  replicaCount: 3
-  adminUsername: admin
-  adminPassword: "CHANGE_ME_PGPOOL"
-
-  # off: write가 있어도 read를 분산 (최대 성능, stale data 가능)
-  # transaction: 명시적 트랜잭션 내에서는 read 분산 안 함 (Default)
-  # always: write 발생 시 세션 끝까지 모든 read를 primary로
-  # trans_transaction:  트랜잭션 종료 후에도 세션 끝까지 read 분산 안 함
-  # dml_adaptive: 테이블 단위로 DML 추적하여 세밀하게 제어
-  disableLoadBalancingOnWrite: always 
-
-  configuration: |
-    statement_level_load_balance = off
-    load_balance_mode = on
-    memory_cache_enabled = off
-    health_check_period = 10
-    health_check_timeout = 20
-    health_check_max_retries = 3
-    connection_life_time = 0
-    client_idle_limit = 0
-
-  numInitChildren: 64
-  maxPool: 4
-  childLifeTime: 300
-  childMaxConnections: 0
-  connectionLifeTime: 0
-
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
-
-  podAntiAffinityPreset: soft
-
-metrics:
-  enabled: false
-
-service:
-  type: ClusterIP
-  ports:
-    postgresql: 5432
-
+# -----------------------------------------------------------------------------
+# EVERYTHING for the subchart must live under this key.
+# -----------------------------------------------------------------------------
 postgresql-ha:
+
+  volumePermissions:
+    enabled: true
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/os-shell
+      tag: 12-debian-12-r51
+
+  # The pgpool-fronting service.
   service:
     type: LoadBalancer
     ports:
       postgresql: 5432
+
+  metrics:
+    enabled: false
+
   postgresql:
     image:
       registry: docker.io
       repository: bitnamilegacy/postgresql-repmgr
       tag: 17.6.0-debian-12-r2
+    replicaCount: 3  # primary 1 + standby 2
+
+    # Keep repmgr! This is a REPLACE, not an append — dropping repmgr leaves
+    # repmgrd unable to attach to its shared memory and disables failover.
+    # Add pg_stat_statements here (not via ALTER SYSTEM) if you decide you want it.
+    sharedPreloadLibraries: "pgaudit, repmgr"
+
+    # ------------------------------------------------------------------
+    # pgHbaConfiguration: DELIBERATELY NOT SET.
+    # ------------------------------------------------------------------
+    # The chart generates a pg_hba that already covers BOTH address families
+    # and honours `global.postgresql.authMethod` above. Hand-writing this is
+    # what broke the cluster on 2026-08-18: the custom block was IPv4-only
+    # (`0.0.0.0/0`, no `::/0`), and OrbStack's pod network is IPv6, so repmgr
+    # could not reach the primary:
+    #
+    #   FATAL: no pg_hba.conf entry for host "fd07:b51a:cc66:a::203",
+    #          user "repmgr", database "repmgr", no encryption
+    #
+    # It had been harmless only because the whole block was inert (un-nested on
+    # an umbrella chart). Nesting the values correctly activated it for the
+    # first time and replication died.
+    #
+    # The custom block bought nothing the chart default does not already do —
+    # so the fix is to DELETE it, not to patch it. `authMethod` above gives you
+    # scram-sha-256 without owning the file.
+    #
+    # If you ever do need a custom pg_hba: every rule needs both families, and
+    # `replication` is a pseudo-database NOT matched by `all`:
+    #
+    #   host  all          all     0.0.0.0/0   scram-sha-256
+    #   host  all          all     ::/0        scram-sha-256
+    #   host  replication  all     0.0.0.0/0   scram-sha-256
+    #   host  replication  all     ::/0        scram-sha-256
+
+    # Explicit `resources` wins over `resourcesPreset`; setting the preset to
+    # "none" makes that unambiguous rather than relying on precedence.
+    resourcesPreset: "none"
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+
+    # Polaris 워크로드에 맞춘 튜닝
+    extendedConf: |
+      # === Connection ===
+      # Polaris's JDBC pool is QUARKUS_DATASOURCE_JDBC_MAX_SIZE=300 per pod, with
+      # an HPA allowing 3 Polaris pods. 200 is still below that ceiling — either
+      # lower the Polaris pool to ~150, or raise this, before running the
+      # 1,000-user seed. Otherwise expect
+      # "FATAL: sorry, too many clients already".
+      max_connections = 200
+      
+      # === Memory (limits 2Gi 기준) ===
+      shared_buffers = 384MB
+      effective_cache_size = 1536MB
+      work_mem = 4MB
+      maintenance_work_mem = 64MB
+      
+      # === WAL / Replication ===
+      wal_level = replica
+      max_wal_senders = 10
+      max_replication_slots = 10
+      wal_keep_size = 512MB
+      hot_standby = on
+      hot_standby_feedback = on
+      
+      # === Checkpoint ===
+      checkpoint_timeout = 15min
+      checkpoint_completion_target = 0.9
+      max_wal_size = 1GB
+      min_wal_size = 256MB
+      
+      # === Query Planner ===
+      random_page_cost = 1.1
+      effective_io_concurrency = 200
+      
+      # === Logging (트러블슈팅용) ===
+      log_min_duration_statement = 1000
+      log_checkpoints = on
+      log_connections = off
+      log_disconnections = off
+      log_lock_waits = on
+      log_temp_files = 0
+      
+      # === Autovacuum ===
+      autovacuum = on
+      autovacuum_max_workers = 2
+      autovacuum_naptime = 30s
+      autovacuum_vacuum_scale_factor = 0.1
+      autovacuum_analyze_scale_factor = 0.05
+
+    persistence:
+      enabled: true
+      # 10Gi is safe on a FRESH install. volumeClaimTemplates are immutable once
+      # the StatefulSet exists, so this is the only moment it can be set — and
+      # changing it later will make `helm upgrade` fail.
+      size: 10Gi
+      storageClass: ""
+
+    # 단일 노드(Docker Desktop)에서는 soft
+    podAntiAffinityPreset: soft
+
+    # Kubernetes gives containers a 64MB /dev/shm. PostgreSQL allocates dynamic
+    # shared memory there for parallel query workers, and 64MB is the exact
+    # condition reproduced in diagnostics/doc-shm-exhaustion-test-plan.md
+    # (DSM allocation failure → client 08001/08003/08006). The postgresql-ha
+    # chart has no `shmVolume` key, so this is the supported way to fix it.
+    extraVolumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Gi
+    extraVolumeMounts:
+      - name: dshm
+        mountPath: /dev/shm
+
   pgpool:
     image:
       registry: docker.io
       repository: bitnamilegacy/pgpool
       tag: 4.6.3-debian-12-r0
-  volumePermissions:
-    image:
-      registry: docker.io
-      repository: bitnamilegacy/os-shell
-      tag: 12-debian-12-r51
+    replicaCount: 3
+    adminUsername: admin
+    # ⚠ still a placeholder — change this.
+    adminPassword: "CHANGE_ME_PGPOOL"
+
+    # off:               write가 있어도 read를 분산 (최대 성능, stale data 가능)
+    # transaction:       명시적 트랜잭션 내에서는 read 분산 안 함 (Default)
+    # always:            write 발생 시 세션 끝까지 모든 read를 primary로
+    # trans_transaction: 트랜잭션 종료 후에도 세션 끝까지 read 분산 안 함
+    # dml_adaptive:      테이블 단위로 DML 추적하여 세밀하게 제어
+    disableLoadBalancingOnWrite: always
+
+    configuration: |
+      statement_level_load_balance = off
+      load_balance_mode = on
+      memory_cache_enabled = off
+      health_check_period = 10
+      health_check_timeout = 20
+      health_check_max_retries = 3
+      connection_life_time = 0
+      client_idle_limit = 0
+
+    # numInitChildren x maxPool x replicaCount is the ceiling on backend
+    # connections pgpool can open: 64 x 4 x 3 = 768 against max_connections=200
+    # per node. Pgpool will queue rather than overrun, but this is well
+    # oversubscribed — revisit together with the Polaris pool size.
+    numInitChildren: 64
+    maxPool: 4
+    childLifeTime: 300
+    childMaxConnections: 0
+    connectionLifeTime: 0
+
+    resourcesPreset: "none"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    podAntiAffinityPreset: soft

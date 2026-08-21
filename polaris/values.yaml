@@ -190,8 +190,17 @@ extraEnv:
   # JSON logging for Fluent Bit (Quarkus 3.29.4 new key)
   - name: QUARKUS_LOG_CONSOLE_JSON_ENABLED
     value: "true"
-extraVolumes: []
-extraVolumeMounts: []
+  - name: QUARKUS_LOG_FILE_JSON_ENABLED
+    value: "true"
+  - name: QUARKUS_LOG_FILE_JSON_PRETTY_PRINT
+    value: "false"
+extraVolumes:
+  - name: polaris-log-volume
+    persistentVolumeClaim:
+      claimName: polaris-shared-logs-pvc
+extraVolumeMounts:
+  - name: polaris-log-volume
+    mountPath: /deployments/logs
 extraInitContainers: []
 
 # -- Event Listener (감사 로그): 모든 API 작업을 PostgreSQL events 테이블에 기록 (create table)
@@ -278,7 +287,7 @@ logging:
     org.apache.polaris.core.storage: DEBUG
 
     # Noise suppression — INFO for high-frequency per-request loggers
-    org.apache.polaris.persistence.relational.jdbc.DatasourceOperations: INFO
+    org.apache.polaris.persistence.relational.jdbc.DatasourceOperations: DEBUG
     org.apache.polaris.service.context.catalog.PolarisCallContextCatalogFactory: INFO
     org.apache.polaris.service.catalog.validation.IcebergPropertiesValidation: INFO
     org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandler: INFO

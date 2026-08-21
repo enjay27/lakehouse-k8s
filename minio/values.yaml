@@ -34,8 +34,22 @@ securityContext:
   runAsUser: 1000
 
 auth:
-  rootUser: "admin"
-  rootPassword: ""
+  # Must match minio.accessKeyId in polaris/values.yaml. Polaris reads the
+  # credential from the Secret (minio.existingSecret), but its inline fallback
+  # says "minioadmin" -- keeping them identical avoids a split-brain if the
+  # Secret reference is ever removed.
+  rootUser: "minio"
+
+  # INTENTIONALLY EMPTY. CLAUDE.md: Zero Hardcoded Credentials.
+  # Pass at install time, sourced from the environment:
+  #   helm upgrade --install benchmarks-minio ./minio -f minio/values.yaml \
+  #     -n datahub-hynix --set-string auth.rootPassword="$MINIO_ROOT_PASSWORD"
+  # templates/secret.yaml fails the render if this is left empty, rather than
+  # silently installing MinIO with a blank root password.
+  rootPassword: "minio"
+
+  # Set to reuse a Secret you manage yourself. It must carry all six keys
+  # listed in templates/secret.yaml -- Polaris and Argo read different names.
   existingSecret: ""
 
 environment:
@@ -143,13 +157,31 @@ affinity: {}
 
 polaris:
   enabled: true
-  defaultBucket: "user-catalog-bucket"
+  # polaris/values.yaml sets warehouse: s3://data-catalog-bucket/
+  # These two must agree or Polaris writes to a bucket that does not exist.
+  defaultBucket: "data-catalog-bucket"
   sts:
     enabled: true
     tokenDuration: 3600
     maxSessionDuration: 43200
 
 buckets:
+  # REQUIRED by polaris/values.yaml -> warehouse: s3://data-catalog-bucket/
+  - name: data-catalog-bucket
+    policy: none
+    purge: false
+    versioning: false
+    objectlocking: false
+
+  # REQUIRED by argo/values.yaml -> artifactRepository.s3.bucket
+  - name: argo-artifacts
+    policy: none
+    purge: false
+    versioning: false
+    objectlocking: false
+
+  # Pre-existing. Retained -- nothing references it, but removing it would
+  # drop any objects already written there.
   - name: user-catalog-bucket
     policy: none
     purge: false
@@ -169,6 +201,10 @@ policies:
           - s3:ListBucketMultipartUploads
           - s3:AbortMultipartUpload
         resources:
+          - arn:aws:s3:::data-catalog-bucket
+          - arn:aws:s3:::data-catalog-bucket/*
+          - arn:aws:s3:::argo-artifacts
+          - arn:aws:s3:::argo-artifacts/*
           - arn:aws:s3:::user-catalog-bucket
           - arn:aws:s3:::user-catalog-bucket/*
 
