@@ -307,9 +307,17 @@ def apply_volume(n):
     repl = api_sweep.wait_for_replicas(conn)
     print(f"  replicas caught up: {repl['standbys']} standby(s) in "
           f"{repl['seconds']:.1f}s")
+    # Recorded per cell, not just printed. Measured 2026-08-21: this cluster
+    # has THREE postgresql pods and ZERO streaming standbys -- pg_stat_replication
+    # on the primary is empty. So the load-balanced-read concern this gate was
+    # built for does not currently apply, and every number below comes from the
+    # primary. That is good for measurement cleanliness and it is exactly the
+    # kind of fact a report must state rather than assume, because it silently
+    # stops being true the moment a replica reattaches.
     print(f"  volume {n:,}: removed {removed['entities']:,}e, "
           f"inserted {inserted['entities']:,}e/{inserted['grants']:,}g -> {rows}")
-    return {"clones": n, "removed": removed, "inserted": inserted, "rows": rows}
+    return {"clones": n, "removed": removed, "inserted": inserted, "rows": rows,
+            "replication": repl}
 
 
 def apply_index(present):
