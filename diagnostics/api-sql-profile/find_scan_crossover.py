@@ -105,9 +105,15 @@ def main():
         base = grant_scale.total_rows(conn, SCHEMA)
         print(f"baseline: {base:,} grant_records (real rows, kept throughout)\n")
 
+        # `read` is not decoration. At 640,000 rows the first run showed 5,982
+        # pages but only 1,376 shared HITS -- the table had stopped fitting in
+        # cache and the rest came from disk. That threshold matters more
+        # operationally than the Seq Scan line does: a cached sequential scan is
+        # cheap, an uncached one is I/O on the authorization path of every
+        # authenticated request. Printing only hits hid it.
         print(
             f"{'target':>9} {'actual':>9} {'pages':>8} {'cost':>10} "
-            f"{'buffers':>8} {'filtered':>10}  plan"
+            f"{'hit':>8} {'read':>8} {'filtered':>10}  plan"
         )
         rows = []
         for target in ladder:
@@ -134,16 +140,33 @@ def main():
             print(
                 f"{target:>9,} {actual:>9,} {bloat['pages']:>8,} "
                 f"{m['total_cost']:>10,.1f} {m['shared_hit'] or 0:>8,} "
+                f"{m['shared_read'] or 0:>8,} "
                 f"{m['rows_filtered'] or 0:>10,}  {m['path']}"
             )
 
         print("\n" + "=" * 70)
         seq = next((r for r in rows if "Seq Scan" in (r["path"] or "")), None)
         par = next((r for r in rows if r["parallel"]), None)
-        if seq:
+        if seq and seq is rows[0]:
+            # Honesty about what a ladder can prove. If the FIRST rung already
+            # shows a Seq Scan, the crossover is somewhere below it and this run
+            # did not bracket it. The first version of this script printed
+            # "first appears at ~5,000" in that situation, which reads as a
+            # measurement and is really just the lowest number tested.
             print(
-                f"SEQ SCAN first appears at ~{seq['rows']:,} rows "
-                f"({seq['pages']:,} pages)."
+                f"SEQ SCAN was already present at the LOWEST volume tested "
+                f"({seq['rows']:,} rows, {seq['pages']:,} pages)."
+            )
+            print("  So the crossover is somewhere BELOW that and this ladder")
+            print("  did not bracket it. Do not quote this number as the")
+            print("  crossover -- it is the floor of the search, not a finding.")
+            print("  Re-run with --volumes 500,1000,2000,3000,4000,5000 if the")
+            print("  exact point matters; for choosing sweep volumes it usually")
+            print("  does not, because anything above it is Seq Scan territory.")
+        elif seq:
+            print(
+                f"SEQ SCAN first appears between {rows[rows.index(seq) - 1]['rows']:,} "
+                f"and {seq['rows']:,} rows ({seq['pages']:,} pages)."
             )
             print("  Below this the primary key covers the query and the index")
             print("  toggle is a no-op — which is exactly what voided the last")
@@ -152,8 +175,27 @@ def main():
             print("NO Seq Scan at any tested volume. The planner kept using an")
             print("index throughout, so the premise behind the whole index")
             print("contrast needs re-examining before another sweep is run.")
+        cached = [r for r in rows if (r.get("shared_read") or 0) > 0]
+        if cached:
+            print(
+                f"\nThe table STOPS FITTING IN CACHE at ~{cached[0]['rows']:,} "
+                f"rows ({cached[0]['pages']:,} pages): "
+                f"{cached[0]['shared_read']:,} blocks read from disk."
+            )
+            print("  Arguably the most operationally significant line here. A")
+            print("  cached sequential scan is cheap; an uncached one is disk")
+            print("  I/O on the authorization path of EVERY authenticated")
+            print("  request. Worth its own paragraph upstream.")
+
         if par:
-            print(f"\nPARALLEL escalation begins at ~{par['rows']:,} rows.")
+            print(
+                f"\nPARALLEL escalation begins between "
+                f"{rows[rows.index(par) - 1]['rows']:,} and {par['rows']:,} rows."
+            )
+            print("  NOTE: doc-index-audit records ~233k from 02b. This measured")
+            print("  lower. Both are real -- the escalation point depends on row")
+            print("  width and table statistics, so it is a property of the")
+            print("  fixture, not of Polaris. Quote the fixture with the number.")
             print("  02b measured timings becoming unusable past this point —")
             print("  identical plan cost and buffers, 3-10x spread. Run the")
             print("  sweep with SWEEP_PIN_PARALLELISM=1 at or above it, and")
