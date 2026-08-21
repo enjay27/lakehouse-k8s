@@ -1,0 +1,41 @@
+{
+  "taken_at": "2026-08-21T15:13:49",
+  "realm": "POLARIS",
+  "schema": "polaris_schema",
+  "node": "192.168.194.37",
+  "is_standby": false,
+  "exact_counts": {
+    "entities": 7286,
+    "grant_records": 55009,
+    "principal_authentication_data": 1002
+  },
+  "reltuples": {
+    "entities": 7286,
+    "grant_records": 55009
+  },
+  "grantee_distribution": {
+    "grantees": 4002,
+    "min": 1,
+    "p50": 1,
+    "p95": 50,
+    "max": 1006,
+    "total_rows": 55007
+  },
+  "grantee_histogram": {
+    "1": 2001,
+    "50": 1000,
+    "2": 1000,
+    "1006": 1
+  },
+  "relation_bytes": {
+    "grant_records": 4218880,
+    "grant_records_pkey": 5111808
+  },
+  "index": {
+    "name": "idx_grant_records_grantee",
+    "present": false,
+    "valid": false,
+    "ready": false
+  },
+  "foreign_keys": []
+}

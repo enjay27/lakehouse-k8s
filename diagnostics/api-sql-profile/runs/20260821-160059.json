@@ -1,0 +1,737 @@
+{
+  "notebook": "02b_grant_scale_sweep.ipynb",
+  "generated_at": "2026-08-21 16:00",
+  "polaris_url": "http://192.168.139.2:8181",
+  "realm": "POLARIS",
+  "postgres": {
+    "host": "192.168.139.2",
+    "port": 5432,
+    "dbname": "polaris"
+  },
+  "schema": "polaris_schema",
+  "statement_logging": "off (see capture.sh pgoff)",
+  "index": {
+    "name": "idx_grant_records_grantee",
+    "ddl": "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_grant_records_grantee\n    ON polaris_schema.grant_records (realm_id, grantee_catalog_id, grantee_id)\n    INCLUDE (securable_catalog_id, securable_id, privilege_code)",
+    "left_in_place": true,
+    "state_at_write": {
+      "present": true,
+      "valid": true,
+      "ready": true
+    }
+  },
+  "fixture": {
+    "exact_counts": {
+      "entities": 8018,
+      "grant_records": 60733,
+      "principal_authentication_data": 1107
+    },
+    "restored_to": 60733,
+    "filler_removed": 550506
+  },
+  "grantee_distribution": {
+    "grantees": 4420,
+    "p50": 1,
+    "p95": 50,
+    "max": 1111
+  },
+  "explain_n": 10,
+  "sweep": {
+    "sizes": [
+      114735,
+      222735,
+      600735
+    ],
+    "probes": [
+      {
+        "label": "1 rows",
+        "grantee_id": 7447844728015103569,
+        "grantee_catalog_id": 0,
+        "rows": 1,
+        "synthetic": false
+      },
+      {
+        "label": "50 rows",
+        "grantee_id": 8317134541448748806,
+        "grantee_catalog_id": 6441085612579251222,
+        "rows": 50,
+        "synthetic": false
+      },
+      {
+        "label": "~500 rows (SYNTHETIC)",
+        "grantee_id": -1,
+        "grantee_catalog_id": -1,
+        "rows": 500,
+        "wanted": 500,
+        "synthetic": true
+      },
+      {
+        "label": "~10000 rows (SYNTHETIC)",
+        "grantee_id": -2,
+        "grantee_catalog_id": -1,
+        "rows": 10000,
+        "wanted": 10000,
+        "synthetic": true
+      },
+      {
+        "label": "fattest (1111 rows)",
+        "grantee_id": 2,
+        "grantee_catalog_id": 0,
+        "rows": 1111,
+        "synthetic": false
+      }
+    ],
+    "cells": [
+      {
+        "target_size": 114735,
+        "exact_rows": 125235,
+        "reltuples": 125235,
+        "filler_rows": 64502,
+        "index_present": false,
+        "index_build_seconds": null,
+        "measurements": [
+          {
+            "label": "1 rows",
+            "synthetic": false,
+            "rows_returned": 1,
+            "rows_filtered": 125234,
+            "path": "Seq Scan",
+            "node": "Seq Scan",
+            "total_cost": 3363.61,
+            "shared_hit": 1172,
+            "shared_read": 0,
+            "ms": 4.9105,
+            "min": 4.318,
+            "max": 29.32
+          },
+          {
+            "label": "50 rows",
+            "synthetic": false,
+            "rows_returned": 50,
+            "rows_filtered": 125185,
+            "path": "Seq Scan",
+            "node": "Seq Scan",
+            "total_cost": 3363.61,
+            "shared_hit": 1172,
+            "shared_read": 0,
+            "ms": 11.642,
+            "min": 4.878,
+            "max": 43.212
+          },
+          {
+            "label": "~500 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 500,
+            "rows_filtered": 124735,
+            "path": "Seq Scan",
+            "node": "Seq Scan",
+            "total_cost": 3363.61,
+            "shared_hit": 1172,
+            "shared_read": 0,
+            "ms": 8.071,
+            "min": 5.96,
+            "max": 66.176
+          },
+          {
+            "label": "~10000 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 10000,
+            "rows_filtered": 115235,
+            "path": "Seq Scan",
+            "node": "Seq Scan",
+            "total_cost": 3363.61,
+            "shared_hit": 1172,
+            "shared_read": 0,
+            "ms": 7.782500000000001,
+            "min": 5.291,
+            "max": 64.217
+          },
+          {
+            "label": "fattest (1111 rows)",
+            "synthetic": false,
+            "rows_returned": 1111,
+            "rows_filtered": 124124,
+            "path": "Seq Scan",
+            "node": "Seq Scan",
+            "total_cost": 3363.61,
+            "shared_hit": 1172,
+            "shared_read": 0,
+            "ms": 7.026,
+            "min": 5.919,
+            "max": 75.181
+          }
+        ]
+      },
+      {
+        "target_size": 114735,
+        "exact_rows": 125235,
+        "reltuples": 125235,
+        "filler_rows": 64502,
+        "index_present": true,
+        "index_build_seconds": 0.7898390293121338,
+        "measurements": [
+          {
+            "label": "1 rows",
+            "synthetic": false,
+            "rows_returned": 1,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 8.44,
+            "shared_hit": 4,
+            "shared_read": 0,
+            "ms": 0.013,
+            "min": 0.011,
+            "max": 0.031
+          },
+          {
+            "label": "50 rows",
+            "synthetic": false,
+            "rows_returned": 50,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 8.44,
+            "shared_hit": 6,
+            "shared_read": 0,
+            "ms": 0.026,
+            "min": 0.022,
+            "max": 0.033
+          },
+          {
+            "label": "~500 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 500,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 257.15,
+            "shared_hit": 14,
+            "shared_read": 0,
+            "ms": 0.126,
+            "min": 0.125,
+            "max": 0.182
+          },
+          {
+            "label": "~10000 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 10000,
+            "rows_filtered": null,
+            "path": "Bitmap Heap Scan > Bitmap Index Scan",
+            "node": "Bitmap Heap Scan",
+            "total_cost": 1492.3,
+            "shared_hit": 179,
+            "shared_read": 0,
+            "ms": 1.3275000000000001,
+            "min": 1.187,
+            "max": 1.67
+          },
+          {
+            "label": "fattest (1111 rows)",
+            "synthetic": false,
+            "rows_returned": 1111,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 40.64,
+            "shared_hit": 67,
+            "shared_read": 0,
+            "ms": 0.131,
+            "min": 0.128,
+            "max": 0.139
+          }
+        ]
+      },
+      {
+        "target_size": 222735,
+        "exact_rows": 233237,
+        "reltuples": 233237,
+        "filler_rows": 172504,
+        "index_present": false,
+        "index_build_seconds": null,
+        "measurements": [
+          {
+            "label": "1 rows",
+            "synthetic": false,
+            "rows_returned": 1,
+            "rows_filtered": null,
+            "path": "Gather > Seq Scan",
+            "node": "Gather",
+            "total_cost": 5582.07,
+            "shared_hit": 2181,
+            "shared_read": 0,
+            "ms": 25.997999999999998,
+            "min": 6.847,
+            "max": 69.602
+          },
+          {
+            "label": "50 rows",
+            "synthetic": false,
+            "rows_returned": 50,
+            "rows_filtered": null,
+            "path": "Gather > Seq Scan",
+            "node": "Gather",
+            "total_cost": 5582.07,
+            "shared_hit": 2181,
+            "shared_read": 0,
+            "ms": 79.352,
+            "min": 8.585,
+            "max": 103.141
+          },
+          {
+            "label": "~500 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 500,
+            "rows_filtered": null,
+            "path": "Gather > Seq Scan",
+            "node": "Gather",
+            "total_cost": 5614.77,
+            "shared_hit": 2181,
+            "shared_read": 0,
+            "ms": 95.6455,
+            "min": 11.517,
+            "max": 196.306
+          },
+          {
+            "label": "~10000 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 10000,
+            "rows_filtered": 223237,
+            "path": "Seq Scan",
+            "node": "Seq Scan",
+            "total_cost": 6262.65,
+            "shared_hit": 2181,
+            "shared_read": 0,
+            "ms": 70.54249999999999,
+            "min": 11.639,
+            "max": 200.55
+          },
+          {
+            "label": "fattest (1111 rows)",
+            "synthetic": false,
+            "rows_returned": 1111,
+            "rows_filtered": null,
+            "path": "Gather > Seq Scan",
+            "node": "Gather",
+            "total_cost": 5583.77,
+            "shared_hit": 2181,
+            "shared_read": 0,
+            "ms": 28.7115,
+            "min": 7.631,
+            "max": 94.28
+          }
+        ]
+      },
+      {
+        "target_size": 222735,
+        "exact_rows": 233237,
+        "reltuples": 233237,
+        "filler_rows": 172504,
+        "index_present": true,
+        "index_build_seconds": 1.6865789890289307,
+        "measurements": [
+          {
+            "label": "1 rows",
+            "synthetic": false,
+            "rows_returned": 1,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 8.44,
+            "shared_hit": 4,
+            "shared_read": 0,
+            "ms": 0.01,
+            "min": 0.006,
+            "max": 0.017
+          },
+          {
+            "label": "50 rows",
+            "synthetic": false,
+            "rows_returned": 50,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 8.44,
+            "shared_hit": 5,
+            "shared_read": 0,
+            "ms": 0.0125,
+            "min": 0.011,
+            "max": 0.016
+          },
+          {
+            "label": "~500 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 500,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 441.99,
+            "shared_hit": 14,
+            "shared_read": 0,
+            "ms": 0.0695,
+            "min": 0.064,
+            "max": 0.084
+          },
+          {
+            "label": "~10000 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 10000,
+            "rows_filtered": null,
+            "path": "Bitmap Heap Scan > Bitmap Index Scan",
+            "node": "Bitmap Heap Scan",
+            "total_cost": 2646.67,
+            "shared_hit": 179,
+            "shared_read": 0,
+            "ms": 0.9855,
+            "min": 0.898,
+            "max": 1.016
+          },
+          {
+            "label": "fattest (1111 rows)",
+            "synthetic": false,
+            "rows_returned": 1111,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 33.33,
+            "shared_hit": 67,
+            "shared_read": 0,
+            "ms": 0.116,
+            "min": 0.096,
+            "max": 0.144
+          }
+        ]
+      },
+      {
+        "target_size": 600735,
+        "exact_rows": 611239,
+        "reltuples": 611239,
+        "filler_rows": 550506,
+        "index_present": false,
+        "index_build_seconds": null,
+        "measurements": [
+          {
+            "label": "1 rows",
+            "synthetic": false,
+            "rows_returned": 1,
+            "rows_filtered": null,
+            "path": "Gather > Seq Scan",
+            "node": "Gather",
+            "total_cost": 11171.05,
+            "shared_hit": 5714,
+            "shared_read": 0,
+            "ms": 240.7865,
+            "min": 96.92,
+            "max": 586.11
+          },
+          {
+            "label": "50 rows",
+            "synthetic": false,
+            "rows_returned": 50,
+            "rows_filtered": null,
+            "path": "Gather > Seq Scan",
+            "node": "Gather",
+            "total_cost": 11171.05,
+            "shared_hit": 5714,
+            "shared_read": 0,
+            "ms": 292.30999999999995,
+            "min": 99.852,
+            "max": 590.57
+          },
+          {
+            "label": "~500 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 500,
+            "rows_filtered": null,
+            "path": "Gather > Seq Scan",
+            "node": "Gather",
+            "total_cost": 11213.15,
+            "shared_hit": 5714,
+            "shared_read": 0,
+            "ms": 96.6545,
+            "min": 12.356,
+            "max": 289.361
+          },
+          {
+            "label": "~10000 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 10000,
+            "rows_filtered": null,
+            "path": "Gather > Seq Scan",
+            "node": "Gather",
+            "total_cost": 12023.55,
+            "shared_hit": 5714,
+            "shared_read": 0,
+            "ms": 145.2065,
+            "min": 14.767,
+            "max": 397.577
+          },
+          {
+            "label": "fattest (1111 rows)",
+            "synthetic": false,
+            "rows_returned": 1111,
+            "rows_filtered": null,
+            "path": "Gather > Seq Scan",
+            "node": "Gather",
+            "total_cost": 11171.85,
+            "shared_hit": 5714,
+            "shared_read": 0,
+            "ms": 101.059,
+            "min": 13.089,
+            "max": 197.005
+          }
+        ]
+      },
+      {
+        "target_size": 600735,
+        "exact_rows": 611239,
+        "reltuples": 611239,
+        "filler_rows": 550506,
+        "index_present": true,
+        "index_build_seconds": 3.237790107727051,
+        "measurements": [
+          {
+            "label": "1 rows",
+            "synthetic": false,
+            "rows_returned": 1,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 8.45,
+            "shared_hit": 4,
+            "shared_read": 0,
+            "ms": 0.035,
+            "min": 0.009,
+            "max": 0.067
+          },
+          {
+            "label": "50 rows",
+            "synthetic": false,
+            "rows_returned": 50,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 8.45,
+            "shared_hit": 5,
+            "shared_read": 0,
+            "ms": 0.0535,
+            "min": 0.033,
+            "max": 0.08
+          },
+          {
+            "label": "~500 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 500,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 682.61,
+            "shared_hit": 14,
+            "shared_read": 0,
+            "ms": 0.2235,
+            "min": 0.184,
+            "max": 0.398
+          },
+          {
+            "label": "~10000 rows (SYNTHETIC)",
+            "synthetic": true,
+            "rows_returned": 10000,
+            "rows_filtered": null,
+            "path": "Bitmap Heap Scan > Bitmap Index Scan",
+            "node": "Bitmap Heap Scan",
+            "total_cost": 6532.39,
+            "shared_hit": 179,
+            "shared_read": 0,
+            "ms": 1.4705,
+            "min": 1.139,
+            "max": 26.906
+          },
+          {
+            "label": "fattest (1111 rows)",
+            "synthetic": false,
+            "rows_returned": 1111,
+            "rows_filtered": null,
+            "path": "Index Only Scan",
+            "node": "Index Only Scan",
+            "total_cost": 22.63,
+            "shared_hit": 67,
+            "shared_read": 0,
+            "ms": 0.1105,
+            "min": 0.097,
+            "max": 0.365
+          }
+        ]
+      }
+    ],
+    "speedups": [
+      {
+        "exact_rows": 125235,
+        "label": "1 rows",
+        "synthetic": false,
+        "before_ms": 4.9105,
+        "after_ms": 0.013,
+        "before_node": "Seq Scan",
+        "after_node": "Index Only Scan",
+        "rows_returned": 1,
+        "speedup": 377.7307692307692
+      },
+      {
+        "exact_rows": 125235,
+        "label": "50 rows",
+        "synthetic": false,
+        "before_ms": 11.642,
+        "after_ms": 0.026,
+        "before_node": "Seq Scan",
+        "after_node": "Index Only Scan",
+        "rows_returned": 50,
+        "speedup": 447.7692307692308
+      },
+      {
+        "exact_rows": 125235,
+        "label": "fattest (1111 rows)",
+        "synthetic": false,
+        "before_ms": 7.026,
+        "after_ms": 0.131,
+        "before_node": "Seq Scan",
+        "after_node": "Index Only Scan",
+        "rows_returned": 1111,
+        "speedup": 53.63358778625954
+      },
+      {
+        "exact_rows": 125235,
+        "label": "~10000 rows (SYNTHETIC)",
+        "synthetic": true,
+        "before_ms": 7.782500000000001,
+        "after_ms": 1.3275000000000001,
+        "before_node": "Seq Scan",
+        "after_node": "Bitmap Heap Scan",
+        "rows_returned": 10000,
+        "speedup": 5.862523540489642
+      },
+      {
+        "exact_rows": 125235,
+        "label": "~500 rows (SYNTHETIC)",
+        "synthetic": true,
+        "before_ms": 8.071,
+        "after_ms": 0.126,
+        "before_node": "Seq Scan",
+        "after_node": "Index Only Scan",
+        "rows_returned": 500,
+        "speedup": 64.05555555555556
+      },
+      {
+        "exact_rows": 233237,
+        "label": "1 rows",
+        "synthetic": false,
+        "before_ms": 25.997999999999998,
+        "after_ms": 0.01,
+        "before_node": "Gather",
+        "after_node": "Index Only Scan",
+        "rows_returned": 1,
+        "speedup": 2599.7999999999997
+      },
+      {
+        "exact_rows": 233237,
+        "label": "50 rows",
+        "synthetic": false,
+        "before_ms": 79.352,
+        "after_ms": 0.0125,
+        "before_node": "Gather",
+        "after_node": "Index Only Scan",
+        "rows_returned": 50,
+        "speedup": 6348.16
+      },
+      {
+        "exact_rows": 233237,
+        "label": "fattest (1111 rows)",
+        "synthetic": false,
+        "before_ms": 28.7115,
+        "after_ms": 0.116,
+        "before_node": "Gather",
+        "after_node": "Index Only Scan",
+        "rows_returned": 1111,
+        "speedup": 247.51293103448276
+      },
+      {
+        "exact_rows": 233237,
+        "label": "~10000 rows (SYNTHETIC)",
+        "synthetic": true,
+        "before_ms": 70.54249999999999,
+        "after_ms": 0.9855,
+        "before_node": "Seq Scan",
+        "after_node": "Bitmap Heap Scan",
+        "rows_returned": 10000,
+        "speedup": 71.58041603247081
+      },
+      {
+        "exact_rows": 233237,
+        "label": "~500 rows (SYNTHETIC)",
+        "synthetic": true,
+        "before_ms": 95.6455,
+        "after_ms": 0.0695,
+        "before_node": "Gather",
+        "after_node": "Index Only Scan",
+        "rows_returned": 500,
+        "speedup": 1376.1942446043165
+      },
+      {
+        "exact_rows": 611239,
+        "label": "1 rows",
+        "synthetic": false,
+        "before_ms": 240.7865,
+        "after_ms": 0.035,
+        "before_node": "Gather",
+        "after_node": "Index Only Scan",
+        "rows_returned": 1,
+        "speedup": 6879.614285714285
+      },
+      {
+        "exact_rows": 611239,
+        "label": "50 rows",
+        "synthetic": false,
+        "before_ms": 292.30999999999995,
+        "after_ms": 0.0535,
+        "before_node": "Gather",
+        "after_node": "Index Only Scan",
+        "rows_returned": 50,
+        "speedup": 5463.738317757008
+      },
+      {
+        "exact_rows": 611239,
+        "label": "fattest (1111 rows)",
+        "synthetic": false,
+        "before_ms": 101.059,
+        "after_ms": 0.1105,
+        "before_node": "Gather",
+        "after_node": "Index Only Scan",
+        "rows_returned": 1111,
+        "speedup": 914.5610859728506
+      },
+      {
+        "exact_rows": 611239,
+        "label": "~10000 rows (SYNTHETIC)",
+        "synthetic": true,
+        "before_ms": 145.2065,
+        "after_ms": 1.4705,
+        "before_node": "Gather",
+        "after_node": "Bitmap Heap Scan",
+        "rows_returned": 10000,
+        "speedup": 98.74634478068685
+      },
+      {
+        "exact_rows": 611239,
+        "label": "~500 rows (SYNTHETIC)",
+        "synthetic": true,
+        "before_ms": 96.6545,
+        "after_ms": 0.2235,
+        "before_node": "Gather",
+        "after_node": "Index Only Scan",
+        "rows_returned": 500,
+        "speedup": 432.4586129753915
+      }
+    ]
+  },
+  "report": "doc-grant-scale-sweep-20260821-160028.md",
+  "run_id": "20260821-160059",
+  "written_at": "2026-08-21T16:00:59"
+}

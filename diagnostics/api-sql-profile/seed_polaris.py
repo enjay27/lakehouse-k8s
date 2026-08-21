@@ -178,9 +178,13 @@ def main():
     )
     ap.add_argument(
         "--cleanup-probes",
-        action="store_true",
-        help="delete any privprobe-* catalog left behind by a failed probe "
-        "teardown. Run before taking a baseline.",
+        nargs="?",
+        const="privprobe-",
+        default=None,
+        metavar="PREFIX",
+        help="delete catalogs left behind by a failed teardown. Defaults to "
+        "the privprobe- prefix; pass another (e.g. --cleanup-probes wtc) to "
+        "clean a different one. Run before taking a baseline.",
     )
     ap.add_argument(
         "--probe-privileges",
@@ -236,7 +240,7 @@ def main():
     print()
 
     if args.cleanup_probes:
-        sys.exit(cleanup_probes(pc))
+        sys.exit(cleanup_probes(pc, args.cleanup_probes))
 
     if args.probe_privileges:
         sys.exit(probe(pc))
@@ -413,8 +417,12 @@ def probe(pc):
     return 0
 
 
-def cleanup_probes(pc):
-    """Remove any `privprobe-*` catalog stranded by a failed probe teardown.
+def cleanup_probes(pc, prefix="privprobe-"):
+    """Remove any catalog matching `prefix` that a failed teardown stranded.
+
+    Defaults to the probe prefix, but takes any prefix — a bare
+    `delete_catalog(purge=True)` has now stranded catalogs under two different
+    names, so the prefix is a parameter rather than a constant.
 
     Prefix-scoped and local-only, like everything else here. Read the list it
     prints before answering yes to anything -- this deletes catalogs.
@@ -429,13 +437,13 @@ def cleanup_probes(pc):
     names = sorted(
         c.get("name")
         for c in (r.json() or {}).get("catalogs", [])
-        if str(c.get("name", "")).startswith("privprobe-")
+        if str(c.get("name", "")).startswith(prefix)
     )
     if not names:
-        print("no privprobe-* catalogs found; nothing to clean.")
+        print(f"no {prefix}* catalogs found; nothing to clean.")
         return 0
 
-    print(f"found {len(names)} stranded probe catalog(s): {names}")
+    print(f"found {len(names)} stranded catalog(s) under {prefix!r}: {names}")
     failed = []
     for n in names:
         ok, d = delete_catalog_fully(pc, n, result)

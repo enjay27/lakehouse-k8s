@@ -29,6 +29,7 @@ from polaris_seed import (
     SeedSpec,
     catalog_privileges,
     delete_catalog_fully,
+    empty_catalog,
     find_strays,
     require_local,
     revert_grants,
@@ -88,6 +89,9 @@ class FakePolaris:
         self.base_url = base_url
         self.principals, self.principal_roles, self.catalogs = set(), set(), set()
         self.catalog_roles, self.grants = set(), set()
+        #: Namespaces and tables live HERE, not on the Iceberg fake, so
+        #: `delete_catalog` can refuse a non-empty catalog the way Polaris does.
+        self.namespaces, self.tables = set(), set()
         self.assignments = []
         self.reject_privs = set(reject_privs)
         self.fail_on = fail_on or {}
@@ -213,9 +217,84 @@ class FakePolaris:
     def calls_of(self, kind):
         return [e for e in self.log if e[0] == kind]
 
+    def list_namespaces(self, catalog, parent=None):
+        if catalog not in self.catalogs:
+            return Resp(404)
+        # `empty_catalog` passes the namespace back as a LIST (that is what
+        # the response carries), so normalise both forms — wrapping a list in a
+        # tuple silently matched nothing and hid a nested namespace.
+        if parent is None:
+            want = ()
+        elif isinstance(parent, (list, tuple)):
+            want = tuple(parent)
+        else:
+            want = (parent,)
+        out = [ns for (c, ns) in self.namespaces if c == catalog and ns[:-1] == want]
+        return Resp(200, {"namespaces": [list(ns) for ns in out]})
+
+    def delete_namespace(self, catalog, ns):
+        key = (catalog, tuple(ns) if isinstance(ns, (list, tuple)) else (ns,))
+        if key not in self.namespaces:
+            return Resp(404)
+        if [t for t in self.tables if t[:2] == key]:
+            return Resp(400, {"error": "Namespace is not empty"})
+        self.namespaces.discard(key)
+        return Resp(204)
+
+    def list_tables(self, catalog, ns):
+        key = (catalog, tuple(ns) if isinstance(ns, (list, tuple)) else (ns,))
+        names = sorted(t[2] for t in self.tables if t[:2] == key and t[3] == "table")
+        return Resp(200, {"identifiers": [{"name": n} for n in names]})
+
+    def list_views(self, catalog, ns):
+        key = (catalog, tuple(ns) if isinstance(ns, (list, tuple)) else (ns,))
+        names = sorted(t[2] for t in self.tables if t[:2] == key and t[3] == "view")
+        return Resp(200, {"identifiers": [{"name": n} for n in names]})
+
+    def delete_table(self, catalog, ns, name, purge=False):
+        key = (
+            catalog,
+            tuple(ns) if isinstance(ns, (list, tuple)) else (ns,),
+            name,
+            "table",
+        )
+        if key not in self.tables:
+            return Resp(404)
+        self.tables.discard(key)
+        return Resp(204)
+
+    def delete_view(self, catalog, ns, name, purge=False):
+        key = (
+            catalog,
+            tuple(ns) if isinstance(ns, (list, tuple)) else (ns,),
+            name,
+            "view",
+        )
+        if key not in self.tables:
+            return Resp(404)
+        self.tables.discard(key)
+        return Resp(204)
+
     def delete_catalog(self, name, purge=False):
         if name not in self.catalogs:
             return Resp(404)
+        # The measured refusal. purgeRequested=true does NOT cascade — it was
+        # set on both live calls that produced this 400.
+        children = [k for k in self.namespaces if k[0] == name] + [
+            r for r in self.catalog_roles if r[0] == name and r[1] != "catalog_admin"
+        ]
+        if children:
+            return Resp(
+                400,
+                {
+                    "error": {
+                        "message": f"Catalog '{name}' cannot be dropped, it is "
+                        "not empty",
+                        "type": "BadRequestException",
+                        "code": 400,
+                    }
+                },
+            )
         self.catalogs.discard(name)
         self.catalog_roles = {k for k in self.catalog_roles if k[0] != name}
         self.grants = {g for g in self.grants if g[0] != name}
@@ -244,22 +323,36 @@ class FakePolaris:
 
 
 class FakeIceberg:
+    """Writes into the Polaris fake's state, so a catalog delete can see it."""
+
     def __init__(self, polaris):
         self.p = polaris
-        self.namespaces, self.tables = set(), set()
+
+    @property
+    def namespaces(self):
+        return self.p.namespaces
+
+    @property
+    def tables(self):
+        return self.p.tables
 
     def create_namespace(self, catalog, ns, **kw):
-        key = (catalog, ns)
-        if key in self.namespaces:
+        key = (catalog, (ns,) if isinstance(ns, str) else tuple(ns))
+        if key in self.p.namespaces:
             return Resp(409)
-        self.namespaces.add(key)
+        self.p.namespaces.add(key)
         return Resp(200)
 
     def create_table(self, catalog, ns, payload, **kw):
-        key = (catalog, ns, payload["name"])
-        if key in self.tables:
+        key = (
+            catalog,
+            (ns,) if isinstance(ns, str) else tuple(ns),
+            payload["name"],
+            "table",
+        )
+        if key in self.p.tables:
             return Resp(409)
-        self.tables.add(key)
+        self.p.tables.add(key)
         return Resp(200)
 
 
@@ -903,3 +996,101 @@ def test_delete_catalog_fully_returns_the_failing_response(small_spec):
     assert not ok
     assert resp.status_code == 400
     assert "why it refused" in resp.text
+
+
+def test_teardown_drops_a_catalog_that_holds_namespaces(small_spec, ledger_path):
+    """The bug the live 400 exposed.
+
+    `teardown_user` used a bare `delete_catalog(purge=True)` from the day it was
+    written. Every seeded catalog holds ns1 and ns2, and Polaris refuses:
+    "Catalog 'x' cannot be dropped, it is not empty" — purgeRequested does not
+    cascade. It went unnoticed because `_ensure_catalog`'s repair path only ever
+    deletes half-created catalogs, which have no children yet.
+    """
+    p = FakePolaris()
+    ic = FakeIceberg(p)
+    seed(p, ic, small_spec, ledger_path)
+    assert p.namespaces and p.tables, "the fixture must actually hold children"
+
+    res = teardown(p, ledger_path=ledger_path, spec=small_spec)
+
+    assert not res.failed_users, f"teardown refused: {res.failed_users}"
+    assert not p.catalogs
+    assert not p.namespaces and not p.tables
+
+
+def test_empty_catalog_removes_children_deepest_first():
+    """Namespaces cannot be dropped while they hold tables, and nested
+    namespaces cannot be dropped before their children — so the order is
+    forced, not a preference."""
+    p = FakePolaris()
+    p.catalogs.add("c")
+    p.catalog_roles.add(("c", "catalog_admin"))
+    p.namespaces.update({("c", ("a",)), ("c", ("a", "b"))})
+    p.tables.update({("c", ("a", "b"), "t1", "table"), ("c", ("a",), "v1", "view")})
+
+    ok, removed = empty_catalog(p, "c", SeedResult())
+
+    assert ok, removed
+    assert removed == {
+        "tables": 1,
+        "views": 1,
+        "namespaces": 2,
+        "catalog_roles": 0,
+    }
+    assert not p.namespaces and not p.tables
+    assert ("c", "catalog_admin") in p.catalog_roles, "never delete catalog_admin"
+
+
+def test_delete_catalog_fully_reports_the_real_refusal():
+    """Two teardowns discarded this body before it was ever read, and a wrong
+    cause got asserted in the meantime. The response comes back now."""
+    p = FakePolaris()
+    p.catalogs.add("c")
+    p.namespaces.add(("c", ("stuck",)))
+    p.delete_namespace = lambda catalog, ns: Resp(403, {"error": "nope"})
+
+    ok, resp = delete_catalog_fully(p, "c", SeedResult())
+    assert not ok
+    assert resp.status_code == 403
+    assert "c" in p.catalogs, "the catalog must survive a failed empty pass"
+
+
+def test_tables_are_dropped_without_purge_by_default():
+    """`DROP_TABLE_WITH_PURGE` is a distinct op that root does NOT bypass —
+    measured 2026-07-06 in purge/table_purge_privilege_test.ipynb, and hit again
+    live on 2026-08-21 when this teardown sent purgeRequested=true:
+
+        "Principal 'root' ... is not authorized for op DROP_TABLE_WITH_PURGE"
+
+    Purge buys nothing here anyway — on this build it does not delete MinIO
+    files (#379) — and the table entity goes either way.
+    """
+    p = FakePolaris()
+    p.catalogs.add("c")
+    p.catalog_roles.add(("c", "catalog_admin"))
+    p.namespaces.add(("c", ("ns",)))
+    p.tables.add(("c", ("ns",), "t", "table"))
+    seen = []
+    original = p.delete_table
+    p.delete_table = lambda cat, ns, name, purge=False: (
+        seen.append(purge) or original(cat, ns, name, purge)
+    )
+
+    ok, removed = empty_catalog(p, "c", SeedResult())
+    assert ok and removed["tables"] == 1
+    assert seen == [False], "purge must be opt-in, not the default"
+
+
+def test_table_purge_can_be_opted_into():
+    p = FakePolaris()
+    p.catalogs.add("c")
+    p.namespaces.add(("c", ("ns",)))
+    p.tables.add(("c", ("ns",), "t", "table"))
+    seen = []
+    original = p.delete_table
+    p.delete_table = lambda cat, ns, name, purge=False: (
+        seen.append(purge) or original(cat, ns, name, purge)
+    )
+    empty_catalog(p, "c", SeedResult(), purge_tables=True)
+    assert seen == [True]

@@ -18,4 +18,8 @@ wheels/
 # Only common.yaml and *.example.yaml are tracked.
 src/config/*.yaml
 !src/config/common.yaml
-!src/config/*.example.yamlrbac/lib/
+!src/config/*.example.yaml
+
+# Vendored RBAC helper libs
+rbac/lib/
+

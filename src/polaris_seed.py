@@ -1148,49 +1148,138 @@ def revert_grants(
     return result
 
 
-def delete_catalog_fully(pc, catalog, result=None, purge=True):
-    """Delete a catalog, clearing the catalog-roles that can block it first.
+def empty_catalog(pc, catalog, result=None, purge_tables=False):
+    """Delete every child of a catalog: tables, views, namespaces, extra roles.
 
-    WHY THIS IS NOT JUST `delete_catalog`
-    -------------------------------------
-    Measured 2026-08-21: `--probe-privileges` created a catalog, granted 51
-    privileges to a `probe_role` on it, and its teardown -- a bare
-    `delete_catalog(purge=True)` -- came back **400**, stranding the catalog,
-    its role and 51 grant_records rows on the cluster. The failure was reported
-    as a bare status code, so the cause was thrown away with the body.
+    Order is forced: Polaris refuses to drop a namespace holding tables or
+    views, and refuses to drop a catalog holding anything at all. Deepest
+    first, therefore, and namespaces after their contents.
 
-    This deletes every catalog-role except the built-in `catalog_admin` before
-    dropping the catalog, which is the ordering the rest of this repo uses, and
-    **returns the failing response** rather than a status, so the next failure
-    explains itself. It does not assume role residue was the cause -- that is
-    still unconfirmed -- it removes one candidate and preserves the evidence for
-    the other.
+    `catalog_admin` is never touched -- it is bootstrapped with the catalog and
+    deleting it is what produces the unusable, unrepairable catalog
+    `_ensure_catalog` exists to repair.
+
+    TABLES ARE DROPPED WITHOUT PURGE, DELIBERATELY
+    ----------------------------------------------
+    `purge_tables=True` sends `?purgeRequested=true`, and this repo measured in
+    2026-07-06 (`purge/table_purge_privilege_test.ipynb`) that table purge is
+    gated by a DISTINCT op, `DROP_TABLE_WITH_PURGE`, which **root does not
+    bypass** -- unlike view drops and plain table drops, which it does:
+
+        "Principal 'root' with activated PrincipalRoles '[service_admin]' ...
+         is not authorized for op DROP_TABLE_WITH_PURGE"
+
+    `TABLE_DROP` alone is insufficient; `CATALOG_MANAGE_CONTENT` is required.
+    So purging costs a privilege grant, and on this build it buys nothing: purge
+    does not delete MinIO files anyway (`purge_deletes_files: false`, upstream
+    #379). The table entity is removed either way -- purge only concerns storage
+    -- so the default is off.
+
+    Set it True only if you have granted `CATALOG_MANAGE_CONTENT` first, and
+    accept that granting it writes grant_records rows, which is a measurement
+    the audit may be in the middle of.
 
     Returns:
-        (ok, resp) -- `ok` is True when the catalog is gone or was already
-        absent. `resp` is the final delete response, or the listing response
-        when the roles could not even be read.
+        (ok, detail) -- detail is the first failing response, or a dict of what
+        was removed.
     """
-    r = pc.list_catalog_roles(catalog)
-    if result is not None:
-        result.calls += 1
+    removed = {"tables": 0, "views": 0, "namespaces": 0, "catalog_roles": 0}
+
+    def _count(r):
+        if result is not None:
+            result.calls += 1
+        return r
+
+    r = _count(pc.list_namespaces(catalog))
     if r.status_code == 404:
-        return True, r  # already gone; nothing to do
-    if r.status_code < 300:
+        return True, removed
+    if r.status_code >= 300:
+        return False, r
+    try:
+        namespaces = [n for n in (r.json() or {}).get("namespaces", []) if n]
+    except Exception:  # noqa: BLE001
+        namespaces = []
+
+    # Children before parents. `list_namespaces` returns only top-level names
+    # unless asked for a parent, so nested namespaces are walked explicitly --
+    # a flat pass would leave a child behind and the drop would still refuse.
+    queue, ordered = list(namespaces), []
+    while queue:
+        ns = queue.pop(0)
+        ordered.append(ns)
+        kids = _count(pc.list_namespaces(catalog, parent=ns))
+        if kids.status_code < 300:
+            try:
+                queue.extend(n for n in (kids.json() or {}).get("namespaces", []) if n)
+            except Exception:  # noqa: BLE001
+                pass
+
+    for ns in reversed(ordered):  # deepest first
+        for lister, deleter, key in (
+            (pc.list_tables, pc.delete_table, "tables"),
+            (pc.list_views, pc.delete_view, "views"),
+        ):
+            lr = _count(lister(catalog, ns))
+            if lr.status_code >= 300:
+                continue
+            try:
+                ids = (lr.json() or {}).get("identifiers", []) or []
+            except Exception:  # noqa: BLE001
+                ids = []
+            for ident in ids:
+                name = ident.get("name") if isinstance(ident, dict) else ident
+                d = _count(deleter(catalog, ns, name, purge=purge_tables))
+                if d.status_code >= 300 and d.status_code != 404:
+                    return False, d
+                removed[key] += 1
+        d = _count(pc.delete_namespace(catalog, ns))
+        if d.status_code >= 300 and d.status_code != 404:
+            return False, d
+        removed["namespaces"] += 1
+
+    roles = _count(pc.list_catalog_roles(catalog))
+    if roles.status_code < 300:
         try:
-            roles = [x.get("name") for x in (r.json() or {}).get("roles", [])]
+            names = [x.get("name") for x in (roles.json() or {}).get("roles", [])]
         except Exception:  # noqa: BLE001
-            roles = []
-        for name in roles:
-            # Never catalog_admin: it is bootstrapped with the catalog and
-            # deleting it is what produces an unusable, unrepairable catalog.
+            names = []
+        for name in names:
             if not name or name == "catalog_admin":
                 continue
-            d = pc.delete_catalog_role(catalog, name)
-            if result is not None:
-                result.calls += 1
+            d = _count(pc.delete_catalog_role(catalog, name))
             if d.status_code >= 300 and d.status_code != 404:
                 return False, d
+            removed["catalog_roles"] += 1
+    return True, removed
+
+
+def delete_catalog_fully(pc, catalog, result=None, purge=True, purge_tables=False):
+    """Empty a catalog, then delete it. Returns the failing response, not a code.
+
+    WHAT THE 400 ACTUALLY WAS
+    -------------------------
+    Measured 2026-08-21, after two teardowns discarded the body and one
+    hypothesis was asserted without it:
+
+        {"error":{"message":"Catalog 'x' cannot be dropped, it is not empty",
+                  "type":"BadRequestException","code":400}}
+
+    Not about catalog-roles, as I claimed -- about **contents**. Deleting the
+    non-default role happened to clear the first case because a catalog-role is
+    itself a child entity, so the remedy worked for the wrong stated reason.
+    The general fix is to empty the catalog: tables, views, namespaces, then
+    the extra roles. `purgeRequested=true` does NOT cascade; it was set on both
+    failing calls.
+
+    **This means `teardown_user` cannot drop a fully-seeded catalog.** Every
+    seeded catalog holds ns1 and ns2, so a bare `delete_catalog(purge=True)`
+    will 400 on all 1,105 of them. The repair path in `_ensure_catalog` was
+    never affected because a half-created catalog has no children yet, which is
+    why this went unnoticed.
+    """
+    ok, detail = empty_catalog(pc, catalog, result, purge_tables=purge_tables)
+    if not ok:
+        return False, detail
 
     d = pc.delete_catalog(catalog, purge=purge)
     if result is not None:
@@ -1228,6 +1317,19 @@ def probe_privileges(pc, catalog, catalog_role, candidates=None):
 # ----------------------------------------------------------------------
 # teardown
 # ----------------------------------------------------------------------
+class Resp204:
+    """Stand-in for a success with no response object.
+
+    `delete_catalog_fully` returns a dict of what it removed when the catalog
+    was already absent, and the teardown loop below wants something with a
+    status code. Rather than special-casing inside the loop -- which is where
+    this kind of thing goes wrong -- it gets one shape to handle.
+    """
+
+    status_code = 204
+    text = ""
+
+
 def teardown_user(pc, spec, i, result):
     """Delete one user{i} set, innermost first. Tolerates already-absent (404).
 
@@ -1237,8 +1339,20 @@ def teardown_user(pc, spec, i, result):
     """
     n = spec.names(i)
     errors = []
+
+    # delete_catalog_fully, NOT delete_catalog. Every seeded catalog holds ns1
+    # and ns2, and Polaris refuses to drop a catalog that is not empty:
+    #     "Catalog 'x' cannot be dropped, it is not empty" (400)
+    # `purgeRequested=true` does not cascade. This teardown used the bare call
+    # from the day it was written, so it would have 400'd on all 1,105 seeded
+    # catalogs -- it went unnoticed because `_ensure_catalog`'s repair path only
+    # ever deletes half-created catalogs, which have no children yet.
+    def _drop_catalog():
+        ok, detail = delete_catalog_fully(pc, n["catalog"], result)
+        return detail if hasattr(detail, "status_code") else Resp204()
+
     for label, call in (
-        ("catalog", lambda: pc.delete_catalog(n["catalog"], purge=True)),
+        ("catalog", _drop_catalog),
         ("principal_role", lambda: pc.delete_principal_role(n["principal_role"])),
         ("principal", lambda: pc.delete_principal(n["principal"])),
     ):
