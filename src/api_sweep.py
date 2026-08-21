@@ -853,3 +853,80 @@ def compact(conn, schema, table):
     with conn.cursor() as cur:
         cur.execute(f"VACUUM (FULL, ANALYZE) {schema}.{table}")  # noqa: S608
     return {"seconds": time.time() - t0, "after": table_bloat(conn, schema, table)}
+
+
+# ----------------------------------------------------------------------
+# identities
+# ----------------------------------------------------------------------
+def auth_path_operations(fx):
+    """The small op set worth repeating per identity.
+
+    Not the full surface -- that would multiply an already long grid by the
+    number of identities for very little. These three force a complete path
+    resolution and therefore the whole authorization prelude, which is the part
+    a grantee's own grant-set size acts on.
+    """
+    c, ns = fx["catalog"], fx["namespace"]
+    return [
+        ("GET  /catalogs/{name}", "mgmt", lambda pc: pc.get_catalog(c)),
+        ("GET  /namespaces", "iceberg", lambda pc: pc.list_namespaces(c)),
+        ("GET  /namespaces/{ns}", "iceberg", lambda pc: pc.get_namespace(c, ns)),
+    ]
+
+
+def bind_identity(label, client, ops):
+    """Re-bind `ops` to a specific authenticated client, and say whose.
+
+    THE GAP THIS CLOSES (Kade, 2026-08-22). Every measurement so far has been
+    made AS ROOT, and root is the least representative identity in the realm:
+    its authorization resolves PRINCIPAL_ROLE_USAGE to service_admin and
+    SERVICE_MANAGE_ACCESS on the root container -- **two rows**. An ordinary
+    principal resolves through its principal-role to a catalog-role holding 25
+    or 50 privileges.
+
+    That difference is not incidental, it is the mechanism behind 02's headline:
+    Seq Scan cost is constant regardless of how many rows the grantee owns
+    (the crossover run measured `filtered` as the whole table at every volume),
+    while index-scan cost tracks rows RETURNED. So grant-set size moves the
+    index-PRESENT column and barely touches index-absent -- which is precisely
+    why 02 measured ~100x for a small grantee and single digits for a large one.
+
+    Sweeping only as root measures the identity that benefits most, and reports
+    it as if it were typical.
+    """
+    return [
+        (f"{name} [{label}]", surface, (lambda f: (lambda _pc: f(client)))(fn))
+        for name, surface, fn in ops
+    ]
+
+
+def identity_grant_footprint(conn, schema, realm, principal_name):
+    """How many grant_records the authorization of `principal_name` walks.
+
+    Counts grants whose grantee is the principal, any principal-role it holds,
+    or any catalog-role those principal-roles hold -- the chain the prelude
+    actually traverses.
+
+    Measured rather than assumed: "each principal has 50 privileges" is a
+    statement about how the fixture was seeded, and this repo has been wrong
+    three times about constants it did not ask the server for.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            api_trace.NO_LOAD_BALANCE + f"""WITH p AS (
+                    SELECT id FROM {schema}.entities
+                     WHERE realm_id = %s AND type_code = 2 AND name = %s),
+                  pr AS (
+                    SELECT g.securable_id AS id FROM {schema}.grant_records g
+                     JOIN p ON p.id = g.grantee_id WHERE g.realm_id = %s),
+                  cr AS (
+                    SELECT g.securable_id AS id FROM {schema}.grant_records g
+                     JOIN pr ON pr.id = g.grantee_id WHERE g.realm_id = %s)
+                SELECT count(*) FROM {schema}.grant_records
+                 WHERE realm_id = %s AND grantee_id IN (
+                    SELECT id FROM p UNION SELECT id FROM pr
+                    UNION SELECT id FROM cr)""",  # noqa: S608
+            (realm, principal_name, realm, realm, realm),
+        )
+        row = cur.fetchone()
+    return int(row[0]) if row else 0

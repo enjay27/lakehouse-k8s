@@ -151,6 +151,9 @@ def install_fakes(ns_env):
         entity_replay.delete_clones, lambda *a, **kw: {"entities": 0, "grants": 0}
     )
     entity_replay.clone_ids = guard(entity_replay.clone_ids, lambda *a, **kw: [])
+    api_sweep.identity_grant_footprint = guard(
+        api_sweep.identity_grant_footprint, lambda *a, **kw: 27
+    )
     api_sweep.compact = guard(
         api_sweep.compact,
         lambda *a, **kw: {"seconds": 0.2, "after": {"pages": 12, "dead_tuples": 0}},
@@ -221,6 +224,20 @@ def install_fakes(ns_env):
 
         def get_token(self, client_id, client_secret, scope="PRINCIPAL_ROLE:ALL"):
             return R()
+
+        def reset_principal_credentials(self, name, token=None):
+            # Shape matters: the notebook reaches into .credentials.clientId.
+            # A bare 200 would let a wrong key path through to the live run.
+            class Creds(R):
+                def json(self_):
+                    return {
+                        "credentials": {
+                            "clientId": f"{name}-id",
+                            "clientSecret": f"{name}-secret",
+                        }
+                    }
+
+            return Creds()
 
         def __getattr__(self, _name):
             return lambda *a, **kw: R()

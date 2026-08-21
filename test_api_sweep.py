@@ -709,3 +709,45 @@ def test_a_compacted_cell_is_not_flagged():
     )
     cell["volume"]["bloat"] = {"grant_records": {"dead_tuples": 0, "dead_share": 0.0}}
     assert sweep.cell_integrity(cell) == []
+
+
+# ----------------------------------------------------------------------
+# identities
+# ----------------------------------------------------------------------
+def test_bound_ops_call_their_own_client_not_the_one_passed_in():
+    """The whole point: each identity authenticates separately. If the bound op
+    used the pc run_sweep hands it, every 'identity' would be root again."""
+    mine, theirs = FakePolaris(), FakePolaris()
+    ops = sweep.bind_identity("50 privs", mine, sweep.auth_path_operations(FIXTURE))
+    for _label, _surface, fn in ops:
+        fn(theirs)
+    assert mine.calls and not theirs.calls
+
+
+def test_bound_ops_say_whose_identity_they_are():
+    ops = sweep.bind_identity(
+        "50 privs", FakePolaris(), sweep.auth_path_operations(FIXTURE)
+    )
+    assert all("[50 privs]" in label for label, _, _ in ops)
+    assert len({label for label, _, _ in ops}) == len(ops)
+
+
+def test_binding_two_identities_yields_distinct_labels():
+    """Same API, two identities — the labels must not collide, or one silently
+    overwrites the other in the results dict."""
+    a = sweep.bind_identity("root", FakePolaris(), sweep.auth_path_operations(FIXTURE))
+    b = sweep.bind_identity("user1", FakePolaris(), sweep.auth_path_operations(FIXTURE))
+    labels = [x[0] for x in a] + [x[0] for x in b]
+    assert len(set(labels)) == len(labels)
+
+
+def test_the_auth_path_set_is_small_on_purpose():
+    """It is repeated per identity; the full surface would multiply the grid."""
+    assert len(sweep.auth_path_operations(FIXTURE)) <= 4
+
+
+def test_bound_ops_still_refuse_to_time_an_error_path():
+    bad = FakePolaris(fail="get_catalog:user1_catalog")
+    ops = sweep.bind_identity("x", bad, sweep.auth_path_operations(FIXTURE))
+    with pytest.raises(AssertionError, match="error path"):
+        sweep.measure_cold(FakePolaris(), ops)

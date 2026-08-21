@@ -196,6 +196,59 @@ print(probe.strip().splitlines()[-1])
 
 # --- clone prefix free? ---
 entity_replay.assert_prefix_is_free(conn, SCHEMA, REALM)
+
+IDENTITIES = [s for s in os.environ.get("SWEEP_IDENTITIES", "user1").split(",") if s]
+
+
+def mint_identity(pc_root, principal):
+    \"\"\"Credentials for a seeded principal, so the sweep can call AS it.
+
+    The ledger records which users were created, not their secrets -- those are
+    returned once, at creation. `reset_principal_credentials` mints new ones as
+    root, which is a WRITE to principal_authentication_data and therefore
+    belongs in preflight, never inside a measurement loop.
+    \"\"\"
+    r = pc_root.reset_principal_credentials(principal)
+    assert r.status_code < 300, (
+        f"could not mint credentials for {principal}: [{r.status_code}] "
+        f"{r.text[:200]}"
+    )
+    body = r.json()
+    creds = body.get("credentials", body)
+    return creds["clientId"], creds["clientSecret"]
+
+
+# --- identities: WHOSE authorization are we actually measuring? ---
+#
+# Kade's point, 2026-08-22. Everything measured so far ran AS ROOT, and root's
+# authorization resolves TWO rows: PRINCIPAL_ROLE_USAGE to service_admin, and
+# SERVICE_MANAGE_ACCESS on the root container. An ordinary principal resolves
+# through its principal-role to a catalog-role holding 25 or 50 privileges.
+#
+# That is not a detail. The crossover run measured `filtered` as the WHOLE
+# TABLE at every volume, i.e. Seq Scan cost does not care how many rows the
+# grantee owns -- while index-scan cost tracks rows RETURNED. So grant-set size
+# moves the index-PRESENT column and barely touches index-absent. Sweeping only
+# as root measures the identity with the smallest grant set in the realm and
+# reports it as typical.
+_root = PolarisREST(POLARIS_URL, REALM)
+_r = _root.get_token(ROOT_CLIENT, ROOT_SECRET)
+assert _r.status_code < 300, f"root auth failed [{_r.status_code}]"
+_root.token = _r.json()["access_token"]
+
+IDENTITY_CREDS = {}
+for _p in IDENTITIES:
+    _cid, _secret = mint_identity(_root, _p)
+    # MEASURED, not taken from the seeding spec. "each principal has 50
+    # privileges" is a claim about how the fixture was built, and this repo has
+    # been wrong three times about constants it did not ask the server for.
+    _fp = api_sweep.identity_grant_footprint(conn, SCHEMA, REALM, _p)
+    IDENTITY_CREDS[_p] = (_cid, _secret, _fp)
+    print(f"identity {_p:<12} walks {_fp:>4} grant_records")
+print(f"identity root         walks "
+      f"{api_sweep.identity_grant_footprint(conn, SCHEMA, REALM, 'root'):>4} "
+      f"grant_records   <- what every previous run measured")
+
 TABLES = ("entities", "grant_records")
 base_counts = run_manifest.table_counts(conn, SCHEMA, TABLES)
 print("baseline rows:", base_counts)
@@ -432,7 +485,22 @@ def connect_polaris(attempts=5):
 
 
 def ops_for(pc):
-    return api_sweep.read_operations(FIXTURE), DECOY, (ROOT_CLIENT, ROOT_SECRET)
+    ops = list(api_sweep.read_operations(FIXTURE))
+    for principal, (cid, secret, footprint) in IDENTITY_CREDS.items():
+        ident = PolarisREST(POLARIS_URL, REALM)
+        r = ident.get_token(cid, secret)
+        assert r.status_code < 300, (
+            f"{principal} could not authenticate after the restart "
+            f"[{r.status_code}] -- its credentials were minted in preflight and "
+            "should still be valid; a 401 here means something reset them"
+        )
+        ident.token = r.json()["access_token"]
+        ops += api_sweep.bind_identity(
+            f"{principal}:{footprint}g",
+            ident,
+            api_sweep.auth_path_operations(FIXTURE),
+        )
+    return ops, DECOY, (ROOT_CLIENT, ROOT_SECRET)
 """),
     md("""
 ## 4. Run it

@@ -1,0 +1,1068 @@
+{
+  "run_id": "20260822-052837",
+  "volumes": [
+    0,
+    10
+  ],
+  "index_states": [
+    false,
+    true
+  ],
+  "k": 2,
+  "warmup": 1,
+  "fixture": {
+    "catalog": "user1_catalog",
+    "namespace": "ns1",
+    "principal": "user1_principal",
+    "principal_role": "user1_principal_role",
+    "catalog_role": "owner_principal"
+  },
+  "decoy": "user2_catalog",
+  "pinned_parallelism": false,
+  "cells": [
+    {
+      "clones": 0,
+      "index": false,
+      "volume": {
+        "clones": 0,
+        "removed": {
+          "entities": 0,
+          "grants": 0
+        },
+        "inserted": {
+          "entities": 0,
+          "grants": 0
+        },
+        "rows": {
+          "entities": 7319,
+          "grant_records": 7319
+        },
+        "replication": {
+          "standbys": 1,
+          "seconds": 0.4,
+          "lag": []
+        },
+        "bloat": {
+          "entities": {
+            "pages": 12,
+            "total_bytes": 98304,
+            "live_tuples": 64,
+            "dead_tuples": 0,
+            "dead_share": 0.0
+          },
+          "grant_records": {
+            "pages": 12,
+            "total_bytes": 98304,
+            "live_tuples": 64,
+            "dead_tuples": 0,
+            "dead_share": 0.0
+          }
+        }
+      },
+      "index_state": {
+        "seconds": 0.1,
+        "state": {
+          "present": true,
+          "valid": true,
+          "ready": true
+        }
+      },
+      "restart": {
+        "seconds": 3.0,
+        "restart": "restarted",
+        "status": "complete",
+        "serving": {
+          "seconds": 1.0,
+          "attempts": true
+        }
+      },
+      "cold": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 0.000500003807246685,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 0.0006250047590583563,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 0.000333995558321476,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00045899651013314724,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 0.00033401011023670435,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 0.000333995558321476,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00033299147617071867,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 0.00037500285543501377,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 0.0004580069798976183,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 0.00033300602808594704,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 0.00033401011023670435,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 0.000333995558321476,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 0.00033300602808594704,
+          "n": 1,
+          "cold": true
+        }
+      },
+      "warm": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 0.0003749955794773996,
+          "min": 0.000333995558321476,
+          "max": 0.0004159956006333232,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00033300602808594704,
+          "min": 0.0002910092007368803,
+          "max": 0.00037500285543501377,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 0.0002910019247792661,
+          "min": 0.00029099464882165194,
+          "max": 0.0002910092007368803,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00035450648283585906,
+          "min": 0.00033401011023670435,
+          "max": 0.00037500285543501377,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 0.0003334935172460973,
+          "min": 0.00033299147617071867,
+          "max": 0.000333995558321476,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 0.0002710003172978759,
+          "min": 0.0002500019036233425,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00031200761441141367,
+          "min": 0.0002910092007368803,
+          "max": 0.00033300602808594704,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 0.00031249510357156396,
+          "min": 0.00029199873097240925,
+          "max": 0.00033299147617071867,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 0.0003119930624961853,
+          "min": 0.00029099464882165194,
+          "max": 0.00033299147617071867,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 0.00029200600693002343,
+          "min": 0.00029199873097240925,
+          "max": 0.0002920132828876376,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 0.00031250237952917814,
+          "min": 0.00029199873097240925,
+          "max": 0.00033300602808594704,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 0.00031250237952917814,
+          "min": 0.00029199873097240925,
+          "max": 0.00033300602808594704,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 0.0002915039658546448,
+          "min": 0.0002500019036233425,
+          "max": 0.00033300602808594704,
+          "n": 2,
+          "cold": false
+        },
+        "POST /oauth/tokens": {
+          "surface": "auth",
+          "ms": 0.0002710003172978759,
+          "min": 0.000166997779160738,
+          "max": 0.00037500285543501377,
+          "n": 2,
+          "cold": false
+        }
+      },
+      "scan": {
+        "label": "fattest (1006 rows)",
+        "plan": "Gather > Parallel Seq Scan",
+        "cost": 810.16,
+        "buffers": 285,
+        "rows_filtered": 29003,
+        "parallel": true,
+        "probe_is_clone": false,
+        "probe_rows": 1006
+      }
+    },
+    {
+      "clones": 0,
+      "index": true,
+      "volume": {
+        "clones": 0,
+        "removed": {
+          "entities": 0,
+          "grants": 0
+        },
+        "inserted": {
+          "entities": 0,
+          "grants": 0
+        },
+        "rows": {
+          "entities": 7319,
+          "grant_records": 7319
+        },
+        "replication": {
+          "standbys": 1,
+          "seconds": 0.4,
+          "lag": []
+        },
+        "bloat": {
+          "entities": {
+            "pages": 12,
+            "total_bytes": 98304,
+            "live_tuples": 64,
+            "dead_tuples": 0,
+            "dead_share": 0.0
+          },
+          "grant_records": {
+            "pages": 12,
+            "total_bytes": 98304,
+            "live_tuples": 64,
+            "dead_tuples": 0,
+            "dead_share": 0.0
+          }
+        }
+      },
+      "index_state": {
+        "seconds": 0.1,
+        "state": {
+          "present": true,
+          "valid": true,
+          "ready": true
+        }
+      },
+      "restart": {
+        "seconds": 3.0,
+        "restart": "restarted",
+        "status": "complete",
+        "serving": {
+          "seconds": 1.0,
+          "attempts": true
+        }
+      },
+      "cold": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 0.00029099464882165194,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 0.000333995558321476,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00037500285543501377,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 0.00033299147617071867,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 0.0002500019036233425,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 0.0002500019036233425,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 0.0003749883035197854,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 0.0002500019036233425,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 0.00033401011023670435,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 0.0002500019036233425,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 0.0002500019036233425,
+          "n": 1,
+          "cold": true
+        }
+      },
+      "warm": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 0.0002710003172978759,
+          "min": 0.0002500019036233425,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "min": 0.00029199873097240925,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 0.0002709930413402617,
+          "min": 0.00024998735170811415,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 0.0002710003172978759,
+          "min": 0.0002500019036233425,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 0.00029099464882165194,
+          "min": 0.00029099464882165194,
+          "max": 0.00029099464882165194,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 0.00024999462766572833,
+          "min": 0.00024998735170811415,
+          "max": 0.0002500019036233425,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 0.0002910019247792661,
+          "min": 0.00029099464882165194,
+          "max": 0.0002910092007368803,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 0.0002915039658546448,
+          "min": 0.0002910092007368803,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 0.00033300602808594704,
+          "min": 0.00033300602808594704,
+          "max": 0.00033300602808594704,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 0.0002500019036233425,
+          "min": 0.0002500019036233425,
+          "max": 0.0002500019036233425,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 0.0002915039658546448,
+          "min": 0.0002910092007368803,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 0.0002910019247792661,
+          "min": 0.00029099464882165194,
+          "max": 0.0002910092007368803,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 0.0002915039658546448,
+          "min": 0.0002910092007368803,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "POST /oauth/tokens": {
+          "surface": "auth",
+          "ms": 0.0001460066414438188,
+          "min": 0.00012500095181167126,
+          "max": 0.00016701233107596636,
+          "n": 2,
+          "cold": false
+        }
+      },
+      "scan": {
+        "label": "fattest (1006 rows)",
+        "plan": "Gather > Parallel Seq Scan",
+        "cost": 810.16,
+        "buffers": 285,
+        "rows_filtered": 29003,
+        "parallel": true,
+        "probe_is_clone": false,
+        "probe_rows": 1006
+      }
+    },
+    {
+      "clones": 10,
+      "index": false,
+      "volume": {
+        "clones": 10,
+        "removed": {
+          "entities": 0,
+          "grants": 0
+        },
+        "inserted": {
+          "entities": 7,
+          "grants": 55
+        },
+        "rows": {
+          "entities": 7319,
+          "grant_records": 7319
+        },
+        "replication": {
+          "standbys": 1,
+          "seconds": 0.4,
+          "lag": []
+        },
+        "bloat": {
+          "entities": {
+            "pages": 12,
+            "total_bytes": 98304,
+            "live_tuples": 64,
+            "dead_tuples": 0,
+            "dead_share": 0.0
+          },
+          "grant_records": {
+            "pages": 12,
+            "total_bytes": 98304,
+            "live_tuples": 64,
+            "dead_tuples": 0,
+            "dead_share": 0.0
+          }
+        }
+      },
+      "index_state": {
+        "seconds": 0.1,
+        "state": {
+          "present": true,
+          "valid": true,
+          "ready": true
+        }
+      },
+      "restart": {
+        "seconds": 3.0,
+        "restart": "restarted",
+        "status": "complete",
+        "serving": {
+          "seconds": 1.0,
+          "attempts": true
+        }
+      },
+      "cold": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 0.00029099464882165194,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 0.000333995558321476,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 0.0002910092007368803,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00033300602808594704,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 0.0002920132828876376,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 0.0002500019036233425,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 0.00033300602808594704,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        }
+      },
+      "warm": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 0.0002500019036233425,
+          "min": 0.0002500019036233425,
+          "max": 0.0002500019036233425,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "min": 0.00029199873097240925,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 0.0003335007932037115,
+          "min": 0.00033300602808594704,
+          "max": 0.000333995558321476,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00031249510357156396,
+          "min": 0.00029199873097240925,
+          "max": 0.00033299147617071867,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 0.0003334935172460973,
+          "min": 0.00033299147617071867,
+          "max": 0.000333995558321476,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 0.00033300602808594704,
+          "min": 0.00033300602808594704,
+          "max": 0.00033300602808594704,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00029099464882165194,
+          "min": 0.00029099464882165194,
+          "max": 0.00029099464882165194,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 0.0002500019036233425,
+          "min": 0.0002500019036233425,
+          "max": 0.0002500019036233425,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 0.00033299147617071867,
+          "min": 0.00033299147617071867,
+          "max": 0.00033299147617071867,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 0.0002914966898970306,
+          "min": 0.00029099464882165194,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 0.0002710003172978759,
+          "min": 0.0002500019036233425,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 0.00033299875212833285,
+          "min": 0.00029099464882165194,
+          "max": 0.00037500285543501377,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 0.00031250237952917814,
+          "min": 0.00029199873097240925,
+          "max": 0.00033300602808594704,
+          "n": 2,
+          "cold": false
+        },
+        "POST /oauth/tokens": {
+          "surface": "auth",
+          "ms": 0.00014550460036844015,
+          "min": 0.00012500095181167126,
+          "max": 0.00016600824892520905,
+          "n": 2,
+          "cold": false
+        }
+      },
+      "scan": {
+        "label": "fattest (1006 rows)",
+        "plan": "Gather > Parallel Seq Scan",
+        "cost": 810.16,
+        "buffers": 285,
+        "rows_filtered": 29003,
+        "parallel": true,
+        "probe_is_clone": false,
+        "probe_rows": 1006
+      }
+    },
+    {
+      "clones": 10,
+      "index": true,
+      "volume": {
+        "clones": 10,
+        "removed": {
+          "entities": 0,
+          "grants": 0
+        },
+        "inserted": {
+          "entities": 7,
+          "grants": 55
+        },
+        "rows": {
+          "entities": 7319,
+          "grant_records": 7319
+        },
+        "replication": {
+          "standbys": 1,
+          "seconds": 0.4,
+          "lag": []
+        },
+        "bloat": {
+          "entities": {
+            "pages": 12,
+            "total_bytes": 98304,
+            "live_tuples": 64,
+            "dead_tuples": 0,
+            "dead_share": 0.0
+          },
+          "grant_records": {
+            "pages": 12,
+            "total_bytes": 98304,
+            "live_tuples": 64,
+            "dead_tuples": 0,
+            "dead_share": 0.0
+          }
+        }
+      },
+      "index_state": {
+        "seconds": 0.1,
+        "state": {
+          "present": true,
+          "valid": true,
+          "ready": true
+        }
+      },
+      "restart": {
+        "seconds": 3.0,
+        "restart": "restarted",
+        "status": "complete",
+        "serving": {
+          "seconds": 1.0,
+          "attempts": true
+        }
+      },
+      "cold": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 0.0002500019036233425,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 0.0002500019036233425,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00033300602808594704,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 0.0002920132828876376,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 0.0002500019036233425,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 0.00033299147617071867,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 0.00029099464882165194,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 0.0002910092007368803,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 0.00024998735170811415,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 0.00029099464882165194,
+          "n": 1,
+          "cold": true
+        }
+      },
+      "warm": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 0.0002914966898970306,
+          "min": 0.00024998735170811415,
+          "max": 0.00033300602808594704,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 0.0002914966898970306,
+          "min": 0.00029099464882165194,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "min": 0.00029199873097240925,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 0.00029099464882165194,
+          "min": 0.00029099464882165194,
+          "max": 0.00029099464882165194,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 0.00029199873097240925,
+          "min": 0.00029199873097240925,
+          "max": 0.00029199873097240925,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 0.00024999462766572833,
+          "min": 0.00024998735170811415,
+          "max": 0.0002500019036233425,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 0.0002500019036233425,
+          "min": 0.0002500019036233425,
+          "max": 0.0002500019036233425,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 0.0002500019036233425,
+          "min": 0.0002500019036233425,
+          "max": 0.0002500019036233425,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 0.0003129971446469426,
+          "min": 0.00029199873097240925,
+          "max": 0.000333995558321476,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 0.0002500019036233425,
+          "min": 0.0002500019036233425,
+          "max": 0.0002500019036233425,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 0.0002910019247792661,
+          "min": 0.00029099464882165194,
+          "max": 0.0002910092007368803,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 0.0002704982762224972,
+          "min": 0.0002500019036233425,
+          "max": 0.00029099464882165194,
+          "n": 2,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 0.0002704982762224972,
+          "min": 0.0002500019036233425,
+          "max": 0.00029099464882165194,
+          "n": 2,
+          "cold": false
+        },
+        "POST /oauth/tokens": {
+          "surface": "auth",
+          "ms": 0.00014549732441082597,
+          "min": 0.00012500095181167126,
+          "max": 0.00016599369700998068,
+          "n": 2,
+          "cold": false
+        }
+      },
+      "scan": {
+        "label": "fattest (1006 rows)",
+        "plan": "Gather > Parallel Seq Scan",
+        "cost": 810.16,
+        "buffers": 285,
+        "rows_filtered": 29003,
+        "parallel": true,
+        "probe_is_clone": false,
+        "probe_rows": 1006
+      }
+    }
+  ]
+}
