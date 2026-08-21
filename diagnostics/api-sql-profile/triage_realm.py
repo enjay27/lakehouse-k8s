@@ -47,6 +47,23 @@ TABLES = (
     "events",
 )
 
+#: Verified against PolarisPrivilege.java at tag apache-polaris-1.3.0-incubating
+#: (2026-08-21), NOT transcribed from a REST spec. The distinction matters: the
+#: hand-rolled bootstrap wrote 11 and 12, which are NAMESPACE_LIST and
+#: TABLE_LIST in that enum, and this script reported the bootstrap "OK" because
+#: it counted the grants without reading what they conferred.
+SERVICE_MANAGE_ACCESS = 1
+PRINCIPAL_ROLE_USAGE = 4
+PRIVILEGE_NAMES = {
+    1: "SERVICE_MANAGE_ACCESS",
+    4: "PRINCIPAL_ROLE_USAGE",
+    11: "NAMESPACE_LIST",
+    12: "TABLE_LIST",
+    25: "CATALOG_CREATE",
+    44: "PRINCIPAL_CREATE",
+    54: "PRINCIPAL_ROLE_CREATE",
+}
+
 TYPE_NAMES = {
     0: "NULL_TYPE",
     1: "ROOT",
@@ -166,10 +183,19 @@ def main():
                 (REALM,),
             ),
             (
-                "service_admin's grants",
+                "service_admin holds SERVICE_MANAGE_ACCESS",
                 "SELECT count(*) FROM {s}.grant_records g "
                 "JOIN {s}.entities e ON e.id = g.grantee_id AND e.realm_id = g.realm_id "
-                "WHERE g.realm_id = %s AND e.name = 'service_admin'",
+                f"WHERE g.realm_id = %s AND e.name = 'service_admin' "
+                f"AND g.privilege_code = {SERVICE_MANAGE_ACCESS}",
+                (REALM,),
+            ),
+            (
+                "root holds PRINCIPAL_ROLE_USAGE",
+                "SELECT count(*) FROM {s}.grant_records g "
+                "JOIN {s}.entities e ON e.id = g.grantee_id AND e.realm_id = g.realm_id "
+                f"WHERE g.realm_id = %s AND e.name = 'root' "
+                f"AND g.privilege_code = {PRINCIPAL_ROLE_USAGE}",
                 (REALM,),
             ),
         ]
@@ -179,6 +205,32 @@ def main():
             ok = n > 0
             alive = alive and ok
             print(f"  {'OK ' if ok else 'GONE'}  {label:<28} {n:>6,}")
+
+        print()
+        print("=" * 62)
+        print("WHAT THE BOOTSTRAP GRANTS ACTUALLY CONFER")
+        print("=" * 62)
+        # Counting these rows is not the same as reading them. An earlier
+        # version of this script did the former, printed "bootstrap SURVIVED",
+        # and the very next command failed 403 on CREATE_PRINCIPAL because
+        # service_admin's one grant was NAMESPACE_LIST.
+        for gid, pc, n in q(
+            cur,
+            f"""SELECT grantee_id, privilege_code, count(*)
+                FROM {SCHEMA}.grant_records
+                WHERE realm_id = %s AND grantee_id IN (1, 2)
+                GROUP BY grantee_id, privilege_code
+                ORDER BY grantee_id""",  # noqa: S608
+            (REALM,),
+        ):
+            who = {1: "root", 2: "service_admin"}.get(gid, str(gid))
+            name = PRIVILEGE_NAMES.get(pc, "?")
+            flag = (
+                ""
+                if pc in (SERVICE_MANAGE_ACCESS, PRINCIPAL_ROLE_USAGE)
+                else "  <- WRONG"
+            )
+            print(f"  {who:<14} code {pc:>3}  {name:<22} x{n}{flag}")
 
         print()
         print("=" * 62)
@@ -227,7 +279,9 @@ def main():
         print("VERDICT")
         print("=" * 62)
         if alive:
-            print("  The bootstrap SURVIVED. Root can still authenticate, so the")
+            print("  The bootstrap SURVIVED **and its grants confer what they")
+            print("  must**. Root can authenticate AND create principals.")
+            print("  Root can still authenticate, so the")
             print("  fixture is re-creatable from this repo's own tooling.")
             print()
             print("  And it is far cheaper than it was in July: 02c needs exactly")
@@ -243,13 +297,19 @@ def main():
             print("  historical measurement of a fixture that no longer exists.")
             return 0
 
-        print("  The bootstrap did NOT survive. No identity in this realm can")
-        print("  call an API, and nothing in this repo can re-create root --")
-        print("  its credentials are hashed with a salt only the bootstrap knew.")
+        print("  The bootstrap is INCOMPLETE. Read the two blocks above to see")
+        print("  which half failed -- they are different problems:")
         print()
-        print("  Recovery is Polaris's admin tool, not SQL:")
-        print("     polaris-admin-tool bootstrap --realm POLARIS ...")
-        print("  Re-seeding cannot start until that succeeds.")
+        print("  * ENTITIES or CREDENTIALS missing -> root cannot authenticate")
+        print("    at all. Nothing here can re-create root; its secret is hashed")
+        print("    with a salt only the bootstrap knew. Re-bootstrap the realm.")
+        print()
+        print("  * ENTITIES present but a grant carries the WRONG CODE -> root")
+        print("    authenticates, service_admin activates, and every write is")
+        print("    still 403. That is a two-row repair, not a rebuild:")
+        print("       psql -f diagnostics/api-sql-profile/repair_bootstrap_grants.sql")
+        print("       then RESTART Polaris -- the cache holds entities WITH")
+        print("       their grants, so it keeps enforcing what it already read.")
         return 1
 
 

@@ -417,3 +417,81 @@ def test_control_is_checked_before_it_is_timed():
     with pytest.raises(AssertionError, match="error path"):
         sweep.measure_control(pc, "root", "wrong-secret", k=2, warmup=1)
     assert pc.calls.count("get_token") == 1
+
+
+# ----------------------------------------------------------------------
+# replication
+# ----------------------------------------------------------------------
+class FakeReplCursor:
+    def __init__(self, db):
+        self.db = db
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        self.db["calls"] += 1
+        # The last step REPEATS rather than falling off to empty. An earlier
+        # version returned [] once exhausted, which `wait_for_replicas` reads as
+        # "no standby" -- so a test meaning "stays behind forever" silently
+        # became "the standby disappeared" and passed for the wrong reason.
+        if self.db["steps"]:
+            self.db["last"] = self.db["steps"].pop(0)
+        self._r = self.db.get("last", [])
+
+    def fetchall(self):
+        return self._r
+
+
+class FakeReplConn:
+    def __init__(self, steps):
+        self.db = {"steps": list(steps), "calls": 0}
+
+    def cursor(self):
+        return FakeReplCursor(self.db)
+
+
+def test_replication_lag_reports_bytes_behind_per_standby():
+    conn = FakeReplConn([[("standby1", "streaming", 4096)]])
+    assert sweep.replication_lag(conn) == [
+        {"standby": "standby1", "state": "streaming", "behind_bytes": 4096}
+    ]
+
+
+def test_wait_for_replicas_blocks_until_caught_up():
+    conn = FakeReplConn(
+        [
+            [("standby1", "streaming", 8192)],
+            [("standby1", "streaming", 512)],
+            [("standby1", "streaming", 0)],
+        ]
+    )
+    out = sweep.wait_for_replicas(conn, interval=0, sleep=lambda _: None)
+    assert out["standbys"] == 1
+    assert conn.db["calls"] == 3
+
+
+def test_a_standby_that_vanishes_mid_wait_is_an_error_not_a_pass():
+    """It dropped its connection part-way through the insert, so it is an
+    unknown number of rows behind — not caught up."""
+    conn = FakeReplConn([[("standby1", "streaming", 8192)], []])
+    with pytest.raises(RuntimeError, match="now none are"):
+        sweep.wait_for_replicas(conn, interval=0, sleep=lambda _: None)
+
+
+def test_no_standby_connected_is_reported_not_treated_as_caught_up():
+    """An empty pg_stat_replication means nothing is streaming — worth seeing
+    on a cluster that is supposed to have a standby, not silently passing."""
+    out = sweep.wait_for_replicas(FakeReplConn([[]]), sleep=lambda _: None)
+    assert out["standbys"] == 0
+
+
+def test_wait_for_replicas_raises_rather_than_measuring_at_unknown_volume():
+    """A cell labelled '10,000 clones' measured against a standby that has only
+    replicated half of them is a wrong number, not a slow one."""
+    conn = FakeReplConn([[("standby1", "streaming", 99999)]] * 50)
+    with pytest.raises(TimeoutError, match="finished replicating"):
+        sweep.wait_for_replicas(conn, timeout=0.05, interval=0, sleep=lambda _: None)

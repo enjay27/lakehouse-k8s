@@ -306,7 +306,19 @@ class SeedSpec:
     #: The histogram is the check, not the total: 2,001 grantees holding 1 row,
     #: 1,000 holding 2, 1,000 holding 25, one holding 1,006.
     grant_overhead_per_user: int = 5
-    grant_overhead_realm: int = 9
+
+    #: RE-MEASURED 2026-08-21, after the realm was dropped and re-bootstrapped.
+    #: Was 9, from a realm bootstrapped by Polaris's own admin tool. The current
+    #: realm is bootstrapped by hand-written SQL that writes exactly two grants
+    #: -- root -> PRINCIPAL_ROLE_USAGE(4) on service_admin, and service_admin ->
+    #: SERVICE_MANAGE_ACCESS(1) on root_container.
+    #:
+    #: THIS IS A PROPERTY OF THE BOOTSTRAP, NOT OF POLARIS. Re-measure it after
+    #: any re-bootstrap instead of trusting this number: a stale value here
+    #: makes `verify_counts` report an UNEXPLAINED residue that is really just
+    #: arithmetic. Both overhead fields are ordinary dataclass fields, so a
+    #: caller can pass the measured value rather than editing this line.
+    grant_overhead_realm: int = 2
 
     #: The same idea for `entities`, and MEASURED from the census on 2026-08-21:
     #: ROOT 2, PRINCIPAL 1002, PRINCIPAL_ROLE 1002, CATALOG 1000,
@@ -319,7 +331,13 @@ class SeedSpec:
     #: drop-with-purge and are the one number worth watching rather than
     #: predicting. `verify_counts` reports them as the residual.
     entity_overhead_per_user: int = 1
-    entity_overhead_realm: int = 6
+
+    #: RE-MEASURED 2026-08-21, same reason as `grant_overhead_realm`. Was 6,
+    #: from the admin-tool bootstrap (two ROOT rows plus root/service_admin and
+    #: their principal-roles). The hand-written bootstrap writes THREE:
+    #: root_container (type 1), root (type 2), service_admin (type 3) -- which
+    #: `triage_realm.py` renders directly, so it never has to be inferred.
+    entity_overhead_realm: int = 3
 
     def names(self, i):
         """Entity names for user index `i`."""

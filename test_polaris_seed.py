@@ -454,16 +454,31 @@ def test_expected_counts_match_the_specified_fixture():
     # of the metadata-only fixture — ROOT 2, PRINCIPAL 1002, PRINCIPAL_ROLE 1002,
     # CATALOG 1000, CATALOG_ROLE 2000, NAMESPACE 2000 = 7,006.
     assert exp["entities_seeded"] == 1000 * 4 + 2000 + 10000
-    assert exp["entities_bootstrap"] == 1000 + 6
-    assert SeedSpec(create_tables=False).expected_counts()["entities_total"] == 7006
+    assert exp["entities_bootstrap"] == 1000 + 3
     # grant_records is now projected in two parts, because it is two things:
     # what the seeder grants, and what Polaris writes on its own (the role
     # assignments and the catalog_admin bootstrap). The observed constant is
     # pinned here against the measured fixture -- 25,000 granted + 5,009
     # Polaris-written = the 30,009 counted on the live cluster.
     assert exp["grant_records_granted"] == 1000 * len(CORE_CATALOG_PRIVILEGES)
-    assert exp["grant_records_overhead"] == 1000 * 5 + 9
-    assert exp["grant_records"] == 30009
+    assert exp["grant_records_overhead"] == 1000 * 5 + 2
+
+
+def test_the_2026_07_census_still_reproduces_under_its_own_bootstrap():
+    """7,006 entities and 30,009 grant_records were REAL, counted on the live
+    cluster in July. They are not wrong -- they are conditional on a realm
+    bootstrapped by Polaris's admin tool, which wrote 6 realm entities and 9
+    realm grants. That realm was dropped on 2026-08-21 and replaced by a
+    hand-written bootstrap writing 3 and 2.
+
+    Pinning the census against its own constants keeps the measurement instead
+    of deleting it, and makes the dependency explicit: if these two lines ever
+    have to change, the census was never about the bootstrap at all."""
+    july = SeedSpec(
+        create_tables=False, entity_overhead_realm=6, grant_overhead_realm=9
+    )
+    assert july.expected_counts()["entities_total"] == 7006
+    assert july.expected_counts()["grant_records"] == 30009
 
 
 def test_coarse_privileges_produce_far_fewer_grant_rows():

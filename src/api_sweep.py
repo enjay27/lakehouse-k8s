@@ -545,3 +545,81 @@ def render_report(cells, meta):
             )
 
     return "\n".join(lines) + "\n"
+
+
+# ----------------------------------------------------------------------
+# replication
+# ----------------------------------------------------------------------
+def replication_lag(conn):
+    """Bytes each standby is behind the primary's current WAL position.
+
+    This exists because of a threat the seeder surfaced and the sweep would
+    not: **Polaris connects through Pgpool, which load-balances SELECTs to
+    standbys.** Every EXPLAIN in this repo is pinned to the primary with
+    `/*NO LOAD BALANCE*/`, so the database-side evidence is safe -- but the
+    REST calls 02c times are not pinned to anything.
+
+    Two distinct ways that ruins a cell, and only the first is obvious:
+
+      1. **Volume the standby has not got yet.** `apply_volume` writes ~550,000
+         rows to the primary. Until they replicate, a request served by a
+         standby is scanning a SMALLER table -- so the cell's label says 10,000
+         clones while the measurement says something else entirely. It is a
+         silent under-read, not an error.
+      2. **Two servers in one median.** Standbys have their own buffer cache
+         and their own load. Mixing them into one `timeit` is measuring which
+         host answered, not what the index did.
+
+    Returns a list of per-standby dicts. An empty list means no streaming
+    standby is connected -- which is itself worth seeing, since this cluster is
+    supposed to have one.
+    """
+    with conn.cursor() as cur:
+        cur.execute(api_trace.NO_LOAD_BALANCE + """SELECT application_name, state,
+                        pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)
+                 FROM pg_stat_replication""")
+        return [
+            {"standby": name, "state": state, "behind_bytes": int(behind or 0)}
+            for name, state, behind in cur.fetchall()
+        ]
+
+
+def wait_for_replicas(conn, timeout=120, interval=1.0, max_bytes=0, sleep=time.sleep):
+    """Block until every streaming standby has replayed the primary's WAL.
+
+    Call it after any bulk write and BEFORE measuring, so a cell cannot time
+    requests against a table the standby has not finished growing.
+
+    `max_bytes=0` demands exact catch-up. Raises rather than measuring at an
+    unknown volume -- reporting a number whose row count is uncertain is the
+    failure this whole directory is organised against.
+    """
+    t0 = time.time()
+    seen = 0
+    while time.time() - t0 < timeout:
+        lag = replication_lag(conn)
+        if not lag:
+            # No standby streaming. Whether that is fine depends on whether one
+            # was there a moment ago: a cluster with no replica is simply not
+            # load-balancing, but a standby that VANISHED mid-wait dropped its
+            # connection part-way through the insert and is now an unknown
+            # number of rows behind. Treating those two alike would let the
+            # second pass as "caught up".
+            if seen:
+                raise RuntimeError(
+                    f"{seen} standby(s) were streaming and now none are. One "
+                    "disconnected mid-write and is an unknown distance behind; "
+                    "measuring now would time requests against a table of "
+                    "unknown size. Check the replica before re-running."
+                )
+            return {"standbys": 0, "seconds": time.time() - t0, "lag": []}
+        seen = max(seen, len(lag))
+        worst = max(s["behind_bytes"] for s in lag)
+        if worst <= max_bytes:
+            return {"standbys": len(lag), "seconds": time.time() - t0, "lag": lag}
+        sleep(interval)
+    raise TimeoutError(
+        f"standbys still behind after {timeout}s: {replication_lag(conn)}. "
+        "Measuring now would time requests against a table that has not "
+        "finished replicating, at a volume the cell label would misstate."
+    )

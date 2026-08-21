@@ -279,6 +279,14 @@ def apply_volume(n):
         cur.execute(f"ANALYZE {SCHEMA}.entities")
         cur.execute(f"ANALYZE {SCHEMA}.grant_records")
     rows = run_manifest.table_counts(conn, SCHEMA, TABLES)
+    # Polaris reads through Pgpool, which load-balances SELECTs to standbys.
+    # Until this insert has replicated, a request served by a standby scans a
+    # SMALLER table -- the cell would be labelled 10,000 clones and measured at
+    # something else. The seed run made this concrete: 4 of 4 create_namespace
+    # calls returned 500 for writes that had already committed.
+    repl = api_sweep.wait_for_replicas(conn)
+    print(f"  replicas caught up: {repl['standbys']} standby(s) in "
+          f"{repl['seconds']:.1f}s")
     print(f"  volume {n:,}: removed {removed['entities']:,}e, "
           f"inserted {inserted['entities']:,}e/{inserted['grants']:,}g -> {rows}")
     return {"clones": n, "removed": removed, "inserted": inserted, "rows": rows}
