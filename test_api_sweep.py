@@ -91,27 +91,47 @@ class FakePolaris:
 # ----------------------------------------------------------------------
 # restart
 # ----------------------------------------------------------------------
-def test_restart_issues_rollout_then_waits_for_status():
-    seen = []
+def _gen_runner(seen, gen=3):
+    """A kubectl that answers the generation probes, so tests exercise the
+    real ordering instead of dying in int('ok')."""
+    state = {"gen": gen, "observed": gen}
 
     def runner(cmd, timeout):
         seen.append(cmd)
+        joined = " ".join(cmd)
+        if "observedGeneration" in joined:
+            return f"{state['gen']} {state['observed']}"
+        if "{.metadata.generation}" in joined:
+            return str(state["gen"])
+        if "restart" in cmd:
+            state["gen"] += 1
+            state["observed"] = state["gen"]
+            return "restarted"
         return "ok"
 
-    out = sweep.restart_polaris(runner=runner)
-    assert seen[0][:3] == ["kubectl", "rollout", "restart"]
-    assert seen[1][:3] == ["kubectl", "rollout", "status"]
-    assert "deploy/benchmarks-polaris" in seen[0]
-    assert "-n" in seen[0] and "datahub-hynix" in seen[0]
-    # The status call must carry a timeout, or a stuck rollout hangs the sweep
-    # instead of failing it.
-    assert any(a.startswith("--timeout=") for a in seen[1])
+    return runner
+
+
+def test_restart_issues_rollout_then_waits_for_status():
+    seen = []
+    out = sweep.restart_polaris(runner=_gen_runner(seen))
+    kinds = [" ".join(c) for c in seen]
+    restart = next(i for i, k in enumerate(kinds) if "rollout restart" in k)
+    status = next(i for i, k in enumerate(kinds) if "rollout status" in k)
+    assert restart < status
+    assert "deploy/benchmarks-polaris" in seen[restart]
+    assert "-n" in seen[restart] and "datahub-hynix" in seen[restart]
+    assert any(a.startswith("--timeout=") for a in seen[status])
     assert out["seconds"] >= 0
 
 
 def test_restart_raises_rather_than_measuring_a_half_restarted_deployment():
+    inner = _gen_runner([])
+
     def runner(cmd, timeout):
-        raise RuntimeError("rollout status: timed out waiting")
+        if "status" in cmd:
+            raise RuntimeError("rollout status: timed out waiting")
+        return inner(cmd, timeout)
 
     with pytest.raises(RuntimeError, match="timed out"):
         sweep.restart_polaris(runner=runner)
@@ -495,3 +515,52 @@ def test_wait_for_replicas_raises_rather_than_measuring_at_unknown_volume():
     conn = FakeReplConn([[("standby1", "streaming", 99999)]] * 50)
     with pytest.raises(TimeoutError, match="finished replicating"):
         sweep.wait_for_replicas(conn, timeout=0.05, interval=0, sleep=lambda _: None)
+
+
+def test_restart_waits_for_the_controller_to_observe_the_patch():
+    """`rollout restart` only patches the template. Running `rollout status`
+    before the controller observes it reports the PREVIOUS rollout complete —
+    which is how a sweep concludes Polaris is up and then hits a closed socket
+    on the terminating pod. Errno 61, 2026-08-21."""
+    seen, state = [], {"gen": 7, "observed": 7}
+
+    def runner(cmd, timeout):
+        seen.append(cmd)
+        joined = " ".join(cmd)
+        if "{.metadata.generation} {.status.observedGeneration}" in joined:
+            # controller lags one poll behind the patch
+            if state["observed"] < state["gen"]:
+                out = f"{state['gen']} {state['observed']}"
+                state["observed"] = state["gen"]
+                return out
+            return f"{state['gen']} {state['observed']}"
+        if "{.metadata.generation}" in joined:
+            return str(state["gen"])
+        if "restart" in cmd:
+            state["gen"] += 1
+            state["observed"] = state["gen"] - 1
+            return "restarted"
+        return "complete"
+
+    sweep.restart_polaris(runner=runner)
+    kinds = [" ".join(c) for c in seen]
+    gen_read = next(i for i, k in enumerate(kinds) if "{.metadata.generation}" in k)
+    restarted = next(i for i, k in enumerate(kinds) if "rollout restart" in k)
+    status = next(i for i, k in enumerate(kinds) if "rollout status" in k)
+    observed = next(
+        i for i, k in enumerate(kinds) if "observedGeneration" in k and i > restarted
+    )
+    assert gen_read < restarted < observed < status, kinds
+
+
+def test_restart_refuses_if_the_controller_never_observes_it():
+    def runner(cmd, timeout):
+        joined = " ".join(cmd)
+        if "observedGeneration" in joined:
+            return "9 8"  # stuck: patched but never observed
+        if "{.metadata.generation}" in joined:
+            return "9"
+        return "ok"
+
+    with pytest.raises(TimeoutError, match="never observed"):
+        sweep.restart_polaris(runner=runner, timeout=0.05)

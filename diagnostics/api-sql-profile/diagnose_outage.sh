@@ -28,9 +28,20 @@ PGDB="${PG_DB:-polaris}"
 
 hr() { printf '\n%s\n%s\n%s\n' "==============================================================" "$1" "=============================================================="; }
 
+# Resolve the Polaris pod BY NAME, not by a guessed label and not by
+# `.items[0]`. The first run of this script did both: the label selector
+# matched nothing (so the `||` fallback never fired, because kubectl exits 0 on
+# "No resources found"), and `.items[0]` picked whatever sorts first in the
+# namespace -- fluent-bit. Sections 3, 4 and 5 then reported that pod's restart
+# count and logs under a Polaris heading. Wrong pod, confident output.
+POD=$(kubectl get pods -n "$NS" -o name 2>/dev/null | grep -i "polaris" | grep -vi "fluent\|shipper" | head -1)
+POD="${POD#pod/}"
+
 hr "1. IS THE POD EVEN RUNNING?"
-kubectl get pods -n "$NS" -l "app.kubernetes.io/name=polaris" -o wide 2>/dev/null \
-  || kubectl get pods -n "$NS" -o wide
+echo "-- every pod in the namespace, with restart counts:"
+kubectl get pods -n "$NS" -o wide 2>/dev/null
+echo
+echo "-- resolved polaris pod: ${POD:-<none found>}"
 echo
 echo "-- deployment:"
 kubectl get deploy "$DEPLOY" -n "$NS" 2>/dev/null
@@ -41,7 +52,6 @@ hr "2. DOES THE SERVICE HAVE ENDPOINTS?"
 kubectl get endpoints -n "$NS" 2>/dev/null | head -20
 
 hr "3. WHY IS IT UNREADY? (events, restarts, OOM)"
-POD=$(kubectl get pods -n "$NS" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 if [ -n "${POD:-}" ]; then
   kubectl get pod "$POD" -n "$NS" \
     -o jsonpath='restarts={.status.containerStatuses[0].restartCount}{"\n"}lastState={.status.containerStatuses[0].lastState}{"\n"}' 2>/dev/null
@@ -85,7 +95,18 @@ hr "6. POSTGRESQL: IS IT ACTUALLY OUT OF CONNECTIONS?"
 # cluster down and forced a full OrbStack reset -- so config changes need
 # explicit sign-off and a measured reason, not an inference from a refused TCP
 # connection on a different port.
-PSQL="psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDB -X -q -A -F$'\t'"
+# psql is not necessarily on the workstation. Run it INSIDE the PostgreSQL
+# pod, which certainly has it -- and which also means these numbers come from
+# the primary rather than through Pgpool's load balancer.
+PGPOD=$(kubectl get pods -n "$NS" -o name 2>/dev/null | grep -E "postgresql-[0-9]+$" | head -1)
+PGPOD="${PGPOD#pod/}"
+if [ -z "${PGPOD:-}" ]; then
+  echo "no postgresql pod found; skipping the PostgreSQL section"
+  PSQL="true"
+else
+  echo "-- querying inside $PGPOD"
+  PSQL="kubectl exec -n $NS $PGPOD -- env PGPASSWORD=${PG_PASSWORD:-polaris} psql -U $PGUSER -d $PGDB -X -q -A"
+fi
 $PSQL -c "SELECT current_setting('max_connections') AS max_connections,
                  count(*)                          AS in_use,
                  count(*) FILTER (WHERE state='idle')              AS idle,

@@ -102,10 +102,27 @@ def restart_polaris(
     """
     run = runner or _run
     t0 = time.time()
+
+    # `kubectl rollout restart` only PATCHES the pod template; the deployment
+    # controller acts on it asynchronously. Run `rollout status` immediately
+    # after and it can report the PREVIOUS rollout complete -- so the sweep
+    # concludes Polaris is up, health/ready answers from the pod that is about
+    # to terminate, and the first real request lands on a closed socket.
+    #
+    # That is exactly the failure seen 2026-08-21: ConnectionError [Errno 61]
+    # on /oauth/tokens, with the cluster perfectly healthy by the time anyone
+    # looked. Not load, not connections -- a race in this function.
+    #
+    # `.metadata.generation` increments on the patch; `.status.observedGeneration`
+    # catches up only once the controller has seen it. Waiting for that closes
+    # the window before `rollout status` is asked anything.
+    gen_before = _generation(run, namespace, deployment, timeout)
     out = run(
         ["kubectl", "rollout", "restart", f"deploy/{deployment}", "-n", namespace],
         timeout=timeout,
     )
+    _await_generation(run, namespace, deployment, gen_before, timeout)
+
     status = run(
         [
             "kubectl",
@@ -123,6 +140,60 @@ def restart_polaris(
         "restart": out.strip(),
         "status": status.strip(),
     }
+
+
+def _generation(run, namespace, deployment, timeout):
+    """The deployment's spec generation. Increments on every template patch."""
+    out = run(
+        [
+            "kubectl",
+            "get",
+            "deploy",
+            deployment,
+            "-n",
+            namespace,
+            "-o",
+            "jsonpath={.metadata.generation}",
+        ],
+        timeout=timeout,
+    )
+    return int((out or "0").strip() or 0)
+
+
+def _await_generation(
+    run, namespace, deployment, gen_before, timeout, sleep=time.sleep
+):
+    """Block until the controller has OBSERVED the restart we just requested.
+
+    Without this, `rollout status` answers about the rollout that finished
+    yesterday.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        out = run(
+            [
+                "kubectl",
+                "get",
+                "deploy",
+                deployment,
+                "-n",
+                namespace,
+                "-o",
+                "jsonpath={.metadata.generation} {.status.observedGeneration}",
+            ],
+            timeout=timeout,
+        )
+        parts = (out or "").split()
+        if len(parts) == 2:
+            gen, observed = int(parts[0]), int(parts[1])
+            if gen > gen_before and observed >= gen:
+                return {"generation": gen, "observed": observed}
+        sleep(1.0)
+    raise TimeoutError(
+        f"deploy/{deployment} never observed the restart (generation stuck at "
+        f"{gen_before}). Asking `rollout status` now would report the previous "
+        "rollout complete and the sweep would measure a terminating pod."
+    )
 
 
 def _run(cmd, timeout):
