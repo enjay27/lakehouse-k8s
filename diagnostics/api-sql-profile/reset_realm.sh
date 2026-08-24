@@ -105,11 +105,17 @@ else
   echo "  schema absent -- applying schema.sql to create the tables"
   psql_in "$PRIMARY" -v ON_ERROR_STOP=1 -f /tmp/schema.sql
 fi
-psql_in "$PRIMARY" -v ON_ERROR_STOP=1 <<SQL
-SET search_path TO ${PG_SCHEMA:-polaris_schema};
-TRUNCATE entities, grant_records, principal_authentication_data,
-         policy_mapping_record, events;
-SQL
+# TRUNCATE via -c, NOT a heredoc on stdin. `kubectl exec` does not forward
+# stdin unless invoked with -i, so a heredoc silently reaches psql as empty
+# input: psql runs nothing, exits 0, and bootstrap then hits the un-truncated
+# rows with a duplicate-key error. That is exactly what happened on the first
+# run. `-c` passes the statement as an argument, independent of stdin. The
+# `-f` calls above are unaffected -- psql reads those files inside the pod.
+SCH="${PG_SCHEMA:-polaris_schema}"
+psql_in "$PRIMARY" -v ON_ERROR_STOP=1 -c \
+  "TRUNCATE ${SCH}.entities, ${SCH}.grant_records, \
+   ${SCH}.principal_authentication_data, ${SCH}.policy_mapping_record, \
+   ${SCH}.events"
 psql_in "$PRIMARY" -v ON_ERROR_STOP=1 -f /tmp/bootstrap.sql
 echo "  schema ensured, tables truncated, bootstrap applied."
 echo "  Replicas will catch up via streaming replication."
