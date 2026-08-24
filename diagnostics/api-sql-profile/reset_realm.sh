@@ -87,9 +87,24 @@ echo "== 1. APPLY schema, TRUNCATE, then bootstrap ON THE PRIMARY =="
 #
 # TRUNCATE keeps table structure and indexes (unlike DROP SCHEMA), which is
 # what the audit wants -- index state is managed explicitly elsewhere.
+#
+# schema.sql is applied ONLY when the schema does not yet exist. Kade's real
+# schema.sql opens with a bare `CREATE SCHEMA POLARIS_SCHEMA` (no IF NOT
+# EXISTS), so on an existing database it errors on line 1 and, under
+# ON_ERROR_STOP, aborts before the reset ever happens. On an existing realm the
+# tables are already there and schema.sql has nothing to do -- the reset is the
+# TRUNCATE. So run schema.sql for first-time creation, skip it otherwise.
 kubectl cp "$SCHEMA_SQL"    "$NS/$PRIMARY:/tmp/schema.sql"
 kubectl cp "$BOOTSTRAP_SQL" "$NS/$PRIMARY:/tmp/bootstrap.sql"
-psql_in "$PRIMARY" -v ON_ERROR_STOP=1 -f /tmp/schema.sql
+have_schema=$(psql_in "$PRIMARY" -tA -c \
+  "SELECT 1 FROM information_schema.schemata WHERE schema_name = '${PG_SCHEMA:-polaris_schema}'" \
+  2>/dev/null | tr -d '[:space:]')
+if [ "$have_schema" = "1" ]; then
+  echo "  schema exists -- skipping schema.sql (reset is the TRUNCATE below)"
+else
+  echo "  schema absent -- applying schema.sql to create the tables"
+  psql_in "$PRIMARY" -v ON_ERROR_STOP=1 -f /tmp/schema.sql
+fi
 psql_in "$PRIMARY" -v ON_ERROR_STOP=1 <<SQL
 SET search_path TO ${PG_SCHEMA:-polaris_schema};
 TRUNCATE entities, grant_records, principal_authentication_data,
