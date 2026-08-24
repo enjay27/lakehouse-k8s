@@ -528,3 +528,286 @@ def delete_clones(conn, schema, realm, prefix=CLONE_NAME_PREFIX):
     left = clone_counts(conn, schema, realm, prefix)
     assert left == {"entities": 0, "grants": 0}, f"clones survived deletion: {left}"
     return {"entities": e, "grants": g}
+
+
+# ----------------------------------------------------------------------
+# authenticable identities, at a chosen grant-set SIZE
+# ----------------------------------------------------------------------
+# Everything above clones USER-SETS to move row volume. This section clones
+# PRINCIPALS that can AUTHENTICATE, to move a different axis: grant-set size.
+#
+# Confirmed live (Kade, 2026-08-24): a principal_authentication_data row copied
+# with the source's main_secret_hash + secret_salt under a new client_id
+# authenticates with the source's plaintext secret. So one API-minted principal
+# seeds a whole fleet, and the plaintext never has to be stored -- the caller
+# holds it from the mint, this code only copies the hash.
+#
+# The point of the fleet is a CURVE. An unindexed grantee lookup's cost is
+# constant in the grantee's grant count; an indexed one tracks rows returned. So
+# the index benefit is large for a 2-grant principal and small for a 200-grant
+# one. Cloning principals at chosen sizes turns that into a measured line.
+
+#: Its own prefix, distinct from CLONE_NAME_PREFIX, so identity cleanup and
+#: volume-clone cleanup never touch each other's rows.
+IDENTITY_NAME_PREFIX = "idclone"
+
+TYPE_CATALOG_ROLE = 5
+
+#: One extra column set beyond ENTITY_COLUMNS/GRANT_COLUMNS: the credential row.
+#: Column order from the captured bootstrap INSERT, not the schema.
+AUTH_COLUMNS = (
+    "realm_id",
+    "principal_id",
+    "principal_client_id",
+    "main_secret_hash",
+    "secondary_secret_hash",
+    "secret_salt",
+)
+
+
+def read_identity_source(conn, schema, realm, source_prefix="user1"):
+    """A source user-set PLUS its principal's credential row.
+
+    Builds on `read_template` (entities + grants) and adds the one thing an
+    authenticable clone needs that a volume clone does not: the source
+    principal's `principal_authentication_data` row. Only the HASH and SALT are
+    read; the plaintext secret is the caller's, from when it minted the source.
+
+    Raises LookupError if the source principal has no credential row -- an
+    identity cloned from it could never authenticate, which is the whole point.
+    """
+    template = read_template(conn, schema, realm, source_prefix)
+    principal = next((e for e in template["entities"] if e[3] == TYPE_PRINCIPAL), None)
+    # read_template already guarantees a principal exists, but be explicit.
+    if principal is None:  # pragma: no cover
+        raise LookupError(f"source {source_prefix} has no principal")
+    principal_id = principal[0]
+
+    acols = ", ".join(AUTH_COLUMNS)
+    with conn.cursor() as cur:
+        cur.execute(
+            api_trace.NO_LOAD_BALANCE
+            + f"SELECT {acols} FROM {schema}.principal_authentication_data "  # noqa: S608
+            "WHERE realm_id = %s AND principal_id = %s",
+            (realm, principal_id),
+        )
+        auth = cur.fetchone()
+    if not auth:
+        raise LookupError(
+            f"source principal {source_prefix} has no credential row. Mint one "
+            "over the API first (reset_principal_credentials), then re-read: a "
+            "clone with no hash to copy cannot authenticate."
+        )
+
+    template["source_principal_id"] = principal_id
+    template["auth"] = auth  # (realm, principal_id, client_id, mainh, sech, salt)
+    return template
+
+
+def _principal_auth_chain(template):
+    """The grantee ids the source principal's authorization actually walks.
+
+    principal -> its principal-roles -> their catalog-roles. Computed from the
+    template's own grant chain, never assumed: which catalog-role a principal
+    holds is a fact about how the fixture was seeded, and this repo has been
+    burned three times by assuming such facts.
+
+    Returns (chain_ids, leaf_catalog_role_ids). The leaves are the catalog-roles
+    whose privilege grants SCALE the footprint -- the ones a size cap trims.
+    """
+    by_type = {e[0]: e[3] for e in template["entities"]}
+    principal_ids = {e[0] for e in template["entities"] if e[3] == TYPE_PRINCIPAL}
+    # grants are (securable_catalog_id, securable_id, grantee_catalog_id,
+    #             grantee_id, privilege_code, realm_id)
+    role_ids = {
+        g[1]
+        for g in template["grants"]
+        if g[3] in principal_ids and by_type.get(g[1]) == TYPE_PRINCIPAL_ROLE
+    }
+    catalog_role_ids = {
+        g[1]
+        for g in template["grants"]
+        if g[3] in role_ids and by_type.get(g[1]) == TYPE_CATALOG_ROLE
+    }
+    chain = principal_ids | role_ids | catalog_role_ids
+    return chain, catalog_role_ids
+
+
+def _size_capped_grants(template, leaf_role_ids, size):
+    """The template's grants, keeping only `size` privilege grants on the leaves.
+
+    A privilege grant is one whose GRANTEE is a leaf catalog-role -- those are
+    what scale a principal's footprint. Structural grants (role assignments,
+    service_admin, catalog_admin) are always kept, so the identity stays
+    authorizable at every size. `size=None` keeps everything.
+
+    Trimming is deterministic (sorted by privilege_code) so size K for one
+    identity is a prefix of size K'>K for another -- a monotone axis, not a
+    random subset.
+    """
+    if size is None:
+        return list(template["grants"])
+    structural = [g for g in template["grants"] if g[3] not in leaf_role_ids]
+    privilege = sorted(
+        (g for g in template["grants"] if g[3] in leaf_role_ids),
+        key=lambda g: g[4],  # privilege_code
+    )
+    return structural + privilege[:size]
+
+
+def clone_identity(
+    template, k, realm, base, size=None, name_prefix=IDENTITY_NAME_PREFIX
+):
+    """Entity rows, size-capped grant rows, and ONE credential row for clone k.
+
+    The entity and grant remapping is `clone_rows`'; the additions are the size
+    cap and the credential tuple. The credential carries the source's hash and
+    salt verbatim under this clone's new principal_id and client_id.
+
+    Returns (entities, grants, auth_tuple, client_id).
+    """
+    # `clone_rows` applies the per-clone shift itself, so it must receive the
+    # ORIGINAL base. Build the local id_map from the SAME shift clone_rows will
+    # use, or the credential and grant rows land at a different base than the
+    # entities -- a double-shift that put idclone1's auth row on a principal id
+    # no entity had. Caught by test_delete_identities_clears_credentials_too.
+    shifted = base + k * IDS_PER_CLONE
+    ordered = sorted(template["entities"], key=lambda r: r[0])
+    id_map = {row[0]: shifted + slot for slot, row in enumerate(ordered)}
+
+    entities, _ = clone_rows(template, k, realm, base, name_prefix)
+
+    _, leaf_role_ids = _principal_auth_chain(template)
+    kept = _size_capped_grants(template, leaf_role_ids, size)
+    grants = []
+    for row in kept:
+        g = list(row)
+        g[0] = _remap(row[0], id_map)
+        g[1] = _remap(row[1], id_map)
+        g[2] = _remap(row[2], id_map)
+        g[3] = _remap(row[3], id_map)
+        grants.append(tuple(g))
+
+    new_principal_id = id_map[template["source_principal_id"]]
+    client_id = f"{name_prefix}{k}-client"
+    src_auth = template["auth"]
+    auth = (
+        realm,
+        new_principal_id,
+        client_id,
+        src_auth[3],  # main_secret_hash, verbatim
+        src_auth[4],  # secondary_secret_hash, verbatim
+        src_auth[5],  # secret_salt, verbatim
+    )
+    return entities, grants, auth, client_id
+
+
+def insert_identities(
+    conn,
+    schema,
+    realm,
+    template,
+    sizes,
+    base,
+    name_prefix=IDENTITY_NAME_PREFIX,
+    on_progress=None,
+):
+    """One authenticable principal per requested size.
+
+    `sizes` is a list of grant-set sizes, e.g. [2, 25, 50, 200]. Each becomes
+    one clone whose principal walks approximately that many privilege grants
+    (approximate because structural grants are always present -- the caller
+    should MEASURE the footprint, never trust the requested number).
+
+    Returns a list of {client_id, principal_id, size_requested, grants_written}
+    -- the caller authenticates each as (client_id, SOURCE_PLAINTEXT_SECRET).
+
+    NOT idempotent, like insert_clones: delete first to re-run. No ON CONFLICT,
+    so an id or client_id collision raises rather than silently under-producing.
+    """
+    from psycopg2.extras import Json, execute_values
+
+    ecols = ", ".join(ENTITY_COLUMNS)
+    gcols = ", ".join(GRANT_COLUMNS)
+    acols = ", ".join(AUTH_COLUMNS)
+    out = []
+
+    for k, size in enumerate(sizes):
+        entities, grants, auth, client_id = clone_identity(
+            template, k, realm, base, size, name_prefix
+        )
+        entities = [
+            tuple(
+                Json(v) if i in (12, 13) and v is not None else v
+                for i, v in enumerate(row)
+            )
+            for row in entities
+        ]
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                f"INSERT INTO {schema}.entities ({ecols}) VALUES %s",  # noqa: S608
+                entities,
+            )
+            if grants:
+                execute_values(
+                    cur,
+                    f"INSERT INTO {schema}.grant_records ({gcols}) "  # noqa: S608
+                    "VALUES %s",
+                    grants,
+                )
+            cur.execute(
+                f"INSERT INTO {schema}.principal_authentication_data ({acols}) "  # noqa: S608
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                auth,
+            )
+        out.append(
+            {
+                "client_id": client_id,
+                "principal_id": auth[1],
+                "size_requested": size,
+                "grants_written": len(grants),
+            }
+        )
+        if on_progress:
+            on_progress(
+                f"  identity {k}: size~{size}, {len(grants)} grants, "
+                f"client_id={client_id}"
+            )
+    return out
+
+
+def delete_identities(conn, schema, realm, prefix=IDENTITY_NAME_PREFIX):
+    """Remove cloned identities INCLUDING their credential rows.
+
+    `delete_clones` does not touch `principal_authentication_data` -- volume
+    clones have none. Identities do, so deletion here clears three tables. The
+    credential rows are keyed by principal_id, resolved from the same name-scoped
+    id set, never an id range.
+    """
+    ids = clone_ids(conn, schema, realm, prefix)
+    if not ids:
+        return {"entities": 0, "grants": 0, "auth": 0}
+    with conn.cursor() as cur:
+        cur.execute(
+            f"DELETE FROM {schema}.principal_authentication_data "  # noqa: S608
+            "WHERE realm_id = %s AND principal_id = ANY(%s)",
+            (realm, ids),
+        )
+        a = cur.rowcount
+        cur.execute(
+            f"DELETE FROM {schema}.grant_records "  # noqa: S608
+            "WHERE realm_id = %s AND (securable_id = ANY(%s) "
+            "  OR grantee_id = ANY(%s))",
+            (realm, ids, ids),
+        )
+        g = cur.rowcount
+        cur.execute(
+            f"DELETE FROM {schema}.entities "  # noqa: S608
+            "WHERE realm_id = %s AND id = ANY(%s)",
+            (realm, ids),
+        )
+        e = cur.rowcount
+    left = clone_counts(conn, schema, realm, prefix)
+    assert left == {"entities": 0, "grants": 0}, f"identities survived: {left}"
+    return {"entities": e, "grants": g, "auth": a}

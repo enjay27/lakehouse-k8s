@@ -112,7 +112,21 @@ class FakeCursor:
     def execute(self, sql, params=None):
         s = " ".join(sql.split())
         self.db.log.append(s)
-        if s.startswith("DELETE FROM") and ".grant_records" in s:
+        if "INSERT INTO polaris_schema.principal_authentication_data" in s:
+            # insert_identities writes the credential row via cur.execute, not
+            # execute_values. params is the 6-tuple in AUTH_COLUMNS order.
+            self.db.auth.append(tuple(params))
+            self.rowcount = 1
+        elif s.startswith("DELETE FROM") and "principal_authentication_data" in s:
+            ids = set(params[1])
+            keep = [a for a in self.db.auth if a[1] not in ids]
+            self.rowcount = len(self.db.auth) - len(keep)
+            self.db.auth = keep
+        elif "FROM polaris_schema.principal_authentication_data" in s:
+            # read_identity_source: WHERE realm_id = %s AND principal_id = %s
+            pid = params[1]
+            self._result = [a for a in self.db.auth if a[1] == pid]
+        elif s.startswith("DELETE FROM") and ".grant_records" in s:
             ids = set(params[1])
             keep = [g for g in self.db.grants if not (g[1] in ids or g[3] in ids)]
             self.rowcount = len(self.db.grants) - len(keep)
@@ -179,9 +193,10 @@ class FakeCursor:
 class FakeDB:
     """entities and grant_records, with the constraints Polaris actually has."""
 
-    def __init__(self, entities=(), grants=()):
+    def __init__(self, entities=(), grants=(), auth=()):
         self.entities = list(entities)
         self.grants = list(grants)
+        self.auth = list(auth)
         self.log = []
 
     def cursor(self):
@@ -211,9 +226,14 @@ class FakeDB:
         return len(rows)
 
 
+#: The source principal's credential row: (realm, principal_id, client_id,
+#: main_hash, secondary_hash, salt). secondary == main, as the bootstrap writes.
+SOURCE_AUTH = (REALM, PRINCIPAL_ID, "user1-client", "HASH", "HASH", "SALT")
+
+
 @pytest.fixture
 def db(monkeypatch):
-    d = FakeDB(template_rows(), template_grants())
+    d = FakeDB(template_rows(), template_grants(), [SOURCE_AUTH])
 
     class _Json:
         def __init__(self, v):
@@ -428,3 +448,117 @@ def test_clone_ids_are_found_by_name_and_parentage(db):
     names = {e[4] for e in db.entities if e[0] in ids}
     assert "ns1" in names and "catalog_admin" in names
     assert len(ids) == 14
+
+
+# ----------------------------------------------------------------------
+# authenticable identities at a chosen grant-set size
+# ----------------------------------------------------------------------
+def _template_with_privileges(n_priv):
+    """A source user-set whose owner_principal holds n_priv privilege grants,
+    each a distinct privilege_code, so size-capping has something to cap."""
+    ents = template_rows()
+    grants = [
+        (0, ROLE_ID, 0, PRINCIPAL_ID, 1, REALM),  # principal -> role
+        (CAT_ID, CAT_ID + 2, 0, ROLE_ID, 1, REALM),  # role -> owner_principal
+        (CAT_ID, CAT_ID, CAT_ID, CAT_ID + 1, 2, REALM),  # catalog_admin
+        (CAT_ID, CAT_ID, 0, SERVICE_ADMIN_ID, 3, REALM),  # service_admin
+    ]
+    # owner_principal (CAT_ID+2) privilege grants, codes 10..10+n
+    for code in range(10, 10 + n_priv):
+        grants.append((CAT_ID, CAT_ID, CAT_ID, CAT_ID + 2, code, REALM))
+    return {
+        "prefix": "user1",
+        "catalog_id": CAT_ID,
+        "ids": {e[0] for e in ents},
+        "entities": ents,
+        "grants": grants,
+        "source_principal_id": PRINCIPAL_ID,
+        "auth": SOURCE_AUTH,
+    }
+
+
+def test_read_identity_source_attaches_the_credential_row(db):
+    t = er.read_identity_source(db, SCHEMA, REALM, "user1")
+    assert t["auth"] == SOURCE_AUTH
+    assert t["source_principal_id"] == PRINCIPAL_ID
+
+
+def test_read_identity_source_refuses_a_principal_with_no_credentials(db):
+    """A clone with no hash to copy could never authenticate — the whole point.
+    Fail loudly at read, not silently at login."""
+    db.auth = []
+    with pytest.raises(LookupError, match="no credential row"):
+        er.read_identity_source(db, SCHEMA, REALM, "user1")
+
+
+def test_auth_chain_finds_the_leaf_catalog_role_from_the_grant_graph():
+    """Which catalog-role the principal holds is computed from the grants, never
+    assumed — the repeated failure mode in this repo."""
+    t = _template_with_privileges(3)
+    chain, leaves = er._principal_auth_chain(t)
+    assert PRINCIPAL_ID in chain and ROLE_ID in chain
+    assert leaves == {CAT_ID + 2}  # owner_principal, not catalog_admin
+
+
+def test_size_cap_trims_privilege_grants_but_keeps_structural_ones():
+    t = _template_with_privileges(10)
+    _, leaves = er._principal_auth_chain(t)
+    kept = er._size_capped_grants(t, leaves, size=3)
+    priv = [g for g in kept if g[3] in leaves]
+    structural = [g for g in kept if g[3] not in leaves]
+    assert len(priv) == 3
+    assert len(structural) == 4  # role assignments + catalog_admin + service_admin
+
+
+def test_size_cap_is_a_prefix_so_sizes_are_monotone():
+    """Size K for one identity must be a subset of size K'>K for another, or the
+    axis is a random scatter instead of a curve."""
+    t = _template_with_privileges(10)
+    _, leaves = er._principal_auth_chain(t)
+    small = {g[4] for g in er._size_capped_grants(t, leaves, 3) if g[3] in leaves}
+    big = {g[4] for g in er._size_capped_grants(t, leaves, 6) if g[3] in leaves}
+    assert small < big
+
+
+def test_size_none_keeps_every_grant():
+    t = _template_with_privileges(10)
+    assert (
+        er._size_capped_grants(t, er._principal_auth_chain(t)[1], None) == t["grants"]
+    )
+
+
+def test_clone_identity_copies_hash_and_salt_verbatim_under_a_new_id():
+    t = _template_with_privileges(5)
+    ents, grants, auth, client_id = er.clone_identity(t, 0, REALM, 9 * 10**18, size=2)
+    realm, pid, cid, mainh, sech, salt = auth
+    assert (mainh, sech, salt) == ("HASH", "HASH", "SALT")  # verbatim
+    assert pid != PRINCIPAL_ID and cid == client_id  # new identity
+    assert client_id == "idclone0-client"
+
+
+def test_insert_identities_writes_one_authenticable_principal_per_size(db):
+    t = er.read_identity_source(db, SCHEMA, REALM, "user1")
+    # give the source several privilege grants so sizes differ
+    t = _template_with_privileges(50)
+    base, _ = er.find_clone_band(db, SCHEMA, REALM, 4)
+    out = er.insert_identities(db, SCHEMA, REALM, t, [2, 25, 50], base)
+    assert [o["size_requested"] for o in out] == [2, 25, 50]
+    assert len({o["client_id"] for o in out}) == 3  # distinct client_ids
+    # one credential row per identity
+    assert len(db.auth) == 1 + 3  # source + three clones
+    # bigger size => more grant rows written
+    assert out[0]["grants_written"] < out[2]["grants_written"]
+
+
+def test_delete_identities_clears_credentials_too(db):
+    t = _template_with_privileges(50)
+    base, _ = er.find_clone_band(db, SCHEMA, REALM, 3)
+    er.insert_identities(db, SCHEMA, REALM, t, [2, 25], base)
+    assert len(db.auth) == 3  # source + 2
+    removed = er.delete_identities(db, SCHEMA, REALM)
+    assert removed["auth"] == 2  # both clone credentials gone
+    assert len(db.auth) == 1  # source survives — it is real, not prefixed
+    assert er.clone_counts(db, SCHEMA, REALM, er.IDENTITY_NAME_PREFIX) == {
+        "entities": 0,
+        "grants": 0,
+    }
