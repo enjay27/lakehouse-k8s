@@ -31,6 +31,7 @@ from polaris_seed import (
     delete_catalog_fully,
     empty_catalog,
     find_strays,
+    ledger_shortfall,
     require_local,
     revert_grants,
 )
@@ -627,6 +628,56 @@ def test_ledger_write_is_atomic(small_spec, ledger_path):
     seed(p, FakeIceberg(p), small_spec, ledger_path)
     assert not Path(ledger_path + ".tmp").exists()
     json.loads(Path(ledger_path).read_text(encoding="utf-8"))
+
+
+# ----------------------------------------------------------------------
+# ledger_shortfall -- the seed path's version of "a changed target
+# invalidates the record". A resumed seed skips finished users, so a ledger
+# written at 25 grants silently under-delivers a 50-grant run.
+# ----------------------------------------------------------------------
+def test_shortfall_absent_ledger_is_safe(tmp_path):
+    assert ledger_shortfall(str(tmp_path / "nope.json"), 50) is None
+
+
+def test_shortfall_empty_ledger_is_safe(ledger_path):
+    Ledger(ledger_path).set_spec(SeedSpec(n_users=3))
+    assert ledger_shortfall(ledger_path, 50) is None
+
+
+def test_shortfall_detects_a_ledger_that_cannot_deliver(small_spec, ledger_path):
+    p = FakePolaris()
+    seed(p, FakeIceberg(p), small_spec, ledger_path)  # 3 users at 25 grants
+
+    n_short, recorded, n_done = ledger_shortfall(ledger_path, 50)
+    assert (n_short, recorded, n_done) == (3, len(CORE_CATALOG_PRIVILEGES), 3)
+
+
+def test_shortfall_is_none_when_the_ledger_already_meets_the_target(tmp_path):
+    lp = str(tmp_path / "fifty.json")
+    spec = SeedSpec(n_users=3, create_tables=False, privileges=catalog_privileges(50))
+    p = FakePolaris()
+    seed(p, FakeIceberg(p), spec, lp)
+
+    assert ledger_shortfall(lp, 50) is None
+    # A LARGER recorded set is fine too -- the run asks for less than it has.
+    assert ledger_shortfall(lp, 25) is None
+
+
+def test_shortfall_counts_a_completed_upgrade(small_spec, ledger_path):
+    """An upgraded user holds the target however few grants the seed wrote.
+
+    Refusing a fixture that `upgrade_grants` has already raised is the failure
+    mode that gets a guard deleted, so it is pinned here.
+    """
+    p = FakePolaris()
+    seed(p, FakeIceberg(p), small_spec, ledger_path)
+    assert ledger_shortfall(ledger_path, 50) is not None
+
+    upgrade_grants(p, small_spec, grants_per_role=50, ledger_path=ledger_path)
+    assert ledger_shortfall(ledger_path, 50) is None
+
+    # ...but only for THAT target. A 50-grant upgrade does not cover 51.
+    assert ledger_shortfall(ledger_path, 51) is not None
 
 
 # ----------------------------------------------------------------------

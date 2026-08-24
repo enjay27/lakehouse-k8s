@@ -29,6 +29,12 @@ additively (see `CATALOG_PRIVILEGES`: the deployed enum has ~51 names, not the
 25 this module once believed), and `revert_grants()` puts it back. Neither
 touches `entities`; both are resumable from the same ledger.
 
+`SeedSpec.privileges` still defaults to the 25-name `CORE_CATALOG_PRIVILEGES`,
+because every existing ledger, report and expected-count projection means that
+list by "baseline". The CLI (`seed_polaris.py`) resolves its own default to 50
+and passes it in, so a NEW fixture is built at production shape in one pass and
+`upgrade_grants()` is left for raising a fixture that already exists.
+
     ~= 16,000 entities rows and ~16,000 grant_records rows at the default
     privilege set. The grant_records volume is the point: it is the table
     whose grantee access path is under suspicion, and a realm with thousands
@@ -522,6 +528,51 @@ class Ledger:
             return None
         known = {f.name for f in fields(SeedSpec)}
         return SeedSpec(**{k: v for k, v in d.items() if k in known})
+
+
+def ledger_shortfall(ledger_path, target):
+    """Users a resumed seed would leave short of `target` grants per role.
+
+    Returns `None` when a seed at `target` is safe, or
+    `(n_short, recorded_per_role, n_done)` when it is not.
+
+    WHY THIS EXISTS. `seed()` skips every user in `Ledger.done_users`, and the
+    ledger records only THAT a user was built -- never how many grants it got.
+    So a 50-grant seed resumed against a ledger written by a 25-grant pass
+    writes nothing at all and reports 1,000 skipped: a fixture 25,000 rows
+    short of what the operator asked for, short in the one table the audit is
+    about, and indistinguishable from success in the output.
+
+    This is the rule `Ledger.upgraded_users` already applies to the upgrade
+    target -- a changed target invalidates the record -- applied to the seed
+    path, which never had it.
+
+    `upgrade_grants` IS counted: a user recorded under a completed upgrade to
+    this same target already holds `target` grants, whatever the seed spec
+    says. Ignoring that would refuse a perfectly sound fixture, which is the
+    failure mode that gets a guard deleted.
+
+    Args:
+        ledger_path: path to the JSON ledger. A missing or empty one is safe.
+        target: grants per owner role this run intends to produce.
+
+    Returns:
+        None, or (n_short, recorded_per_role, n_done).
+    """
+    if not ledger_path or not os.path.exists(ledger_path):
+        return None
+    ledger = Ledger(ledger_path)
+    done = ledger.done_users
+    if not done:
+        return None
+    spec = ledger.spec()
+    recorded = len(spec.privileges) if spec and spec.privileges else 0
+    if recorded >= target:
+        return None
+    short = done - ledger.upgraded_users(target)
+    if not short:
+        return None
+    return len(short), recorded, len(done)
 
 
 # ----------------------------------------------------------------------

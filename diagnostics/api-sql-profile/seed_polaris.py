@@ -4,7 +4,8 @@
 WHY A CLI AND NOT JUST THE NOTEBOOK
 -----------------------------------
 Notebook 01 can run this (cells 10-12, RUN_SEED = True). But the seed is
-~17,000 API calls over 10-30 minutes, and a notebook cell that long is exposed
+~42,000 API calls over 30-60 minutes at the default 50 grants per role, and a
+notebook cell that long is exposed
 to kernel restarts, browser sleep, and losing the output buffer. Running it here
 keeps the notebook for the part that actually needs to be interactive -- the
 trace and the EXPLAIN work -- and lets the seed survive a closed laptop under
@@ -17,19 +18,25 @@ re-run either, nothing is created twice.
 FIXTURE (project decision #9)
 -----------------------------
 1,000 principals, each with a principal-role, a catalog, a catalog-role, and an
-`owner_principal` role holding all catalog privileges. Two namespaces per
-catalog, five tables per namespace.
+`owner_principal` role holding **50 catalog-scoped privileges** -- the
+production shape. Two namespaces per catalog, five tables per namespace.
+
+    --grants-per-role N   defaults to 50 everywhere. Pass a smaller n for a
+                          thin fixture; `catalog_privileges` slices the
+                          spec-ordered enum, so any larger n is a strict
+                          superset of any smaller one.
 
     --no-tables   (DEFAULT) metadata only: ~10x faster, skips 10,000 Iceberg
                   tables and their MinIO objects, but STILL fully populates
-                  grant_records (~25,000 rows) -- which is the table the
-                  grantee-index hypothesis is actually about.
+                  grant_records (~50,000 granted rows at the default 50
+                  grants/role) -- which is the table the grantee-index
+                  hypothesis is actually about.
     --tables      the full fixture. Slower, and heavier on connections:
                   PostgreSQL max_connections is 100 against a JDBC pool of 300.
 
 USAGE
 -----
-    python3 seed_polaris.py                 # default 1000 users, no tables
+    python3 seed_polaris.py                 # 1000 users x 50 grants, no tables
     python3 seed_polaris.py --users 200     # a smaller trial run first
     python3 seed_polaris.py --tables        # full fixture
     python3 seed_polaris.py --teardown      # remove everything it created
@@ -40,20 +47,33 @@ Interrupt it with Ctrl-C at any time; re-run to continue from the ledger.
 
 PRODUCTION GRANT VOLUME
 -----------------------
-25 grants per role is not a production shape; a real catalog role holds ~50.
-These raise an EXISTING fixture rather than rebuilding it (a rebuild costs far
-more and re-triggers the non-atomic catalog bug), and touch grant_records only:
+25 grants per role is not a production shape; a real catalog role holds ~50, so
+50 is what a fresh seed writes -- in ONE pass, not a 25-grant seed followed by
+25,000 more PUTs into the same table.
+
+The upgrade path is for a fixture that ALREADY EXISTS: it raises it in place
+rather than rebuilding (a rebuild costs far more and re-triggers the non-atomic
+catalog bug), and touches grant_records only:
 
     python3 seed_polaris.py --probe-privileges          # FIRST: what does this
                                                         # build actually accept?
     python3 seed_polaris.py --upgrade-grants --dry-run  # the per-role diff
     python3 seed_polaris.py --upgrade-grants            # ~26,000 calls, ~20 min
     python3 seed_polaris.py --verify --grants-per-role 50
-    python3 seed_polaris.py --revert-grants             # back to the baseline
+    python3 seed_polaris.py --revert-grants             # back to the 25 baseline
 
-Run `ANALYZE grant_records` after any of these. Without it the planner works
-from stale reltuples and may pick a plan the data no longer justifies — which
-looks exactly like a finding.
+Run `ANALYZE grant_records` after ANY of these, the seed included. Without it
+the planner works from stale reltuples and may pick a plan the data no longer
+justifies — which looks exactly like a finding.
+
+A LEDGER CAN OUTRANK THE TARGET
+-------------------------------
+`seed()` skips every user the ledger marks done, and the ledger records only
+THAT a user was built, not how many grants it got. A 50-grant seed resumed
+against a 25-grant ledger therefore writes nothing and reports "1,000 skipped"
+— a fixture 25,000 rows short, in the table under audit, that reads as success.
+This refuses instead, and prints the two ways out. See
+`polaris_seed.ledger_shortfall`.
 """
 
 import argparse
@@ -87,6 +107,7 @@ from polaris_seed import (
     delete_catalog_fully,
     ensure_catalog,
     find_strays,
+    ledger_shortfall,
     probe_privileges,
     revert_grants,
     seed,
@@ -102,6 +123,12 @@ ROOT_CLIENT = os.environ.get("POLARIS_ROOT_CLIENT", "root")
 ROOT_SECRET = os.environ.get("POLARIS_ROOT_SECRET", "polaris-secret")
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://192.168.139.2:9000")
 BUCKET = os.environ.get("MINIO_BUCKET", "data-catalog-bucket")
+
+#: Grants per `owner_principal` role, for EVERY path this CLI offers.
+#: 50 is the production shape (a real catalog role holds roughly that many);
+#: `CORE_CATALOG_PRIVILEGES`' 25 remain the revert target and the meaning of
+#: "baseline" in every ledger and report written before this default changed.
+GRANTS_PER_ROLE_DEFAULT = 50
 
 
 def ledger_path():
@@ -146,6 +173,37 @@ def make_progress(total):
         )
 
     return on_progress
+
+
+def refuse_on_short_ledger(lp, target):
+    """Exit rather than run a seed the ledger will silently under-deliver.
+
+    `seed()` skips every user the ledger marks done and the ledger does not
+    record how many grants each got, so a 50-grant seed resumed against a
+    25-grant ledger writes NOTHING, reports "1,000 skipped", and leaves the
+    table under audit 25,000 rows short. Printing the two ways out is the
+    whole point -- a bare refusal would just get worked around.
+    """
+    short = ledger_shortfall(str(lp), target)
+    if not short:
+        return
+    n_short, recorded, n_done = short
+    print(f"REFUSING to seed: the ledger cannot deliver {target} grants/role.")
+    print()
+    print(f"  {lp}")
+    print(f"  records {n_done} finished user(s) at {recorded} grants per role,")
+    print(f"  {n_short} of which have not been upgraded to {target}.")
+    print()
+    print("  seed() SKIPS every user the ledger marks done, so this run would")
+    print(f"  write nothing and report {n_done} skipped, leaving the fixture")
+    print(f"  ~{n_short * (target - recorded):,} grant_records rows short — short in")
+    print("  the one table the audit is about, and looking like success.")
+    print()
+    print("  raise the existing fixture:")
+    print(f"      python3 seed_polaris.py --upgrade-grants --grants-per-role {target}")
+    print("  or build a new one from scratch:")
+    print(f"      mv {lp} {lp}.{recorded}grants")
+    sys.exit(2)
 
 
 def main():
@@ -195,11 +253,12 @@ def main():
     ap.add_argument(
         "--grants-per-role",
         type=int,
-        default=None,
-        help="target grants per owner_principal role. Defaults to 50 for "
-        f"--upgrade-grants and to the {len(CORE_CATALOG_PRIVILEGES)}-name "
-        "baseline everywhere else. Pass it with --verify to check counts "
-        "against an upgraded fixture.",
+        default=GRANTS_PER_ROLE_DEFAULT,
+        help=f"target grants per owner_principal role (default "
+        f"{GRANTS_PER_ROLE_DEFAULT}, the production shape). Applies to every "
+        f"path — seed, --upgrade-grants and --verify alike. Pass a smaller n "
+        f"for a thin fixture; --revert-grants always returns to the "
+        f"{len(CORE_CATALOG_PRIVILEGES)}-name baseline.",
     )
     ap.add_argument(
         "--dry-run",
@@ -208,16 +267,20 @@ def main():
     )
     args = ap.parse_args()
 
-    # One flag, two defaults: the spec keeps today's 25-grant shape unless
-    # asked otherwise, while the upgrade pass targets 50. Resolving both from
-    # `None` here means --verify --grants-per-role 50 checks the upgraded
-    # fixture, instead of reporting a 25,000-row shortfall that is not real.
-    spec_privileges = (
-        catalog_privileges(args.grants_per_role)
-        if args.grants_per_role
-        else list(CORE_CATALOG_PRIVILEGES)
-    )
-    upgrade_target = args.grants_per_role or 50
+    # ONE default for every path. The old split -- 25 for a seed, 50 for the
+    # upgrade -- made the documented flow permanently two passes: write 25,000
+    # grant_records rows, then PUT 25,000 more into the same table. It also
+    # meant `--verify` and the seed disagreed about what the fixture was
+    # supposed to be unless the operator remembered to pass the flag twice.
+    #
+    # `catalog_privileges(n)` slices the spec-ordered enum, so 50 is a strict
+    # SUPERSET of the 25 an existing fixture holds (test_polaris_seed pins
+    # that). The upgrade stays additive; --revert-grants still returns to the
+    # 25-name CORE baseline, which is what every older ledger and report means
+    # by "baseline".
+    target = args.grants_per_role
+    spec_privileges = catalog_privileges(target)
+    upgrade_target = target
 
     spec = SeedSpec(
         n_users=args.users,
@@ -228,6 +291,24 @@ def main():
         privileges=spec_privileges,
     )
     lp = ledger_path()
+
+    # BEFORE connect(): a ledger that cannot deliver the target is a local
+    # fact, and refusing on it needs no cluster. Only the seed path is
+    # affected -- every other mode either reads the fixture or rewrites the
+    # grants directly, and none of them consult `Ledger.done_users`.
+    seeding = not any(
+        (
+            args.cleanup_probes,
+            args.probe_privileges,
+            args.upgrade_grants,
+            args.revert_grants,
+            args.verify,
+            args.teardown,
+        )
+    )
+    if seeding:
+        refuse_on_short_ledger(lp, target)
+
     pc, ic = connect()
 
     print(f"polaris : {POLARIS_URL}  realm={REALM}")

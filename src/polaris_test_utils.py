@@ -256,99 +256,99 @@ def ensure_watchdog_setup():
     print("🔧 Checking watchdog setup (realm: POLARIS)...")
 
     # 1. Principal
-    principals = (
-        requests.get(f"{BASE_MGMT}/principals", headers=h(tok))
-        .json()
-        .get("principals", [])
-    )
-    existing = next((p for p in principals if p["name"] == WATCHDOG_PRINCIPAL), None)
-
-    client_secret = None
-    if existing:
-        print(f"  ✅ principal exists: {WATCHDOG_PRINCIPAL}")
-        client_id = existing.get("clientId", WATCHDOG_PRINCIPAL)
-    else:
-        r = create_principal(name=WATCHDOG_PRINCIPAL, token=tok)
-        assert r.status_code in (
-            200,
-            201,
-        ), f"create_principal failed: {r.status_code} {r.text}"
-        body = r.json()
-        client_id = body.get("principal", {}).get("clientId", WATCHDOG_PRINCIPAL)
-        client_secret = body.get("credentials", {}).get("clientSecret")
-        print(f"  ✅ principal created: {WATCHDOG_PRINCIPAL}")
-        print(f"     clientId:     {client_id}")
-        print(f"     clientSecret: {client_secret}")
-        print("     ⚠️  Save this secret — Polaris will not show it again.")
+    # principals = (
+    #     requests.get(f"{BASE_MGMT}/principals", headers=h(tok))
+    #     .json()
+    #     .get("principals", [])
+    # )
+    # existing = next((p for p in principals if p["name"] == WATCHDOG_PRINCIPAL), None)
+    #
+    # client_secret = None
+    # if existing:
+    #     print(f"  ✅ principal exists: {WATCHDOG_PRINCIPAL}")
+    #     client_id = existing.get("clientId", WATCHDOG_PRINCIPAL)
+    # else:
+    #     r = create_principal(name=WATCHDOG_PRINCIPAL, token=tok)
+    #     assert r.status_code in (
+    #         200,
+    #         201,
+    #     ), f"create_principal failed: {r.status_code} {r.text}"
+    #     body = r.json()
+    #     client_id = body.get("principal", {}).get("clientId", WATCHDOG_PRINCIPAL)
+    #     client_secret = body.get("credentials", {}).get("clientSecret")
+    #     print(f"  ✅ principal created: {WATCHDOG_PRINCIPAL}")
+    #     print(f"     clientId:     {client_id}")
+    #     print(f"     clientSecret: {client_secret}")
+    #     print("     ⚠️  Save this secret — Polaris will not show it again.")
 
     # 2. Principal role
-    pr_list = (
-        requests.get(f"{BASE_MGMT}/principal-roles", headers=h(tok))
-        .json()
-        .get("roles", [])
-    )
-    if any(pr["name"] == WATCHDOG_PR for pr in pr_list):
-        print(f"  ✅ principal role exists: {WATCHDOG_PR}")
-    else:
-        r = create_principal_role(name=WATCHDOG_PR, token=tok)
-        assert r.status_code in (
-            200,
-            201,
-        ), f"create_principal_role failed: {r.status_code} {r.text}"
-        print(f"  ✅ principal role created: {WATCHDOG_PR}")
+    # pr_list = (
+    #     requests.get(f"{BASE_MGMT}/principal-roles", headers=h(tok))
+    #     .json()
+    #     .get("roles", [])
+    # )
+    # if any(pr["name"] == WATCHDOG_PR for pr in pr_list):
+    #     print(f"  ✅ principal role exists: {WATCHDOG_PR}")
+    # else:
+    #     r = create_principal_role(name=WATCHDOG_PR, token=tok)
+    #     assert r.status_code in (
+    #         200,
+    #         201,
+    #     ), f"create_principal_role failed: {r.status_code} {r.text}"
+    #     print(f"  ✅ principal role created: {WATCHDOG_PR}")
 
     # 3. Assign principal role to principal (idempotent — PUT is safe to repeat)
     r = assign_principal_role_to_principal(
-        principal=WATCHDOG_PRINCIPAL, pr=WATCHDOG_PR, token=tok
+        principal='user11_principal', pr=WATCHDOG_PR, token=tok
     )
     print(f"  ✅ principal role assigned ({r.status_code})")
 
     # 4. Catalog
-    catalogs = (
-        requests.get(f"{BASE_MGMT}/catalogs", headers=h(tok)).json().get("catalogs", [])
-    )
-    if any(c["name"] == WATCHDOG_CATALOG for c in catalogs):
-        print(f"  ✅ catalog exists: {WATCHDOG_CATALOG}")
-    else:
-        r = create_catalog(name=WATCHDOG_CATALOG, token=tok)
-        assert r.status_code in (
-            200,
-            201,
-        ), f"create_catalog failed: {r.status_code} {r.text}"
-        print(f"  ✅ catalog created: {WATCHDOG_CATALOG}")
-
-    # 5. Catalog role
-    cr_list = (
-        requests.get(
-            f"{BASE_MGMT}/catalogs/{WATCHDOG_CATALOG}/catalog-roles", headers=h(tok)
-        )
-        .json()
-        .get("roles", [])
-    )
-    if any(cr["name"] == WATCHDOG_CR for cr in cr_list):
-        print(f"  ✅ catalog role exists: {WATCHDOG_CR}")
-    else:
-        r = create_catalog_role(catalog=WATCHDOG_CATALOG, name=WATCHDOG_CR, token=tok)
-        assert r.status_code in (
-            200,
-            201,
-        ), f"create_catalog_role failed: {r.status_code} {r.text}"
-        print(f"  ✅ catalog role created: {WATCHDOG_CR}")
-
-    # 6. Grant + assign (idempotent — safe to repeat)
-    grant_privilege(
-        catalog=WATCHDOG_CATALOG,
-        cr=WATCHDOG_CR,
-        privilege="CATALOG_MANAGE_CONTENT",
-        token=tok,
-    )
-    assign_catalog_role_to_principal_role(
-        catalog=WATCHDOG_CATALOG, pr=WATCHDOG_PR, cr=WATCHDOG_CR, token=tok
-    )
-    print(f"  ✅ grants verified")
-
-    print("🔧 Watchdog setup complete (realm: POLARIS)\n")
-    return client_id, client_secret
+    # catalogs = (
+    #     requests.get(f"{BASE_MGMT}/catalogs", headers=h(tok)).json().get("catalogs", [])
+    # )
+    # if any(c["name"] == WATCHDOG_CATALOG for c in catalogs):
+    #     print(f"  ✅ catalog exists: {WATCHDOG_CATALOG}")
+    # else:
+    #     r = create_catalog(name=WATCHDOG_CATALOG, token=tok)
+    #     assert r.status_code in (
+    #         200,
+    #         201,
+    #     ), f"create_catalog failed: {r.status_code} {r.text}"
+    #     print(f"  ✅ catalog created: {WATCHDOG_CATALOG}")
+    #
+    # # 5. Catalog role
+    # cr_list = (
+    #     requests.get(
+    #         f"{BASE_MGMT}/catalogs/{WATCHDOG_CATALOG}/catalog-roles", headers=h(tok)
+    #     )
+    #     .json()
+    #     .get("roles", [])
+    # )
+    # if any(cr["name"] == WATCHDOG_CR for cr in cr_list):
+    #     print(f"  ✅ catalog role exists: {WATCHDOG_CR}")
+    # else:
+    #     r = create_catalog_role(catalog=WATCHDOG_CATALOG, name=WATCHDOG_CR, token=tok)
+    #     assert r.status_code in (
+    #         200,
+    #         201,
+    #     ), f"create_catalog_role failed: {r.status_code} {r.text}"
+    #     print(f"  ✅ catalog role created: {WATCHDOG_CR}")
+    #
+    # # 6. Grant + assign (idempotent — safe to repeat)
+    # grant_privilege(
+    #     catalog=WATCHDOG_CATALOG,
+    #     cr=WATCHDOG_CR,
+    #     privilege="CATALOG_MANAGE_CONTENT",
+    #     token=tok,
+    # )
+    # assign_catalog_role_to_principal_role(
+    #     catalog=WATCHDOG_CATALOG, pr=WATCHDOG_PR, cr=WATCHDOG_CR, token=tok
+    # )
+    # print(f"  ✅ grants verified")
+    #
+    # print("🔧 Watchdog setup complete (realm: POLARIS)\n")
+    # return client_id, client_secret
 
 
 def reset_watchdog_principal():
