@@ -98,33 +98,89 @@ replica.
 
 ### Phase 1 — seed (Kade)
 
-1,000 principals with catalogs, namespaces, tables, views, privileges:
+**Resolved 2026-08-31: no real Iceberg tables.** The goal is SQL inspection, so
+the fixture exists to supply *volume*, not API targets. Coverage comes from
+somewhere else entirely — notebook 01 creates and tears down its **own** probe
+catalog (`apiprofile<ts>_cat`, `probe_ns`, `probe_tbl`, `probe_tbl2`,
+`probe_view`) and drives all 44 APIs against those. So `--tables` (10,000 Iceberg
+tables, slow) buys nothing this task needs.
 
 ```bash
 python3 seed_polaris.py --users 1000 \
-    --views-per-namespace N \
-    --generic-tables-per-namespace N \
-    --policies-per-namespace N
+    --views-per-namespace 5 \
+    --generic-tables-per-namespace 5 \
+    --policies-per-namespace 2
+#   no --tables; --grants-per-role stays at the default 50
 ```
 
-Notes, each one a known trap:
+### Why those numbers — each one is picked to make a table's shapes readable
 
-- **`--tables` creates 10,000 Iceberg tables and is slow.** Decide deliberately
-  whether the table APIs need real Iceberg tables or whether generic tables are
-  enough for plan shape. (Plan shape depends on row counts and predicates, not on
-  whether a table has Iceberg metadata behind it.)
+The 27 shapes are not evenly spread. 18 of them hit `entities`, and a fixture
+that leaves `entities` thin makes two thirds of the report unreadable for the
+reason in §3.
+
+| table | shapes | rows at this fixture | comment |
+|---|---:|---:|---|
+| `entities` | 18 | **~30,000** | 1,000 × (principal + principal_role + catalog + catalog_role + 2 ns) ≈ 6,000, **plus** 2 ns × 5 views × 1,000 = 10,000 and the same again in generic tables |
+| `grant_records` | 4 | **~52,000** | 52/principal at the default 50 grants/role — already far past the ~3–5K crossover measured 2026-08-22 |
+| `policy_mapping_record` | 2 | ~4,000 | **only if policies actually seed — see the warning below** |
+| `principal_authentication_data` | 3 | **1,000** | 1:1 with principals and cannot be grown independently |
+
+Without the views and generic tables, `entities` lands near ~6,000 — inside the
+band where `entities_pkey` / `idx_entities` can cover a query by accident of
+width, which is precisely the 02c failure in §3. 5 and 5 per namespace is the
+cheapest lever that pushes it clear.
+
+**`principal_authentication_data` stays small by construction.** It holds one row
+per principal, so at 1,000 principals it is 1,000 rows and no fixture choice
+changes that. Its 3 shapes must be reported as *volume-limited*: a trivial plan
+there is a statement about a 1,000-row table, not about Polaris.
+
+**Policies are a known unknown — probe before trusting the number.** Policies are
+feature-flagged in 1.3, and this repo has already seen them seed as **zero** while
+`GET /policies` answered 200 (feature on, payload wrong). Run
+`seed_polaris.py --probe-policy` first to find the `type` string this build
+accepts. If policies cannot be seeded, `policy_mapping_record` stays empty and its
+2 shapes must be reported as **not measurable at this fixture** — never as a plan,
+because every plan against an empty table looks the same and means nothing.
+
+Other traps, unchanged:
+
 - **A short ledger silently writes nothing.** `seed()` skips every user in
-  `Ledger.done_users` and the ledger records only *that* a user was built, never
+  `Ledger.done_users`, and the ledger records only *that* a user was built, never
   how many grants it got. `refuse_on_short_ledger()` guards the known case; a
   fresh `--prefix` avoids the question entirely.
 - **The seeder discards credentials.** Seeded client_ids exist only in
-  `principal_authentication_data`; anything authenticating as a seeded principal
-  reads them from there.
-- **Record the measured volume**, `count(*)` per table, not the projected one.
-  Every figure downstream is relative to it. The realm has grown ~10% between
-  passes before.
+  `principal_authentication_data`.
+- **Record the measured volume**, `count(*)` per table, not the projected one —
+  and take it *after* Phase 2, since 01 leaks 4 entities per run.
 
 ### Phase 2 — regenerate the matrix at the seeded volume (Kade)
+
+**Resolved: yes — but archive the current matrix first, and the archive has to be
+a TRACKED file.**
+
+`reports/.gitignore` is `*.md` with `!doc-*-latest.md`, so **only
+`doc-api-sql-matrix-latest.md` is tracked**. The timestamped twin
+`doc-api-sql-matrix-20260820-172931.md` is byte-identical (same md5) but
+**gitignored**, so it would not survive a clean checkout. Notebook 01 overwrites
+`-latest` in place. Git history would still hold the old blob, but recovering the
+pre-reseed matrix would mean knowing to go looking for it in a past revision —
+and the two matrices are worth sitting side by side, since the whole point of
+regenerating is that the volume and parameters differ.
+
+So, before running 01:
+
+```bash
+cd diagnostics/api-sql-profile/reports
+# un-ignore the pinned baseline, then force-add it
+printf '!doc-api-sql-matrix-20260820-172931.md\n' >> .gitignore
+git add -f doc-api-sql-matrix-20260820-172931.md .gitignore
+```
+
+Commit that as its own change *before* 01 runs. Then the 2026-08-20 root-driven
+matrix is pinned in the tree under its own timestamp, and `-latest` is free to be
+overwritten.
 
 Re-run `01_api_access_map.ipynb`. It refreshes
 `reports/doc-api-sql-matrix-latest.md` with the same 44 APIs, now with **live
@@ -265,13 +321,16 @@ the tooling against the banked captures while you seed.
 
 ---
 
-## 6. Open questions for sign-off
+## 6. Sign-off — resolved 2026-08-31
 
-1. **Tables:** do the table APIs need real Iceberg tables (`--tables`, 10,000 of
-   them, slow), or are generic tables enough? Plan shape does not care; only
-   `count(*)` does.
-2. **Views / policies / generic tables per namespace:** what N? The last
-   full-surface fixture used 5 tables, 2 views, 1 policy, 1 generic table per
-   namespace at n=100.
-3. **Phase 2:** re-run notebook 01 (recommended — live params), or keep the
-   existing matrix and re-parameterize in code?
+1. **Real Iceberg tables?** No. SQL inspection only; the fixture supplies volume
+   and notebook 01's own probe entities supply API coverage. `--tables` dropped.
+2. **N per namespace?** Chosen here rather than asked back: **5 views, 5 generic
+   tables, 2 policies**, reasoned per table in Phase 1. Change any of them and the
+   only thing that moves is how readable that table's shapes are.
+3. **Regenerate the matrix?** Yes — with the pinned archive committed first, per
+   Phase 2.
+
+**Still needs Kade before Phase 4:** a proven-restorable dump (Phase 0), and the
+`--probe-policy` result, which decides whether `policy_mapping_record`'s 2 shapes
+are measurable at all.
