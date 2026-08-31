@@ -1144,6 +1144,194 @@ def parse_api_matrix(text, read_only=True):
     return out
 
 
+#: One statement inside a per-API detail block. The report renders every
+#: statement identically -- verified 2026-08-31 across all 513 in
+#: `doc-api-sql-matrix-latest.md`: one header shape, four verbs, the table
+#: always in backticks (never a dash), and a `params:` line on every single one.
+#: So a miss here is a PARSING fault, not a statement without parameters, and
+#: `parse_api_statements` refuses rather than returning a short list.
+_MATRIX_STATEMENT = re.compile(
+    r"^\*\*\[(?P<idx>\d+)\]\*\* `(?P<table>[^`]*)` · (?P<verb>[A-Z]+) ·[^\n]*\n"
+    r"\n```sql\n(?P<sql>.*?)\n```\n"
+    r"params: `(?P<params>[^`]*)`",
+    re.M | re.S,
+)
+
+#: Counted independently of the parser, so the two can DISAGREE. Deriving the
+#: expected count from the same regex that does the parsing would make the
+#: check vacuous -- it would only ever confirm that the parser agrees with
+#: itself.
+_MATRIX_STATEMENT_HEADER = re.compile(r"^\*\*\[\d+\]\*\*", re.M)
+
+#: Not an API. `01` records its own setup calls under this heading.
+_MATRIX_NON_API = ("preflight",)
+
+
+@dataclass
+class ApiStatement:
+    """One (SQL, parameters) PAIR from a matrix report, and the APIs issuing it.
+
+    THE UNIT IS THE PAIR, NOT THE SQL TEXT. Measured in
+    `doc-api-sql-matrix-latest.md`: 505 statement instances across 43 APIs
+    collapse to 27 distinct SQL texts but **115 distinct (SQL, params) pairs**,
+    and 20 of those 27 texts carry more than one parameter set -- one carries
+    13.
+
+    That distinction is the whole reason this class exists. PostgreSQL
+    estimates selectivity from parameter VALUES, so one text can plan as a Seq
+    Scan with one parameter and an Index Scan with another. Grouping by text
+    would EXPLAIN each text once against an arbitrary parameter set, discard
+    the other 88 pairs, and report the result as "the plan for this API" --
+    and nothing downstream would show that 88 plans were never taken.
+
+    `sql` is the RAW recorded text, not `normalize_sql` output: this is what
+    gets replayed. It is kept atomic with `params` from the same occurrence for
+    the reason `StatementProfile` documents -- parameters from a different
+    occurrence can disagree on placeholder count, and a mismatched replay is
+    worse than a refused one.
+    """
+
+    sql: str
+    params: str
+    table: str
+    verb: str
+    #: {api label: [instance index within that API's block, ...]}. A list, not
+    #: a count, so a caller can map every instance back to its pair and assert
+    #: that none went missing.
+    apis: dict = field(default_factory=dict)
+
+    @property
+    def key(self):
+        """Grouping key: whitespace-normalised SQL plus the exact parameters."""
+        return (re.sub(r"\s+", " ", self.sql).strip(), self.params)
+
+    @property
+    def occurrences(self):
+        return sum(len(v) for v in self.apis.values())
+
+    @property
+    def params_observed(self):
+        return bool(self.params) and REDACTED not in self.params
+
+    @property
+    def replayable(self):
+        """Same test as `StatementProfile.replayable`, and for the same reason.
+
+        Placeholder count must match parameter count. `INSERT ... VALUES` rows
+        in this report carry JSON blobs containing commas, so a naive split
+        over-counts -- the check catches that rather than sending a replay with
+        the wrong arity, which would either error or, worse, succeed against a
+        different statement than the one being reported.
+        """
+        if not (self.sql and self.params_observed):
+            return False
+        return self.sql.count("?") == len(param_tuple(self.params))
+
+    def replay(self):
+        """(sql, params) ready for psycopg2, or (None, None) if not replayable."""
+        if not self.replayable:
+            return None, None
+        return to_psycopg(self.sql), param_tuple(self.params)
+
+
+@dataclass
+class MatrixStatements:
+    """Every (SQL, params) pair a matrix report records, plus the parse audit.
+
+    `unparsed` is the point of the audit. This repo has already watched a wrong
+    JSON key read as an empty collection and a full namespace report "holds
+    none". A statement block this regex does not match would otherwise vanish
+    into a slightly shorter list, and every figure downstream would inherit the
+    omission while looking entirely normal.
+    """
+
+    pairs: list = field(default_factory=list)
+    apis: list = field(default_factory=list)
+    headers_seen: int = 0
+    instances: int = 0
+    skipped: dict = field(default_factory=dict)
+
+    @property
+    def unparsed(self):
+        """Statement headers present in the text that produced no pair."""
+        return self.headers_seen - self.instances - sum(self.skipped.values())
+
+    @property
+    def clean(self):
+        return self.unparsed == 0
+
+    @property
+    def texts(self):
+        """Distinct SQL texts -- ALWAYS <= len(pairs). See `ApiStatement`."""
+        return len({p.key[0] for p in self.pairs})
+
+    @property
+    def replayable(self):
+        return [p for p in self.pairs if p.replayable]
+
+    @property
+    def refused(self):
+        """Pairs that cannot be replayed, each with the reason, so the report
+        can say a statement was skipped rather than quietly omitting it."""
+        out = []
+        for p in self.pairs:
+            if p.replayable:
+                continue
+            reason = (
+                "parameters were redacted at capture (secret table)"
+                if not p.params_observed
+                else (
+                    f"placeholder/parameter mismatch: {p.sql.count('?')} "
+                    f"placeholders, {len(param_tuple(p.params))} values"
+                )
+            )
+            out.append((p, reason))
+        return out
+
+
+def parse_api_statements(text, include=_MATRIX_NON_API):
+    """Every (SQL, params) pair a `doc-api-sql-matrix-*.md` records, by API.
+
+    Reads the per-API detail blocks -- the fenced SQL and its `params:` line --
+    which `parse_api_matrix` does not touch: that function reads only the
+    API/method/path headings and answers a question about COVERAGE. This one
+    answers "what would I have to EXPLAIN to cover every query every API
+    issues", and the answer is a list of pairs, not of SQL texts.
+
+    Args:
+        text: the Markdown of a matrix report.
+        include: API headings to SKIP as non-APIs. Defaults to `preflight`,
+            which is `01`'s own setup traffic and not an operation under test.
+
+    Returns:
+        MatrixStatements. Check `.clean` before trusting `.pairs` -- an
+        unmatched statement block is a parsing fault and is reported as one.
+    """
+    result = MatrixStatements()
+    result.headers_seen = len(_MATRIX_STATEMENT_HEADER.findall(text))
+
+    by_key = {}
+    for block in re.split(r"^### `", text, flags=re.M)[1:]:
+        api = block.split("`", 1)[0]
+        if api in include:
+            result.skipped[api] = len(_MATRIX_STATEMENT_HEADER.findall(block))
+            continue
+        result.apis.append(api)
+        for m in _MATRIX_STATEMENT.finditer(block):
+            st = ApiStatement(
+                sql=m.group("sql"),
+                params=m.group("params"),
+                table=m.group("table"),
+                verb=m.group("verb"),
+            )
+            pair = by_key.setdefault(st.key, st)
+            pair.apis.setdefault(api, []).append(int(m.group("idx")))
+            result.instances += 1
+
+    result.pairs = list(by_key.values())
+    return result
+
+
 def coverage_from_evidence(templates, observed, candidates=(), methods=READ_METHODS):
     """Three-way coverage: confirmed gaps, unverified candidates, and the rest.
 

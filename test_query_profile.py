@@ -683,3 +683,175 @@ def test_the_fold_note_names_harness_calls_not_just_ns_resolve():
     run = {"status_counts": {"GET  /policies [entity-resolve]": {"200": 1}}}
     out = qp.render_reconciliation(qp.reconcile(corr, run))
     assert "incl. harness resolve calls" in out
+
+
+# ----------------------------------------------------------------------
+# parse_api_statements — the (SQL, params) pair, not the SQL text
+#
+# The failure this whole section guards against is silent: a statement block
+# the regex does not match does not raise, it just makes the pair list one
+# shorter, and every count downstream inherits the omission while looking
+# entirely normal. Same shape as the wrong-JSON-key bug that once reported a
+# full namespace as empty.
+# ----------------------------------------------------------------------
+def _stmt(idx, table, verb, sql, params):
+    return (
+        f"**[{idx}]** `{table}` · {verb} · no timing\n\n"
+        f"```sql\n{sql}\n```\n"
+        f"params: `{params}`\n"
+    )
+
+
+def _matrix(*sections):
+    """A matrix report: (api, [statement, ...]) pairs."""
+    out = ["# API → SQL → MinIO Access Matrix\n", "## Per-API detail\n"]
+    for api, stmts in sections:
+        out.append(f"### `{api}`\n")
+        out.append("- `GET /v1/x` → **200**\n")
+        out.extend(stmts)
+    return "\n".join(out)
+
+
+SEL = "SELECT id FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ?"
+
+
+def test_same_sql_with_different_params_is_two_pairs():
+    """The invariant the whole class exists for.
+
+    PostgreSQL estimates selectivity from parameter VALUES, so one SQL text can
+    plan as a Seq Scan with one parameter and an Index Scan with another.
+    Collapsing these to one pair would EXPLAIN the text once against whichever
+    parameter set happened to be first and silently discard the other plan.
+    """
+    doc = _matrix(
+        (
+            "mgmt.get_principal",
+            [
+                _stmt(0, "entities", "SELECT", SEL, "POLARIS, 1"),
+                _stmt(1, "entities", "SELECT", SEL, "POLARIS, 99999"),
+            ],
+        )
+    )
+    r = qp.parse_api_statements(doc)
+    assert r.clean
+    assert r.instances == 2
+    assert len(r.pairs) == 2, "same SQL, different params must not collapse"
+    assert r.texts == 1, "...but it is still ONE distinct SQL text"
+
+
+def test_the_same_pair_in_two_apis_is_one_pair_naming_both():
+    doc = _matrix(
+        ("mgmt.get_principal", [_stmt(0, "entities", "SELECT", SEL, "POLARIS, 1")]),
+        ("mgmt.list_principals", [_stmt(3, "entities", "SELECT", SEL, "POLARIS, 1")]),
+    )
+    r = qp.parse_api_statements(doc)
+    assert len(r.pairs) == 1
+    pair = r.pairs[0]
+    assert set(pair.apis) == {"mgmt.get_principal", "mgmt.list_principals"}
+    assert pair.occurrences == 2
+    #: instance indexes kept, not just counts, so every instance maps back
+    assert pair.apis["mgmt.list_principals"] == [3]
+
+
+def test_preflight_is_skipped_and_its_statements_are_accounted_for():
+    """Skipped is not the same as unparsed, and conflating them hides faults."""
+    doc = _matrix(
+        ("preflight", [_stmt(0, "entities", "SELECT", SEL, "POLARIS, 1")]),
+        ("mgmt.get_principal", [_stmt(0, "entities", "SELECT", SEL, "POLARIS, 2")]),
+    )
+    r = qp.parse_api_statements(doc)
+    assert r.apis == ["mgmt.get_principal"]
+    assert r.skipped == {"preflight": 1}
+    assert r.instances == 1
+    assert r.clean, "a skipped block must not read as an unparsed one"
+
+
+def test_an_unmatchable_statement_block_is_reported_not_silently_dropped():
+    """THE guard. A short list must never pass as a complete one."""
+    doc = _matrix(("mgmt.get_principal", [_stmt(0, "entities", "SELECT", SEL, "P, 1")]))
+    #: a header whose body the regex cannot match — no params line
+    doc += "\n**[1]** `entities` · SELECT · no timing\n\n```sql\nSELECT 1\n```\n"
+    r = qp.parse_api_statements(doc)
+    assert r.headers_seen == 2
+    assert r.instances == 1
+    assert r.unparsed == 1
+    assert not r.clean
+
+
+def test_redacted_params_refuse_and_the_reason_names_redaction():
+    doc = _matrix(
+        (
+            "mgmt.create_principal",
+            [_stmt(0, "principal_authentication_data", "SELECT", SEL, qp.REDACTED)],
+        )
+    )
+    r = qp.parse_api_statements(doc)
+    assert r.replayable == []
+    ((_, why),) = r.refused
+    assert "redacted" in why
+    assert "secret table" in why
+
+
+def test_json_params_containing_comma_space_refuse_rather_than_miscount():
+    """A real fault, found 2026-08-31 in `doc-api-sql-matrix-latest.md`.
+
+    `param_tuple` splits bound values on ", ", and a JSON properties blob
+    contains ", " between its own keys. So a 20-placeholder statement parses as
+    22 values and the split is wrong — not short, WRONG, with two fragments of
+    one JSON document standing in for separate columns.
+
+    Three write statements in that report are affected (an `entities` UPDATE and
+    two catalog-properties writes). The right behaviour is to refuse: a replay
+    with the wrong arity either errors or, worse, succeeds against a different
+    statement than the one being reported.
+    """
+    sql = "UPDATE POLARIS_SCHEMA.ENTITIES SET properties = ? WHERE id = ?"
+    doc = _matrix(
+        (
+            "mgmt.grant_privilege",
+            [_stmt(0, "entities", "UPDATE", sql, '{"a": "1", "b": "2"}, 5')],
+        ),
+    )
+    r = qp.parse_api_statements(doc)
+    pair = r.pairs[0]
+    assert pair.params_observed, "not a redaction — the values ARE present"
+    assert not pair.replayable
+    ((_, why),) = r.refused
+    assert "2 placeholders, 3 values" in why
+    assert pair.replay() == (None, None)
+
+
+def test_a_replayable_pair_converts_placeholders_and_keeps_values_as_strings():
+    doc = _matrix(
+        ("mgmt.get_principal", [_stmt(0, "entities", "SELECT", SEL, "POLARIS, 1002")])
+    )
+    (pair,) = qp.parse_api_statements(doc).pairs
+    sql, params = pair.replay()
+    assert "?" not in sql and sql.count("%s") == 2
+    #: strings, not ints — PostgreSQL resolves an unknown-typed literal against
+    #: the column it is compared to, so `id = '1002'` still plans as bigint.
+    assert params == ("POLARIS", "1002")
+
+
+def test_the_real_matrix_report_parses_clean_with_the_counts_it_is_known_to_have():
+    """Regression against the actual artifact, not a fixture.
+
+    These counts were derived independently of this parser on 2026-08-31. If a
+    future edit to the report or the regex moves any of them, this fails rather
+    than quietly re-baselining.
+    """
+    doc = Path(__file__).resolve().parent / (
+        "diagnostics/api-sql-profile/reports/doc-api-sql-matrix-latest.md"
+    )
+    if not doc.exists():  # pragma: no cover - report is gitignored in some trees
+        pytest.skip("matrix report not present")
+    r = qp.parse_api_statements(doc.read_text())
+    assert r.clean, f"{r.unparsed} statement blocks did not parse"
+    assert r.headers_seen == 513
+    assert r.skipped == {"preflight": 8}
+    assert r.instances == 505
+    assert len(r.apis) == 43
+    assert len(r.pairs) == 115, "the sweep unit is the pair"
+    assert r.texts == 27, "...and there are only 27 distinct SQL texts"
+    assert len(r.replayable) == 109
+    assert len(r.refused) == 6
