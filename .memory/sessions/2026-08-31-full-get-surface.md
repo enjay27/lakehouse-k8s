@@ -1,10 +1,10 @@
-# Archived tracking context
+# 2026-08-31 — the full GET surface, three identity tiers, six captures
 
-Moved out of `MEMORY.md` to keep it under its 150-line limit. Nothing here is
-stale — it is detail whose summary lives in MEMORY and whose narrative lives in
-the HANDOFF documents.
-
-## 2026-08-31 — full GET surface, three identity tiers, six captures
+The blow-by-blow. The standalone account written for whoever picks the work
+up is `diagnostics/api-sql-profile/HANDOFF-index-contrast.md`; the one-block
+summary is in `.memory/roadmap.md`. This file is the detail behind both,
+including the wrong turns — they are the part that does not survive a
+summary and the part most likely to be repeated.
 
 Summarised in `MEMORY.md`; the standalone account is
 `diagnostics/api-sql-profile/HANDOFF-index-contrast.md`.

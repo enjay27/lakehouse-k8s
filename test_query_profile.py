@@ -190,10 +190,13 @@ def test_no_sentinel_survives_into_a_template():
 
 
 def test_every_op_label_round_trips_through_a_concrete_path():
-    """The report's labels must be the run JSON's labels, for all 14.
+    """The report's labels must be the run JSON's labels, for all 30.
 
     A label that does not round-trip shows up in the report as an
-    "unclassified path" — i.e. as a fixture fault, when it is a bug here.
+    "unclassified path" — i.e. as a fixture fault, when it is a bug here. That
+    is not hypothetical: the entity-level templates below went unexercised
+    while `operation_templates` defaulted to the frozen 13, and 16 operations
+    spent a whole session being filed under their raw per-entity paths.
     """
     templates = qp.operation_templates()
     real = {
@@ -202,7 +205,12 @@ def test_every_op_label_round_trips_through_a_concrete_path():
         "principal": "user7_principal",
         "principal_role": "user7_principal_role",
         "catalog_role": "owner_principal",
+        "table": "tbl1",
+        "view": "vw1",
+        "generic_table": "gt1",
+        "policy": "pol1",
     }
+    assert set(real) == set(qp._SENTINELS), "a sentinel with no concrete value"
     for t in templates:
         concrete = t.template
         for name, value in real.items():
@@ -420,6 +428,91 @@ def test_reconcile_reports_a_short_capture_rather_than_averaging_it_away():
     rec = qp.reconcile(corr, run)
     assert rec["clean"] is False
     assert rec["delta_total"] == -100
+
+
+def _probe_corr(catalogs, tokens):
+    """A capture holding `catalogs` catalog reads and `tokens` token calls."""
+    corr = qp.Correlation()
+    corr.profiles = [
+        qp.RequestProfile(
+            "c%d" % i, "GET  /catalogs/{name}", "mgmt", "GET", "/p", "u", 200
+        )
+        for i in range(catalogs)
+    ] + [
+        qp.RequestProfile(
+            "t%d" % i, "POST /oauth/tokens", "auth", "POST", "/p", "-", 200
+        )
+        for i in range(tokens)
+    ]
+    return corr
+
+
+def _probe_run(catalogs, tokens):
+    return {
+        "status_counts": {"GET  /catalogs/{name}": {"200": catalogs}},
+        "authenticated": tokens,
+    }
+
+
+def test_the_capture_liveness_probe_is_named_not_waved_away():
+    """`assert_capture_live` costs the capture exactly +2, every single drive.
+
+    It authenticates and reads one catalog BEFORE the drive starts, so neither
+    request is in the run JSON's `status_counts`. Every capture in this repo
+    reconciles at +2, and for one release the reconciler answered that with
+    `clean=False` and a banner saying the capture "is not what the drive
+    issued" — which is false, and which teaches the reader to skip the one
+    check that catches a genuinely short capture.
+    """
+    rec = qp.reconcile(_probe_corr(1001, 1001), _probe_run(1000, 1000))
+    assert rec["delta_total"] == 2, "the raw delta stays visible"
+    assert rec["probe_total"] == 2
+    assert rec["unexplained_total"] == 0
+    assert rec["clean"], "explained is not the same as absent, but it IS clean"
+
+
+def test_the_allowance_is_capped_at_the_probe_and_the_rest_is_unexplained():
+    """A +3 must still report +1. The allowance is a named cost, not a budget."""
+    rec = qp.reconcile(_probe_corr(1002, 1001), _probe_run(1000, 1000))
+    assert rec["probe_total"] == 2
+    assert rec["unexplained_total"] == 1
+    assert rec["clean"] is False
+
+
+def test_a_short_capture_is_never_given_an_allowance():
+    """The negative direction is the fault this check was written for.
+
+    A capture 100 requests short on a probe label must not be netted to -99 by
+    the probe that would have been added had it run long.
+    """
+    rec = qp.reconcile(_probe_corr(900, 1000), _probe_run(1000, 1000))
+    (row,) = [r for r in rec["rows"] if r["label"] == "GET  /catalogs/{name}"]
+    assert row["probe"] == 0
+    assert row["unexplained"] == -100
+    assert rec["clean"] is False
+
+
+def test_the_allowance_applies_only_to_the_probe_labels():
+    """An op the probe never touches gets no forgiveness for being +1."""
+    corr = qp.Correlation()
+    corr.profiles = [
+        qp.RequestProfile(
+            "n%d" % i, "GET  /namespaces", "iceberg", "GET", "/p", "u", 200
+        )
+        for i in range(101)
+    ]
+    rec = qp.reconcile(corr, {"status_counts": {"GET  /namespaces": {"200": 100}}})
+    assert rec["unexplained_total"] == 1
+    assert rec["clean"] is False
+
+
+def test_the_reconciliation_render_says_which_delta_is_the_probe():
+    """A reader who cannot see WHY a delta is forgiven has to trust the flag."""
+    rec = qp.reconcile(_probe_corr(1001, 1001), _probe_run(1000, 1000))
+    out = qp.render_reconciliation(rec)
+    assert "capture-liveness probe" in out
+    assert "+2 probe, +0 unexplained" in out
+    assert "UNEXPLAINED" not in out
 
 
 def test_reconcile_counts_token_calls_from_authenticated():

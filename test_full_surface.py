@@ -255,14 +255,45 @@ def test_canonical_path_ignores_parameter_names():
     )
 
 
+def test_the_default_template_set_is_the_whole_surface():
+    """The default classifies all 29 read ops, not the frozen 13.
+
+    While the default was `read_operations`, every capture driven by an
+    authorised tier classified only 13 operations and left the other 16 to fall
+    through to their raw per-entity paths -- `GET  /policies` became 200
+    one-request "ops" named after individual catalogs, and its own template row
+    read zero. Reconciliation missed it because the errors NET OUT: 75 requests
+    missing from template rows and 77 arriving on raw-path rows summed to the
+    +2 the capture-liveness probe costs.
+
+    Classifying with the full surface is safe for a 13-op capture too: a
+    template nothing matches simply never fires.
+    """
+    default = qp.operation_templates()
+    full = qp.operation_templates(read_operations=sweep.full_read_operations)
+    assert {t.label for t in default} == {t.label for t in full}
+    #: 29 read operations plus the token call the surface is driven through.
+    assert len(default) == 30
+    frozen = qp.operation_templates(read_operations=sweep.read_operations)
+    assert len(frozen) == 14
+    assert {t.label for t in frozen} < {t.label for t in default}
+
+
 def test_coverage_gap_reports_the_13_of_29_that_started_this():
+    """The frozen 13 is now passed EXPLICITLY -- it is no longer the default.
+
+    `operation_templates()` defaults to the full 29-op surface, because
+    defaulting to the 13 left every authorised-tier capture with 16 operations
+    unclassified and their requests filed under raw per-entity paths. This test
+    is about the gap a PARTIAL suite reports, so it names the partial suite.
+    """
     server = [
         ("GET", "/api/management/v1/catalogs"),
         ("GET", "/api/management/v1/principals/{principalName}/principal-roles"),
         ("GET", "/api/catalog/v1/config"),
         ("HEAD", "/api/catalog/v1/{prefix}/namespaces/{namespace}"),
     ]
-    thirteen = qp.operation_templates()
+    thirteen = qp.operation_templates(read_operations=sweep.read_operations)
     gap = qp.coverage_gap(thirteen, server)
     assert not gap["clean"]
     assert len(gap["missing"]) == 3
@@ -298,7 +329,7 @@ def test_the_token_post_is_not_reported_as_an_uncovered_path():
 
 def test_render_coverage_states_the_fraction_plainly():
     gap = qp.coverage_gap(
-        qp.operation_templates(),
+        qp.operation_templates(read_operations=sweep.read_operations),
         [("GET", "/api/catalog/v1/config"), ("GET", "/api/management/v1/catalogs")],
     )
     out = qp.render_coverage(gap, total_server=2)
@@ -400,7 +431,9 @@ def test_matrix_query_string_is_not_part_of_the_operation():
 def test_an_observed_operation_the_suite_misses_is_a_CONFIRMED_gap():
     """The cluster answered it, so it exists. No asterisk needed."""
     observed = qp.parse_api_matrix(MATRIX)
-    cov = qp.coverage_from_evidence(qp.operation_templates(), observed)
+    cov = qp.coverage_from_evidence(
+        qp.operation_templates(read_operations=sweep.read_operations), observed
+    )
     assert not cov["clean"]
     assert any("tables/{tbl}" in o for o in cov["observed_not_driven"])
     assert "GET  /catalogs" in cov["driven_verified"]

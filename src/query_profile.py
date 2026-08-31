@@ -301,18 +301,36 @@ class _StubResponse:
 def operation_templates(read_operations=None, include_token=True):
     """The op surface as (label, method, URL template, matcher).
 
-    Built by DRIVING `api_sweep.read_operations` against a real `PolarisREST`
-    whose `requests` module is a recorder. So the labels and their order come
-    from `api_sweep` -- the single definition of the surface -- and the paths
-    come from `polaris_rest`. Neither is restated here, which is the point:
-    a hand-written method-to-path table in this module would drift from the
-    client the scan actually used, and the drift would show up as
-    "unclassified path", i.e. as a fixture fault rather than as the bug it is.
+    Built by DRIVING `api_sweep.full_read_operations` against a real
+    `PolarisREST` whose `requests` module is a recorder. So the labels and
+    their order come from `api_sweep` -- the single definition of the surface
+    -- and the paths come from `polaris_rest`. Neither is restated here, which
+    is the point: a hand-written method-to-path table in this module would
+    drift from the client the scan actually used, and the drift would show up
+    as "unclassified path", i.e. as a fixture fault rather than as the bug it
+    is.
+
+    THE DEFAULT IS THE FULL 29-OP SURFACE, NOT THE FROZEN 13.
+    ---------------------------------------------------------
+    It used to be `read_operations`, which is deliberately frozen at the 13 ops
+    the original unauthorised-principal scan drove. Every capture from an
+    authorised tier then classified only those 13; the other 16 fell through to
+    their raw per-entity paths, so `GET  /policies` read as 200 separate ops
+    named `.../admin3_catalog/namespaces/ns1/policies` and its template row
+    showed 0 requests.
+
+    Reconciliation did not save us, because the two errors NET OUT: 75 requests
+    missing from 13 template rows and 77 appearing on 61 raw-path rows summed
+    to the same +2 the capture-liveness probe costs. The total looked normal.
+    Only the per-row composition showed it.
+
+    Classifying with the full surface is safe for a 13-op capture too: a
+    template that nothing matched simply never fires.
     """
     import api_sweep
     import polaris_rest
 
-    read_operations = read_operations or api_sweep.read_operations
+    read_operations = read_operations or api_sweep.full_read_operations
     fixture = dict(_SENTINELS)
     recorder = _RecordingRequests()
     real = polaris_rest.requests
@@ -739,6 +757,25 @@ def base_label(label):
     return _HARNESS_SUFFIX.sub("", label or "")
 
 
+#: What `assert_capture_live` costs the capture, per label, per drive.
+#:
+#: The liveness probe runs BEFORE the drive and is not in the run JSON's
+#: `status_counts`, so its two requests land in the capture with nothing to
+#: match them: one `POST /oauth/tokens` to authenticate and one
+#: `GET  /catalogs/{name}` as the call it proves was recorded. Every capture in
+#: this repo therefore reconciles at exactly +2.
+#:
+#: Naming it is not the same as ignoring it. An unnamed +2 trains the reader to
+#: wave away a non-zero delta, which is the one thing reconciliation exists to
+#: stop; a +3 here still reports +1 unexplained, and a NEGATIVE delta -- the
+#: short capture this whole check was written for -- is never allowed an
+#: allowance at all.
+CAPTURE_PROBE_ALLOWANCE = {
+    "GET  /catalogs/{name}": 1,
+    "POST /oauth/tokens": 1,
+}
+
+
 def reconcile(corr, run_json, ns_resolve_label=None):
     """Compare the capture's request counts against the run JSON's.
 
@@ -771,23 +808,34 @@ def reconcile(corr, run_json, ns_resolve_label=None):
     rows = []
     for label in sorted(set(expected) | set(observed)):
         exp, obs = expected.get(label, 0), observed.get(label, 0)
+        delta = obs - exp
+        #: Only a POSITIVE delta, only on a probe label, only up to the
+        #: probe's own cost. A short capture keeps its full negative delta.
+        probe = min(delta, CAPTURE_PROBE_ALLOWANCE.get(label, 0)) if delta > 0 else 0
         rows.append(
             {
                 "label": label,
                 "expected": exp,
                 "observed": obs,
-                "delta": obs - exp,
+                "delta": delta,
+                "probe": probe,
+                "unexplained": delta - probe,
                 "folded": label in folded,
             }
         )
     total_exp = sum(expected.values())
     total_obs = sum(observed.values())
+    probe_total = sum(r["probe"] for r in rows)
+    unexplained_total = sum(r["unexplained"] for r in rows)
     return {
         "rows": rows,
         "expected_total": total_exp,
         "observed_total": total_obs,
         "delta_total": total_obs - total_exp,
-        "clean": all(r["delta"] == 0 for r in rows),
+        "probe_total": probe_total,
+        "unexplained_total": unexplained_total,
+        #: `clean` means nothing is UNEXPLAINED -- not that nothing differs.
+        "clean": all(r["unexplained"] == 0 for r in rows),
         "folded_labels": sorted(folded),
     }
 
@@ -801,18 +849,26 @@ def _fmt(n, places=2):
 
 def render_reconciliation(rec):
     lines = [
-        "| op | run JSON | capture | delta |",
-        "|---|---:|---:|---:|",
+        "| op | run JSON | capture | delta | accounted |",
+        "|---|---:|---:|---:|---|",
     ]
     for r in rec["rows"]:
-        note = "  *(incl. harness resolve calls)*" if r["folded"] else ""
+        notes = []
+        if r["folded"]:
+            notes.append("incl. harness resolve calls")
+        if r.get("probe"):
+            notes.append(f"{r['probe']:+d} capture-liveness probe")
+        if r.get("unexplained"):
+            notes.append(f"**{r['unexplained']:+d} UNEXPLAINED**")
         lines.append(
-            f"| `{r['label'].strip()}`{note} | {r['expected']} | {r['observed']} "
-            f"| {r['delta']:+d} |"
+            f"| `{r['label'].strip()}` | {r['expected']} | {r['observed']} "
+            f"| {r['delta']:+d} | {'; '.join(notes) or '—'} |"
         )
     lines.append(
         f"| **total** | **{rec['expected_total']}** | **{rec['observed_total']}** "
-        f"| **{rec['delta_total']:+d}** |"
+        f"| **{rec['delta_total']:+d}** | "
+        f"**{rec.get('probe_total', 0):+d} probe, "
+        f"{rec.get('unexplained_total', 0):+d} unexplained** |"
     )
     return "\n".join(lines)
 

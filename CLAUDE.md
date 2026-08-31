@@ -65,7 +65,12 @@ Rules:
 Before marking any verification task as complete:
 1. Ensure all test notebook cells run sequentially with zero runtime or compilation errors.
 2. Format all newly updated Python logic modules using `black . && isort .`.
-3. Document the successful endpoints, data table definitions, and security authority states inside `MEMORY.md`.
+3. Record the outcome in the memory tree. `MEMORY.md` is an **index, kept under
+   ~40 lines** — update its *Now* section and nothing else. The detail goes in
+   `.memory/`: a finding with a number in `.memory/roadmap.md`, a tool or figure
+   you should not trust in `.memory/active-issues.md`, the blow-by-blow
+   (including the wrong turns) in `.memory/sessions/<date>-<slug>.md`. See
+   `.memory/README.md` for which file takes what.
 4. **Commit the task as one versioned change, automatically** — see *Version Control* below. Claude runs the commit itself as the last step of the task, without being asked. A task is not done until it is in git; an uncommitted finding lives only in a chat transcript.
 
 ## Version Control
@@ -112,9 +117,9 @@ The body carries what a reader six months out will need and cannot reconstruct:
 - **what is verified vs still open**, so the next session does not re-establish
   what is settled or trust what is not.
 
-Prefer the honest correction to the tidy summary. `MEMORY.md` and any
-`PLAN-*.md` / `HANDOFF-*.md` touched by the task belong in the SAME commit as
-the code — they are the reasoning behind it, and they go stale the instant they
+Prefer the honest correction to the tidy summary. `MEMORY.md`, the `.memory/`
+files and any `PLAN-*.md` / `HANDOFF-*.md` touched by the task belong in the
+SAME commit as the code — they are the reasoning behind it, and they go stale the instant they
 are committed separately.
 
 ### Never commit
