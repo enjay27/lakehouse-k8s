@@ -1058,7 +1058,7 @@ def full_read_operations(fx):
         # -- iceberg catalog service: 8 GETs + 3 HEADs --
         #: `warehouse` is optional in the Iceberg spec and REQUIRED in practice
         #: for a non-root principal: without it Polaris cannot resolve which
-        #: catalog's config to return and answers 400. Measured 2026-08-24 --
+        #: catalog's config to return and answers 400. Measured 2026-08-31 --
         #: the first full-surface probe filed that 400 as a refusal, which read
         #: as "ordinary principals may not read the config" and was really a
         #: missing query parameter.

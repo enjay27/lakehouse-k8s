@@ -8,7 +8,7 @@
 
 WHY THIS EXISTS
 ---------------
-On 2026-08-24 the privilege scan was found to drive 13 of 29 GET/HEAD
+On 2026-08-31 the privilege scan was found to drive 13 of 29 GET/HEAD
 operations, and nothing in the harness said so. Nobody made a mistake: the op
 list was its own authority, so there was no place for a disagreement to appear.
 This runner is that place.
@@ -33,7 +33,7 @@ THREE SOURCES, AND THEY ARE NOT EQUAL
 
 3. **SERVER (--server, and it did not work here).** A live OpenAPI document
    would settle both at once. Polaris 8181/8182 serves none: every `/q/openapi`
-   and `/openapi` candidate came back empty on 2026-08-24. Two plausible
+   and `/openapi` candidate came back empty on 2026-08-31. Two plausible
    reasons -- the `quarkus-smallrye-openapi` extension is not in the server
    build, or it is present but not exposed outside dev mode -- and neither is
    worth chasing, because source 1 is better evidence than a document would be.
@@ -208,7 +208,7 @@ def main():
     ap.add_argument(
         "--server",
         action="store_true",
-        help="also try the live OpenAPI document (none served as of 2026-08-24)",
+        help="also try the live OpenAPI document (none served as of 2026-08-31)",
     )
     ap.add_argument(
         "--no-spec",

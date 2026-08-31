@@ -504,7 +504,7 @@ class StatementProfile:
     parameters from that same occurrence. It is what EXPLAIN must replay.
 
     Sending `sql` to EXPLAIN fails with `syntax error at or near "<"`, which is
-    how this was found (2026-08-24, first `--explain` run: 7 of 8 statements
+    how this was found (2026-08-31, first `--explain` run: 7 of 8 statements
     errored). Keeping the pair atomic matters for the same reason: parameters
     taken from a different occurrence than the SQL can disagree on placeholder
     count, and a mismatched replay is worse than a refused one.
@@ -573,7 +573,7 @@ def to_psycopg(sql):
     placeholder. The parser reads `= ?` as an operator expression and then
     chokes on the next token, reporting `syntax error at or near "AND"`: an
     error that points at a keyword several tokens away from the actual cause.
-    That misdirection cost the first `--explain` run (2026-08-24).
+    That misdirection cost the first `--explain` run (2026-08-31).
 
     Any literal `%` is escaped first, since psycopg2 treats `%` as its own
     placeholder introducer once parameters are passed.
@@ -719,6 +719,26 @@ def explain_worklist(shapes, table=None, limit=None):
 # ----------------------------------------------------------------------
 # reconciliation against the drive's own record
 # ----------------------------------------------------------------------
+#: A label the harness records for a call it made to PREPARE a drive, not an
+#: operation the drive measured: `GET  /namespaces [ns-resolve]`,
+#: `GET  /namespaces/{ns}/tables [entity-resolve]`. The bracketed suffix is the
+#: marker, so a new preparation call needs no change here.
+_HARNESS_SUFFIX = re.compile(r"\s*\[[a-z-]+\]\s*$")
+
+
+def base_label(label):
+    """The operation a harness-preparation label shares its path with.
+
+    These are REAL requests on real op paths -- `GET /namespaces/{ns}/tables` is
+    issued both to resolve a table target and as the operation itself -- so the
+    capture holds them and the reconciliation must expect them. Folding on the
+    bracketed suffix generalises what was a special case for ns-resolve;
+    without it, entity resolution makes four ops per identity read as an
+    unexplained 2x.
+    """
+    return _HARNESS_SUFFIX.sub("", label or "")
+
+
 def reconcile(corr, run_json, ns_resolve_label=None):
     """Compare the capture's request counts against the run JSON's.
 
@@ -734,17 +754,12 @@ def reconcile(corr, run_json, ns_resolve_label=None):
     the 2x; here they are folded back together and the fold is reported, not
     hidden.
     """
-    if ns_resolve_label is None:
-        try:
-            from privilege_scan import NS_RESOLVE_LABEL
-
-            ns_resolve_label = NS_RESOLVE_LABEL
-        except ImportError:  # pragma: no cover
-            ns_resolve_label = "GET  /namespaces [ns-resolve]"
-
     expected = {}
+    folded = set()
     for label, buckets in (run_json.get("status_counts") or {}).items():
-        target = "GET  /namespaces" if label == ns_resolve_label else label
+        target = base_label(label)
+        if target != label:
+            folded.add(target)
         expected[target] = expected.get(target, 0) + sum(buckets.values())
     #: The drive counts one token call per identity; the run JSON's
     #: `requests` total includes them but `status_counts` does not.
@@ -762,7 +777,7 @@ def reconcile(corr, run_json, ns_resolve_label=None):
                 "expected": exp,
                 "observed": obs,
                 "delta": obs - exp,
-                "folded": label == "GET  /namespaces",
+                "folded": label in folded,
             }
         )
     total_exp = sum(expected.values())
@@ -773,7 +788,7 @@ def reconcile(corr, run_json, ns_resolve_label=None):
         "observed_total": total_obs,
         "delta_total": total_obs - total_exp,
         "clean": all(r["delta"] == 0 for r in rows),
-        "ns_resolve_folded_into": "GET  /namespaces",
+        "folded_labels": sorted(folded),
     }
 
 
@@ -790,7 +805,7 @@ def render_reconciliation(rec):
         "|---|---:|---:|---:|",
     ]
     for r in rec["rows"]:
-        note = "  *(incl. ns-resolve)*" if r["folded"] else ""
+        note = "  *(incl. harness resolve calls)*" if r["folded"] else ""
         lines.append(
             f"| `{r['label'].strip()}`{note} | {r['expected']} | {r['observed']} "
             f"| {r['delta']:+d} |"

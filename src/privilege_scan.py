@@ -68,6 +68,26 @@ SERVICE_ADMIN_ROLE = "service_admin"
 #: in `drive()`.
 NS_RESOLVE_LABEL = "GET  /namespaces [ns-resolve]"
 
+#: Suffix marking a call the HARNESS made to prepare a drive, not an operation
+#: the drive was measuring. Same idea as `NS_RESOLVE_LABEL`, generalised
+#: because entity resolution adds four more per identity -- and they land on
+#: paths that are ALSO real operations (`GET /namespaces/{ns}/tables` is both).
+#:
+#: Without this the capture holds roughly twice as many of those four as the
+#: run JSON accounts for, and `query_profile.reconcile` reports a large
+#: unexplained delta on ops that are not missing anything. Recorded under their
+#: own labels so the run JSON accounts for them; folded back by the reconciler,
+#: which prints the fold rather than hiding it.
+ENTITY_RESOLVE_SUFFIX = " [entity-resolve]"
+
+#: The op label each resolution call shares a path with.
+RESOLVE_BASE_LABELS = {
+    "table": "GET  /namespaces/{ns}/tables",
+    "view": "GET  /namespaces/{ns}/views",
+    "generic_table": "GET  /generic-tables",
+    "policy": "GET  /policies",
+}
+
 
 @dataclass
 class Profile:
@@ -120,7 +140,7 @@ class Profile:
 
     #: OAuth scope to request, or None for the identity's OWN principal-role.
     #:
-    #: THE BUG THIS FIXES (2026-08-24, and it silently defeated a whole
+    #: THE BUG THIS FIXES (2026-08-31, and it silently defeated a whole
     #: fixture). A principal holding TWO principal-roles gets a token scoped to
     #: ONE of them. The `admin{N}` principals hold their own role plus
     #: `service_admin`, and the probe requested
@@ -150,7 +170,7 @@ PROFILES = {
         operations="read_operations",
         description="owner_principal on its own catalog; 6 of 13 ops 403",
     ),
-    #: RENAMED 2026-08-24, when the premise behind "service-scoped" turned out
+    #: RENAMED 2026-08-31, when the premise behind "service-scoped" turned out
     #: to be wrong. The 1.3.0 management API has NO service-level grant type --
     #: `GrantResource` is catalog / namespace / table / view / policy, and
     #: `SERVICE_MANAGE_ACCESS` is in none of them. An `authz{N}` principal is
@@ -161,8 +181,9 @@ PROFILES = {
         name="catalog-scoped-full",
         prefix="authz",
         operations="full_read_operations",
-        description="catalog privileges + full entities; 29 ops driven, the 6 "
-        "service-level reads still 403",
+        description="catalog privileges + full entities; MEASURED 2026-08-31: "
+        "21 of 29 authorized, 8 refused (the 6 service-level reads plus the two "
+        "role-graph traversals that walk from a principal)",
         footprint_must_match="catalog-scoped",
         resolve_entities=True,
     ),
@@ -181,8 +202,9 @@ PROFILES = {
         name="service-admin",
         prefix="admin",
         operations="full_read_operations",
-        description="member of service_admin; all 29 ops 2xx, but ~1,100 grant "
-        "rows — NOT comparable to a catalog-scoped run",
+        description="member of service_admin; MEASURED 2026-08-31: 26 of 29 "
+        "authorized — every management read, but NOT credential vending — and "
+        "~1,100 grant rows, so NOT comparable to a catalog-scoped run",
         footprint_must_match=None,
         resolve_entities=True,
         scope=f"PRINCIPAL_ROLE:{SERVICE_ADMIN_ROLE}",
@@ -271,7 +293,7 @@ class OpStatus:
         """The server rejected the REQUEST, not the caller.
 
         A 400 is not an authorization outcome and must not sit in the same
-        column as a 403. Measured 2026-08-24: `GET /v1/config` answered 400
+        column as a 403. Measured 2026-08-31: `GET /v1/config` answered 400
         because the harness sent no `warehouse` parameter -- a bug in the op
         binding. Filed as "refused" it read as "ordinary principals may not
         read the catalog config", which is a claim about Polaris drawn from a
@@ -485,22 +507,31 @@ def resolve_entities(client, identity):
     it report UNDRIVEABLE -- the fixture has no such entity, which is a
     different fact from a refusal and is kept that way.
 
-    Returns `{kind: reason}` for every kind that did NOT resolve.
+    Returns (missing, statuses): `{kind: reason}` for every kind that did not
+    resolve, and `{kind: http_status}` for every call made -- the caller
+    records the latter so the run JSON accounts for calls the capture will
+    hold.
     """
     missing = {}
+    statuses = {}
     ns = identity.namespace
     if not ns:
-        return {
-            k: "no namespace resolved"
-            for k in ("table", "view", "policy", "generic_table")
-        }
+        return (
+            {
+                k: "no namespace resolved"
+                for k in ("table", "view", "policy", "generic_table")
+            },
+            {},
+        )
 
     def first(call, key, kind):
         try:
             r = call()
         except Exception as exc:  # noqa: BLE001
             missing[kind] = f"{type(exc).__name__}"
+            statuses[kind] = 0
             return None
+        statuses[kind] = r.status_code
         if r.status_code >= 300:
             #: 404/501 from the extensions means the FEATURE is off; a 403
             #: means this identity may not list them. Both leave the field
@@ -508,10 +539,23 @@ def resolve_entities(client, identity):
             missing[kind] = f"list [{r.status_code}]"
             return None
         try:
-            items = (r.json() or {}).get(key) or []
+            body = r.json() or {}
         except Exception:  # noqa: BLE001
             missing[kind] = "response was not JSON"
             return None
+        if key not in body:
+            #: Say what the response ACTUALLY held. Reading the wrong key
+            #: returns an empty list, which is indistinguishable from an empty
+            #: namespace -- and on 2026-08-31 that cost a proposal to TRUNCATE
+            #: the realm and rebuild a 55,004-row fixture, to fix what was a
+            #: one-word mistake here. `ListPoliciesResponse` holds its entries
+            #: under `identifiers`, not `policies`.
+            missing[kind] = (
+                f"response has no '{key}' key (keys: {sorted(body)}) — "
+                "this is a PARSING fault, not an empty namespace"
+            )
+            return None
+        items = body.get(key) or []
         if not items:
             missing[kind] = "namespace holds none"
             return None
@@ -535,10 +579,13 @@ def resolve_entities(client, identity):
         "identifiers",
         "generic_table",
     )
+    #: `identifiers`, per ListPoliciesResponse -- the same shape the Iceberg
+    #: listings use, not a `policies` key. Confirmed against the 1.3.0 spec
+    #: after the wrong guess made a full namespace read as an empty one.
     identity.policy = first(
-        lambda: client.list_policies(identity.catalog, ns), "policies", "policy"
+        lambda: client.list_policies(identity.catalog, ns), "identifiers", "policy"
     )
-    return missing
+    return missing, statuses
 
 
 # ----------------------------------------------------------------------
@@ -787,10 +834,16 @@ def drive(
             #: difference between "loadTable returned 404" and "this fixture
             #: has no table to load". Those are not the same finding and a
             #: report cannot tell them apart afterwards.
-            gone = resolve_entities(client, identity)
-            result.requests += sum(
-                1 for k in ("table", "view", "generic_table", "policy")
-            )
+            gone, resolved_statuses = resolve_entities(client, identity)
+            for kind, status in resolved_statuses.items():
+                #: Under its OWN label, exactly as `NS_RESOLVE_LABEL` is, so the
+                #: run JSON accounts for a call the capture will hold on a path
+                #: that is also a real operation. Unaccounted, these show up
+                #: later as an unexplained 2x on four ops that are not missing
+                #: anything.
+                label = RESOLVE_BASE_LABELS[kind] + ENTITY_RESOLVE_SUFFIX
+                result.statuses[(identity.index, label)] = status
+                result.requests += 1
             for kind, why in gone.items():
                 result.unresolved.setdefault(kind, {})
                 result.unresolved[kind][why] = result.unresolved[kind].get(why, 0) + 1
@@ -920,4 +973,125 @@ def render_scan_report(result, ops, title="Privilege scan"):
             f"{s}×{n}" for s, n in sorted(buckets.items()) if not 200 <= s < 300
         )
         lines.append(f"| `{label.strip()}` | {ok} | {other or '—'} |")
+    return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------
+# across tiers: what the WHOLE suite reaches, which is not what any one does
+# ----------------------------------------------------------------------
+#: Best-to-worst. A union takes the best verdict any tier achieved for an
+#: operation, because "some identity can drive this" is the question coverage
+#: asks -- not "every identity can".
+_VERDICT_RANK = (
+    "authorized",
+    "undriveable",
+    "unavailable",
+    "malformed",
+    "refused",
+    "raised",
+)
+
+
+def union_verdicts(probes):
+    """Merge probe results across identity tiers.
+
+    THE FINDING THIS EXISTS FOR (measured 2026-08-31). The two tiers are
+    COMPLEMENTARY, not nested, and neither alone reaches the whole surface:
+
+      * `catalog-scoped-full` drives 20 of 29 -- it cannot read the service
+        surface, but it CAN vend storage credentials.
+      * `service-admin` drives 26 of 29 -- every management read, and it CANNOT
+        vend credentials. Its 403 names its own roles:
+        `activated grants via '[service_admin, catalog_admin]'`.
+
+    So administrative authority and data authority are separate in Polaris, and
+    the admin tier is not a superset of the ordinary one. A report quoting
+    either tier's count as "the coverage" understates the suite by the other
+    tier's exclusive operations -- which is why this is computed rather than
+    left to a reader to intersect two tables by eye.
+
+    Args:
+        probes: `{tier_name: probe_dict}` as written by `--probe`.
+
+    Returns:
+        {label: {"verdict", "tiers", "best_tier"}} plus the summary keys
+        `covered`, `uncovered` and `exclusive`.
+    """
+    rank = {v: i for i, v in enumerate(_VERDICT_RANK)}
+    merged = {}
+    for tier, probe in probes.items():
+        verdicts = probe.get("verdicts") or {}
+        if not verdicts:
+            #: An older probe recorded only `authorized` + `refused`. Recover
+            #: what it does carry rather than dropping the tier silently.
+            verdicts = {label: "authorized" for label in probe.get("authorized") or []}
+            verdicts.update(
+                {label: "refused" for label in (probe.get("refused") or {})}
+            )
+        for label, verdict in verdicts.items():
+            slot = merged.setdefault(
+                label, {"verdict": None, "tiers": {}, "best_tier": None}
+            )
+            slot["tiers"][tier] = verdict
+            if slot["verdict"] is None or rank.get(verdict, 99) < rank.get(
+                slot["verdict"], 99
+            ):
+                slot["verdict"] = verdict
+                slot["best_tier"] = tier
+
+    covered = sorted(l for l, v in merged.items() if v["verdict"] == "authorized")
+    uncovered = sorted(l for l, v in merged.items() if v["verdict"] != "authorized")
+    exclusive = {}
+    for label, v in merged.items():
+        if v["verdict"] != "authorized":
+            continue
+        winners = [t for t, x in v["tiers"].items() if x == "authorized"]
+        if len(winners) == 1 and len(v["tiers"]) > 1:
+            exclusive.setdefault(winners[0], []).append(label)
+    return {
+        "operations": merged,
+        "covered": covered,
+        "uncovered": uncovered,
+        "exclusive": {k: sorted(v) for k, v in exclusive.items()},
+        "total": len(merged),
+    }
+
+
+def render_union(union, probes=None):
+    """Per-tier counts, the union, and what only one tier can reach."""
+    lines = []
+    if probes:
+        lines += ["| tier | authorized | of | scope |", "|---|---:|---:|---|"]
+        for tier, probe in sorted(probes.items()):
+            v = probe.get("verdicts") or {}
+            ok = sum(1 for x in v.values() if x == "authorized") or len(
+                probe.get("authorized") or []
+            )
+            lines.append(
+                f"| `{tier}` | {ok} | {len(v) or '—'} | `{probe.get('scope', '—')}` |"
+            )
+        lines.append("")
+    lines.append(
+        f"**Union: {len(union['covered'])} of {union['total']}** operations are "
+        "reachable by at least one identity tier."
+    )
+    if union["exclusive"]:
+        lines.append("")
+        lines.append(
+            "Neither tier is a superset of the other — these are reachable by "
+            "ONE tier only:"
+        )
+        for tier, labels in sorted(union["exclusive"].items()):
+            for label in labels:
+                lines.append(f"  - `{label.strip()}` — only `{tier}`")
+    if union["uncovered"]:
+        lines.append("")
+        lines.append(
+            f"**{len(union['uncovered'])} operations no tier reached.** These "
+            "are absent from every figure any report can produce:"
+        )
+        for label in union["uncovered"]:
+            tiers = union["operations"][label]["tiers"]
+            why = ", ".join(f"{t}: {v}" for t, v in sorted(tiers.items()))
+            lines.append(f"  - `{label.strip()}` — {why}")
     return "\n".join(lines)

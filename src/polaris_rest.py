@@ -745,7 +745,7 @@ class PolarisREST:
         )
 
     # ------------------------------------------------------------------
-    # The rest of the readable surface (added 2026-08-24)
+    # The rest of the readable surface (added 2026-08-31)
     #
     # The 1.3.0 spec defines 29 GET/HEAD operations across the two services.
     # `api_sweep.read_operations` bound 13 of them; these are the other 16 that

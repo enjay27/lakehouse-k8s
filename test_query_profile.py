@@ -22,7 +22,6 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-
 import api_sweep as sweep  # noqa: E402
 import query_profile as qp  # noqa: E402
 
@@ -402,6 +401,7 @@ def test_ns_resolve_is_folded_into_the_op_it_duplicates():
     (row,) = [r for r in rec["rows"] if r["label"] == "GET  /namespaces"]
     assert row["expected"] == 4 and row["observed"] == 4 and row["delta"] == 0
     assert row["folded"] is True
+    assert rec["folded_labels"] == ["GET  /namespaces"]
     assert rec["clean"]
 
 
@@ -538,3 +538,55 @@ def test_every_capture_statement_except_the_secret_one_is_replayable(capture):
     shapes = qp.statement_profile(corr.profiles)
     unreplayable = [s.table for s in shapes.values() if not s.replayable]
     assert unreplayable == ["principal_authentication_data"]
+
+
+def test_entity_resolve_labels_fold_like_ns_resolve():
+    """Four MORE harness calls per identity, on paths that are also real ops.
+
+    `GET /namespaces/{ns}/tables` is issued both to resolve a table target and
+    as the operation itself. Unfolded, the capture holds ~2x what the run JSON
+    accounts for and four ops read as an unexplained delta — the same shape
+    ns-resolve had, which is why the fold is now on the bracketed suffix rather
+    than one hard-coded label.
+    """
+    corr = qp.Correlation()
+    corr.profiles = [
+        qp.RequestProfile(
+            "r%d" % i,
+            "GET  /namespaces/{ns}/tables",
+            "iceberg",
+            "GET",
+            "/p",
+            "u",
+            200,
+        )
+        for i in range(200)
+    ]
+    run = {
+        "status_counts": {
+            "GET  /namespaces/{ns}/tables": {"200": 100},
+            "GET  /namespaces/{ns}/tables [entity-resolve]": {"200": 100},
+        },
+        "authenticated": 0,
+    }
+    rec = qp.reconcile(corr, run)
+    (row,) = rec["rows"]
+    assert row["expected"] == 200 and row["observed"] == 200
+    assert row["folded"] is True and rec["clean"]
+
+
+def test_base_label_leaves_a_real_op_alone():
+    assert qp.base_label("GET  /catalogs") == "GET  /catalogs"
+    assert qp.base_label("GET  /catalogs/{c}/catalog-roles/{r}") == (
+        "GET  /catalogs/{c}/catalog-roles/{r}"
+    )
+
+
+def test_the_fold_note_names_harness_calls_not_just_ns_resolve():
+    corr = qp.Correlation()
+    corr.profiles = [
+        qp.RequestProfile("a", "GET  /policies", "polaris", "GET", "/p", "u", 200)
+    ]
+    run = {"status_counts": {"GET  /policies [entity-resolve]": {"200": 1}}}
+    out = qp.render_reconciliation(qp.reconcile(corr, run))
+    assert "incl. harness resolve calls" in out

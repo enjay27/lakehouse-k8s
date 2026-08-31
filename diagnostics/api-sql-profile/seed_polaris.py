@@ -87,6 +87,7 @@ REPO = HERE
 while not (REPO / "src").is_dir() and REPO != REPO.parent:
     REPO = REPO.parent
 sys.path.insert(0, str(REPO / "src"))
+
 from iceberg_rest import IcebergREST  # noqa: E402
 from polaris_rest import PolarisREST  # noqa: E402
 
@@ -99,6 +100,7 @@ from polaris_rest import PolarisREST  # noqa: E402
 from polaris_seed import (
     CATALOG_PRIVILEGES,
     CORE_CATALOG_PRIVILEGES,
+    POLICY_TYPE_CANDIDATES,
     SeedResult,
     SeedSpec,
     call_with_lag_retry,
@@ -107,6 +109,7 @@ from polaris_seed import (
     ensure_catalog,
     find_strays,
     ledger_shortfall,
+    probe_policy_types,
     probe_privileges,
     revert_grants,
     seed,
@@ -142,7 +145,7 @@ def ledger_path(prefix="user"):
         seeded=0 skipped=100 failed=0
 
     which is indistinguishable from "already done" and was followed, before
-    this fix, by a cheerful "Next: ..." (measured 2026-08-24 -- it cost two
+    this fix, by a cheerful "Next: ..." (measured 2026-08-31 -- it cost two
     seeding runs that created nothing).
 
     `user` keeps the original unsuffixed filename so the existing 1,000-user
@@ -319,6 +322,18 @@ def main():
         "clean a different one. Run before taking a baseline.",
     )
     ap.add_argument(
+        "--probe-policy",
+        action="store_true",
+        help="which policy `type` does this build accept? Four calls against an "
+        "EXISTING seeded namespace. Use when policies seeded as zero while "
+        "GET /policies answered 200 — feature on, payload wrong.",
+    )
+    ap.add_argument(
+        "--policy-type",
+        default=None,
+        help="override the policy `type` string (see --probe-policy)",
+    )
+    ap.add_argument(
         "--probe-privileges",
         action="store_true",
         help="find out which privilege names THIS build accepts, on one "
@@ -365,6 +380,7 @@ def main():
         policies_per_namespace=args.policies_per_namespace,
         generic_tables_per_namespace=args.generic_tables_per_namespace,
         assign_service_admin=args.service_admin,
+        policy_type=args.policy_type,
         prefix=args.prefix,
         privileges=spec_privileges,
     )
@@ -396,11 +412,18 @@ def main():
         f"fixture : {args.users} users, tables={args.tables}, "
         f"{len(spec_privileges)} grants/role"
     )
-    print(f"expected: {spec.expected_counts()}")
+    if not (args.probe_policy or args.probe_privileges or args.cleanup_probes):
+        #: A probe seeds nothing, so printing a 1,000-user projection above its
+        #: output invites the reader to check the probe against a number that
+        #: describes a different run entirely.
+        print(f"expected: {spec.expected_counts()}")
     print()
 
     if args.cleanup_probes:
         sys.exit(cleanup_probes(pc, args.cleanup_probes))
+
+    if args.probe_policy:
+        sys.exit(probe_policy(pc, spec))
 
     if args.probe_privileges:
         sys.exit(probe(pc))
@@ -530,16 +553,10 @@ def main():
         if res.features_off:
             # Feature-flagged off on this build. A fact about the deployment,
             # so `--verify` will report a shortfall that is NOT a seeding fault.
-            print(f"\nFEATURE(S) NOT CREATED: {sorted(res.features_off)}")
-            for kind, why in sorted(res.feature_errors.items()):
-                print(f"  {kind}: {why}")
             print(
-                "  Those entities do not exist and --verify will show a "
-                "shortfall.\n"
-                "  A 404/501 is the FEATURE being off. Any other status is the "
-                "PAYLOAD\n"
-                "  being wrong — which is the seeder's fault, not the "
-                "deployment's."
+                f"\nFEATURE(S) OFF on this build: {sorted(res.features_off)}."
+                "\n  Those entities were not created and --verify will show a"
+                "\n  shortfall. That is the deployment, not the seeder."
             )
         if res.service_admin_failures:
             print(
@@ -556,6 +573,46 @@ def main():
 # ---------------------------------------------------------------------------
 # grant volume
 # ---------------------------------------------------------------------------
+def probe_policy(pc, spec):
+    """Which policy `type` this build accepts, against a real namespace.
+
+    Costs four calls. Uses an EXISTING seeded namespace rather than a throwaway
+    catalog, because the question is not "can a policy be created somewhere" --
+    it is "why did creation fail in the fixture", and a fresh catalog would
+    answer a different question.
+    """
+    #: `spec.start_index`, not an `args.user` -- this runner's `--users` is a
+    #: COUNT, and reaching for an index flag that only `scan_privileges.py` has
+    #: is what made the first version of this raise AttributeError on the one
+    #: machine that can run it. Runner branches need a live cluster, so `--help`
+    #: parses them without ever executing one.
+    n = spec.names(spec.start_index)
+    catalog, ns = n["catalog"], n["namespaces"][0]
+    print(f"probing policy types on {catalog}/{ns}")
+    print(f"  candidates: {list(POLICY_TYPE_CANDIDATES)}")
+    print()
+    res = probe_policy_types(pc, catalog, ns)
+    for t in res["accepted"]:
+        print(f"  ACCEPTED  {t}")
+    for t, why in res["rejected"].items():
+        print(f"  rejected  {t}")
+        print(f"              {why}")
+    print()
+    print(f"{res['calls']} calls.")
+    if res["accepted"]:
+        print()
+        print(
+            f"Seed with:  --policies-per-namespace N --policy-type {res['accepted'][0]}"
+        )
+        print("(anything accepted here was really created and is left in place;")
+        print(" the next seed pass makes the fixture uniform.)")
+        return 0
+    print()
+    print("NOTHING was accepted. The type string is not the problem — read the")
+    print("bodies above; the failure is in another field of CreatePolicyRequest.")
+    return 1
+
+
 def probe(pc):
     """Ask the DEPLOYED build which privilege names it accepts.
 

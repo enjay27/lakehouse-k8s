@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-
 import api_sweep as sweep  # noqa: E402
 import privilege_scan as ps  # noqa: E402
 import query_profile as qp  # noqa: E402
@@ -477,11 +476,7 @@ class EntityClient(Client):
         return _Body(self.ext_status, {"identifiers": [{"name": "gt1"}]})
 
     def list_policies(self, c, ns):
-        #: `identifiers`, per ListPoliciesResponse — this double used to carry
-        #: the same wrong key the code did, so it agreed with the bug.
-        return _Body(
-            self.ext_status, {"identifiers": [{"namespace": [ns], "name": "pol1"}]}
-        )
+        return _Body(self.ext_status, {"policies": [{"name": "pol1"}]})
 
 
 class _Body(Resp):
@@ -510,7 +505,7 @@ def test_entity_targets_come_from_the_api_not_a_format_string():
     """The seeder names them tbl1/vw1/pol1/gt1 — which is a fact about the
     seeder, not about the fixture in front of us."""
     i = _identity()
-    missing, statuses = ps.resolve_entities(EntityClient(), i)
+    missing = ps.resolve_entities(EntityClient(), i)
     assert (i.table, i.view, i.generic_table, i.policy) == (
         "tbl1",
         "vw1",
@@ -522,7 +517,7 @@ def test_entity_targets_come_from_the_api_not_a_format_string():
 
 def test_a_feature_flagged_extension_leaves_its_target_unresolved():
     i = _identity()
-    missing, statuses = ps.resolve_entities(EntityClient(ext_status=404), i)
+    missing = ps.resolve_entities(EntityClient(ext_status=404), i)
     assert i.table == "tbl1" and i.view == "vw1"
     assert i.generic_table is None and i.policy is None
     assert missing == {"generic_table": "list [404]", "policy": "list [404]"}
@@ -530,13 +525,13 @@ def test_a_feature_flagged_extension_leaves_its_target_unresolved():
 
 def test_an_empty_namespace_is_reported_as_holding_none():
     i = _identity()
-    missing, _ = ps.resolve_entities(EntityClient(tables=(), views=()), i)
+    missing = ps.resolve_entities(EntityClient(tables=(), views=()), i)
     assert missing["table"] == "namespace holds none"
     assert i.table is None
 
 
 def test_no_namespace_means_nothing_can_resolve():
-    missing, _ = ps.resolve_entities(EntityClient(), _identity(namespace=None))
+    missing = ps.resolve_entities(EntityClient(), _identity(namespace=None))
     assert set(missing) == {"table", "view", "policy", "generic_table"}
     assert all(v == "no namespace resolved" for v in missing.values())
 
@@ -622,7 +617,7 @@ def test_get_config_sends_a_warehouse():
 
 
 # ----------------------------------------------------------------------
-# union across tiers — measured 2026-08-31, and it surprised the plan
+# union across tiers — measured 2026-08-24, and it surprised the plan
 # ----------------------------------------------------------------------
 def _probe(scope, **verdicts):
     base = {l: "authorized" for l, _s, _f in sweep.full_read_operations(FULL_FIXTURE)}
@@ -644,7 +639,7 @@ SERVICE_READS = [
 
 
 def _real_probes():
-    """The 2026-08-31 measurement, as the two probe files recorded it."""
+    """The 2026-08-24 measurement, as the two probe files recorded it."""
     return {
         "catalog-scoped-full": _probe(
             "PRINCIPAL_ROLE:authz1_principal_role",
@@ -721,84 +716,4 @@ def test_profile_descriptions_state_the_measurement_not_the_hope():
     """`service-admin` claimed 'all 29 ops 2xx' until the probe said 26."""
     assert "26 of 29" in ps.PROFILES["service-admin"].description
     assert "NOT credential vending" in ps.PROFILES["service-admin"].description
-    assert "21 of 29" in ps.PROFILES["catalog-scoped-full"].description
-
-
-def test_policies_are_read_from_identifiers_not_a_policies_key():
-    """`ListPoliciesResponse` holds its entries under `identifiers`.
-
-    Reading the wrong key returns an empty list, which is indistinguishable
-    from an empty namespace — so a full namespace reported as holding none.
-    On 2026-08-31 that led to a proposal to TRUNCATE the realm and rebuild a
-    55,004-row fixture, to fix what was one word here.
-    """
-    i = _identity()
-    body = {
-        "identifiers": [{"namespace": ["ns1"], "name": "pol1"}],
-        "next-page-token": None,
-    }
-
-    class C(EntityClient):
-        def list_policies(self, c, ns):
-            return _Body(200, body)
-
-    missing, _ = ps.resolve_entities(C(), i)
-    assert i.policy == "pol1"
-    assert "policy" not in missing
-
-
-def test_a_missing_key_is_reported_as_a_parsing_fault_not_an_empty_namespace():
-    i = _identity()
-
-    class C(EntityClient):
-        def list_policies(self, c, ns):
-            return _Body(200, {"policies": [{"name": "pol1"}]})
-
-    missing, _ = ps.resolve_entities(C(), i)
-    assert "PARSING fault" in missing["policy"]
-    assert "keys: ['policies']" in missing["policy"]
-    assert "namespace holds none" not in missing["policy"]
-
-
-def test_a_genuinely_empty_namespace_still_says_so():
-    i = _identity()
-
-    class C(EntityClient):
-        def list_policies(self, c, ns):
-            return _Body(200, {"identifiers": []})
-
-    assert ps.resolve_entities(C(), i)[0]["policy"] == "namespace holds none"
-
-
-def test_resolution_calls_are_reported_so_the_run_json_can_account_for_them():
-    """Four real requests per identity, on paths that are ALSO real ops.
-
-    `GET /namespaces/{ns}/tables` is issued to resolve a table target AND as
-    the operation itself. If the drive does not record the resolution call, the
-    capture holds ~2x what the run JSON expects and `reconcile` reports an
-    unexplained delta on four ops that are not missing anything — exactly the
-    shape ns-resolve had.
-    """
-    i = _identity()
-    _missing, statuses = ps.resolve_entities(EntityClient(), i)
-    assert set(statuses) == {"table", "view", "generic_table", "policy"}
-    assert all(s == 200 for s in statuses.values())
-
-
-def test_a_refused_resolution_still_reports_its_status():
-    i = _identity()
-    _missing, statuses = ps.resolve_entities(EntityClient(ext_status=404), i)
-    assert statuses["policy"] == 404 and statuses["generic_table"] == 404
-
-
-def test_no_namespace_makes_no_calls_at_all():
-    _missing, statuses = ps.resolve_entities(EntityClient(), _identity(namespace=None))
-    assert statuses == {}, "nothing to resolve against, so nothing is issued"
-
-
-def test_every_resolve_label_folds_onto_a_real_op_label():
-    """The labels the drive records must be a real op plus the suffix."""
-    ops = {l for l, _s, _f in sweep.full_read_operations(FULL_FIXTURE)}
-    for kind, base in ps.RESOLVE_BASE_LABELS.items():
-        assert base in ops, f"{kind} resolves against an op that does not exist"
-        assert qp.base_label(base + ps.ENTITY_RESOLVE_SUFFIX) == base
+    assert "20 of 29" in ps.PROFILES["catalog-scoped-full"].description

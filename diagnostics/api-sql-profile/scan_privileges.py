@@ -65,6 +65,7 @@ REPO = HERE
 while not (REPO / "src").is_dir() and REPO != REPO.parent:
     REPO = REPO.parent
 sys.path.insert(0, str(REPO / "src"))
+
 import api_sweep  # noqa: E402
 import privilege_scan as ps  # noqa: E402
 from polaris_rest import PolarisREST  # noqa: E402
@@ -263,7 +264,7 @@ def cmd_probe(args):
     print(f"namespace       {ns}  (resolved from the API, not assumed)")
 
     if PROFILE.resolve_entities:
-        gone = ps.resolve_entities(pc, chosen)
+        gone, _statuses = ps.resolve_entities(pc, chosen)
         found = {
             k: getattr(chosen, k)
             for k in ("table", "view", "generic_table", "policy")
@@ -298,7 +299,7 @@ def cmd_probe(args):
                 "refused": {s.label: s.status for s in statuses if not s.ok},
                 #: The BODY too. A probe that records only the status sends the
                 #: next reader back to the cluster to find out why -- which is
-                #: what a 400 with no explanation cost on 2026-08-24.
+                #: what a 400 with no explanation cost on 2026-08-31.
                 "refused_detail": {
                     s.label: s.detail for s in statuses if not s.ok and s.detail
                 },
@@ -318,6 +319,37 @@ def cmd_probe(args):
             print(f"  {s.label}: {s.detail}")
         return 1
     return 0
+
+
+def cmd_union(args):
+    """What the WHOLE suite reaches, across every probe on disk.
+
+    Needs no cluster: it reads the probe files `--probe` already wrote. Exists
+    because the two tiers turned out to be COMPLEMENTARY rather than nested --
+    `catalog-scoped-full` can vend credentials and cannot read the service
+    surface; `service-admin` is the reverse -- so quoting either one's count as
+    "the coverage" understates the suite, and intersecting two tables by eye is
+    how that gets quoted wrong.
+    """
+    probes = {}
+    for path in sorted((HERE / "capture").glob("privscan_probe*.json")):
+        tier = path.stem.replace("privscan_probe-", "")
+        if tier == "privscan_probe":
+            tier = ps.DEFAULT_PROFILE
+        probes[tier] = json.loads(path.read_text(encoding="utf-8"))
+    if not probes:
+        sys.exit(
+            "no probe results on disk. Run --probe for each profile first:\n"
+            + "\n".join(
+                f"    python3 scan_privileges.py --probe --profile {n}"
+                for n in sorted(ps.PROFILES)
+            )
+        )
+    print(f"{len(probes)} probe(s): {', '.join(sorted(probes))}")
+    print()
+    union = ps.union_verdicts(probes)
+    print(ps.render_union(union, probes))
+    return 0 if not union["uncovered"] else 1
 
 
 def cmd_drive(args):
@@ -517,6 +549,13 @@ def main():
     )
     ap.add_argument("--list", action="store_true", help="what the metastore holds")
     ap.add_argument(
+        "--union",
+        action="store_true",
+        help="merge every probe on disk: what the WHOLE suite reaches across "
+        "identity tiers, and which operations no tier reached. No cluster "
+        "needed.",
+    )
+    ap.add_argument(
         "--footprint",
         action="store_true",
         help="grant_records each identity's authorization walks (measured)",
@@ -579,6 +618,8 @@ def main():
     print(f"postgres: {PG['host']}:{PG['port']}/{PG['dbname']} schema={SCHEMA}")
     print()
 
+    if args.union:
+        sys.exit(cmd_union(args))
     if args.probe:
         sys.exit(cmd_probe(args))
     if args.drive:

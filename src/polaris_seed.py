@@ -350,7 +350,7 @@ class SeedSpec:
     #: `triage_realm.py` renders directly, so it never has to be inferred.
     entity_overhead_realm: int = 3
 
-    #: Entities the 1,000-user fixture does NOT have, added 2026-08-24 for the
+    #: Entities the 1,000-user fixture does NOT have, added 2026-08-31 for the
     #: full-surface scan. ALL DEFAULT TO ZERO, deliberately: `expected_counts`
     #: and `verify_counts` are calibrated against the existing fixture, and a
     #: default that silently added rows would make `--verify` report a residue
@@ -368,6 +368,10 @@ class SeedSpec:
     #: skipped feature rather than a failed user, because it is a fact about
     #: the deployment and not about the fixture.
     policies_per_namespace: int = 0
+
+    #: Overridable so a build that names its policy types differently needs a
+    #: flag, not an edit. `--probe-policy` reports what this build accepts.
+    policy_type: str = None
     generic_tables_per_namespace: int = 0
 
     #: Assign the bootstrapped `service_admin` principal-role to every seeded
@@ -472,7 +476,7 @@ class SeedResult:
 
     #: WHY each one was refused: `{kind: "status body"}`.
     #:
-    #: Recording only the NAME was not enough, measured 2026-08-24. The authz
+    #: Recording only the NAME was not enough, measured 2026-08-31. The authz
     #: fixture seeded generic tables fine and produced zero policies, and
     #: `GET /policies` answered 200 -- so the feature was ON and the payload
     #: was wrong. With only "policies" recorded there was nothing to say which,
@@ -994,7 +998,7 @@ def seed_user(pc, ic, spec, i, result, bucket=None, minio_endpoint=None):
                     pc.create_policy,
                     n["catalog"],
                     ns,
-                    _policy_payload(pol),
+                    _policy_payload(pol, spec.policy_type),
                     "policies",
                     result,
                 ):
@@ -1028,24 +1032,44 @@ def _table_payload(name):
 
 
 def _try_extension(call, catalog, ns, payload, kind, result):
-    """Create one feature-flagged entity, keeping the REASON if it refuses.
+    """Create one feature-flagged entity, retrying LAG but not a real refusal.
 
-    Deliberately not routed through `step`: `step` retries and treats a failure
-    as a user-level fault, and a disabled feature is neither retryable nor the
-    user's fault. One attempt, the body recorded, the kind marked off.
+    THE BUG THIS FIXES, which was mine (2026-08-31). The first version made ONE
+    attempt and marked the whole kind off on any non-2xx. But 403, 404 and 5xx
+    are exactly the three signatures `_attempt` exists to absorb -- PG-HA
+    read-after-write lag, where the confirming read lands on a replica that has
+    not caught up. Creating a policy into a namespace written milliseconds
+    earlier is precisely that race.
+
+    So one unlucky user could disable policies for the entire run, silently:
+    the authz fixture seeded 100 catalogs, 1,000 tables, 400 views and 200
+    generic tables and ZERO policies, while `GET /policies` answered 200 and
+    `--probe-policy` later showed the payload was fine all along.
+
+    Retrying the transient class first is the whole fix. A DEFINITIVE refusal
+    still disables the kind after one strike, because re-issuing a payload the
+    build will never accept 200 more times only makes the same discovery
+    slower -- which was the original rationale, and is still right.
+
+    Returns True when the entity was created.
     """
-    try:
-        r = call(catalog, ns, payload)
-    except Exception as exc:  # noqa: BLE001
-        result.features_off.add(kind)
-        result.feature_errors[kind] = f"{type(exc).__name__}: {exc}"
-        return False
-    if 200 <= r.status_code < 300:
+    ok, r = _attempt(lambda: call(catalog, ns, payload), f"create_{kind}", result)
+    if ok:
         return True
+    status = getattr(r, "status_code", 0)
+    body = (getattr(r, "text", "") or "")[:300]
+    #: 501/405 mean the build does not implement it; a 404 that SURVIVED the
+    #: retries means the route is absent rather than lagging. Anything else --
+    #: a 400 above all -- is the payload, and saying which spares the next
+    #: reader the archaeology this one cost.
+    if status in (404, 405, 501):
+        reason = "feature not available on this build"
+    elif status == 400:
+        reason = "payload rejected — this is the seeder's fault, not the deployment's"
+    else:
+        reason = "failed after lag retries"
     result.features_off.add(kind)
-    result.feature_errors[kind] = (
-        f"[{r.status_code}] {(getattr(r, 'text', '') or '')[:300]}"
-    )
+    result.feature_errors[kind] = f"[{status}] {reason}: {body}"
     return False
 
 
@@ -1084,11 +1108,55 @@ def _generic_table_payload(name):
     return {"name": name, "format": "delta", "properties": {}}
 
 
-def _policy_payload(name):
+#: Candidate `type` strings for a policy, most likely first. The 1.3.0 docs
+#: show BOTH spellings -- `system.data-compaction` in the PolicyType example
+#: and `system.data_compaction` in the prose -- and a transcribed constant is a
+#: hypothesis (MEMORY: the 25-privilege retraction). `probe_policy_types()`
+#: settles it against the running build in four calls.
+POLICY_TYPE_CANDIDATES = (
+    "system.data-compaction",
+    "system.data_compaction",
+    "system.snapshot-expiry",
+    "system.orphan-file-removal",
+)
+
+DEFAULT_POLICY_TYPE = POLICY_TYPE_CANDIDATES[0]
+
+
+def probe_policy_types(pc, catalog, ns, candidates=None, name_prefix="polprobe"):
+    """Which policy `type` does THIS build accept?
+
+    Mirrors `probe_privileges`, for the same reason and at the same cost: the
+    authz fixture seeded 100 catalogs, 1,000 tables, 400 views and 200 generic
+    tables successfully and ZERO policies, while `GET /policies` answered 200 --
+    so the feature is on and the payload is wrong. Inferring which field from a
+    silent shortfall is the expensive way to find out.
+
+    Really creates, on whatever namespace the caller names. Anything it
+    succeeds with is left behind -- deliberately, since the next seed pass
+    makes the fixture uniform anyway, and deleting it would need a policy
+    delete this client does not have.
+
+    Returns {accepted: [types], rejected: {type: "status: body"}, calls: n}.
+    """
+    accepted, rejected, calls = [], {}, 0
+    for i, ptype in enumerate(candidates or POLICY_TYPE_CANDIDATES, start=1):
+        r = pc.create_policy(
+            catalog, ns, _policy_payload(f"{name_prefix}{i}", policy_type=ptype)
+        )
+        calls += 1
+        if r.status_code < 400 or _is_duplicate(r):
+            accepted.append(ptype)
+        else:
+            rejected[ptype] = f"{r.status_code}: {(r.text or '')[:200]}"
+    return {"accepted": accepted, "rejected": rejected, "calls": calls}
+
+
+def _policy_payload(name, policy_type=None):
     """Minimal policy. `content` is opaque to the metastore row this creates."""
     return {
         "name": name,
-        "type": "system.data-compaction",
+        "type": policy_type or DEFAULT_POLICY_TYPE,
         "description": "seed fixture",
         "content": '{"enable": false}',
     }
