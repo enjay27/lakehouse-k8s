@@ -87,7 +87,6 @@ REPO = HERE
 while not (REPO / "src").is_dir() and REPO != REPO.parent:
     REPO = REPO.parent
 sys.path.insert(0, str(REPO / "src"))
-
 from iceberg_rest import IcebergREST  # noqa: E402
 from polaris_rest import PolarisREST  # noqa: E402
 
@@ -131,17 +130,59 @@ BUCKET = os.environ.get("MINIO_BUCKET", "data-catalog-bucket")
 GRANTS_PER_ROLE_DEFAULT = 50
 
 
-def ledger_path():
-    """The same file the notebooks use, wherever their capture dir landed."""
-    for c in (
-        HERE / "capture" / "seed_ledger.json",
-        REPO / "capture" / "seed_ledger.json",
-    ):
+def ledger_path(prefix="user"):
+    """The ledger for THIS fixture. Per-prefix, and it has to be.
+
+    `Ledger.done_users` is a set of bare user INDEXES -- it records that user 7
+    was built, never which fixture user 7 belonged to. One shared file
+    therefore makes every fixture after the first a no-op: seeding 100 `authz`
+    principals against a ledger holding `user` 1..1000 skips all 100 and
+    reports
+
+        seeded=0 skipped=100 failed=0
+
+    which is indistinguishable from "already done" and was followed, before
+    this fix, by a cheerful "Next: ..." (measured 2026-08-24 -- it cost two
+    seeding runs that created nothing).
+
+    `user` keeps the original unsuffixed filename so the existing 1,000-user
+    fixture, its `grant_upgrades` record and every report that references it
+    still resolve.
+    """
+    name = "seed_ledger.json" if prefix == "user" else f"seed_ledger-{prefix}.json"
+    for c in (HERE / "capture" / name, REPO / "capture" / name):
         if c.exists():
             return c
     d = HERE / "capture"
     d.mkdir(parents=True, exist_ok=True)
-    return d / "seed_ledger.json"
+    return d / name
+
+
+def refuse_on_foreign_ledger(lp, prefix):
+    """Refuse a ledger that belongs to a DIFFERENT fixture.
+
+    Belt and braces beside the per-prefix path: the path can still be pointed
+    somewhere by hand, and the failure mode is silent. A ledger whose spec
+    names another prefix cannot say anything about this one's users.
+    """
+    import json as _json
+
+    if not lp.exists():
+        return
+    try:
+        spec = (_json.loads(lp.read_text(encoding="utf-8")) or {}).get("spec") or {}
+    except (ValueError, OSError):
+        return
+    recorded = spec.get("prefix")
+    if recorded and recorded != prefix:
+        sys.exit(
+            f"ledger at {lp} was written for prefix {recorded!r}, but this run\n"
+            f"targets {prefix!r}. Its user indexes describe {recorded!r} users, so every\n"
+            f"{prefix!r} user would be SKIPPED and the run would report success\n"
+            "having created nothing.\n"
+            f"    use this fixture's own ledger:  capture/seed_ledger-{prefix}.json\n"
+            f"    or move the foreign one aside:  mv {lp.name} {lp.stem}-{recorded}.json"
+        )
 
 
 def connect():
@@ -220,6 +261,39 @@ def main():
     ap.add_argument("--no-tables", dest="tables", action="store_false")
     ap.set_defaults(tables=False)
     ap.add_argument("--prefix", default="user")
+    #: The full-surface fixture (2026-08-24). All default to the existing
+    #: fixture's shape, so a bare `seed_polaris.py` still seeds exactly what it
+    #: seeded before.
+    ap.add_argument(
+        "--views-per-namespace",
+        type=int,
+        default=0,
+        help="create N views per namespace. Without them loadView/headView "
+        "have no target and are UNDRIVEABLE — a fixture gap, not a 404.",
+    )
+    ap.add_argument(
+        "--policies-per-namespace",
+        type=int,
+        default=0,
+        help="create N policies per namespace. Feature-flagged in 1.3; a "
+        "refusal is recorded once as a disabled feature, not retried per user.",
+    )
+    ap.add_argument(
+        "--generic-tables-per-namespace",
+        type=int,
+        default=0,
+        help="create N generic tables per namespace. Feature-flagged in 1.3.",
+    )
+    ap.add_argument(
+        "--service-admin",
+        action="store_true",
+        help="assign the bootstrapped `service_admin` principal-role to every "
+        "seeded principal. THE ONLY route to service-level authorization — the "
+        "1.3.0 management API has no service-level grant type. Note it makes "
+        "each principal resolve ~1 grant per catalog in the realm (~1,100 "
+        "here) instead of ~50, so such a fixture is NOT footprint-comparable "
+        "with a catalog-scoped one. Seed it separately.",
+    )
     ap.add_argument("--teardown", action="store_true")
     ap.add_argument("--verify", action="store_true")
     ap.add_argument(
@@ -287,10 +361,14 @@ def main():
         namespaces_per_catalog=2,
         tables_per_namespace=5,
         create_tables=args.tables,
+        views_per_namespace=args.views_per_namespace,
+        policies_per_namespace=args.policies_per_namespace,
+        generic_tables_per_namespace=args.generic_tables_per_namespace,
+        assign_service_admin=args.service_admin,
         prefix=args.prefix,
         privileges=spec_privileges,
     )
-    lp = ledger_path()
+    lp = ledger_path(args.prefix)
 
     # BEFORE connect(): a ledger that cannot deliver the target is a local
     # fact, and refusing on it needs no cluster. Only the seed path is
@@ -307,6 +385,7 @@ def main():
         )
     )
     if seeding:
+        refuse_on_foreign_ledger(lp, args.prefix)
         refuse_on_short_ledger(lp, target)
 
     pc, ic = connect()
@@ -437,7 +516,39 @@ def main():
         print("\nNOT seeded — fix the errors above and re-run (the ledger will")
         print("skip whatever did succeed). Check for partial residue with:")
         print("      python3 seed_polaris.py --verify")
+    elif res.completed_users == 0 and res.skipped_users:
+        # `seeded=0 skipped=N failed=0` is not success. Two causes, and the
+        # output has to say which rather than printing a "Next:" that implies
+        # a fixture exists.
+        print(f"\nNOTHING WAS CREATED — all {res.skipped_users} users were skipped.")
+        print(f"  The ledger at {lp} already records those user indexes.")
+        print("  Either this fixture is already seeded — check with")
+        print(f"      python3 seed_polaris.py --verify --prefix {spec.prefix}")
+        print("  or the ledger belongs to a different fixture, in which case")
+        print("  move it aside and re-run.")
     else:
+        if res.features_off:
+            # Feature-flagged off on this build. A fact about the deployment,
+            # so `--verify` will report a shortfall that is NOT a seeding fault.
+            print(f"\nFEATURE(S) NOT CREATED: {sorted(res.features_off)}")
+            for kind, why in sorted(res.feature_errors.items()):
+                print(f"  {kind}: {why}")
+            print(
+                "  Those entities do not exist and --verify will show a "
+                "shortfall.\n"
+                "  A 404/501 is the FEATURE being off. Any other status is the "
+                "PAYLOAD\n"
+                "  being wrong — which is the seeder's fault, not the "
+                "deployment's."
+            )
+        if res.service_admin_failures:
+            print(
+                f"\n{len(res.service_admin_failures)} principals did NOT get "
+                "service_admin."
+                "\n  They are still valid catalog-scoped identities, but the "
+                "service-level"
+                "\n  reads will 403 for them — the probe will show it."
+            )
         print("\nNext: in notebook 01 leave RUN_SEED = False (this already seeded),")
         print("      then run it to trace the API surface at real volume.")
 

@@ -65,14 +65,25 @@ REPO = HERE
 while not (REPO / "src").is_dir() and REPO != REPO.parent:
     REPO = REPO.parent
 sys.path.insert(0, str(REPO / "src"))
-
 import api_sweep  # noqa: E402
 import privilege_scan as ps  # noqa: E402
 from polaris_rest import PolarisREST  # noqa: E402
 
 POLARIS_URL = os.environ.get("POLARIS_URL", "http://192.168.139.2:8181")
 REALM = os.environ.get("POLARIS_REALM", "POLARIS")
-PREFIX = os.environ.get("SCAN_PREFIX", "user")
+#: The active identity tier. Set from --profile in main(); every prefix and op
+#: list below derives from it, so the two suites cannot drift apart by one of
+#: them being changed and the other forgotten.
+PROFILE = ps.PROFILES[ps.DEFAULT_PROFILE]
+
+#: An explicit SCAN_PREFIX still wins, for driving a fixture seeded under a
+#: name the profile does not know about.
+PREFIX_OVERRIDE = os.environ.get("SCAN_PREFIX")
+
+
+def prefix():
+    return PREFIX_OVERRIDE or PROFILE.prefix
+
 
 PG = dict(
     host=os.environ.get("PG_HOST", "192.168.139.2"),
@@ -83,11 +94,29 @@ PG = dict(
 )
 SCHEMA = os.environ.get("PG_SCHEMA", "polaris_schema")
 
+
 #: Where the probe result lives between runs. `--drive` reads it rather than
 #: re-probing, so the op set it drove is recoverable from disk afterwards --
 #: a report that cannot say which operations were in the denominator is not
 #: reporting a distribution.
-PROBE_PATH = HERE / "capture" / "privscan_probe.json"
+def probe_path(profile=None):
+    """Where THIS profile's probe result lives.
+
+    Per-profile, and it has to be: `--drive` reads the probe to decide which
+    operations to issue, so one shared file would let a 29-op service-scoped
+    probe select the op set for a 13-op catalog-scoped drive -- silently, since
+    both are valid JSON and both name real operations.
+
+    `catalog-scoped` keeps the original unsuffixed filename so the completed
+    pass (`privscan-20260824-123408`) still resolves against the probe it was
+    actually driven with.
+    """
+    profile = profile or PROFILE
+    if profile.name == ps.DEFAULT_PROFILE:
+        return HERE / "capture" / "privscan_probe.json"
+    return HERE / "capture" / f"privscan_probe-{profile.name}.json"
+
+
 RUNS_DIR = HERE / "runs"
 
 
@@ -124,11 +153,11 @@ def client():
 
 def load(conn, limit=None):
     identities, problems = ps.load_identities(
-        conn, SCHEMA, REALM, prefix=PREFIX, limit=limit
+        conn, SCHEMA, REALM, prefix=prefix(), limit=limit
     )
     if not identities:
         sys.exit(
-            f"no seeded identities found for prefix {PREFIX!r} in realm {REALM}.\n"
+            f"no seeded identities found for prefix {prefix()!r} in realm {REALM}.\n"
             "  Is the fixture there? python3 seed_polaris.py --verify"
         )
     for reason, names in problems.items():
@@ -144,7 +173,7 @@ def ops_for_identity(identity):
     just supplies a different fixture per identity. Building a second op list
     here is how the two drift apart.
     """
-    return api_sweep.read_operations(identity.fixture())
+    return PROFILE.ops(identity.fixture())
 
 
 # ----------------------------------------------------------------------
@@ -154,7 +183,7 @@ def cmd_list(args):
     conn = pg_connect()
     identities = load(conn, args.limit)
     conn.close()
-    print(f"{len(identities)} identities, prefix {PREFIX!r}, realm {REALM}")
+    print(f"{len(identities)} identities, prefix {prefix()!r}, realm {REALM}")
     print()
     print(f"  {'user':>6}  {'client_id':<24} {'catalog':<24} principal-role")
     for i in identities[:10]:
@@ -215,7 +244,7 @@ def cmd_probe(args):
         sys.exit(f"user index {args.user} is not among the loaded identities")
 
     pc = client()
-    token, scope, detail = ps.authenticate(pc, chosen, secret)
+    token, scope, detail = ps.authenticate(pc, chosen, secret, scope=PROFILE.scope)
     if not token:
         sys.exit(
             f"could not authenticate as {chosen.principal} at scope {scope}:\n"
@@ -232,21 +261,48 @@ def cmd_probe(args):
         sys.exit(f"cannot resolve a namespace in {chosen.catalog}: {why}")
     chosen.namespace = ns
     print(f"namespace       {ns}  (resolved from the API, not assumed)")
+
+    if PROFILE.resolve_entities:
+        gone = ps.resolve_entities(pc, chosen)
+        found = {
+            k: getattr(chosen, k)
+            for k in ("table", "view", "generic_table", "policy")
+            if getattr(chosen, k)
+        }
+        for k, v in found.items():
+            print(f"{k:<15} {v}  (resolved from the API)")
+        for k, why in sorted(gone.items()):
+            print(f"{k:<15} —  UNDRIVEABLE: {why}")
+        if gone:
+            print()
+            print(
+                "  An unresolved kind is a FIXTURE fact, not a refusal. Its "
+                "operations\n  below will read `undriveable`, which is "
+                "deliberately not a 404 finding."
+            )
     print()
 
     ops = ops_for_identity(chosen)
     statuses = ps.probe_surface(pc, chosen, ops)
     print(ps.render_probe_table(statuses))
 
-    PROBE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROBE_PATH.write_text(
+    probe_path().parent.mkdir(parents=True, exist_ok=True)
+    probe_path().write_text(
         json.dumps(
             {
+                "profile": PROFILE.name,
                 "probed_user": chosen.index,
                 "scope": scope,
                 "namespace": ns,
                 "authorized": [s.label for s in statuses if s.ok],
                 "refused": {s.label: s.status for s in statuses if not s.ok},
+                #: The BODY too. A probe that records only the status sends the
+                #: next reader back to the cluster to find out why -- which is
+                #: what a 400 with no explanation cost on 2026-08-24.
+                "refused_detail": {
+                    s.label: s.detail for s in statuses if not s.ok and s.detail
+                },
+                "verdicts": {s.label: s.verdict for s in statuses},
                 "at": int(time.time()),
             },
             indent=2,
@@ -254,7 +310,7 @@ def cmd_probe(args):
         encoding="utf-8",
     )
     print()
-    print(f"probe written to {PROBE_PATH}")
+    print(f"probe written to {probe_path()}")
     unexpected = [s for s in statuses if s.status == 0]
     if unexpected:
         print("\nNOTE: some operations raised rather than answering:")
@@ -266,14 +322,14 @@ def cmd_probe(args):
 
 def cmd_drive(args):
     secret = secret_or_exit()
-    if not PROBE_PATH.exists():
+    if not probe_path().exists():
         sys.exit(
-            f"no probe result at {PROBE_PATH}.\n"
+            f"no probe result at {probe_path()}.\n"
             "  Run `python3 scan_privileges.py --probe` first. Driving 7,000\n"
             "  requests against an assumed op set is how a 403 column becomes\n"
             "  a finding."
         )
-    probe = json.loads(PROBE_PATH.read_text(encoding="utf-8"))
+    probe = json.loads(probe_path().read_text(encoding="utf-8"))
     allowed = set(probe["authorized"])
     if not allowed:
         sys.exit("the probe found NO authorized GET operations; nothing to drive.")
@@ -328,6 +384,8 @@ def cmd_drive(args):
         progress_every=args.progress_every,
         stop_after_auth_failures=args.stop_after_auth_failures,
         tolerated_labels=deny_sample,
+        resolve_entity_targets=PROFILE.resolve_entities,
+        auth_scope=PROFILE.scope,
     )
     print()
     print(result.summary())
@@ -340,13 +398,15 @@ def cmd_drive(args):
             {
                 "run_id": run_id,
                 "realm": REALM,
-                "prefix": PREFIX,
+                "prefix": prefix(),
+                "profile": PROFILE.name,
                 "probe": probe,
                 "identities": result.identities,
                 "authenticated": result.authenticated,
                 "requests": result.requests,
                 "auth_failures": result.auth_failures,
                 "skipped": result.skipped,
+                "unresolved": result.unresolved,
                 "errors": [list(e) for e in result.errors],
                 "status_counts": {
                     label: buckets
@@ -363,6 +423,13 @@ def cmd_drive(args):
     print(f"run written to {out}")
     print()
     print(ps.render_scan_report(result, ops_for_identity(identities[0])))
+
+    if result.unresolved:
+        print()
+        print("entity targets that did NOT resolve (fixture facts, not refusals):")
+        for kind, reasons in sorted(result.unresolved.items()):
+            for why, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
+                print(f"  {kind:<15} {n:>5} identities — {why}")
 
     if result.errors or result.auth_failures or result.skipped:
         print()
@@ -387,7 +454,7 @@ def assert_capture_live(capture_dir, identity, secret, settle_s=2.0):
         print(f"  no .log files under {capture_dir}")
 
     pc = client()
-    token, scope, detail = ps.authenticate(pc, identity, secret)
+    token, scope, detail = ps.authenticate(pc, identity, secret, scope=PROFILE.scope)
     if not token:
         sys.exit(f"could not authenticate for the capture check: {detail}")
     pc.token = token
@@ -464,6 +531,13 @@ def main():
         action="store_true",
         help="every identity through the probe's authorized subset",
     )
+    ap.add_argument(
+        "--profile",
+        default=ps.DEFAULT_PROFILE,
+        choices=sorted(ps.PROFILES),
+        help="identity tier to drive. "
+        + "; ".join(f"{n}: {p.description}" for n, p in sorted(ps.PROFILES.items())),
+    )
     ap.add_argument("--user", type=int, default=1, help="identity index to probe")
     ap.add_argument("--limit", type=int, default=None, help="first N identities only")
     ap.add_argument(
@@ -497,7 +571,11 @@ def main():
     )
     args = ap.parse_args()
 
-    print(f"polaris : {POLARIS_URL}  realm={REALM}  prefix={PREFIX}")
+    global PROFILE
+    PROFILE = ps.PROFILES[args.profile]
+
+    print(f"polaris : {POLARIS_URL}  realm={REALM}  prefix={prefix()}")
+    print(f"profile : {PROFILE.name} — {PROFILE.description}")
     print(f"postgres: {PG['host']}:{PG['port']}/{PG['dbname']} schema={SCHEMA}")
     print()
 

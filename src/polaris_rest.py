@@ -743,3 +743,194 @@ class PolarisREST:
             params={"cascade": "true" if cascade else "false"},
             json={"grant": {"type": "catalog", "privilege": privilege}},
         )
+
+    # ------------------------------------------------------------------
+    # The rest of the readable surface (added 2026-08-24)
+    #
+    # The 1.3.0 spec defines 29 GET/HEAD operations across the two services.
+    # `api_sweep.read_operations` bound 13 of them; these are the other 16 that
+    # this client lacked, so `api_sweep.full_read_operations` can cover the
+    # whole surface.
+    #
+    # They live HERE, on `PolarisREST`, rather than on `iceberg_rest` -- even
+    # the Iceberg-shaped ones -- for a mechanical reason:
+    # `query_profile.operation_templates()` derives every URL template by
+    # driving a real `PolarisREST` whose `requests` module is swapped for a
+    # recorder. An op that reached the network through a different client would
+    # record nothing, and its label would surface in the report as an
+    # "unclassified path": a harness bug wearing a fixture bug's clothes.
+    # ------------------------------------------------------------------
+
+    # ---- management: the role graph ----
+    def list_principal_roles_assigned(self, principal, token=None):
+        """GET the principal-roles assigned to `principal`.
+
+        One of the four role-graph traversals the original 13 omitted. They
+        matter more than their count suggests: principal -> principal-role ->
+        catalog-role IS the authorization model, so these are the reads most
+        likely to touch `grant_records` more than once per request.
+        """
+        return requests.get(
+            f"{self.base_mgmt}/principals/{principal}/principal-roles",
+            headers=self._h(token),
+        )
+
+    def list_catalog_roles_for_principal_role(
+        self, principal_role, catalog, token=None
+    ):
+        """GET the catalog-roles `principal_role` holds within `catalog`.
+
+        Same URL as `assign_catalog_role_to_principal_role`'s PUT; the method
+        is what separates them.
+        """
+        return requests.get(
+            f"{self.base_mgmt}/principal-roles/{principal_role}/catalog-roles/{catalog}",
+            headers=self._h(token),
+        )
+
+    def get_catalog_role(self, catalog, catalog_role, token=None):
+        """GET one catalog-role by name."""
+        return requests.get(
+            f"{self.base_mgmt}/catalogs/{catalog}/catalog-roles/{catalog_role}",
+            headers=self._h(token),
+        )
+
+    def list_assignee_principal_roles_for_catalog_role(
+        self, catalog, catalog_role, token=None
+    ):
+        """GET the principal-roles a catalog-role is assigned to. The reverse
+        edge of `list_catalog_roles_for_principal_role`."""
+        return requests.get(
+            f"{self.base_mgmt}/catalogs/{catalog}/catalog-roles/{catalog_role}"
+            "/principal-roles",
+            headers=self._h(token),
+        )
+
+    # ---- iceberg catalog: config, existence checks, credentials ----
+    def get_config(self, warehouse=None, token=None):
+        """GET /v1/config -- the catalog's own configuration document.
+
+        The one operation on the surface that names no entity, which makes it
+        the natural control: whatever SQL it issues is the floor an
+        authenticated request cannot go below.
+        """
+        params = {"warehouse": warehouse} if warehouse else {}
+        return requests.get(
+            f"{self.base_cat}/config", headers=self._h(token), params=params
+        )
+
+    def head_namespace(self, catalog, ns, token=None):
+        """HEAD a namespace -- Iceberg's existence check. No body, same
+        resolution path as the GET; whether it also costs the same is the
+        question, and it is measured rather than assumed."""
+        return requests.head(
+            f"{self.base_cat}/{catalog}/namespaces/{self._ns_path(ns)}",
+            headers=self._h(token),
+        )
+
+    def head_table(self, catalog, ns, table, token=None):
+        """HEAD a table -- existence check, no metadata body."""
+        return requests.head(
+            f"{self.base_cat}/{catalog}/namespaces/{self._ns_path(ns)}/tables/{table}",
+            headers=self._h(token),
+        )
+
+    def head_view(self, catalog, ns, view, token=None):
+        """HEAD a view -- existence check, no metadata body."""
+        return requests.head(
+            f"{self.base_cat}/{catalog}/namespaces/{self._ns_path(ns)}/views/{view}",
+            headers=self._h(token),
+        )
+
+    def load_credentials(self, catalog, ns, table, token=None):
+        """GET vended storage credentials for a table.
+
+        On the GET surface, but NOT only a metastore read: this is the
+        credential-vending path, so it reaches storage configuration and can
+        call out to the object store. Its SQL belongs in the profile; its
+        latency does not belong in the same column as a pure metadata read,
+        and the report says so rather than letting the two average together.
+        """
+        return requests.get(
+            f"{self.base_cat}/{catalog}/namespaces/{self._ns_path(ns)}/tables/"
+            f"{table}/credentials",
+            headers=self._h(token),
+        )
+
+    # ---- polaris extensions: generic tables and policies ----
+    #
+    # Both are FEATURE-FLAGGED in 1.3. A 404 or 501 from these is a measured
+    # fact about this deployment, not a failure and not a reason to leave them
+    # out of the sweep -- `probe_surface` already classifies an op by what it
+    # actually returned.
+    def list_generic_tables(self, catalog, ns, token=None):
+        """GET the generic (non-Iceberg) tables in a namespace."""
+        return requests.get(
+            f"{self.base_url}/api/catalog/polaris/v1/{catalog}/namespaces/"
+            f"{self._ns_path(ns)}/generic-tables",
+            headers=self._h(token),
+        )
+
+    def load_generic_table(self, catalog, ns, table, token=None):
+        """GET one generic table."""
+        return requests.get(
+            f"{self.base_url}/api/catalog/polaris/v1/{catalog}/namespaces/"
+            f"{self._ns_path(ns)}/generic-tables/{table}",
+            headers=self._h(token),
+        )
+
+    def list_policies(self, catalog, ns, token=None):
+        """GET the policies attached within a namespace."""
+        return requests.get(
+            f"{self.base_url}/api/catalog/polaris/v1/{catalog}/namespaces/"
+            f"{self._ns_path(ns)}/policies",
+            headers=self._h(token),
+        )
+
+    def load_policy(self, catalog, ns, policy, token=None):
+        """GET one policy by name."""
+        return requests.get(
+            f"{self.base_url}/api/catalog/polaris/v1/{catalog}/namespaces/"
+            f"{self._ns_path(ns)}/policies/{policy}",
+            headers=self._h(token),
+        )
+
+    def create_generic_table(self, catalog, ns, payload, token=None):
+        """POST a generic (non-Iceberg) table. Feature-flagged in 1.3.
+
+        Returns the response rather than raising on 404/501, because "this
+        build has the feature off" is a fact the caller records, not an error
+        it recovers from.
+        """
+        return requests.post(
+            f"{self.base_url}/api/catalog/polaris/v1/{catalog}/namespaces/"
+            f"{self._ns_path(ns)}/generic-tables",
+            headers=self._h(token),
+            json=payload,
+        )
+
+    def create_policy(self, catalog, ns, payload, token=None):
+        """POST a policy into a namespace. Feature-flagged in 1.3."""
+        return requests.post(
+            f"{self.base_url}/api/catalog/polaris/v1/{catalog}/namespaces/"
+            f"{self._ns_path(ns)}/policies",
+            headers=self._h(token),
+            json=payload,
+        )
+
+    def get_applicable_policies(self, catalog, ns=None, table=None, token=None):
+        """GET the policies applicable to a target, walking the hierarchy.
+
+        The one policy read that resolves INHERITANCE rather than a single
+        entity, so it is the one worth watching for a different query shape.
+        """
+        params = {}
+        if ns is not None:
+            params["namespace"] = self._ns_path(ns)
+        if table is not None:
+            params["target-name"] = table
+        return requests.get(
+            f"{self.base_url}/api/catalog/polaris/v1/{catalog}/applicable-policies",
+            headers=self._h(token),
+            params=params,
+        )

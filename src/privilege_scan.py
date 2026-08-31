@@ -45,6 +45,7 @@ asks.
 
 from dataclasses import dataclass, field
 
+import api_sweep
 import api_trace
 
 #: `entities.type_code` values, from `entity_replay` where they were confirmed
@@ -58,10 +59,137 @@ TYPE_CATALOG = 4
 #: to work against a fixture built by any means.
 OWNER_ROLE_NAME = "owner_principal"
 
+#: Bootstrapped by Polaris. Mirrors `polaris_seed.SERVICE_ADMIN_ROLE`; named
+#: here too so `PROFILES` does not have to import the seeder for one string.
+SERVICE_ADMIN_ROLE = "service_admin"
+
 #: Label for the `GET /namespaces` call `drive()` makes to resolve a namespace,
 #: kept distinct from the identical call the drive itself issues. See the note
 #: in `drive()`.
 NS_RESOLVE_LABEL = "GET  /namespaces [ns-resolve]"
+
+
+@dataclass
+class Profile:
+    """A named identity tier: which principals, and which operations.
+
+    The two tiers measure different things and must not be conflated:
+
+    * **catalog-scoped** -- `user{N}_principal`, holding `owner_principal` on
+      its OWN catalog and nothing at service level. Six of its thirteen
+      operations 403. This is NOT "an unauthorized principal": 8,000 of its
+      15,000 requests succeeded. It is the least-privileged tier that is still
+      a real working identity.
+    * **service-scoped** -- granted service-level access as well, so the whole
+      29-operation surface should answer 2xx. Its probe is GATED on that: a
+      suite named "fully authorized" that quietly contains 403s is the same
+      error as a 403 in a column headed "ms".
+
+    THE TRAP, and it is the reason this is a Profile and not a flag.
+    `api_sweep.bind_identity` records that root resolves ~2 grant rows while an
+    ordinary principal resolves 25 or 50 -- and that Seq Scan cost is FLAT in
+    rows-owned while index-scan cost tracks rows RETURNED. So the identity's
+    grant footprint barely moves the index-absent column and dominates the
+    index-present one.
+
+    A service-scoped principal granted service access and little else would
+    therefore sit at a completely different point on that curve, and diffing
+    its numbers against the catalog-scoped suite's would compare two volumes
+    while appearing to compare two privilege levels. Hence `footprint_must_match`:
+    measure both tiers with `api_sweep.identity_grant_footprint`, and claim
+    comparability only when they agree.
+
+    Root is disqualified for the same reason -- it is authorized for
+    everything and resolves two rows, so a suite built on it would sweep the
+    whole surface and report the least representative identity in the realm.
+    """
+
+    name: str
+    prefix: str
+    #: The `api_sweep` builder's NAME, not the function. So a profile stays a
+    #: plain data record -- serialisable into the run JSON, printable in
+    #: `--list-profiles` -- and the op list it names is resolved from
+    #: `api_sweep`, which remains the single definition of the surface.
+    operations: str
+    description: str = ""
+    footprint_must_match: str = None
+    #: Resolve a table / view / policy / generic table per identity before
+    #: driving. Only the 29-op profiles need it; the 13-op surface names no
+    #: entity below the namespace.
+    resolve_entities: bool = False
+
+    #: OAuth scope to request, or None for the identity's OWN principal-role.
+    #:
+    #: THE BUG THIS FIXES (2026-08-24, and it silently defeated a whole
+    #: fixture). A principal holding TWO principal-roles gets a token scoped to
+    #: ONE of them. The `admin{N}` principals hold their own role plus
+    #: `service_admin`, and the probe requested
+    #: `PRINCIPAL_ROLE:admin1_principal_role` -- so service_admin's grants were
+    #: never in scope, and the "fully authorized" profile refused EXACTLY the
+    #: same nine operations as the catalog-scoped one. Identical output from
+    #: two privilege levels is the shape of a scope bug, not a finding.
+    #:
+    #: `PRINCIPAL_ROLE:ALL` is NOT the answer: it is root's scope, and a
+    #: non-root principal asking for it is handed a token with no effective
+    #: role which then 403s everything (`polaris_test_utils`, and
+    #: `authenticate`'s own docstring). A SPECIFIC assigned role is what works.
+    scope: str = None
+
+    def ops(self, fx):
+        return getattr(api_sweep, self.operations)(fx)
+
+
+#: The tiers. `catalog-scoped` reproduces the completed pass EXACTLY -- same
+#: prefix, same 13 operations -- because `privscan-20260824-123408` is already
+#: correlated against it and a denominator that moved underneath would make
+#: that report describe nothing.
+PROFILES = {
+    "catalog-scoped": Profile(
+        name="catalog-scoped",
+        prefix="user",
+        operations="read_operations",
+        description="owner_principal on its own catalog; 6 of 13 ops 403",
+    ),
+    #: RENAMED 2026-08-24, when the premise behind "service-scoped" turned out
+    #: to be wrong. The 1.3.0 management API has NO service-level grant type --
+    #: `GrantResource` is catalog / namespace / table / view / policy, and
+    #: `SERVICE_MANAGE_ACCESS` is in none of them. An `authz{N}` principal is
+    #: therefore still CATALOG-scoped, however many entities it owns; calling
+    #: it service-scoped would have named the fixture after a privilege level
+    #: it cannot reach.
+    "catalog-scoped-full": Profile(
+        name="catalog-scoped-full",
+        prefix="authz",
+        operations="full_read_operations",
+        description="catalog privileges + full entities; 29 ops driven, the 6 "
+        "service-level reads still 403",
+        footprint_must_match="catalog-scoped",
+        resolve_entities=True,
+    ),
+    #: The only identity that can answer the whole surface -- and the reason it
+    #: is a SEPARATE fixture rather than a flag. `service_admin` gains one
+    #: grant per catalog (measured: 1,006 at 1,000 catalogs), so these
+    #: principals resolve a grant set that grows with the REALM rather than
+    #: with their own privileges. Seq Scan cost is flat in rows-owned while
+    #: index-scan cost tracks rows returned, so they sit at a different point
+    #: on the curve entirely.
+    #:
+    #: `footprint_must_match` is deliberately None: there is nothing to match,
+    #: and pretending otherwise would invite the diff this whole distinction
+    #: exists to prevent.
+    "service-admin": Profile(
+        name="service-admin",
+        prefix="admin",
+        operations="full_read_operations",
+        description="member of service_admin; all 29 ops 2xx, but ~1,100 grant "
+        "rows — NOT comparable to a catalog-scoped run",
+        footprint_must_match=None,
+        resolve_entities=True,
+        scope=f"PRINCIPAL_ROLE:{SERVICE_ADMIN_ROLE}",
+    ),
+}
+
+DEFAULT_PROFILE = "catalog-scoped"
 
 
 @dataclass
@@ -80,15 +208,27 @@ class Identity:
     catalog: str
     catalog_role: str = OWNER_ROLE_NAME
     namespace: str = None
+    #: Entity-level reads need a target. Left None for a fixture seeded with
+    #: `--no-tables`, which is not a defect in the identity -- it is the reason
+    #: `loadTable` and friends are UNDRIVEABLE there, and the probe reports
+    #: that as its own class rather than as a 404 finding.
+    table: str = None
+    view: str = None
+    generic_table: str = None
+    policy: str = None
 
     def fixture(self):
-        """The `fx` mapping `api_sweep.read_operations` expects."""
+        """The `fx` mapping the `api_sweep` op builders expect."""
         return {
             "catalog": self.catalog,
             "namespace": self.namespace,
             "principal": self.principal,
             "principal_role": self.principal_role,
             "catalog_role": self.catalog_role,
+            "table": self.table,
+            "view": self.view,
+            "generic_table": self.generic_table,
+            "policy": self.policy,
         }
 
 
@@ -101,9 +241,57 @@ class OpStatus:
     status: int
     detail: str = ""
 
+    #: Sentinel statuses for the two non-HTTP outcomes. Negative so they can
+    #: never collide with a real code, and named so a report never has to
+    #: guess what a 0 meant.
+    UNDRIVEABLE = -1
+    RAISED = 0
+
     @property
     def ok(self):
         return 200 <= self.status < 300
+
+    @property
+    def undriveable(self):
+        """The fixture had no entity to point this operation at.
+
+        Not a refusal and not a server error. Keeping it separate is what stops
+        `loadTable` against a `--no-tables` fixture from being reported as a
+        Polaris 404.
+        """
+        return self.status == self.UNDRIVEABLE
+
+    @property
+    def unavailable(self):
+        """Feature-flagged off on this deployment (generic tables, policies)."""
+        return self.status in (404, 501) and not self.undriveable
+
+    @property
+    def malformed(self):
+        """The server rejected the REQUEST, not the caller.
+
+        A 400 is not an authorization outcome and must not sit in the same
+        column as a 403. Measured 2026-08-24: `GET /v1/config` answered 400
+        because the harness sent no `warehouse` parameter -- a bug in the op
+        binding. Filed as "refused" it read as "ordinary principals may not
+        read the catalog config", which is a claim about Polaris drawn from a
+        mistake of ours.
+        """
+        return self.status in (400, 405, 415, 422)
+
+    @property
+    def verdict(self):
+        if self.ok:
+            return "authorized"
+        if self.undriveable:
+            return "undriveable"
+        if self.unavailable:
+            return "unavailable"
+        if self.malformed:
+            return "malformed"
+        if self.status == self.RAISED:
+            return "raised"
+        return "refused"
 
 
 @dataclass
@@ -119,6 +307,10 @@ class ScanResult:
     auth_failures: list = field(default_factory=list)
     #: Identities dropped before driving, e.g. no namespace they can list.
     skipped: list = field(default_factory=list)
+    #: `{kind: {reason: count}}` for entity targets that could not be resolved.
+    #: Aggregated rather than per-identity: 100 identities missing a policy for
+    #: the same reason is ONE fact about the fixture, not 100 findings.
+    unresolved: dict = field(default_factory=dict)
     #: Non-2xx responses from the drive itself, as (index, label, status).
     errors: list = field(default_factory=list)
     elapsed_s: float = 0.0
@@ -277,6 +469,78 @@ def resolve_namespace(client, identity):
     return (first[0] if isinstance(first, (list, tuple)) else first), ""
 
 
+def resolve_entities(client, identity):
+    """Fill in a table, view, policy and generic table this identity can see.
+
+    ASKED FOR, NOT CONSTRUCTED. The seeder names them `tbl1`, `vw1`, `pol1`,
+    `gt1`, so a format string would work today and be a hypothesis about the
+    fixture rather than a fact about it. This repo has paid for that twice --
+    `CLONE_ID_BASE` and the 25-privilege list -- and `load_identities` already
+    reads client_ids from the metastore for exactly this reason.
+
+    It also makes the harness work against a fixture built by any means, which
+    is the property `privilege_scan` was written to have.
+
+    A kind that resolves to nothing leaves its field None, and the ops needing
+    it report UNDRIVEABLE -- the fixture has no such entity, which is a
+    different fact from a refusal and is kept that way.
+
+    Returns `{kind: reason}` for every kind that did NOT resolve.
+    """
+    missing = {}
+    ns = identity.namespace
+    if not ns:
+        return {
+            k: "no namespace resolved"
+            for k in ("table", "view", "policy", "generic_table")
+        }
+
+    def first(call, key, kind):
+        try:
+            r = call()
+        except Exception as exc:  # noqa: BLE001
+            missing[kind] = f"{type(exc).__name__}"
+            return None
+        if r.status_code >= 300:
+            #: 404/501 from the extensions means the FEATURE is off; a 403
+            #: means this identity may not list them. Both leave the field
+            #: None, and both are worth telling apart in the reason.
+            missing[kind] = f"list [{r.status_code}]"
+            return None
+        try:
+            items = (r.json() or {}).get(key) or []
+        except Exception:  # noqa: BLE001
+            missing[kind] = "response was not JSON"
+            return None
+        if not items:
+            missing[kind] = "namespace holds none"
+            return None
+        item = items[0]
+        if isinstance(item, dict):
+            #: Iceberg returns `{"namespace": [...], "name": "tbl1"}`;
+            #: the Polaris extensions return `{"name": ...}`.
+            return item.get("name")
+        if isinstance(item, (list, tuple)):
+            return item[-1]
+        return item
+
+    identity.table = first(
+        lambda: client.list_tables(identity.catalog, ns), "identifiers", "table"
+    )
+    identity.view = first(
+        lambda: client.list_views(identity.catalog, ns), "identifiers", "view"
+    )
+    identity.generic_table = first(
+        lambda: client.list_generic_tables(identity.catalog, ns),
+        "identifiers",
+        "generic_table",
+    )
+    identity.policy = first(
+        lambda: client.list_policies(identity.catalog, ns), "policies", "policy"
+    )
+    return missing
+
+
 # ----------------------------------------------------------------------
 # what an ordinary principal is actually allowed to GET
 # ----------------------------------------------------------------------
@@ -302,8 +566,13 @@ def probe_surface(client, identity, ops):
             status, detail = r.status_code, ""
             if status >= 300:
                 detail = (getattr(r, "text", "") or "")[:160]
+        except api_sweep.UndriveableOp as exc:
+            #: Its own class, ahead of the generic handler. A fixture with no
+            #: tables makes `loadTable` undriveable; calling that a server
+            #: error would put a fixture gap in a column about Polaris.
+            status, detail = OpStatus.UNDRIVEABLE, str(exc)
         except Exception as exc:  # noqa: BLE001
-            status, detail = 0, f"{type(exc).__name__}: {exc}"
+            status, detail = OpStatus.RAISED, f"{type(exc).__name__}: {exc}"
         out.append(OpStatus(label, surface, status, detail))
     return out
 
@@ -427,6 +696,8 @@ def drive(
     progress_every=25,
     stop_after_auth_failures=None,
     tolerated_labels=None,
+    resolve_entity_targets=False,
+    auth_scope=None,
     clock=None,
 ):
     """Authenticate as every identity and issue its ops. Single-threaded.
@@ -447,6 +718,13 @@ def drive(
         stop_after_auth_failures: bail out after this many consecutive token
             failures. A wrong shared secret fails all 1,000 identically, and
             finding that out on identity 3 beats finding it out in 20 minutes.
+        auth_scope: OAuth scope for every identity, or None for each one's
+            OWN principal-role. A principal holding two principal-roles gets a
+            token scoped to ONE of them, so the `service_admin` tier needs its
+            scope named or its extra role is simply not in the token.
+        resolve_entity_targets: ask the API for a table / view / policy /
+            generic table per identity before driving. Required by the 29-op
+            profiles; the 13-op surface names no entity below the namespace.
         tolerated_labels: op labels whose non-2xx is EXPECTED and therefore not
             an error. Measured 2026-08-24: six of the thirteen GETs are
             service-scoped and 403 for an ordinary principal. A refused request
@@ -469,7 +747,7 @@ def drive(
 
     for done, identity in enumerate(identities, start=1):
         client = client_factory()
-        token, scope, detail = authenticate(client, identity, secret)
+        token, scope, detail = authenticate(client, identity, secret, scope=auth_scope)
         result.requests += 1
         if not token:
             result.auth_failures.append((identity.index, scope, detail))
@@ -503,6 +781,19 @@ def drive(
                 result.skipped.append((identity.index, why))
                 continue
             identity.namespace = ns
+
+        if resolve_entity_targets:
+            #: Costs up to four list calls per identity, and buys the
+            #: difference between "loadTable returned 404" and "this fixture
+            #: has no table to load". Those are not the same finding and a
+            #: report cannot tell them apart afterwards.
+            gone = resolve_entities(client, identity)
+            result.requests += sum(
+                1 for k in ("table", "view", "generic_table", "policy")
+            )
+            for kind, why in gone.items():
+                result.unresolved.setdefault(kind, {})
+                result.unresolved[kind][why] = result.unresolved[kind].get(why, 0) + 1
 
         tolerated = set(tolerated_labels or ())
         for label, _surface, fn in ops_for(client, identity):
@@ -550,20 +841,43 @@ def render_probe_table(statuses):
     measurement here, not noise to be filtered out before the interesting part.
     """
     lines = [
-        "| API | surface | status | authorized |",
+        "| API | surface | status | verdict |",
         "| --- | --- | ---: | --- |",
     ]
     for s in statuses:
+        shown = "" if s.status < 0 else s.status
+        why = ""
+        if not s.ok and s.detail:
+            #: The BODY, not just the code. A 400 that does not say what was
+            #: wrong sends the reader back to the cluster to find out; this
+            #: probe costs 29 calls and should answer that in its own output.
+            why = " " + s.detail.replace("\n", " ").replace("|", "/")[:110]
         lines.append(
-            f"| `{s.label.strip()}` | {s.surface} | {s.status} | "
-            f"{'yes' if s.ok else 'NO'} |"
+            f"| `{s.label.strip()}` | {s.surface} | {shown} | {s.verdict}{why} |"
         )
-    ok = sum(1 for s in statuses if s.ok)
+    counts = {}
+    for s in statuses:
+        counts[s.verdict] = counts.get(s.verdict, 0) + 1
     lines.append("")
     lines.append(
-        f"{ok} of {len(statuses)} GET operations are authorized for this "
-        "identity; the rest are service-scoped and belong to root."
+        f"{counts.get('authorized', 0)} of {len(statuses)} operations authorized"
+        + "".join(f", {n} {v}" for v, n in sorted(counts.items()) if v != "authorized")
+        + "."
     )
+    if counts.get("malformed"):
+        lines.append("")
+        lines.append(
+            "**malformed** = the server rejected the REQUEST (400/422), which "
+            "is a harness fault until proven otherwise — NOT an authorization "
+            "outcome. Fix the op binding before reading anything into that row."
+        )
+    if counts.get("undriveable"):
+        lines.append("")
+        lines.append(
+            "**undriveable** = the FIXTURE has no such entity, not that the "
+            "server refused. Seed the missing entities before reading anything "
+            "into that row."
+        )
     return "\n".join(lines)
 
 

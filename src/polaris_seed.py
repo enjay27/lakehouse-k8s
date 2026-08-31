@@ -207,6 +207,11 @@ COARSE_CATALOG_PRIVILEGES = ["CATALOG_MANAGE_CONTENT"]
 
 OWNER_ROLE_NAME = "owner_principal"
 
+#: Bootstrapped by Polaris; not created by this seeder. Assigning it is the
+#: ONLY way to give a principal service-level authorization -- the 1.3.0
+#: management API has no service-level grant type.
+SERVICE_ADMIN_ROLE = "service_admin"
+
 
 def catalog_privileges(n):
     """The first `n` catalog-scoped privileges, in spec order.
@@ -345,6 +350,48 @@ class SeedSpec:
     #: `triage_realm.py` renders directly, so it never has to be inferred.
     entity_overhead_realm: int = 3
 
+    #: Entities the 1,000-user fixture does NOT have, added 2026-08-24 for the
+    #: full-surface scan. ALL DEFAULT TO ZERO, deliberately: `expected_counts`
+    #: and `verify_counts` are calibrated against the existing fixture, and a
+    #: default that silently added rows would make `--verify` report a residue
+    #: on a fixture nobody changed.
+    #:
+    #: They exist because `create_tables: False` left seven GET operations with
+    #: nothing to point at -- `loadTable`, `headTable`, `loadCredentials`,
+    #: `loadView`, `headView`, `loadGenericTable`, `loadPolicy` -- and an
+    #: operation with no target is undriveable, which is a fixture gap wearing
+    #: a 404's clothes.
+    views_per_namespace: int = 0
+
+    #: Polaris extensions, FEATURE-FLAGGED in 1.3. Seeding them can fail with
+    #: 404/501 on a build that has them off; `seed_user` records that as a
+    #: skipped feature rather than a failed user, because it is a fact about
+    #: the deployment and not about the fixture.
+    policies_per_namespace: int = 0
+    generic_tables_per_namespace: int = 0
+
+    #: Assign the bootstrapped `service_admin` principal-role to every seeded
+    #: principal.
+    #:
+    #: THE ONLY ROUTE TO SERVICE-LEVEL AUTHORIZATION, and it is not free.
+    #: The 1.3.0 management API cannot grant a service privilege at all -- its
+    #: `GrantResource` types are catalog / namespace / table / view / policy,
+    #: and `SERVICE_MANAGE_ACCESS` is in none of them. Membership in
+    #: `service_admin` is the only mechanism.
+    #:
+    #: And `service_admin` gains ONE GRANT PER CATALOG (measured: the fattest
+    #: grantee tracked the catalog count exactly, 1,006 at 1,000 catalogs). So
+    #: a principal holding it resolves a grant set that grows with the REALM,
+    #: not with its own privileges -- roughly 1,100 rows here against an
+    #: ordinary principal's ~50.
+    #:
+    #: That is why this is a separate fixture rather than a flag on the main
+    #: one: Seq Scan cost is flat in rows-owned while index-scan cost tracks
+    #: rows returned, so these identities sit at a different point on the curve
+    #: and their numbers must never be diffed against a catalog-scoped run
+    #: without both footprints stated.
+    assign_service_admin: bool = False
+
     def names(self, i):
         """Entity names for user index `i`."""
         return {
@@ -354,6 +401,11 @@ class SeedSpec:
             "catalog_role": OWNER_ROLE_NAME,
             "namespaces": [f"ns{j}" for j in range(1, self.namespaces_per_catalog + 1)],
             "tables": [f"tbl{k}" for k in range(1, self.tables_per_namespace + 1)],
+            "views": [f"vw{k}" for k in range(1, self.views_per_namespace + 1)],
+            "policies": [f"pol{k}" for k in range(1, self.policies_per_namespace + 1)],
+            "generic_tables": [
+                f"gt{k}" for k in range(1, self.generic_tables_per_namespace + 1)
+            ],
         }
 
     def expected_counts(self):
@@ -370,9 +422,17 @@ class SeedSpec:
         n = self.n_users
         ns = n * self.namespaces_per_catalog
         tbl = ns * self.tables_per_namespace if self.create_tables else 0
+        views = ns * self.views_per_namespace
+        #: Policies and generic tables are PROJECTED here but may not be
+        #: created: both are feature-flagged, and `seed_user` skips them when
+        #: the build refuses. `verify_counts` will then report a shortfall --
+        #: which is the correct outcome, and the run summary names the feature
+        #: that was off so the shortfall is not read as a seeding failure.
+        policies = ns * self.policies_per_namespace
+        generics = ns * self.generic_tables_per_namespace
         granted = n * len(self.privileges)
         overhead = n * self.grant_overhead_per_user + self.grant_overhead_realm
-        seeded = n * 4 + ns + tbl
+        seeded = n * 4 + ns + tbl + views + policies + generics
         bootstrap = n * self.entity_overhead_per_user + self.entity_overhead_realm
         return {
             "principals": n,
@@ -381,6 +441,9 @@ class SeedSpec:
             "catalog_roles": n,
             "namespaces": ns,
             "tables": tbl,
+            "views": views,
+            "policies": policies,
+            "generic_tables": generics,
             "entities_seeded": seeded,
             "entities_bootstrap": bootstrap,
             "entities_total": seeded + bootstrap,
@@ -398,6 +461,23 @@ class SeedResult:
     skipped_users: int = 0
     failed_users: list = field(default_factory=list)
     invalid_privileges: list = field(default_factory=list)
+    #: Principals the `service_admin` assignment did not take on. Recorded, not
+    #: raised: such a principal is still a valid catalog-scoped identity, and
+    #: the probe reports the consequence far more clearly than a dead run.
+    service_admin_failures: list = field(default_factory=list)
+    #: Feature-flagged entity kinds this build refused. Detected ONCE and then
+    #: skipped -- retrying a disabled feature per user costs thousands of calls
+    #: to learn the same fact.
+    features_off: set = field(default_factory=set)
+
+    #: WHY each one was refused: `{kind: "status body"}`.
+    #:
+    #: Recording only the NAME was not enough, measured 2026-08-24. The authz
+    #: fixture seeded generic tables fine and produced zero policies, and
+    #: `GET /policies` answered 200 -- so the feature was ON and the payload
+    #: was wrong. With only "policies" recorded there was nothing to say which,
+    #: and the shortfall looked like a feature flag. The body says which.
+    feature_errors: dict = field(default_factory=dict)
     elapsed_s: float = 0.0
     calls: int = 0
     lag_recovered: list = field(default_factory=list)
@@ -850,6 +930,21 @@ def seed_user(pc, ic, spec, i, result, bucket=None, minio_endpoint=None):
                 # it and keep going rather than losing the whole run.
                 result.invalid_privileges.append(priv)
 
+        if spec.assign_service_admin:
+            #: The ONLY route to service-level authorization -- the management
+            #: API cannot grant a service privilege at all (see the field's
+            #: note on SeedSpec). Not fatal if it fails: a principal without it
+            #: is still a valid catalog-scoped identity, and the probe will say
+            #: so far more clearly than a dead seed run would.
+            ok = step(
+                lambda: pc.assign_principal_role_to_principal(
+                    n["principal"], SERVICE_ADMIN_ROLE
+                ),
+                f"assign {SERVICE_ADMIN_ROLE}",
+            )
+            if not ok:
+                result.service_admin_failures.append(n["principal"])
+
         for ns in n["namespaces"]:
             step(
                 lambda ns=ns: ic.create_namespace(n["catalog"], ns),
@@ -857,16 +952,53 @@ def seed_user(pc, ic, spec, i, result, bucket=None, minio_endpoint=None):
                 lambda ns=ns: ic.namespace_exists(n["catalog"], ns),
             )
 
-            if not spec.create_tables:
-                continue
-            for tbl in n["tables"]:
+            if spec.create_tables:
+                for tbl in n["tables"]:
+                    step(
+                        lambda ns=ns, tbl=tbl: ic.create_table(
+                            n["catalog"], ns, _table_payload(tbl)
+                        ),
+                        f"create_table {ns}.{tbl}",
+                        lambda ns=ns, tbl=tbl: ic.table_exists(n["catalog"], ns, tbl),
+                    )
+
+            for vw in n["views"]:
                 step(
-                    lambda ns=ns, tbl=tbl: ic.create_table(
-                        n["catalog"], ns, _table_payload(tbl)
+                    lambda ns=ns, vw=vw: ic.create_view(
+                        n["catalog"], ns, _view_payload(vw, ns)
                     ),
-                    f"create_table {ns}.{tbl}",
-                    lambda ns=ns, tbl=tbl: ic.table_exists(n["catalog"], ns, tbl),
+                    f"create_view {ns}.{vw}",
+                    lambda ns=ns, vw=vw: ic.view_exists(n["catalog"], ns, vw),
                 )
+
+            #: Feature-flagged. A 404/501 here means the build has the feature
+            #: off, which is a fact about the DEPLOYMENT -- recorded once and
+            #: skipped, not retried per user and not counted as a failure.
+            for gt in n["generic_tables"]:
+                if "generic_tables" in result.features_off:
+                    break
+                if not _try_extension(
+                    pc.create_generic_table,
+                    n["catalog"],
+                    ns,
+                    _generic_table_payload(gt),
+                    "generic_tables",
+                    result,
+                ):
+                    break
+
+            for pol in n["policies"]:
+                if "policies" in result.features_off:
+                    break
+                if not _try_extension(
+                    pc.create_policy,
+                    n["catalog"],
+                    ns,
+                    _policy_payload(pol),
+                    "policies",
+                    result,
+                ):
+                    break
         return True
     except Exception as exc:  # noqa: BLE001 -- one bad user must not kill the seed
         result.failed_users.append(
@@ -892,6 +1024,73 @@ def _table_payload(name):
                 {"id": 2, "name": "val", "required": False, "type": "string"},
             ],
         },
+    }
+
+
+def _try_extension(call, catalog, ns, payload, kind, result):
+    """Create one feature-flagged entity, keeping the REASON if it refuses.
+
+    Deliberately not routed through `step`: `step` retries and treats a failure
+    as a user-level fault, and a disabled feature is neither retryable nor the
+    user's fault. One attempt, the body recorded, the kind marked off.
+    """
+    try:
+        r = call(catalog, ns, payload)
+    except Exception as exc:  # noqa: BLE001
+        result.features_off.add(kind)
+        result.feature_errors[kind] = f"{type(exc).__name__}: {exc}"
+        return False
+    if 200 <= r.status_code < 300:
+        return True
+    result.features_off.add(kind)
+    result.feature_errors[kind] = (
+        f"[{r.status_code}] {(getattr(r, 'text', '') or '')[:300]}"
+    )
+    return False
+
+
+def _view_payload(name, ns):
+    """Minimal Iceberg view. Polaris does NOT validate the SQL.
+
+    An invalid query is stored as-is and only fails when something tries to
+    resolve it (measured, `diagnostics/polaris_api_dependency_test.ipynb`), so
+    a trivial SELECT is enough to create the entity this fixture needs.
+    """
+    return {
+        "name": name,
+        "schema": {
+            "type": "struct",
+            "schema-id": 0,
+            "fields": [
+                {"id": 1, "name": "id", "required": True, "type": "long"},
+            ],
+        },
+        "view-version": {
+            "version-id": 1,
+            "schema-id": 0,
+            "timestamp-ms": 0,
+            "summary": {"engine-name": "seed"},
+            "default-namespace": [ns] if isinstance(ns, str) else list(ns),
+            "representations": [
+                {"type": "sql", "sql": "SELECT 1 AS id", "dialect": "spark"}
+            ],
+        },
+        "properties": {},
+    }
+
+
+def _generic_table_payload(name):
+    """Minimal generic (non-Iceberg) table."""
+    return {"name": name, "format": "delta", "properties": {}}
+
+
+def _policy_payload(name):
+    """Minimal policy. `content` is opaque to the metastore row this creates."""
+    return {
+        "name": name,
+        "type": "system.data-compaction",
+        "description": "seed fixture",
+        "content": '{"enable": false}',
     }
 
 

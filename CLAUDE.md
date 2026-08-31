@@ -66,3 +66,70 @@ Before marking any verification task as complete:
 1. Ensure all test notebook cells run sequentially with zero runtime or compilation errors.
 2. Format all newly updated Python logic modules using `black . && isort .`.
 3. Document the successful endpoints, data table definitions, and security authority states inside `MEMORY.md`.
+4. **Commit the task as one versioned change** — see *Version Control* below. A task is not done until it is in git; an uncommitted finding lives only in a chat transcript.
+
+## Version Control
+
+**One task, one commit.** After each completed unit of work — a plan carried out,
+a bug found and fixed, a measurement taken and reported — the change gets
+committed. Not per file edit, and not batched across unrelated tasks: the unit is
+the thing you would describe to someone in a sentence.
+
+This matters here more than in most repos. The work is *findings*, and a finding
+that only exists in a chat transcript is lost the moment the session ends. The
+commit is where it becomes durable and attributable to the state of the code that
+produced it.
+
+### The gate: DoD first, commit second
+
+Never commit a state you have not verified. In order:
+
+```bash
+black .            # black LAST if you also run isort -- no [tool.isort] profile is set
+pytest
+git add -A && git commit
+```
+
+A commit whose tests were not run is a commit someone will later have to bisect.
+
+### Message style
+
+Follow what is already in `git log`. The subject line states **the finding or the
+point of the change**, not the files touched:
+
+```
+The sweep was measuring root, and root is the least representative identity
+reset_realm.sh: TRUNCATE via -c, not a heredoc -- kubectl exec drops stdin
+```
+
+not `update api_sweep.py` or `fix bug`.
+
+The body carries what a reader six months out will need and cannot reconstruct:
+
+- **what was measured or changed**, with the numbers;
+- **why**, especially when the change corrects an earlier belief — say what the
+  old belief was and what cost it;
+- **what is verified vs still open**, so the next session does not re-establish
+  what is settled or trust what is not.
+
+Prefer the honest correction to the tidy summary. `MEMORY.md` and any
+`PLAN-*.md` / `HANDOFF-*.md` touched by the task belong in the SAME commit as
+the code — they are the reasoning behind it, and they go stale the instant they
+are committed separately.
+
+### Never commit
+
+- Secrets. `src/config/<env>.yaml`, real tokens, principal secrets, the seed
+  ledger's credentials. Only `common.yaml` and `*.example.yaml` are tracked.
+- Capture directories (`capture*/`, `*.log`) — they run to hundreds of MB and are
+  already gitignored per-directory. Check `git status` before `-A`, never after.
+- A broken or half-formatted tree, to "save progress". Use a branch instead.
+
+### Who runs it
+
+**Kade runs the commits, from his own shell.** Claude works through a mount that
+cannot unlink `.git/index.lock`, so every git invocation from that side leaves a
+stale lock that blocks the next write — measured 2026-08-24, and it takes a
+manual `rm` to clear. Claude therefore prepares the change and hands over the
+subject line and body; it does not run `git add`, `git commit`, or `git push`
+unless asked directly and told the lock is acceptable.

@@ -930,3 +930,207 @@ def identity_grant_footprint(conn, schema, realm, principal_name):
         )
         row = cur.fetchone()
     return int(row[0]) if row else 0
+
+
+#: Fixture keys `full_read_operations` needs beyond `read_operations`'. A
+#: fixture missing one of these cannot bind the entity-level reads at all --
+#: which is not hypothetical: the 1,000-principal fixture was seeded with
+#: `create_tables: False`, so `loadTable` and friends had no target and
+#: `listTables` was measured against an EMPTY collection.
+FULL_FIXTURE_KEYS = ("table", "view", "generic_table", "policy")
+
+
+class UndriveableOp(RuntimeError):
+    """The fixture holds no entity of the kind this operation needs.
+
+    A THIRD outcome, distinct from both success and refusal, and it has to stay
+    distinct. `loadTable` against a fixture seeded with `create_tables: False`
+    is not a 404 finding about Polaris and not a 403 about the identity -- it
+    is the fixture having nothing to load. Rendered as either of the other two,
+    it becomes a claim about the server that the run cannot support.
+    """
+
+
+def _require(value, what, label):
+    if value is None:
+        raise UndriveableOp(f"{label.strip()}: the fixture has no {what}")
+    return value
+
+
+def full_read_operations(fx):
+    """Every GET and HEAD the 1.3.0 spec defines. All 29.
+
+    `read_operations` covers 13 -- 45% of the readable surface -- and its
+    omissions are not evenly spread. The four missing MANAGEMENT reads are
+    precisely the role-graph traversals (principal -> principal-role ->
+    catalog-role), which is the authorization model itself and therefore the
+    part of the surface most likely to touch `grant_records` more than once.
+    The missing ICEBERG reads are every entity-level load plus all three
+    existence checks. The Polaris extensions were absent entirely.
+
+    Kept SEPARATE from `read_operations` rather than replacing it. That op list
+    is the denominator of an already-correlated capture
+    (`privscan-20260824-123408`), and a report whose denominator moved under it
+    is a report about nothing. Notebooks 01/02/02b/02c depend on it too.
+
+    THREE THINGS THIS LIST CANNOT PROMISE, and the harness reports each:
+
+    * **Availability.** Generic tables and policies are feature-flagged in 1.3.
+      A 404 or 501 is a measured fact about this deployment, recorded as
+      `unavailable` -- not a failure, and not a reason to drop the op.
+    * **Driveability.** `loadTable`/`headTable`/`loadCredentials` need a table
+      to exist. Against a `--no-tables` fixture they are undriveable, which is
+      a different thing from unauthorized and must not be rendered as a 404
+      finding.
+    * **Completeness.** This list is transcribed from the spec, and a
+      transcribed constant is a hypothesis (MEMORY: the 25-privilege
+      retraction). `probe_openapi.py` diffs it against the RUNNING server's own
+      document; that diff, not this docstring, is the authority.
+
+    Args:
+        fx: fixture naming live entities. Needs `read_operations`' keys plus
+            `FULL_FIXTURE_KEYS`; missing optional ones yield ops bound to None,
+            which the probe will classify as undriveable rather than crash.
+
+    Returns:
+        list of (label, surface, fn(pc) -> response), in spec order.
+    """
+    c = fx["catalog"]
+    ns = fx["namespace"]
+    pr = fx["principal_role"]
+    cr = fx["catalog_role"]
+    tbl = fx.get("table")
+    view = fx.get("view")
+    gt = fx.get("generic_table")
+    pol = fx.get("policy")
+
+    return [
+        # -- management service: 13 GETs, spec order --
+        ("GET  /catalogs", "mgmt", lambda pc: pc.list_catalogs()),
+        ("GET  /catalogs/{name}", "mgmt", lambda pc: pc.get_catalog(c)),
+        ("GET  /principals", "mgmt", lambda pc: pc.list_principals()),
+        (
+            "GET  /principals/{name}",
+            "mgmt",
+            lambda pc: pc.get_principal(fx["principal"]),
+        ),
+        (
+            "GET  /principals/{p}/principal-roles",
+            "mgmt",
+            lambda pc: pc.list_principal_roles_assigned(fx["principal"]),
+        ),
+        ("GET  /principal-roles", "mgmt", lambda pc: pc.list_principal_roles()),
+        (
+            "GET  /principal-roles/{name}",
+            "mgmt",
+            lambda pc: pc.get_principal_role(pr),
+        ),
+        (
+            "GET  /principal-roles/{n}/principals",
+            "mgmt",
+            lambda pc: pc.list_principals_for_principal_role(pr),
+        ),
+        (
+            "GET  /principal-roles/{n}/catalog-roles/{c}",
+            "mgmt",
+            lambda pc: pc.list_catalog_roles_for_principal_role(pr, c),
+        ),
+        (
+            "GET  /catalogs/{c}/catalog-roles",
+            "mgmt",
+            lambda pc: pc.list_catalog_roles(c),
+        ),
+        (
+            "GET  /catalogs/{c}/catalog-roles/{r}",
+            "mgmt",
+            lambda pc: pc.get_catalog_role(c, cr),
+        ),
+        (
+            "GET  /catalog-roles/{r}/principal-roles",
+            "mgmt",
+            lambda pc: pc.list_assignee_principal_roles_for_catalog_role(c, cr),
+        ),
+        (
+            "GET  /catalog-roles/{r}/grants",
+            "mgmt",
+            lambda pc: pc.list_grants(c, cr),
+        ),
+        # -- iceberg catalog service: 8 GETs + 3 HEADs --
+        #: `warehouse` is optional in the Iceberg spec and REQUIRED in practice
+        #: for a non-root principal: without it Polaris cannot resolve which
+        #: catalog's config to return and answers 400. Measured 2026-08-24 --
+        #: the first full-surface probe filed that 400 as a refusal, which read
+        #: as "ordinary principals may not read the config" and was really a
+        #: missing query parameter.
+        (
+            "GET  /config",
+            "iceberg",
+            lambda pc: pc.get_config(warehouse=c),
+        ),
+        ("GET  /namespaces", "iceberg", lambda pc: pc.list_namespaces(c)),
+        ("GET  /namespaces/{ns}", "iceberg", lambda pc: pc.get_namespace(c, ns)),
+        ("HEAD /namespaces/{ns}", "iceberg", lambda pc: pc.head_namespace(c, ns)),
+        ("GET  /namespaces/{ns}/tables", "iceberg", lambda pc: pc.list_tables(c, ns)),
+        (
+            "GET  /namespaces/{ns}/tables/{t}",
+            "iceberg",
+            lambda pc: pc.load_table(
+                c, ns, _require(tbl, "table", "GET  /namespaces/{ns}/tables/{t}")
+            ),
+        ),
+        (
+            "HEAD /namespaces/{ns}/tables/{t}",
+            "iceberg",
+            lambda pc: pc.head_table(
+                c, ns, _require(tbl, "table", "HEAD /namespaces/{ns}/tables/{t}")
+            ),
+        ),
+        (
+            "GET  /namespaces/{ns}/tables/{t}/credentials",
+            "iceberg",
+            lambda pc: pc.load_credentials(
+                c, ns, _require(tbl, "table", "GET  /credentials")
+            ),
+        ),
+        ("GET  /namespaces/{ns}/views", "iceberg", lambda pc: pc.list_views(c, ns)),
+        (
+            "GET  /namespaces/{ns}/views/{v}",
+            "iceberg",
+            lambda pc: pc.load_view(
+                c, ns, _require(view, "view", "GET  /namespaces/{ns}/views/{v}")
+            ),
+        ),
+        (
+            "HEAD /namespaces/{ns}/views/{v}",
+            "iceberg",
+            lambda pc: pc.head_view(
+                c, ns, _require(view, "view", "HEAD /namespaces/{ns}/views/{v}")
+            ),
+        ),
+        # -- polaris extensions: 5 GETs, feature-flagged --
+        (
+            "GET  /generic-tables",
+            "polaris",
+            lambda pc: pc.list_generic_tables(c, ns),
+        ),
+        (
+            "GET  /generic-tables/{gt}",
+            "polaris",
+            lambda pc: pc.load_generic_table(
+                c, ns, _require(gt, "generic table", "GET  /generic-tables/{gt}")
+            ),
+        ),
+        ("GET  /policies", "polaris", lambda pc: pc.list_policies(c, ns)),
+        (
+            "GET  /policies/{p}",
+            "polaris",
+            lambda pc: pc.load_policy(
+                c, ns, _require(pol, "policy", "GET  /policies/{p}")
+            ),
+        ),
+        (
+            "GET  /applicable-policies",
+            "polaris",
+            lambda pc: pc.get_applicable_policies(c, ns),
+        ),
+    ]

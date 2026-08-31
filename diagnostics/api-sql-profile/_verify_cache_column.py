@@ -3,7 +3,9 @@
 Groups statements by mdc.requestId so each group is one request, then profiles
 each. Reproduces (or refutes) the documented reference figures.
 """
+
 import sys, pathlib, collections, statistics
+
 sys.path.insert(0, sys.argv[1])
 import api_trace as a
 
@@ -30,15 +32,20 @@ for rid, ss in by_req.items():
 
 n = len(by_req)
 print("\nverdicts:", dict(verdicts))
-print(f"requests containing >=1 batched validation: {with_batch}/{n}"
-      f" ({100*with_batch/n:.1f}%)" if n else "")
+print(
+    f"requests containing >=1 batched validation: {with_batch}/{n}"
+    f" ({100*with_batch/n:.1f}%)"
+    if n
+    else ""
+)
 if shares:
     print(f"median batched_share: {statistics.median(shares):.2f}")
 
 shapes = collections.Counter()
 for s in stmts:
     sh = a.entity_access_shape(s.sql)
-    if sh: shapes[sh] += 1
+    if sh:
+        shapes[sh] += 1
 print("\nstatement shapes:")
 for k, v in shapes.most_common():
     print(f"  {k:<28} {v}")

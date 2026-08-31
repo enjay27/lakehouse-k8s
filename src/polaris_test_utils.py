@@ -299,7 +299,7 @@ def ensure_watchdog_setup():
 
     # 3. Assign principal role to principal (idempotent — PUT is safe to repeat)
     r = assign_principal_role_to_principal(
-        principal='user11_principal', pr=WATCHDOG_PR, token=tok
+        principal="user11_principal", pr=WATCHDOG_PR, token=tok
     )
     print(f"  ✅ principal role assigned ({r.status_code})")
 

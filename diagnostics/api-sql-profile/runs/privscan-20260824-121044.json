@@ -1,0 +1,79 @@
+{
+  "run_id": "20260824-121044",
+  "realm": "POLARIS",
+  "prefix": "user",
+  "probe": {
+    "probed_user": 1,
+    "scope": "PRINCIPAL_ROLE:user1_principal_role",
+    "namespace": "ns1",
+    "authorized": [
+      "GET  /catalogs/{name}",
+      "GET  /catalogs/{c}/catalog-roles",
+      "GET  /catalog-roles/{r}/grants",
+      "GET  /namespaces",
+      "GET  /namespaces/{ns}",
+      "GET  /namespaces/{ns}/tables",
+      "GET  /namespaces/{ns}/views"
+    ],
+    "refused": {
+      "GET  /principals": 403,
+      "GET  /principals/{name}": 403,
+      "GET  /principal-roles": 403,
+      "GET  /principal-roles/{name}": 403,
+      "GET  /principal-roles/{n}/principals": 403,
+      "GET  /catalogs": 403
+    },
+    "at": 1787540470
+  },
+  "identities": 1000,
+  "authenticated": 1000,
+  "requests": 9300,
+  "auth_failures": [],
+  "skipped": [],
+  "errors": [],
+  "status_counts": {
+    "GET  /principals": {
+      "403": 50
+    },
+    "GET  /principals/{name}": {
+      "403": 50
+    },
+    "GET  /principal-roles": {
+      "403": 50
+    },
+    "GET  /principal-roles/{name}": {
+      "403": 50
+    },
+    "GET  /principal-roles/{n}/principals": {
+      "403": 50
+    },
+    "GET  /catalogs": {
+      "403": 50
+    },
+    "GET  /catalogs/{name}": {
+      "200": 1000
+    },
+    "GET  /catalogs/{c}/catalog-roles": {
+      "200": 1000
+    },
+    "GET  /catalog-roles/{r}/grants": {
+      "200": 1000
+    },
+    "GET  /namespaces": {
+      "200": 1000
+    },
+    "GET  /namespaces/{ns}": {
+      "200": 1000
+    },
+    "GET  /namespaces/{ns}/tables": {
+      "200": 1000
+    },
+    "GET  /namespaces/{ns}/views": {
+      "200": 1000
+    },
+    "GET  /namespaces [ns-resolve]": {
+      "200": 1000
+    }
+  },
+  "elapsed_s": 108.2
+}

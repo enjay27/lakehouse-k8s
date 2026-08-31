@@ -7,6 +7,7 @@ guard, which is what refuses to run while the index exists.
 Safe to re-run: IF EXISTS, and it verifies the result rather than assuming it.
 CONCURRENTLY cannot run inside a transaction, hence autocommit.
 """
+
 import os
 
 import psycopg2
@@ -48,7 +49,9 @@ with conn.cursor() as cur:
     # naive existence check passes but the planner never uses — 02 would then
     # measure unindexed behaviour while the guard still saw an index.
     if row:
-        raise SystemExit(f"STILL PRESENT (valid={row[1]}, ready={row[2]}) — do not run 02 yet")
+        raise SystemExit(
+            f"STILL PRESENT (valid={row[1]}, ready={row[2]}) — do not run 02 yet"
+        )
 
     cur.execute("SELECT count(*) FROM polaris_schema.entities")
     e = cur.fetchone()[0]
