@@ -6,19 +6,19 @@ handoff named in *Now* — it is standalone.
 
 ## Now — 2026-08-31
 
-**Read [`HANDOFF-pass-b.md`](diagnostics/api-sql-profile/HANDOFF-pass-b.md) first — it is standalone.**
+**Task: EXPLAIN every API in `doc-api-sql-matrix-latest.md`, under three identities.** Plan is standalone — read [`PLAN-api-index-matrix.md`](diagnostics/api-sql-profile/PLAN-api-index-matrix.md) first.
+43 APIs, 505 statement instances, **115 distinct (SQL, params) pairs** — the pair is the sweep unit, not the
+27 distinct SQL texts. Driven as admin / authorized / unauthorized, each from a **restarted Polaris** (cold
+cache), then EXPLAINed with each case's own parameters, both index states, plain EXPLAIN so writes are safe.
 
-Done — the index contrast, reported in [`doc-grant-index-contrast-20260831.md`](diagnostics/api-sql-profile/doc-grant-index-contrast-20260831.md):
-at 60,784 `grant_records` the grantee lookup **Seq-Scans 572 pages, discarding 60,783
-rows to return 1**; with `idx_grant_records_grantee`, an **Index Scan of 3 pages**
-discarding none. Three fixtures agree, 29 of 29 read ops affected, a 403 pays the same
-7-statement prelude in both states. A page-access ratio, **not** latency — logging was on.
+**Phase 3 (Claude, offline) is ~60% done and BLOCKS the drives.** Landed: `parse_api_statements` (pair-keyed,
+parse-audit guard); `_summarise_plan` reports every scan node; `explain_statements(analyze=False)`;
+`src/api_surface.py`, the 43 ops as a catalogue any identity can drive. **143 tests green.** REMAINING:
+probe-fixture setup/teardown (nb cells 14/35), the matrix renderer (cell 33), and runners
+`drive_api_surface.py` + `explain_api_matrix.py`. Kade's Phases 0–2 (dump, seed, archive) need no code.
 
-Next — Pass B (latency, logging off), **blocked** on one unexplained thing: the
-index-absent passes issued *more statements*, not just slower ones (122,010 vs 109,010 on
-`user`), and ran first, so a naive Pass B would report `index + warmth` as the index. The
-handoff's step 1 settles it offline from the banked captures, no cluster.
-`HANDOFF-index-contrast.md` is complete and superseded.
+Prior task done: the index contrast — 572 pages vs 3 — in [`doc-grant-index-contrast-20260831.md`](diagnostics/api-sql-profile/doc-grant-index-contrast-20260831.md).
+Pass B stays blocked on the statement-count asymmetry; see [`HANDOFF-pass-b.md`](diagnostics/api-sql-profile/HANDOFF-pass-b.md).
 
 ## Where the detail is
 
