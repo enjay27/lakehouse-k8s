@@ -19,21 +19,55 @@ These are facts about the repo as it stands, not assumptions:
   different, older render whose SQL column is truncated at ~150 chars and which
   additionally logs Pgpool-II health-check traffic — `nodes`,
   `pg_stat_replication` — as if Polaris issued it. Use the `reports/` one.)
-- **The sweep is small.** 513 statement instances across 44 APIs collapse to
-  **27 distinct statement shapes**:
+- **The unit is 115 statements, not 27.** 513 statement instances collapse to 27
+  distinct SQL *texts* — but to **115 distinct (SQL, params) pairs**, and 20 of
+  the 27 texts carry more than one parameter set (one carries 13). PostgreSQL
+  estimates selectivity from parameter *values*, so the same SQL can plan as a
+  Seq Scan with one parameter and an Index Scan with another. **EXPLAINing 27
+  would answer "each distinct SQL text once, with an arbitrary parameter" — not
+  "every query every API request issues."** Corrected 2026-08-31; the earlier
+  draft of this plan had it wrong.
 
-  | verb | distinct shapes |
+  | | count |
   |---|---:|
-  | SELECT | 19 |
-  | DELETE | 4 |
-  | INSERT | 3 |
-  | UPDATE | 1 |
+  | statement instances across 44 APIs | 513 |
+  | distinct SQL texts | 27 |
+  | **distinct (SQL, params) pairs — the sweep unit** | **115** |
 
-  By table: `entities` 18, `grant_records` 4, `principal_authentication_data` 3,
+  By verb the 27 texts are 19 SELECT, 4 DELETE, 3 INSERT, 1 UPDATE; by table,
+  `entities` 18, `grant_records` 4, `principal_authentication_data` 3,
   `policy_mapping_record` 2.
 
-- **So the measurement is 27 × 2 index states = 54 EXPLAINs.** Minutes. The seed
-  is the expensive phase; the thing being asked for is nearly free once it exists.
+- **So the measurement is 115 × 2 index states = 230 plain EXPLAINs.** Still
+  minutes, still free next to the seed. Every one of the 513 instances maps to
+  one of the 115, so every API's every statement gets a plan.
+
+- **The matrix is a LOWER BOUND on the API surface, and the gap is measured.**
+  `reports/doc-api-sql-matrix-latest.md` holds **40 operations, only 19 of them
+  GET/HEAD**. The harness's own full read surface is **29–30**, and the
+  privilege scan reaches all of them. So **10 read APIs appear nowhere in the
+  matrix**:
+
+  ```
+  GET /applicable-policies                     GET /policies
+  GET /catalog-roles/{r}/principal-roles       GET /policies/{p}
+  GET /catalogs/{c}/catalog-roles/{r}          GET /principal-roles/{n}/catalog-roles/{c}
+  GET /generic-tables                          GET /principals/{p}/principal-roles
+  GET /generic-tables/{gt}                     GET /namespaces/{ns}/tables/{t}/credentials
+  ```
+
+  This is the *same* class of fault as last session's classifier frozen at 13
+  ops, one layer up: notebook 01's operation list is narrower than
+  `api_sweep.full_read_operations`, and nothing said so. `coverage_gap` /
+  `coverage_from_evidence` exist precisely to make that disagreement visible —
+  they report `observed_not_driven = 0` and `driven_unverified = 10` against this
+  matrix right now.
+
+  **For writes there is no independent inventory at all.** A call log proves what
+  was called and says nothing about what was not, and Polaris 8181/8182 serves no
+  OpenAPI document to check against. So write coverage stays a lower bound, and
+  the report must say so rather than implying 44 is the surface.
+
 - **Notebook 01 refreshes `-latest` itself** — it writes `<stem>-<stamp>.md` and
   re-points `<stem>-latest.md`. So "regenerate the matrix" is a re-run of 01, not
   new code.
@@ -194,6 +228,13 @@ with an index scan that the real value would never get. Sweeping the stale
 params would produce a plan shape that is a fiction — precisely the class of
 error `--index-state` was built to prevent, arriving through the other door.
 
+**And 01's op list must be widened before it is re-run**, or the regenerated
+matrix reproduces the same 19-of-29 read coverage. The 10 missing operations are
+listed in §0; `api_sweep.full_read_operations` already names them. Without this
+the sweep cannot claim to cover all API requests — it would cover all the API
+requests *one notebook happens to drive*, which is the circularity
+`probe_api_surface.py` was written to break.
+
 Two known costs, both recorded:
 
 - **01 drives as root**, the least representative identity in the realm — root's
@@ -312,8 +353,12 @@ the tooling against the banked captures while you seed.
 - Measured volume per table, at the seeded shape.
 - `runs/apiexplain-<stamp>.json` × 2, each recording the live `pg_indexes` state
   it was taken in.
-- All **44 APIs** covered; all **27 shapes** either planned or explicitly
-  accounted for (the 3 INSERTs are accounted for, not planned).
+- All **44+ APIs** covered — including the 10 read operations absent from
+  today's matrix — and all **115 (SQL, params) pairs** either planned or
+  explicitly accounted for (the INSERT pairs are accounted for, not planned).
+- A coverage section stating what the surface is *known* to be versus what was
+  swept, with `driven_unverified` at zero for reads and the write surface
+  labelled a lower bound.
 - `reports/doc-api-index-matrix-<stamp>.md` + `-latest`, every figure re-derived
   green by its verifier, volume stamped on every row, no timing anywhere.
 - `black` (last) and `isort` clean, `pytest` green.
