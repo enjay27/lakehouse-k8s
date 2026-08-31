@@ -6,19 +6,23 @@ handoff named in *Now* — it is standalone.
 
 ## Now — 2026-08-31
 
-**Task: EXPLAIN every API in `doc-api-sql-matrix-latest.md`, under three identities.** Plan is standalone — read [`PLAN-api-index-matrix.md`](diagnostics/api-sql-profile/PLAN-api-index-matrix.md) first.
-43 APIs, 505 statement instances, **115 distinct (SQL, params) pairs** — the pair is the sweep unit, not the
-27 distinct SQL texts. Driven as admin / authorized / unauthorized, each from a **restarted Polaris** (cold
-cache), then EXPLAINed with each case's own parameters, both index states, plain EXPLAIN so writes are safe.
+**Task: EXPLAIN every API in `doc-api-sql-matrix-latest.md`, under three identities.** Plan is standalone —
+read [`PLAN-api-index-matrix.md`](diagnostics/api-sql-profile/PLAN-api-index-matrix.md) first. 43 APIs, 505
+statement instances, **115 distinct (SQL, params) pairs** — the pair is the sweep unit, not the 27 SQL texts.
+Cases: admin (seeded `service_admin`, ~1,100 grants) / authorized (`authz`, 52) / unauthorized (zero grants),
+each from a **restarted Polaris**, then plain EXPLAIN (no ANALYZE, so writes are safe) in both index states.
 
-**Phase 3 (Claude, offline) is ~60% done and BLOCKS the drives.** Landed: `parse_api_statements` (pair-keyed,
-parse-audit guard); `_summarise_plan` reports every scan node; `explain_statements(analyze=False)`;
-`src/api_surface.py`, the 43 ops as a catalogue any identity can drive. **143 tests green.** REMAINING:
-probe-fixture setup/teardown (nb cells 14/35), the matrix renderer (cell 33), and runners
-`drive_api_surface.py` + `explain_api_matrix.py`. Kade's Phases 0–2 (dump, seed, archive) need no code.
+**PHASE 3 IS DONE — 167 tests green, nothing has touched a cluster.** Built: `parse_api_statements`
+(pair-keyed + parse audit), `_summarise_plan` reporting every scan node, `explain_statements(analyze=False)`,
+`src/api_surface.py` (43 ops + fixture setup/teardown), `src/api_report.py` (renderer; round-trip tested
+against the parser), and runners `drive_api_surface.py` + `explain_api_matrix.py`.
 
-Prior task done: the index contrast — 572 pages vs 3 — in [`doc-grant-index-contrast-20260831.md`](diagnostics/api-sql-profile/doc-grant-index-contrast-20260831.md).
-Pass B stays blocked on the statement-count asymmetry; see [`HANDOFF-pass-b.md`](diagnostics/api-sql-profile/HANDOFF-pass-b.md).
+**NEXT IS KADE'S, and it is Phases 0–2 then 4–5:** dump + prove the restore → `--probe-policy` → seed
+(1000 users, 5 views + 5 generic tables/ns, plus a **verified zero-grant** principal) → archive the current
+matrix as a **tracked** file → `drive_api_surface.py --setup`, then restart-and-drive per case
+(**unauthorized, authorized, admin last**) → `explain_api_matrix.py` per case × both index states → Claude
+writes the report. Open: the `param_tuple` `", "` split bug leaves 3 write statements unreplayable
+(`.memory/active-issues.md`); fixing it is a shared-code decision, not a drive-by.
 
 ## Where the detail is
 
