@@ -1144,16 +1144,25 @@ def parse_api_matrix(text, read_only=True):
     return out
 
 
-#: One statement inside a per-API detail block. The report renders every
-#: statement identically -- verified 2026-08-31 across all 513 in
-#: `doc-api-sql-matrix-latest.md`: one header shape, four verbs, the table
-#: always in backticks (never a dash), and a `params:` line on every single one.
-#: So a miss here is a PARSING fault, not a statement without parameters, and
-#: `parse_api_statements` refuses rather than returning a short list.
+#: One statement inside a per-API detail block.
+#:
+#: TOLERANT WHERE THE RENDERER IS OPTIONAL, STRICT WHERE IT IS NOT. All 513
+#: statements in `doc-api-sql-matrix-latest.md` happen to carry a real table, a
+#: real verb and a `params:` line -- but the renderer emits `—` for an
+#: unattributed table or verb and emits NO params line at all when a statement
+#: bound none (`SET synchronous_commit`, say). Requiring them would make those
+#: blocks read as PARSE FAILURES in any future report, which is the opposite of
+#: the truth: they parsed fine and simply cannot be replayed.
+#:
+#: So the params line is optional here and its absence becomes a refusal with a
+#: reason, while `unparsed` stays reserved for a block that genuinely did not
+#: match -- a missing SQL fence, a mangled header. Keeping those two apart is
+#: the whole value of the audit; conflating them would mean either crying wolf
+#: on every valid report or going quiet on a real one.
 _MATRIX_STATEMENT = re.compile(
-    r"^\*\*\[(?P<idx>\d+)\]\*\* `(?P<table>[^`]*)` · (?P<verb>[A-Z]+) ·[^\n]*\n"
+    r"^\*\*\[(?P<idx>\d+)\]\*\* `(?P<table>[^`]*)` · (?P<verb>[^ ·]+) ·[^\n]*\n"
     r"\n```sql\n(?P<sql>.*?)\n```\n"
-    r"params: `(?P<params>[^`]*)`",
+    r"(?:params: `(?P<params>[^`]*)`)?",
     re.M | re.S,
 )
 
@@ -1278,11 +1287,15 @@ class MatrixStatements:
             if p.replayable:
                 continue
             reason = (
-                "parameters were redacted at capture (secret table)"
-                if not p.params_observed
+                "no parameters were recorded for this statement"
+                if not p.params
                 else (
-                    f"placeholder/parameter mismatch: {p.sql.count('?')} "
-                    f"placeholders, {len(param_tuple(p.params))} values"
+                    "parameters were redacted at capture (secret table)"
+                    if not p.params_observed
+                    else (
+                        f"placeholder/parameter mismatch: {p.sql.count('?')} "
+                        f"placeholders, {len(param_tuple(p.params))} values"
+                    )
                 )
             )
             out.append((p, reason))
@@ -1320,7 +1333,7 @@ def parse_api_statements(text, include=_MATRIX_NON_API):
         for m in _MATRIX_STATEMENT.finditer(block):
             st = ApiStatement(
                 sql=m.group("sql"),
-                params=m.group("params"),
+                params=m.group("params") or "",
                 table=m.group("table"),
                 verb=m.group("verb"),
             )

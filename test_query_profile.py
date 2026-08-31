@@ -767,15 +767,35 @@ def test_preflight_is_skipped_and_its_statements_are_accounted_for():
 
 
 def test_an_unmatchable_statement_block_is_reported_not_silently_dropped():
-    """THE guard. A short list must never pass as a complete one."""
+    """THE guard. A short list must never pass as a complete one.
+
+    Genuinely malformed here means no SQL fence — not merely a missing params
+    line, which is a valid render for a statement that bound nothing.
+    """
     doc = _matrix(("mgmt.get_principal", [_stmt(0, "entities", "SELECT", SEL, "P, 1")]))
-    #: a header whose body the regex cannot match — no params line
-    doc += "\n**[1]** `entities` · SELECT · no timing\n\n```sql\nSELECT 1\n```\n"
+    doc += "\n**[1]** `entities` · SELECT · no timing\n\nthere is no sql fence\n"
     r = qp.parse_api_statements(doc)
     assert r.headers_seen == 2
     assert r.instances == 1
     assert r.unparsed == 1
     assert not r.clean
+
+
+def test_a_statement_with_no_params_line_parses_and_refuses_with_that_reason():
+    """The renderer omits `params:` when a statement bound none, and writes `—`
+    for an unattributed table or verb. Those blocks parsed fine; they simply
+    cannot be replayed. Calling them parse failures would cry wolf on every
+    future report."""
+    doc = _matrix(("mgmt.get_principal", []))
+    doc += "\n**[0]** `—` · SET · no timing\n\n```sql\nSET synchronous_commit TO 'local'\n```\n"
+    r = qp.parse_api_statements(doc)
+    assert r.clean, "a statement without parameters is not a parse fault"
+    assert r.instances == 1
+    (pair,) = r.pairs
+    assert pair.table == "—" and pair.verb == "SET"
+    assert not pair.replayable
+    ((_, why),) = r.refused
+    assert "no parameters were recorded" in why
 
 
 def test_redacted_params_refuse_and_the_reason_names_redaction():
