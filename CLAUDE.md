@@ -66,7 +66,7 @@ Before marking any verification task as complete:
 1. Ensure all test notebook cells run sequentially with zero runtime or compilation errors.
 2. Format all newly updated Python logic modules using `black . && isort .`.
 3. Document the successful endpoints, data table definitions, and security authority states inside `MEMORY.md`.
-4. **Commit the task as one versioned change** — see *Version Control* below. A task is not done until it is in git; an uncommitted finding lives only in a chat transcript.
+4. **Commit the task as one versioned change, automatically** — see *Version Control* below. Claude runs the commit itself as the last step of the task, without being asked. A task is not done until it is in git; an uncommitted finding lives only in a chat transcript.
 
 ## Version Control
 
@@ -125,11 +125,37 @@ are committed separately.
   already gitignored per-directory. Check `git status` before `-A`, never after.
 - A broken or half-formatted tree, to "save progress". Use a branch instead.
 
-### Who runs it
+### Who runs it — Claude commits, automatically
 
-**Kade runs the commits, from his own shell.** Claude works through a mount that
-cannot unlink `.git/index.lock`, so every git invocation from that side leaves a
-stale lock that blocks the next write — measured 2026-08-24, and it takes a
-manual `rm` to clear. Claude therefore prepares the change and hands over the
-subject line and body; it does not run `git add`, `git commit`, or `git push`
-unless asked directly and told the lock is acceptable.
+**Every completed unit of work is committed by Claude, without being asked.**
+The developer must be able to open `git log` and see the session's reasoning as
+a sequence of revisions; a finding that sits uncommitted at the end of a session
+is a finding that only exists in a chat transcript. So the commit is not a
+closing formality Claude offers to perform — it is the last step of the task,
+run as soon as the DoD gate above is green.
+
+- **One task, one commit** — the rule above still holds. Auto-commit means
+  Claude does not wait to be told; it does **not** mean a commit per file edit.
+- **The gate is not skippable.** `pytest` green before `git commit`, always. If
+  the gate cannot be run at all (no venv, no network), commit anyway so the work
+  is traceable, and say so **in the commit body** — `NOT VERIFIED: pytest could
+  not be run, <reason>` — so the next session knows not to trust the tree.
+- **`git push` is still Kade's.** Auto-commit is local history; publishing is a
+  separate decision.
+- **Commit before a risky step**, not only after a finished one. An
+  index toggle, a realm reset, a TRUNCATE — get the tree committed first so the
+  before-state is recoverable.
+
+**The lock blocker is resolved (2026-08-31).** The mount could create files under
+`.git/` but not unlink them, so every `git commit` left a stale
+`.git/index.lock` that blocked the next write — measured 2026-08-24, and it is
+why this section previously said Kade ran the commits. The cause was the mount's
+delete permission, not git: with deletion granted for this folder, `git add` /
+`git commit` complete cleanly and remove their own locks. If a session ever
+finds `git` failing on `index.lock` again, the fix is to re-grant delete
+permission on the repo folder, not to hand the commit back.
+
+Identity: this repo has no `user.name` / `user.email` in its local config and
+the mount does not see Kade's global one, so Claude commits with
+`git -c user.name=... -c user.email=...` rather than writing an identity into
+`.git/config`.

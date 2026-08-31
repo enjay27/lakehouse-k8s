@@ -234,9 +234,11 @@ real: API-seeded principals, no synthetic rows, nothing to disclose.
   claim about Polaris. There is a `malformed` verdict now.
 - **Batching edits into one script is how a later assertion discards earlier
   writes.** One edit, one write, one verification.
-- **Claude cannot run git here** — this mount cannot unlink `.git/index.lock`,
-  so every git invocation leaves a stale lock. Claude prepares the change and
-  hands over the message; Kade commits.
+- ~~**Claude cannot run git here**~~ — **RESOLVED 2026-08-31.** The mount could
+  create files under `.git/` but not unlink them, so every git invocation left a
+  stale `index.lock`. The cause was the mount's delete permission, not git; with
+  deletion granted on the repo folder, commits complete cleanly. Claude now
+  commits every completed task automatically (CLAUDE.md, *Version Control*).
 
 ---
 
