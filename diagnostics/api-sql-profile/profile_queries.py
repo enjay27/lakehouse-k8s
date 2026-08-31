@@ -535,6 +535,17 @@ def main():
         default=None,
         help="EXPLAIN only the N most frequent statements",
     )
+    ap.add_argument(
+        "--index-state",
+        choices=("absent", "present"),
+        default=None,
+        help="what index state this CAPTURE was driven in. REQUIRED with "
+        "--explain, and checked against live pg_indexes. EXPLAIN replays "
+        "against the database as it is NOW, so running it on a no-index "
+        "capture after the index exists yields Index Scan plans stapled to a "
+        "Seq Scan drive — one report, two cluster states, and nothing in it "
+        "saying so.",
+    )
     ap.add_argument("--report", action="store_true", help="write the Markdown report")
     ap.add_argument(
         "--pg-host",
@@ -545,6 +556,16 @@ def main():
         "--chunk-mb", type=int, default=8, help="log read chunk size, in MB"
     )
     args = ap.parse_args()
+
+    if args.explain and not args.index_state:
+        #: Required, not defaulted. A default would be a guess about which
+        #: cluster state a capture belongs to, and getting that wrong is
+        #: precisely the mislabel this flag exists to prevent.
+        ap.error(
+            "--explain needs --index-state {absent,present}: which state was "
+            "this CAPTURE driven in? EXPLAIN replays against the database as "
+            "it is now, so the two must agree or the report mixes them."
+        )
 
     capture = resolve_capture(args.capture)
     run = resolve_run(args.run)
@@ -605,10 +626,32 @@ def main():
         meta["grant_rows"] = table_rows(conn)
         names = [i["name"] for i in meta["indexes"]]
         has_grantee = any("grantee" in n for n in names)
-        meta["index_state_label"] = "index PRESENT" if has_grantee else "index ABSENT"
+        live = "present" if has_grantee else "absent"
+        meta["index_state_label"] = f"index {live.upper()}"
         print(f"primary : {meta['primary']}")
         print(f"{FOCUS_TABLE}: {meta['grant_rows']:,} rows, indexes {names}")
         print(f"  -> {meta['index_state_label']}")
+        if args.index_state and args.index_state != live:
+            conn.close()
+            sys.exit(
+                f"\nREFUSING to EXPLAIN.\n"
+                f"  This capture was driven with the index {args.index_state.upper()},\n"
+                f"  but the database has it {live.upper()} right now.\n"
+                "\n"
+                "  EXPLAIN replays against the database AS IT IS, not as it was.\n"
+                "  The statement counts would come from the captured drive and the\n"
+                "  PLANS from a different cluster state -- one report, two states,\n"
+                "  and the buffer numbers that are the whole finding would belong\n"
+                "  to neither pass.\n"
+                "\n"
+                f"  Either EXPLAIN a capture driven with the index {live.upper()},\n"
+                "  or put the database back:\n"
+                "      python3 drop_grantee_index.py      # then ANALYZE\n"
+                "      CREATE INDEX CONCURRENTLY idx_grant_records_grantee\n"
+                f"          ON {SCHEMA}.{FOCUS_TABLE} "
+                "(realm_id, grantee_catalog_id, grantee_id);"
+            )
+        meta["index_state_asserted"] = args.index_state
         print()
         worklist = qp.explain_worklist(shapes, limit=args.explain_limit)
         print(f"EXPLAINing {len(worklist)} distinct statements ...", flush=True)

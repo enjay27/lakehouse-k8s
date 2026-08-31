@@ -1,0 +1,1041 @@
+{
+  "run_id": "20260831-110305",
+  "capture": "capture-user-noindex-2",
+  "generated": "2026-08-31 11:18:15",
+  "index_state": "index ABSENT",
+  "indexes": [
+    {
+      "name": "grant_records_pkey",
+      "def": "CREATE UNIQUE INDEX grant_records_pkey ON polaris_schema.grant_records USING btree (realm_id, securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code)"
+    }
+  ],
+  "grant_rows": 60784,
+  "primary": "192.168.194.103",
+  "reconciliation": {
+    "rows": [
+      {
+        "label": "GET  /catalog-roles/{r}/grants",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs/{c}/catalog-roles",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs/{name}",
+        "expected": 1000,
+        "observed": 1001,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces",
+        "expected": 2000,
+        "observed": 2000,
+        "delta": 0,
+        "folded": true
+      },
+      {
+        "label": "GET  /namespaces/{ns}",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces/{ns}/tables",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces/{ns}/views",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles/{name}",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles/{n}/principals",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principals",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principals/{name}",
+        "expected": 1000,
+        "observed": 1000,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "POST /oauth/tokens",
+        "expected": 1000,
+        "observed": 1001,
+        "delta": 1,
+        "folded": false
+      }
+    ],
+    "expected_total": 15000,
+    "observed_total": 15002,
+    "delta_total": 2,
+    "clean": false,
+    "folded_labels": [
+      "GET  /namespaces"
+    ]
+  },
+  "integrity": {
+    "access_records": 15002,
+    "statements": 122010,
+    "orphan_statements": 0,
+    "unclassified_paths": {}
+  },
+  "per_label": [
+    {
+      "label": "GET  /namespaces",
+      "surface": "iceberg",
+      "requests": 2000,
+      "statuses": {
+        "200": 2000
+      },
+      "statements": 26989,
+      "per_request": 13.4945,
+      "table_hits": 8993,
+      "table_per_request": 4.4965
+    },
+    {
+      "label": "GET  /catalog-roles/{r}/grants",
+      "surface": "mgmt",
+      "requests": 1000,
+      "statuses": {
+        "200": 1000
+      },
+      "statements": 10000,
+      "per_request": 10.0,
+      "table_hits": 2000,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}",
+      "surface": "iceberg",
+      "requests": 1000,
+      "statuses": {
+        "200": 1000
+      },
+      "statements": 9000,
+      "per_request": 9.0,
+      "table_hits": 2000,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET  /catalogs/{c}/catalog-roles",
+      "surface": "mgmt",
+      "requests": 1000,
+      "statuses": {
+        "200": 1000
+      },
+      "statements": 8000,
+      "per_request": 8.0,
+      "table_hits": 1000,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}/tables",
+      "surface": "iceberg",
+      "requests": 1000,
+      "statuses": {
+        "200": 1000
+      },
+      "statements": 8000,
+      "per_request": 8.0,
+      "table_hits": 1000,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}/views",
+      "surface": "iceberg",
+      "requests": 1000,
+      "statuses": {
+        "200": 1000
+      },
+      "statements": 8000,
+      "per_request": 8.0,
+      "table_hits": 1000,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /catalogs/{name}",
+      "surface": "mgmt",
+      "requests": 1001,
+      "statuses": {
+        "200": 1001
+      },
+      "statements": 7018,
+      "per_request": 7.010989010989011,
+      "table_hits": 1008,
+      "table_per_request": 1.006993006993007
+    },
+    {
+      "label": "GET  /catalogs",
+      "surface": "mgmt",
+      "requests": 1000,
+      "statuses": {
+        "403": 1000
+      },
+      "statements": 7000,
+      "per_request": 7.0,
+      "table_hits": 1000,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /principal-roles",
+      "surface": "mgmt",
+      "requests": 1000,
+      "statuses": {
+        "403": 1000
+      },
+      "statements": 7000,
+      "per_request": 7.0,
+      "table_hits": 1000,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /principal-roles/{name}",
+      "surface": "mgmt",
+      "requests": 1000,
+      "statuses": {
+        "403": 1000
+      },
+      "statements": 7000,
+      "per_request": 7.0,
+      "table_hits": 1000,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /principal-roles/{n}/principals",
+      "surface": "mgmt",
+      "requests": 1000,
+      "statuses": {
+        "403": 1000
+      },
+      "statements": 7000,
+      "per_request": 7.0,
+      "table_hits": 1000,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /principals",
+      "surface": "mgmt",
+      "requests": 1000,
+      "statuses": {
+        "403": 1000
+      },
+      "statements": 7000,
+      "per_request": 7.0,
+      "table_hits": 1000,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /principals/{name}",
+      "surface": "mgmt",
+      "requests": 1000,
+      "statuses": {
+        "403": 1000
+      },
+      "statements": 7000,
+      "per_request": 7.0,
+      "table_hits": 1000,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "POST /oauth/tokens",
+      "surface": "auth",
+      "requests": 1001,
+      "statuses": {
+        "200": 1001
+      },
+      "statements": 3003,
+      "per_request": 3.0,
+      "table_hits": 0,
+      "table_per_request": 0.0
+    }
+  ],
+  "outcome_classes": {
+    "auth (token)": {
+      "requests": 1001,
+      "statements": 3003,
+      "per_request": 3.0,
+      "min": 3,
+      "median": 3,
+      "max": 3,
+      "table_per_request": 0.0,
+      "labels": [
+        "POST /oauth/tokens"
+      ]
+    },
+    "permitted (2xx)": {
+      "requests": 8001,
+      "statements": 77007,
+      "per_request": 9.624671916010499,
+      "min": 7,
+      "median": 8,
+      "max": 19,
+      "table_per_request": 2.124859392575928,
+      "labels": [
+        "GET  /catalog-roles/{r}/grants",
+        "GET  /catalogs/{c}/catalog-roles",
+        "GET  /catalogs/{name}",
+        "GET  /namespaces",
+        "GET  /namespaces/{ns}",
+        "GET  /namespaces/{ns}/tables",
+        "GET  /namespaces/{ns}/views"
+      ]
+    },
+    "refused (403)": {
+      "requests": 6000,
+      "statements": 42000,
+      "per_request": 7.0,
+      "min": 7,
+      "median": 7,
+      "max": 7,
+      "table_per_request": 1.0,
+      "labels": [
+        "GET  /catalogs",
+        "GET  /principal-roles",
+        "GET  /principal-roles/{name}",
+        "GET  /principal-roles/{n}/principals",
+        "GET  /principals",
+        "GET  /principals/{name}"
+      ]
+    }
+  },
+  "statements": [
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ? AND type_code = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 30003,
+      "requests": 15002,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN (<rows>) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 29002,
+      "requests": 14001,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND parent_id = ? AND type_code = ? AND realm_id = ? AND name = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 19002,
+      "requests": 15002,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_catalog_id = ? AND grantee_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 18001,
+      "requests": 14001,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 15001,
+      "requests": 14001,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = ? AND securable_catalog_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 5000,
+      "requests": 2000,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 4000,
+      "requests": 4000,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT principal_id, principal_client_id, main_secret_hash, secondary_secret_hash, secret_salt FROM POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA WHERE principal_client_id = ? AND realm_id = ?",
+      "table": "principal_authentication_data",
+      "verb": "SELECT",
+      "occurrences": 1001,
+      "requests": 1001,
+      "params_observed": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1000,
+      "requests": 1000,
+      "params_observed": true
+    }
+  ],
+  "explains": [
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ? AND type_code = ? AND catalog_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ? AND type_code = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 30003,
+      "requests": 15002,
+      "per_request": 2.0,
+      "params_observed": true,
+      "params": "POLARIS, 2761039760315785594, 2, 0",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "idx_entities",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.006,
+          "Actual Total Time": 0.006,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '2761039760315785594'::bigint))",
+          "Rows Removed by Index Recheck": 0,
+          "Filter": "(type_code = 2)",
+          "Rows Removed by Filter": 0,
+          "Shared Hit Blocks": 3,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.033,
+        "Triggers": [],
+        "Execution Time": 0.011
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "idx_entities",
+      "rows_removed_by_filter": 0,
+      "actual_rows": 1,
+      "plan_rows": 1,
+      "shared_hit_blocks": 3,
+      "shared_read_blocks": 0,
+      "buffers": "hit=3 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.006,
+        "min": 0.006,
+        "max": 0.011
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN (<rows>) AND realm_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?)) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 29002,
+      "requests": 14001,
+      "per_request": 2.071,
+      "params_observed": true,
+      "params": "0, 2768200245379081937, POLARIS",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "idx_entities",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.004,
+          "Actual Total Time": 0.004,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '2768200245379081937'::bigint))",
+          "Rows Removed by Index Recheck": 0,
+          "Shared Hit Blocks": 3,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.027,
+        "Triggers": [],
+        "Execution Time": 0.01
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "idx_entities",
+      "rows_removed_by_filter": null,
+      "actual_rows": 1,
+      "plan_rows": 1,
+      "shared_hit_blocks": 3,
+      "shared_read_blocks": 0,
+      "buffers": "hit=3 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.009,
+        "min": 0.006,
+        "max": 0.014
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND parent_id = ? AND type_code = ? AND realm_id = ? AND name = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND parent_id = ? AND type_code = ? AND realm_id = ? AND name = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 19002,
+      "requests": 15002,
+      "per_request": 1.267,
+      "params_observed": true,
+      "params": "0, 0, 2, POLARIS, root",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.005,
+          "Actual Total Time": 0.005,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (parent_id = '0'::bigint) AND (type_code = 2) AND (name = 'root'::text))",
+          "Rows Removed by Index Recheck": 0,
+          "Shared Hit Blocks": 3,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.025,
+        "Triggers": [],
+        "Execution Time": 0.01
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": 1,
+      "plan_rows": 1,
+      "shared_hit_blocks": 3,
+      "shared_read_blocks": 0,
+      "buffers": "hit=3 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.009,
+        "min": 0.006,
+        "max": 0.018
+      }
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_catalog_id = ? AND grantee_id = ? AND realm_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_catalog_id = ? AND grantee_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 18001,
+      "requests": 14001,
+      "per_request": 1.286,
+      "params_observed": true,
+      "params": "0, 2761039760315785594, POLARIS",
+      "plan": {
+        "Plan": {
+          "Node Type": "Seq Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.0,
+          "Total Cost": 1635.72,
+          "Plan Rows": 1,
+          "Plan Width": 36,
+          "Actual Startup Time": 0.002,
+          "Actual Total Time": 2.56,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Filter": "((grantee_catalog_id = '0'::bigint) AND (grantee_id = '2761039760315785594'::bigint) AND (realm_id = 'POLARIS'::text))",
+          "Rows Removed by Filter": 60783,
+          "Shared Hit Blocks": 572,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.016,
+        "Triggers": [],
+        "Execution Time": 2.563
+      },
+      "scan": "Seq Scan",
+      "relation": "grant_records",
+      "index": null,
+      "rows_removed_by_filter": 60783,
+      "actual_rows": 1,
+      "plan_rows": 1,
+      "shared_hit_blocks": 572,
+      "shared_read_blocks": 0,
+      "buffers": "hit=572 read=0",
+      "parallel": false,
+      "node_types": [
+        "Seq Scan"
+      ],
+      "explain_ms": {
+        "median": 3.056,
+        "min": 2.028,
+        "max": 4.357
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 15001,
+      "requests": 14001,
+      "per_request": 1.071,
+      "params_observed": true,
+      "params": "2761039760315785594, POLARIS, 0",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "idx_entities",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.003,
+          "Actual Total Time": 0.003,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '2761039760315785594'::bigint))",
+          "Rows Removed by Index Recheck": 0,
+          "Shared Hit Blocks": 3,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.016,
+        "Triggers": [],
+        "Execution Time": 0.006
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "idx_entities",
+      "rows_removed_by_filter": null,
+      "actual_rows": 1,
+      "plan_rows": 1,
+      "shared_hit_blocks": 3,
+      "shared_read_blocks": 0,
+      "buffers": "hit=3 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.007,
+        "min": 0.006,
+        "max": 0.012
+      }
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = ? AND securable_catalog_id = ? AND realm_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = ? AND securable_catalog_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 5000,
+      "requests": 2000,
+      "per_request": 2.5,
+      "params_observed": true,
+      "params": "2761039760315785594, 0, POLARIS",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Only Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "grant_records_pkey",
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.41,
+          "Total Cost": 12.34,
+          "Plan Rows": 19,
+          "Plan Width": 36,
+          "Actual Startup Time": 0.023,
+          "Actual Total Time": 0.023,
+          "Actual Rows": 0,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (securable_catalog_id = '0'::bigint) AND (securable_id = '2761039760315785594'::bigint))",
+          "Rows Removed by Index Recheck": 0,
+          "Heap Fetches": 0,
+          "Shared Hit Blocks": 3,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.125,
+        "Triggers": [],
+        "Execution Time": 0.056
+      },
+      "scan": "Index Only Scan",
+      "relation": "grant_records",
+      "index": "grant_records_pkey",
+      "rows_removed_by_filter": null,
+      "actual_rows": 0,
+      "plan_rows": 19,
+      "shared_hit_blocks": 3,
+      "shared_read_blocks": 0,
+      "buffers": "hit=3 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Only Scan"
+      ],
+      "explain_ms": {
+        "median": 0.058,
+        "min": 0.005,
+        "max": 0.07
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 4000,
+      "requests": 4000,
+      "per_request": 1.0,
+      "params_observed": true,
+      "params": "1920790130525672606, 0, POLARIS, 1920790130525672606, 6",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 43,
+          "Actual Startup Time": 0.004,
+          "Actual Total Time": 0.005,
+          "Actual Rows": 2,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1920790130525672606'::bigint) AND (parent_id = '1920790130525672606'::bigint) AND (type_code = 6))",
+          "Rows Removed by Index Recheck": 0,
+          "Filter": "(sub_type_code = 0)",
+          "Rows Removed by Filter": 0,
+          "Shared Hit Blocks": 3,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.035,
+        "Triggers": [],
+        "Execution Time": 0.01
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": 0,
+      "actual_rows": 2,
+      "plan_rows": 1,
+      "shared_hit_blocks": 3,
+      "shared_read_blocks": 0,
+      "buffers": "hit=3 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.037,
+        "min": 0.01,
+        "max": 0.117
+      }
+    },
+    {
+      "sql": "SELECT principal_id, principal_client_id, main_secret_hash, secondary_secret_hash, secret_salt FROM POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA WHERE principal_client_id = ? AND realm_id = ?",
+      "replayed_sql": "SELECT principal_id, principal_client_id, main_secret_hash, secondary_secret_hash, secret_salt FROM POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA WHERE principal_client_id = ? AND realm_id = ?",
+      "table": "principal_authentication_data",
+      "verb": "SELECT",
+      "occurrences": 1001,
+      "requests": 1001,
+      "per_request": 1.0,
+      "params_observed": false,
+      "params": null,
+      "skipped": "parameters were redacted at capture (secret table); replay would need them reconstructed from the metastore"
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1000,
+      "requests": 1000,
+      "per_request": 1.0,
+      "params_observed": true,
+      "params": "1920790130525672606, 0, POLARIS, 1920790130525672606, 5",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.009,
+          "Actual Total Time": 0.01,
+          "Actual Rows": 2,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1920790130525672606'::bigint) AND (parent_id = '1920790130525672606'::bigint) AND (type_code = 5))",
+          "Rows Removed by Index Recheck": 0,
+          "Filter": "(sub_type_code = 0)",
+          "Rows Removed by Filter": 0,
+          "Shared Hit Blocks": 3,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.069,
+        "Triggers": [],
+        "Execution Time": 0.02
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": 0,
+      "actual_rows": 2,
+      "plan_rows": 1,
+      "shared_hit_blocks": 3,
+      "shared_read_blocks": 0,
+      "buffers": "hit=3 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.02,
+        "min": 0.01,
+        "max": 0.044
+      }
+    }
+  ]
+}
