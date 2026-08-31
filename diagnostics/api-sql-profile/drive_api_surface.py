@@ -84,13 +84,54 @@ def load_fixture():
     return surf.ProbeFixture(**json.loads(STATE.read_text()))
 
 
-def build_clients(case, env):
+def resolve_identity(
+    case, conn=None, client_id=None, principal_role=None, schema=None, realm=None
+):
+    """The `Identity` to drive as, from the metastore or stated outright.
+
+    TWO PATHS, AND THE SECOND IS NOT A SHORTCUT. `load_identities` requires a
+    principal to own a catalog named `{prefix}{N}_catalog` and reports anything
+    else as `no_catalog` -- correct for the seeded tiers, and fatal for the
+    unauthorized case, whose whole definition is a principal holding nothing.
+    So a zero-grant principal is named outright with --client-id and
+    --principal-role rather than discovered, and the runner says which path it
+    took.
+    """
+    from privilege_scan import Identity, load_identities
+
+    if client_id:
+        if not principal_role:
+            sys.exit("--client-id also needs --principal-role (the token scope)")
+        return (
+            Identity(
+                index=0,
+                principal=principal_role.replace("_principal_role", ""),
+                principal_role=principal_role,
+                client_id=client_id,
+                catalog=None,
+            ),
+            {},
+        )
+
+    prefix = CASE_PREFIX[case]
+    ids, problems = load_identities(conn, schema, realm, prefix=prefix, limit=1)
+    if not ids:
+        sys.exit(
+            f"no drivable principal with prefix {prefix!r}.\n"
+            f"  load_identities reported: {problems}\n"
+            "  'no_catalog' means the principal exists but owns no\n"
+            f"  {prefix}N_catalog -- expected for a zero-grant principal, which\n"
+            "  must be named with --client-id/--principal-role instead."
+        )
+    return ids[0], problems
+
+
+def build_clients(case, args):
     """(drive_ic, drive_pc, admin_ic, admin_pc) for this case.
 
-    The admin pair always authenticates as the bootstrap/service-admin identity.
-    The drive pair authenticates as the CASE's principal -- and for `admin` they
-    are the same object, which is the degenerate case rather than a special
-    path.
+    The admin pair always authenticates as the bootstrap identity. The drive
+    pair authenticates as the CASE's principal -- and for `root` they are the
+    same object, which is the degenerate case rather than a special path.
     """
     from iceberg_rest import IcebergREST
     from polaris_rest import PolarisREST
@@ -99,13 +140,9 @@ def build_clients(case, env):
     admin_token = root_token()
     adm_pc = PolarisREST(POLARIS_URL, REALM, token=admin_token)
     adm_ic = IcebergREST(POLARIS_URL, REALM, token=admin_token)
-
     if case == "root":
         return adm_ic, adm_pc, adm_ic, adm_pc
 
-    from privilege_scan import authenticate, load_identities
-
-    prefix = CASE_PREFIX[case]
     secret = os.environ.get("POLARIS_USER_SECRET")
     if not secret:
         sys.exit(
@@ -114,15 +151,38 @@ def build_clients(case, env):
             "  principal_authentication_data; the seeder discards the ones\n"
             "  create_principal returns."
         )
-    ids = load_identities(prefix=prefix)
-    if not ids:
-        sys.exit(f"no principals with prefix {prefix!r} — seed the {case} tier first")
-    who = ids[0]
-    #: NEVER `PRINCIPAL_ROLE:ALL`. That is root's scope; a non-root principal
-    #: asking for it gets a 200 and a token with NO effective role, then 403s on
-    #: everything -- which would read as "the surface is unauthorized" and be a
-    #: statement about a scope string.
-    token = authenticate(who, secret)
+
+    conn = None
+    if not getattr(args, "client_id", None):
+        import psycopg2
+
+        from polaris_test_utils import PG_URL
+
+        conn = psycopg2.connect(PG_URL)
+    try:
+        ident, problems = resolve_identity(
+            case,
+            conn=conn,
+            client_id=getattr(args, "client_id", None),
+            principal_role=getattr(args, "principal_role", None),
+            schema=os.environ.get("PG_SCHEMA", "polaris_schema"),
+            realm=REALM,
+        )
+    finally:
+        if conn:
+            conn.close()
+
+    #: authenticate() returns (token, scope_used, detail) -- and NEVER asks for
+    #: PRINCIPAL_ROLE:ALL. That is root's scope; a non-root principal handed it
+    #: gets a 200 and a token with no effective role, then 403s on everything,
+    #: which would read as "the surface is unauthorized" and be a statement
+    #: about a scope string.
+    token, scope, detail = authenticate_via(adm_pc, ident, secret)
+    if not token:
+        sys.exit(f"could not authenticate as {ident.principal}: {detail}")
+    print(f"  driving as {ident.principal}  scope={scope}")
+    if problems and any(problems.values()):
+        print(f"  (not drivable: {problems})")
     return (
         IcebergREST(POLARIS_URL, REALM, token=token),
         PolarisREST(POLARIS_URL, REALM, token=token),
@@ -131,11 +191,17 @@ def build_clients(case, env):
     )
 
 
+def authenticate_via(pc, identity, secret):
+    from privilege_scan import authenticate
+
+    return authenticate(pc, identity, secret)
+
+
 def do_setup(args):
     from iceberg_rest import build_create_table_payload, build_schema
     from polaris_test_utils import BUCKET, MINIO_ENDPOINT
 
-    _, _, adm_ic, adm_pc = build_clients("root", None)
+    _, _, adm_ic, adm_pc = build_clients("root", args)
     fx = surf.ProbeFixture.stamped()
     schema = build_schema([(1, "id", "long", True), (2, "val", "string", False)])
     surf.setup_fixture(
@@ -148,7 +214,7 @@ def do_setup(args):
 
 
 def do_teardown(args):
-    _, _, adm_ic, adm_pc = build_clients("root", None)
+    _, _, adm_ic, adm_pc = build_clients("root", args)
     fx = load_fixture()
     print("teardown:", json.dumps(surf.teardown_fixture(fx, adm_pc, adm_ic), indent=2))
     STATE.unlink(missing_ok=True)
@@ -160,7 +226,7 @@ def do_drive(args):
     from iceberg_rest import build_create_table_payload, build_scan_report
 
     fx = load_fixture()
-    ic, pc, adm_ic, adm_pc = build_clients(args.case, None)
+    ic, pc, adm_ic, adm_pc = build_clients(args.case, args)
     capture = pathlib.Path(args.capture) if args.capture else find_capture_dir()
     print(f"case={args.case}  fixture={fx.cat}  capture={capture}")
     print("  (Polaris must have been RESTARTED since the last drive — a cold")
@@ -237,6 +303,19 @@ def main():
     ap.add_argument("--drive", action="store_true")
     ap.add_argument("--teardown", action="store_true")
     ap.add_argument("--capture", default=None, help="capture directory")
+    ap.add_argument(
+        "--client-id",
+        default=None,
+        help="drive as this principal_client_id instead of discovering one. "
+        "Required for the unauthorized case: load_identities filters out "
+        "any principal that owns no catalog, which is exactly what a "
+        "zero-grant principal is.",
+    )
+    ap.add_argument(
+        "--principal-role",
+        default=None,
+        help="the principal-role to scope the token to. Never ALL.",
+    )
     ap.add_argument(
         "--latest",
         action="store_true",

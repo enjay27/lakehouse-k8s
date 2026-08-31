@@ -508,3 +508,77 @@ def test_admin_maps_to_a_seeded_principal_not_to_root(driver):
     assert driver.CASE_PREFIX["authorized"] == "authz"
     assert driver.CASE_PREFIX["unauthorized"] == "zerograve"
     assert "root" not in driver.CASE_PREFIX.values()
+
+
+def test_resolve_identity_accepts_a_named_principal_for_the_zero_grant_case(driver):
+    """`load_identities` requires a principal to own a {prefix}N_catalog and
+    reports anything else as no_catalog. Correct for the seeded tiers, fatal for
+    the unauthorized case, whose whole definition is a principal holding
+    nothing — so it is named outright rather than discovered."""
+    ident, problems = driver.resolve_identity(
+        "unauthorized",
+        client_id="zerograve_client",
+        principal_role="zerograve_principal_role",
+    )
+    assert ident.client_id == "zerograve_client"
+    assert ident.principal_role == "zerograve_principal_role"
+    assert ident.catalog is None, "it owns no catalog — that is the point"
+    assert problems == {}
+
+
+def test_a_named_principal_without_a_role_is_refused_not_scoped_to_all(driver):
+    """The scope must be the principal's OWN role. Falling back to
+    PRINCIPAL_ROLE:ALL would hand a non-root principal a token with no effective
+    role, and every 403 would then be about the scope string."""
+    with pytest.raises(SystemExit, match="principal-role"):
+        driver.resolve_identity("unauthorized", client_id="zerograve_client")
+
+
+def test_resolve_identity_matches_load_identities_arity(driver, monkeypatch):
+    """This test exists because the first version of build_clients called
+    load_identities(prefix=...) and authenticate(identity, secret). Both are
+    wrong — load_identities takes (conn, schema, realm, ...) and returns a PAIR,
+    and authenticate returns a TRIPLE. Nothing caught it until the contracts
+    were read, and it would have failed on the first real drive."""
+    import privilege_scan as ps
+
+    seen = {}
+
+    def fake(conn, schema, realm, prefix="user", limit=None):
+        seen.update(conn=conn, schema=schema, realm=realm, prefix=prefix, limit=limit)
+        return [
+            ps.Identity(
+                index=1,
+                principal="authz1_principal",
+                principal_role="authz1_principal_role",
+                client_id="cid",
+                catalog="authz1_catalog",
+            )
+        ], {}
+
+    monkeypatch.setattr(ps, "load_identities", fake)
+    ident, _ = driver.resolve_identity(
+        "authorized", conn="CONN", schema="polaris_schema", realm="POLARIS"
+    )
+    assert seen == {
+        "conn": "CONN",
+        "schema": "polaris_schema",
+        "realm": "POLARIS",
+        "prefix": "authz",
+        "limit": 1,
+    }
+    assert ident.client_id == "cid"
+
+
+def test_no_drivable_principal_names_the_no_catalog_reason(driver, monkeypatch):
+    import privilege_scan as ps
+
+    monkeypatch.setattr(
+        ps,
+        "load_identities",
+        lambda *a, **k: ([], {"no_catalog": ["zerograve_principal"]}),
+    )
+    with pytest.raises(SystemExit) as e:
+        driver.resolve_identity("authorized", conn="C", schema="s", realm="R")
+    assert "no_catalog" in str(e.value)
+    assert "--client-id" in str(e.value)
