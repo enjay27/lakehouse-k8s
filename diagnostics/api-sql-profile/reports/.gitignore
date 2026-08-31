@@ -2,3 +2,4 @@
 # Managed by hand -- add rules as you see fit, e.g.:
 *.md
 !doc-*-latest.md
+!doc-api-sql-matrix-20260820-172931.md

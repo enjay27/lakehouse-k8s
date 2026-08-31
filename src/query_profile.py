@@ -571,16 +571,80 @@ class StatementProfile:
 def param_tuple(sample_params):
     """The logged parameter string back into a tuple, in issue order.
 
-    `split_query_message` joins the bound values with ", " after validating
-    that their count matches the statement's placeholder count, so splitting on
-    the same separator round-trips. Values stay STRINGS: PostgreSQL resolves an
-    unknown-typed literal against the column it is compared to, so `id = '1002'`
-    plans as bigint. Guessing types here is how a bigint predicate silently
-    becomes a text one and the plan changes underneath the measurement.
+    `split_query_message` joins the bound values with ", " after validating that
+    their count matches the statement's placeholder count, so splitting on the
+    same separator round-trips -- UNLESS a value contains ", " itself.
+
+    IT DOES. An `entities` properties column holds JSON whose own keys are
+    separated by ", ", so a naive split turns
+
+        {"default-base-location": "s3a://...", "drop-with-purge": "true"}
+
+    into TWO values, and a 20-placeholder statement parses as 22. Not short --
+    WRONG, with two fragments of one JSON document standing in for separate
+    columns. Measured 2026-08-31: three write statements in
+    `doc-api-sql-matrix-latest.md` were unreplayable for exactly this reason
+    (an `entities` UPDATE in `iceberg.drop_view`, and catalog-properties writes
+    in `mgmt.grant_privilege` and `mgmt.delete_catalog_role`).
+
+    So the split is brace- and quote-aware: a separator only counts at bracket
+    depth 0 and outside a quoted string, with backslash escapes honoured -- the
+    real values nest a JSON document inside a JSON string, so `\\\"` appears and
+    must not toggle string state.
+
+    This cannot silently produce a WRONG replay. `replayable` still compares the
+    value count against the placeholder count, so a value whose brackets are
+    genuinely unbalanced makes the split disagree and the statement is refused,
+    exactly as before. The change only moves statements from "refused" to
+    "replayable"; it can never move one into "replayed with the wrong arity".
+
+    Values stay STRINGS: PostgreSQL resolves an unknown-typed literal against
+    the column it is compared to, so `id = '1002'` plans as bigint. Guessing
+    types here is how a bigint predicate silently becomes a text one and the
+    plan changes underneath the measurement.
     """
     if not sample_params:
         return ()
-    return tuple(p.strip() for p in sample_params.split(", ") if p.strip())
+    parts, buf = [], []
+    depth = 0
+    in_str = False
+    esc = False
+    i = 0
+    n = len(sample_params)
+    while i < n:
+        c = sample_params[i]
+        if esc:
+            buf.append(c)
+            esc = False
+        elif c == "\\":
+            buf.append(c)
+            esc = True
+        elif c == '"':
+            in_str = not in_str
+            buf.append(c)
+        elif not in_str and c in "{[":
+            depth += 1
+            buf.append(c)
+        elif not in_str and c in "}]":
+            #: never below zero -- an unbalanced closer in a plain scalar must
+            #: not make every later separator invisible
+            depth = max(0, depth - 1)
+            buf.append(c)
+        elif (
+            not in_str
+            and depth == 0
+            and c == ","
+            and sample_params[i + 1 : i + 2] == " "
+        ):
+            parts.append("".join(buf).strip())
+            buf = []
+            i += 2
+            continue
+        else:
+            buf.append(c)
+        i += 1
+    parts.append("".join(buf).strip())
+    return tuple(p for p in parts if p)
 
 
 def to_psycopg(sql):

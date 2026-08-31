@@ -1,0 +1,11 @@
+{
+  "prefix": "apiprofile1788153994",
+  "cat": "apiprofile1788153994_cat",
+  "ns": "probe_ns",
+  "ns2": "probe_ns2",
+  "tbl": "probe_tbl",
+  "view": "probe_view",
+  "principal": "apiprofile1788153994_p",
+  "prole": "apiprofile1788153994_pr",
+  "crole": "apiprofile1788153994_cr"
+}

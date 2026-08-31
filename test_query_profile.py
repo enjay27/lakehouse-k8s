@@ -812,18 +812,14 @@ def test_redacted_params_refuse_and_the_reason_names_redaction():
     assert "secret table" in why
 
 
-def test_json_params_containing_comma_space_refuse_rather_than_miscount():
-    """A real fault, found 2026-08-31 in `doc-api-sql-matrix-latest.md`.
+def test_json_params_containing_comma_space_stay_one_value():
+    """The bug this fixed, kept as a test so it cannot come back.
 
-    `param_tuple` splits bound values on ", ", and a JSON properties blob
-    contains ", " between its own keys. So a 20-placeholder statement parses as
-    22 values and the split is wrong — not short, WRONG, with two fragments of
-    one JSON document standing in for separate columns.
-
-    Three write statements in that report are affected (an `entities` UPDATE and
-    two catalog-properties writes). The right behaviour is to refuse: a replay
-    with the wrong arity either errors or, worse, succeeds against a different
-    statement than the one being reported.
+    `param_tuple` split bound values on ", " and a JSON properties blob
+    separates its own keys with ", ". A 20-placeholder statement parsed as 22
+    values -- not short, WRONG, with two fragments of one JSON document standing
+    in for separate columns. Three write statements in
+    doc-api-sql-matrix-latest.md were unreplayable for exactly this reason.
     """
     sql = "UPDATE POLARIS_SCHEMA.ENTITIES SET properties = ? WHERE id = ?"
     doc = _matrix(
@@ -832,13 +828,34 @@ def test_json_params_containing_comma_space_refuse_rather_than_miscount():
             [_stmt(0, "entities", "UPDATE", sql, '{"a": "1", "b": "2"}, 5')],
         ),
     )
-    r = qp.parse_api_statements(doc)
-    pair = r.pairs[0]
-    assert pair.params_observed, "not a redaction — the values ARE present"
-    assert not pair.replayable
-    ((_, why),) = r.refused
-    assert "2 placeholders, 3 values" in why
-    assert pair.replay() == (None, None)
+    (pair,) = qp.parse_api_statements(doc).pairs
+    assert qp.param_tuple(pair.params) == ('{"a": "1", "b": "2"}', "5")
+    assert pair.replayable
+    _sql, params = pair.replay()
+    assert params == ('{"a": "1", "b": "2"}', "5")
+
+
+def test_a_json_string_nesting_another_json_document_survives():
+    """The real shape: `internal_properties` holds a JSON string whose CONTENT
+    is another JSON document, so `\\"` appears and must not toggle string state.
+    A separator inside it is not a separator."""
+    inner = '{"taskType":"1","data":"{\\"id\\":7, \\"parent\\":9}"}'
+    assert qp.param_tuple(f"{inner}, POLARIS") == (inner, "POLARIS")
+
+
+def test_an_unbalanced_bracket_in_a_scalar_does_not_swallow_later_values():
+    """Depth must never go below zero. If it did, one stray closer would make
+    every later separator invisible and the statement would parse as one value
+    -- a mismatch, so it would be refused rather than mis-replayed, but the
+    refusal would point at the wrong statement."""
+    assert qp.param_tuple("a}b, c, d") == ("a}b", "c", "d")
+
+
+def test_a_plain_parameter_list_splits_exactly_as_before():
+    """Regression: the bracket-aware path must not change simple inputs, which
+    are the overwhelming majority and already had correct plans."""
+    assert qp.param_tuple("POLARIS, 1002, NULL, ") == ("POLARIS", "1002", "NULL")
+    assert qp.param_tuple("") == ()
 
 
 def test_a_replayable_pair_converts_placeholders_and_keeps_values_as_strings():
@@ -873,5 +890,8 @@ def test_the_real_matrix_report_parses_clean_with_the_counts_it_is_known_to_have
     assert len(r.apis) == 43
     assert len(r.pairs) == 115, "the sweep unit is the pair"
     assert r.texts == 27, "...and there are only 27 distinct SQL texts"
-    assert len(r.replayable) == 109
-    assert len(r.refused) == 6
+    #: 112, not 109 — the bracket-aware split (2026-08-31) recovered the
+    #: three JSON-properties write statements. The remaining 3 are the
+    #: redacted secret-table params, which are unreplayable forever.
+    assert len(r.replayable) == 112
+    assert len(r.refused) == 3
