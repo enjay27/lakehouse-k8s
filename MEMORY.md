@@ -6,16 +6,19 @@ handoff named in *Now* — it is standalone.
 
 ## Now — 2026-08-31
 
-The privilege-query index audit is at its analysis step — see
-**[`diagnostics/api-sql-profile/HANDOFF-index-contrast.md`](diagnostics/api-sql-profile/HANDOFF-index-contrast.md)**
-first; it is standalone. Three identity tiers x two index states, all driven at
-a measured **60,782 `grant_records`**, 0 non-2xx everywhere. **Nothing is
-EXPLAINed yet at that volume**, so the Seq→Index contrast is banked but unread.
-NEXT: correlate + EXPLAIN all six (`profile_queries.py --index-state
-{present|absent} --explain --report`), toggling the index once between the
-halves, then one combined report. No drives needed. Older handoffs
-(`HANDOFF-privilege-scan.md`, `HANDOFF.md`, `HANDOFF-20260820.md`) are
-superseded for the measurement; their Phase 3 is this task.
+**Read [`HANDOFF-pass-b.md`](diagnostics/api-sql-profile/HANDOFF-pass-b.md) first — it is standalone.**
+
+Done — the index contrast, reported in [`doc-grant-index-contrast-20260831.md`](diagnostics/api-sql-profile/doc-grant-index-contrast-20260831.md):
+at 60,784 `grant_records` the grantee lookup **Seq-Scans 572 pages, discarding 60,783
+rows to return 1**; with `idx_grant_records_grantee`, an **Index Scan of 3 pages**
+discarding none. Three fixtures agree, 29 of 29 read ops affected, a 403 pays the same
+7-statement prelude in both states. A page-access ratio, **not** latency — logging was on.
+
+Next — Pass B (latency, logging off), **blocked** on one unexplained thing: the
+index-absent passes issued *more statements*, not just slower ones (122,010 vs 109,010 on
+`user`), and ran first, so a naive Pass B would report `index + warmth` as the index. The
+handoff's step 1 settles it offline from the banked captures, no cluster.
+`HANDOFF-index-contrast.md` is complete and superseded.
 
 ## Where the detail is
 
