@@ -498,3 +498,194 @@ def drive(tracer, ops, ctx, on_record=None):
         if on_record:
             on_record(op, rec)
     return result
+
+
+# ----------------------------------------------------------------------
+# the probe fixture — created ONCE, as admin, and driven by every identity
+# ----------------------------------------------------------------------
+@dataclass
+class ProbeFixture:
+    """The entities the surface is driven against, and their names.
+
+    Created and destroyed by the ADMIN identity. That is not a convenience: a
+    catalog-scoped principal cannot create a catalog at all (Polaris 1.3.0 has
+    no service-level grant type), and an unauthorized one cannot create
+    anything -- so a fixture built by the identity under test would restrict
+    the experiment to identities that do not need testing.
+
+    ONE FIXTURE, THREE DRIVES. Reusing it across the cases is what isolates the
+    variable: the parameters an operation binds are then identical between
+    cases except for the caller's own identity, which is the whole comparison.
+    The sweep is self-cleaning by construction -- every entity it creates
+    (`probe_ns_tmp`, `probe_tbl2`->`probe_tbl3`, the view, the principal and
+    roles) is dropped by a later operation in the same list.
+
+    DRIVE ORDER: the two refused cases first, admin LAST. Only the admin drive
+    mutates -- the others 403 before touching anything -- so running admin last
+    leaves the fixture pristine for the cases that must see it unchanged.
+    """
+
+    prefix: str
+    cat: str = None
+    ns: str = "probe_ns"
+    ns2: str = "probe_ns2"
+    tbl: str = "probe_tbl"
+    view: str = "probe_view"
+    principal: str = None
+    prole: str = None
+    crole: str = None
+
+    def __post_init__(self):
+        self.cat = self.cat or f"{self.prefix}_cat"
+        self.principal = self.principal or f"{self.prefix}_p"
+        self.prole = self.prole or f"{self.prefix}_pr"
+        self.crole = self.crole or f"{self.prefix}_cr"
+
+    @classmethod
+    def stamped(cls, now=None):
+        """A fresh prefix. `apiprofile*` is swept by teardown, so keep the stem."""
+        from datetime import datetime
+
+        ts = int((now or datetime.now()).timestamp())
+        return cls(prefix=f"apiprofile{ts}")
+
+    def context(self, ic, pc, adm, schema):
+        """A `SurfaceContext` pointing the DRIVE clients at this fixture."""
+        return SurfaceContext(
+            ic=ic,
+            pc=pc,
+            adm=adm,
+            cat=self.cat,
+            ns=self.ns,
+            tbl=self.tbl,
+            view=self.view,
+            principal=self.principal,
+            prole=self.prole,
+            crole=self.crole,
+            schema=schema,
+        )
+
+
+def setup_fixture(
+    fx,
+    adm_pc,
+    adm_ic,
+    bucket,
+    endpoint,
+    schema,
+    payload_builder,
+    ensure_catalog=None,
+    attempt=None,
+    result=None,
+):
+    """Build the probe fixture as admin. Tolerates replication lag; fails loudly.
+
+    Reuses the seeder's `_attempt`/`_ensure_catalog` rather than writing a third
+    variant of lag handling. `_attempt` encodes what a thousand-user seed
+    taught: on 5xx/403/404 the prerequisite may simply not have replicated yet,
+    so verify existence and retry with backoff; a duplicate-key body means the
+    write already landed; any other 4xx is real and must not be retried.
+
+    `_ensure_catalog` rather than a bare create, because a catalog whose entity
+    commits while its grant bootstrap does not is permanently unusable -- it
+    verifies `catalog_admin` is really there instead of trusting a 200 from
+    `get_catalog`.
+
+    Creating a catalog does NOT grant rights inside it. `service_admin` covers
+    CATALOG_CREATE/CATALOG_LIST at the ROOT container, but namespace and table
+    operations are CATALOG-scoped and authorize against `grant_records`, so the
+    explicit CATALOG_MANAGE_CONTENT grant is load-bearing.
+    """
+    if ensure_catalog is None or attempt is None or result is None:
+        from polaris_seed import SeedResult, _attempt, _ensure_catalog
+
+        ensure_catalog = ensure_catalog or _ensure_catalog
+        attempt = attempt or _attempt
+        result = result if result is not None else SeedResult()
+
+    def ck(call, what, exists=None):
+        #: `call` is a CALLABLE, not an already-made response. The earlier
+        #: version asserted on a response it had been handed, so a 500 that had
+        #: in fact committed -- or would have succeeded a moment later --
+        #: aborted the whole run.
+        ok, r = attempt(call, what, result, exists=exists)
+        if not ok:
+            raise AssertionError(f"{what} -> [{r.status_code}] {r.text[:300]}")
+        return r
+
+    ensure_catalog(adm_pc, fx.cat, bucket, endpoint, result)
+    ck(
+        lambda: adm_pc.grant_privilege(
+            fx.cat, "catalog_admin", "CATALOG_MANAGE_CONTENT"
+        ),
+        "grant CATALOG_MANAGE_CONTENT",
+    )
+    for ns in (fx.ns, fx.ns2):
+        ck(
+            lambda ns=ns: adm_ic.create_namespace(fx.cat, ns),
+            f"create namespace {ns}",
+            lambda ns=ns: adm_ic.namespace_exists(fx.cat, ns),
+        )
+    ck(
+        lambda: adm_ic.create_table(fx.cat, fx.ns, payload_builder(fx.tbl, schema)),
+        f"create table {fx.tbl}",
+        lambda: adm_ic.table_exists(fx.cat, fx.ns, fx.tbl),
+    )
+    return result
+
+
+def drop_catalog_tree(catalog, adm_pc, adm_ic):
+    """Empty a catalog from the LEAVES UP, then delete it.
+
+    Polaris refuses `DELETE /catalogs/{name}` while the catalog still holds
+    namespaces -- it answers **400**, not a cascade, and `purgeRequested` does
+    not cascade either. The captured log shows it plainly: three 400s in
+    `doc-api-sql-matrix.md`. So tables and views first, then namespaces, then
+    the catalog.
+    """
+    report = {"tables": 0, "views": 0, "namespaces": 0, "catalog": None}
+    r = adm_ic.list_namespaces(catalog)
+    if r.status_code == 404:
+        report["catalog"] = "absent"
+        return report
+    for ns in r.json().get("namespaces", []):
+        nsn = ns[0] if isinstance(ns, list) else ns
+        for t in adm_ic.list_tables(catalog, nsn).json().get("identifiers", []):
+            adm_ic.drop_table(catalog, nsn, t["name"], purge=True)
+            report["tables"] += 1
+        for v in adm_ic.list_views(catalog, nsn).json().get("identifiers", []):
+            adm_ic.drop_view(catalog, nsn, v["name"])
+            report["views"] += 1
+        adm_ic.drop_namespace(catalog, nsn)
+        report["namespaces"] += 1
+    d = adm_pc.delete_catalog(catalog, purge=True)
+    report["catalog"] = d.status_code
+    if d.status_code >= 300:
+        report["error"] = d.text[:200]
+    return report
+
+
+def teardown_fixture(fx, adm_pc, adm_ic, sweep_stale=True):
+    """Remove the fixture, and any probe catalog an earlier aborted run left.
+
+    The sweep exists because a run that dies during setup never reaches
+    teardown, and its catalog stays. Every `apiprofile*` catalog is this
+    harness's own fixture, so sweeping them is safe and keeps `find_strays`
+    meaningful -- an assertion that is routinely violated by known residue is
+    an assertion nobody reads.
+    """
+    out = {"fixture": drop_catalog_tree(fx.cat, adm_pc, adm_ic), "swept": {}}
+    for call in (
+        lambda: adm_pc.delete_principal_role(fx.prole),
+        lambda: adm_pc.delete_principal(fx.principal),
+    ):
+        try:
+            call()
+        except Exception as exc:  # noqa: BLE001
+            out.setdefault("errors", []).append(f"{type(exc).__name__}: {exc}")
+    if sweep_stale:
+        for c in adm_pc.list_catalogs().json().get("catalogs", []):
+            name = c["name"] if isinstance(c, dict) else c
+            if name.startswith("apiprofile") and name != fx.cat:
+                out["swept"][name] = drop_catalog_tree(name, adm_pc, adm_ic)
+    return out

@@ -30,9 +30,12 @@ import query_profile as qp  # noqa: E402
 
 
 class Resp:
-    def __init__(self, status=200, payload=None):
+    def __init__(self, status=200, payload=None, text=""):
         self.status_code = status
         self._payload = payload or {}
+        #: real responses carry it, and the setup failure path reads it — a
+        #: stub without it turns a legitimate assertion into an AttributeError
+        self.text = text
 
     def json(self):
         return self._payload
@@ -232,3 +235,177 @@ def test_an_admin_drive_is_the_same_object_for_both_clients():
     ctx = _ctx(ic=both, pc=both, adm=both)
     res = surf.drive(Tracer(), _ops(ctx), ctx)
     assert res.driven == 43 and len(res.permitted) == 43
+
+
+# ----------------------------------------------------------------------
+# the probe fixture — built as admin, driven by everyone
+# ----------------------------------------------------------------------
+class FakeCatalogs:
+    """A management client that remembers catalogs and answers list_catalogs."""
+
+    def __init__(self, names=()):
+        self.names = list(names)
+        self.deleted = []
+        self.granted = []
+        self.calls = []
+
+    def list_catalogs(self):
+        return Resp(200, {"catalogs": [{"name": n} for n in self.names]})
+
+    def delete_catalog(self, name, purge=False):
+        self.deleted.append(name)
+        if name in self.names:
+            self.names.remove(name)
+        return Resp(204)
+
+    def grant_privilege(self, cat, role, priv):
+        self.granted.append((cat, role, priv))
+        return Resp(200)
+
+    def __getattr__(self, meth):
+        def go(*a, **kw):
+            self.calls.append((meth, a, kw))
+            return Resp(200)
+
+        return go
+
+
+class FakeTree:
+    """An Iceberg client over a {namespace: (tables, views)} tree."""
+
+    def __init__(self, tree=None, missing=()):
+        self.tree = tree if tree is not None else {}
+        self.missing = set(missing)
+        self.dropped = []
+        self.created = []
+
+    def list_namespaces(self, cat):
+        if cat in self.missing:
+            return Resp(404, {})
+        return Resp(200, {"namespaces": [[n] for n in self.tree]})
+
+    def list_tables(self, cat, ns):
+        return Resp(
+            200, {"identifiers": [{"name": t} for t in self.tree.get(ns, ([], []))[0]]}
+        )
+
+    def list_views(self, cat, ns):
+        return Resp(
+            200, {"identifiers": [{"name": v} for v in self.tree.get(ns, ([], []))[1]]}
+        )
+
+    def drop_table(self, cat, ns, name, purge=False):
+        self.dropped.append(("table", ns, name))
+        return Resp(204)
+
+    def drop_view(self, cat, ns, name):
+        self.dropped.append(("view", ns, name))
+        return Resp(204)
+
+    def drop_namespace(self, cat, ns):
+        self.dropped.append(("namespace", ns, None))
+        return Resp(204)
+
+    def create_namespace(self, cat, ns):
+        self.created.append(("namespace", ns))
+        return Resp(200)
+
+    def create_table(self, cat, ns, payload):
+        self.created.append(("table", payload.get("name")))
+        return Resp(200)
+
+    def namespace_exists(self, cat, ns):
+        return Resp(200)
+
+    def table_exists(self, cat, ns, t):
+        return Resp(200)
+
+
+def test_setup_grants_catalog_manage_content_because_creating_a_catalog_does_not():
+    """`service_admin` covers CATALOG_CREATE at the ROOT container, but namespace
+    and table work is CATALOG-scoped and authorizes against grant_records. Drop
+    this grant and the fixture builds a catalog nobody can use."""
+    fx = surf.ProbeFixture(prefix="apiprofileTEST")
+    pc, ic = FakeCatalogs(), FakeTree()
+    seen = []
+    surf.setup_fixture(
+        fx,
+        pc,
+        ic,
+        "bucket",
+        "http://minio",
+        {"fields": []},
+        payload_builder=lambda name, schema: {"name": name},
+        ensure_catalog=lambda *a, **k: seen.append(a[1]),
+        attempt=lambda call, what, res, exists=None: (True, call()),
+        result=object(),
+    )
+    assert seen == [fx.cat], "the catalog is ensured, not bare-created"
+    assert (fx.cat, "catalog_admin", "CATALOG_MANAGE_CONTENT") in pc.granted
+    assert ("namespace", "probe_ns") in ic.created
+    assert ("namespace", "probe_ns2") in ic.created
+    assert ("table", "probe_tbl") in ic.created
+
+
+def test_setup_raises_loudly_when_a_call_really_failed():
+    """Lag is retried; a real failure must abort rather than leave a half fixture."""
+    fx = surf.ProbeFixture(prefix="apiprofileTEST")
+    with pytest.raises(AssertionError, match="grant CATALOG_MANAGE_CONTENT"):
+        surf.setup_fixture(
+            fx,
+            FakeCatalogs(),
+            FakeTree(),
+            "b",
+            "e",
+            {},
+            payload_builder=lambda n, s: {"name": n},
+            ensure_catalog=lambda *a, **k: None,
+            attempt=lambda call, what, res, exists=None: (False, Resp(500)),
+            result=object(),
+        )
+
+
+def test_teardown_empties_the_catalog_from_the_leaves_up():
+    """Polaris answers 400 on deleting a catalog that still holds namespaces, and
+    purge does NOT cascade. Order here is the whole point."""
+    fx = surf.ProbeFixture(prefix="apiprofileTEST")
+    ic = FakeTree({"probe_ns": (["probe_tbl"], ["probe_view"]), "probe_ns2": ([], [])})
+    pc = FakeCatalogs([fx.cat])
+    out = surf.teardown_fixture(fx, pc, ic, sweep_stale=False)
+    kinds = [k for k, _ns, _n in ic.dropped]
+    assert kinds.index("table") < kinds.index("namespace")
+    assert kinds.index("view") < kinds.index("namespace")
+    assert pc.deleted == [fx.cat], "the catalog goes last"
+    assert out["fixture"] == {"tables": 1, "views": 1, "namespaces": 2, "catalog": 204}
+
+
+def test_teardown_sweeps_probe_catalogs_an_aborted_run_left_behind():
+    """A run that dies during setup never reaches teardown and its catalog stays.
+    Residue that routinely violates find_strays is residue that trains people to
+    ignore the assertion."""
+    fx = surf.ProbeFixture(prefix="apiprofile999")
+    pc = FakeCatalogs([fx.cat, "apiprofile111_cat", "someone_elses_cat"])
+    out = surf.teardown_fixture(fx, pc, FakeTree(), sweep_stale=True)
+    assert set(out["swept"]) == {"apiprofile111_cat"}
+    assert "someone_elses_cat" not in pc.deleted, "only this harness's own prefix"
+
+
+def test_a_missing_catalog_is_reported_absent_not_treated_as_an_error():
+    fx = surf.ProbeFixture(prefix="apiprofileTEST")
+    ic = FakeTree(missing={fx.cat})
+    out = surf.teardown_fixture(fx, FakeCatalogs(), ic, sweep_stale=False)
+    assert out["fixture"]["catalog"] == "absent"
+    assert ic.dropped == []
+
+
+def test_the_fixture_hands_the_drive_clients_to_the_context_and_keeps_adm_apart():
+    fx = surf.ProbeFixture(prefix="apiprofileTEST")
+    ic, pc, adm = Recorder("ic"), Recorder("pc"), Forbidden()
+    ctx = fx.context(ic, pc, adm, schema={"fields": []})
+    assert ctx.ic is ic and ctx.pc is pc and ctx.adm is adm
+    assert ctx.cat == fx.cat and ctx.tbl == "probe_tbl"
+    #: and the operations built from it still never touch adm
+    for op in surf.operations(ctx, lambda n, s: {"name": n}, lambda t, s: {}):
+        if op.prepare:
+            op.prepare(ctx)
+        op.fn(ctx)
