@@ -239,3 +239,133 @@ def test_the_accepted_policy_type_is_the_default():
 
     assert seed.DEFAULT_POLICY_TYPE == "system.data-compaction"
     assert seed._policy_payload("p1")["type"] == "system.data-compaction"
+
+
+# ----------------------------------------------------------------------
+# _summarise_plan — the index question, asked of every relation
+#
+# The single-node summary was built to answer one question about
+# `grant_records`. "Does this API use an index" is asked of every relation a
+# statement touches, and reading only the chosen node reports the first scan's
+# verdict as the whole statement's.
+# ----------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def profiler():
+    return _load("profile_queries")
+
+
+def _plan(*nodes):
+    return {"Plan": {"Node Type": "Nested Loop", "Plans": list(nodes)}}
+
+
+def test_every_scan_node_is_reported_not_only_the_chosen_one(profiler):
+    r = profiler._summarise_plan(
+        _plan(
+            {"Node Type": "Seq Scan", "Relation Name": "grant_records"},
+            {
+                "Node Type": "Index Scan",
+                "Relation Name": "entities",
+                "Index Name": "idx_entities",
+            },
+        ),
+        "grant_records",
+    )
+    assert len(r["scans"]) == 2
+    assert r["seq_scanned"] == ["grant_records"]
+    assert r["indexes_used"] == ["idx_entities"]
+    #: the original single-node fields still answer about the focus table
+    assert r["scan"] == "Seq Scan" and r["relation"] == "grant_records"
+
+
+def test_a_bitmap_heap_read_is_index_access_not_a_sequential_scan(profiler):
+    """The classification that a substring search gets wrong.
+
+    A Bitmap Heap Scan reaches its rows through the child Bitmap Index Scan, so
+    the relation is index-accessed. Calling it a sequential scan because the
+    node type ends in "Scan" would report a missing index that is present and
+    working.
+    """
+    r = profiler._summarise_plan(
+        _plan(
+            {
+                "Node Type": "Bitmap Heap Scan",
+                "Relation Name": "entities",
+                "Plans": [
+                    {"Node Type": "Bitmap Index Scan", "Index Name": "idx_entities"}
+                ],
+            },
+        )
+    )
+    assert r["seq_scanned"] == [], "a bitmap heap read is not a Seq Scan"
+    assert r["indexes_used"] == ["idx_entities"]
+
+
+def test_a_parallel_seq_scan_still_counts_as_sequential(profiler):
+    r = profiler._summarise_plan(
+        _plan({"Node Type": "Parallel Seq Scan", "Relation Name": "grant_records"})
+    )
+    assert r["seq_scanned"] == ["grant_records"]
+
+
+def test_a_plan_with_no_scan_at_all_reports_neither(profiler):
+    """`INSERT ... VALUES` plans to a Result node. There is no index to detect,
+    and reporting "no index used" there would read as a finding rather than a
+    category error."""
+    r = profiler._summarise_plan({"Plan": {"Node Type": "Result"}})
+    assert r["scans"] == []
+    assert r["seq_scanned"] == [] and r["indexes_used"] == []
+
+
+def test_explain_statements_without_analyze_plans_once_and_reports_no_timing(
+    profiler, monkeypatch
+):
+    """Plain EXPLAIN is what makes a write safe to ask about.
+
+    `EXPLAIN ANALYZE` on an INSERT/UPDATE/DELETE really performs it. This path
+    must therefore call `explain`, never `explain_n` — which additionally would
+    raise, since it medians an `Execution Time` that a plan-only EXPLAIN does
+    not emit.
+    """
+    import api_trace
+
+    calls = {"explain": 0, "explain_n": 0}
+
+    def fake_explain(conn, sql, params=None, analyze=True, no_lb=True):
+        calls["explain"] += 1
+        assert analyze is False, "a write must not be ANALYZEd"
+        return _plan({"Node Type": "Seq Scan", "Relation Name": "entities"})
+
+    def fake_explain_n(*a, **k):  # pragma: no cover - must never run
+        calls["explain_n"] += 1
+        raise AssertionError("explain_n has no Execution Time to median here")
+
+    monkeypatch.setattr(api_trace, "explain", fake_explain)
+    monkeypatch.setattr(api_trace, "explain_n", fake_explain_n)
+
+    import query_profile as qp
+
+    doc = (
+        "### `iceberg.create_table`\n\n- `POST /v1/x` → **200**\n\n"
+        "**[0]** `entities` · INSERT · no timing\n\n"
+        "```sql\nINSERT INTO POLARIS_SCHEMA.ENTITIES (id) VALUES (?)\n```\n"
+        "params: `7`\n"
+    )
+    (pair,) = qp.parse_api_statements(doc).pairs
+
+    class _Cur:
+        def execute(self, *a):
+            pass
+
+        def close(self):
+            pass
+
+    class _Conn:
+        def cursor(self):
+            return _Cur()
+
+    (entry,) = profiler.explain_statements(_Conn(), [pair], analyze=False)
+    assert calls == {"explain": 1, "explain_n": 0}, "exactly one plan, no timing runs"
+    assert entry["analyze"] is False
+    assert "explain_ms" not in entry
+    assert entry["seq_scanned"] == ["entities"]
+    assert entry["apis"] == ["iceberg.create_table"], "the pair carries its APIs"

@@ -187,7 +187,7 @@ def table_rows(conn, table=FOCUS_TABLE):
     return n
 
 
-def explain_statements(conn, worklist, k=11, pin_serial=True):
+def explain_statements(conn, worklist, k=11, pin_serial=True, analyze=True):
     """EXPLAIN (ANALYZE, BUFFERS) each distinct statement, on the primary.
 
     Replays `sp.sample_sql` -- ONE occurrence's raw text -- not `sp.sql`, which
@@ -203,8 +203,21 @@ def explain_statements(conn, worklist, k=11, pin_serial=True):
     unusable: identical plan cost and buffers, 3-10x clock spread. Whether the
     unindexed path WOULD escalate is recorded separately rather than being
     allowed to contaminate the comparison.
+
+    ANALYZE=False IS NOT A CHEAPER MODE, IT IS A DIFFERENT QUESTION
+    ---------------------------------------------------------------
+    `EXPLAIN ANALYZE` on an INSERT/UPDATE/DELETE really performs it. Plain
+    EXPLAIN only plans, so it is the only safe way to ask the index question of
+    a write -- and since this sweep wants index PRESENCE and not performance,
+    it is also the honest one: there is no clock to quote and therefore no clock
+    anyone can misquote.
+
+    It also takes k=1. `explain_n` exists to median a timing and discard a
+    warm-up run, and there is no `Execution Time` in a plan-only EXPLAIN -- it
+    would raise comparing None to None. The plan itself does not vary between
+    identical runs against unchanged statistics, so repeating it buys nothing.
     """
-    from api_trace import explain_n
+    from api_trace import explain, explain_n
 
     if pin_serial:
         cur = conn.cursor()
@@ -214,16 +227,25 @@ def explain_statements(conn, worklist, k=11, pin_serial=True):
     out = []
     for sp in worklist:
         sql, params = sp.replay()
+        #: Accepts a `StatementProfile` (from a capture) or an `ApiStatement`
+        #: (from a matrix report). ONE EXPLAIN path for both on purpose: two
+        #: would be two definitions of how a statement gets planned, and they
+        #: would drift. The capture-only fields degrade to None rather than
+        #: being faked.
+        raw = getattr(sp, "sample_sql", None) or getattr(sp, "sql", None)
+        bound = getattr(sp, "sample_params", None) or getattr(sp, "params", None)
+        n_req = getattr(sp, "requests", None)
         entry = {
             "sql": sp.sql,
-            "replayed_sql": sp.sample_sql,
+            "replayed_sql": raw,
             "table": sp.table,
             "verb": sp.verb,
             "occurrences": sp.occurrences,
-            "requests": sp.requests,
-            "per_request": round(sp.per_request, 3),
+            "requests": n_req,
+            "per_request": round(sp.per_request, 3) if n_req else None,
             "params_observed": sp.params_observed,
-            "params": sp.sample_params if sp.params_observed else None,
+            "params": bound if sp.params_observed else None,
+            "apis": sorted(sp.apis) if getattr(sp, "apis", None) else None,
         }
         if sql is None:
             #: §3.4 of the plan, plus the placeholder-count guard. Saying which
@@ -235,21 +257,30 @@ def explain_statements(conn, worklist, k=11, pin_serial=True):
                 if not sp.params_observed
                 else (
                     f"placeholder/parameter mismatch: SQL has "
-                    f"{(sp.sample_sql or '').count('?')} placeholders, "
-                    f"{len(qp.param_tuple(sp.sample_params))} values captured"
+                    f"{(raw or '').count('?')} placeholders, "
+                    f"{len(qp.param_tuple(bound))} values captured"
                 )
             )
             out.append(entry)
             continue
         try:
-            med, lo, hi, plan, _times = explain_n(
-                conn, sql, params, k=k, analyze=True, no_lb=True
-            )
+            if analyze:
+                med, lo, hi, plan, _times = explain_n(
+                    conn, sql, params, k=k, analyze=True, no_lb=True
+                )
+            else:
+                plan = explain(conn, sql, params, analyze=False, no_lb=True)
         except Exception as exc:  # noqa: BLE001
             entry["error"] = f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
             out.append(entry)
             continue
         entry.update(_summarise_plan(plan, sp.table))
+        if not analyze:
+            #: Say so in the record. A reader who finds no `explain_ms` should
+            #: not have to infer whether it was plain EXPLAIN or a failure.
+            entry["analyze"] = False
+            out.append(entry)
+            continue
         #: A range, never a headline. This pass ran with statement logging on
         #: (4.6x inflation, measured) and these EXPLAINs were taken afterwards
         #: on a cluster that may still have it enabled, so even the honest
@@ -297,8 +328,41 @@ def _summarise_plan(plan, table=None):
     chosen = chosen or (scans[0] if scans else root)
     hit = chosen.get("Shared Hit Blocks")
     read = chosen.get("Shared Read Blocks")
+
+    #: EVERY scan node, not just the chosen one. The single-node summary above
+    #: was built to answer one question about one table; "does this API use an
+    #: index" is asked of every relation a statement touches, and a plan with a
+    #: join has more than one. Reading only `chosen` there would report the
+    #: first scan's verdict as the statement's.
+    all_scans = [
+        {
+            "relation": n.get("Relation Name"),
+            "node": n.get("Node Type"),
+            "index": n.get("Index Name"),
+            "rows_removed_by_filter": n.get("Rows Removed by Filter"),
+            "actual_rows": n.get("Actual Rows"),
+            "plan_rows": n.get("Plan Rows"),
+        }
+        for n in scans
+    ]
+    #: Classified by named fields, never by grepping rendered plan text.
+    #: "Seq Scan" is a substring of "Parallel Seq Scan", which is intended; it
+    #: is NOT a substring of "Bitmap Heap Scan", which is also intended -- a
+    #: bitmap heap read reaches its rows through the child Bitmap Index Scan,
+    #: so the relation is index-accessed and its index shows up in
+    #: `indexes_used` rather than the relation showing up as sequentially
+    #: scanned.
     return {
         "plan": plan,
+        "scans": all_scans,
+        "seq_scanned": sorted(
+            {
+                c["relation"]
+                for c in all_scans
+                if c["relation"] and "Seq Scan" in (c["node"] or "")
+            }
+        ),
+        "indexes_used": sorted({c["index"] for c in all_scans if c["index"]}),
         "scan": chosen.get("Node Type"),
         "relation": chosen.get("Relation Name"),
         "index": chosen.get("Index Name"),
