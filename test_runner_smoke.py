@@ -73,7 +73,14 @@ class PolicyClient:
 # ----------------------------------------------------------------------
 @pytest.mark.parametrize(
     "name",
-    ["seed_polaris", "scan_privileges", "profile_queries", "probe_api_surface"],
+    [
+        "seed_polaris",
+        "scan_privileges",
+        "profile_queries",
+        "probe_api_surface",
+        "explain_api_matrix",
+        "drive_api_surface",
+    ],
 )
 def test_runner_imports(name):
     """Catches a bad import or a NameError at module scope before the cluster does."""
@@ -369,3 +376,135 @@ def test_explain_statements_without_analyze_plans_once_and_reports_no_timing(
     assert "explain_ms" not in entry
     assert entry["seq_scanned"] == ["entities"]
     assert entry["apis"] == ["iceberg.create_table"], "the pair carries its APIs"
+
+
+# ----------------------------------------------------------------------
+# explain_api_matrix — the per-API rollup, and the refusal to sweep a bad parse
+# ----------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def explainer():
+    return _load("explain_api_matrix")
+
+
+def test_a_report_that_did_not_fully_parse_is_refused_before_any_sweep(
+    explainer, tmp_path
+):
+    """A short worklist looks exactly like a complete one downstream, so the
+    refusal has to come before the database is touched, not after."""
+    doc = tmp_path / "bad.md"
+    doc.write_text(
+        "### `mgmt.get_principal`\n\n- `GET /v1/x` → **200**\n\n"
+        "**[0]** `entities` · SELECT · no timing\n\nno sql fence here\n"
+    )
+    with pytest.raises(SystemExit) as e:
+        explainer.load_matrix(doc)
+    assert "did not parse" in str(e.value)
+
+
+def _pair(sql, params, apis, table="entities", verb="SELECT"):
+    import query_profile as qp
+
+    p = qp.ApiStatement(sql=sql, params=params, table=table, verb=verb)
+    for api, idxs in apis.items():
+        p.apis[api] = idxs
+    return p
+
+
+def test_a_statement_shared_by_two_apis_rolls_up_to_both(explainer):
+    """Statements are shared, so the rollup is a fan-out of the pair results —
+    not a second measurement that could disagree with the first."""
+    import query_profile as qp
+
+    ms = qp.MatrixStatements()
+    ms.pairs = [
+        _pair(
+            "SELECT 1", "a", {"mgmt.get_principal": [0], "mgmt.list_principals": [3, 4]}
+        )
+    ]
+    explains = [
+        {
+            "seq_scanned": ["entities"],
+            "indexes_used": [],
+            "scans": [{"relation": "entities"}],
+        }
+    ]
+    r = explainer.per_api_rollup(explains, ms)
+    assert set(r) == {"mgmt.get_principal", "mgmt.list_principals"}
+    assert r["mgmt.get_principal"]["statements"] == 1
+    assert r["mgmt.list_principals"]["statements"] == 2, "both instances counted"
+    assert r["mgmt.get_principal"]["seq_scanned"] == ["entities"]
+
+
+def test_a_skipped_statement_is_counted_as_skipped_not_as_index_using(explainer):
+    """The three redacted secret-table statements can never be planned. Letting
+    them fall through as 'no seq scan' would read as a clean result."""
+    import query_profile as qp
+
+    ms = qp.MatrixStatements()
+    ms.pairs = [_pair("SELECT 1", "", {"mgmt.create_principal": [0]})]
+    r = explainer.per_api_rollup([{"skipped": "params redacted"}], ms)
+    row = r["mgmt.create_principal"]
+    assert row["planned"] == 0 and row["skipped"] == 1
+    assert row["seq_scanned"] == [] and row["indexes_used"] == []
+    assert row["uses_index_only"] is False, "unplanned is not index-clean"
+
+
+def test_an_api_whose_statements_all_use_indexes_is_marked_as_such(explainer):
+    import query_profile as qp
+
+    ms = qp.MatrixStatements()
+    ms.pairs = [_pair("SELECT 1", "a", {"mgmt.get_catalog": [0]})]
+    explains = [
+        {
+            "seq_scanned": [],
+            "indexes_used": ["idx_entities"],
+            "scans": [{"relation": "entities"}],
+        }
+    ]
+    r = explainer.per_api_rollup(explains, ms)
+    assert r["mgmt.get_catalog"]["uses_index_only"] is True
+    assert r["mgmt.get_catalog"]["relations"] == ["entities"]
+
+
+# ----------------------------------------------------------------------
+# drive_api_surface — the fixture must survive between five processes
+# ----------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def driver():
+    return _load("drive_api_surface")
+
+
+def test_the_fixture_is_persisted_and_reloaded_identically(
+    driver, tmp_path, monkeypatch
+):
+    """Setup, three drives and teardown are five separate processes. A fixture
+    whose name is recomputed from a timestamp in each of them is five different
+    fixtures, and the three cases would then differ by more than the identity."""
+    import api_surface as surf
+
+    monkeypatch.setattr(driver, "STATE", tmp_path / "fx.json")
+    monkeypatch.setattr(driver, "RUNS_DIR", tmp_path)
+    fx = surf.ProbeFixture.stamped()
+    driver.save_fixture(fx)
+    back = driver.load_fixture()
+    assert back.cat == fx.cat and back.prole == fx.prole
+    assert back.prefix == fx.prefix
+
+
+def test_driving_without_a_recorded_fixture_refuses_with_the_reason(
+    driver, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(driver, "STATE", tmp_path / "absent.json")
+    with pytest.raises(SystemExit) as e:
+        driver.load_fixture()
+    assert "--setup first" in str(e.value)
+
+
+def test_admin_maps_to_a_seeded_principal_not_to_root(driver):
+    """root's authorization resolves TWO grant rows and is the least
+    representative identity in the realm; a seeded service_admin resolves
+    ~1,100 and an authz principal 52. That spread is the point of the cases."""
+    assert driver.CASE_PREFIX["admin"] == "admin"
+    assert driver.CASE_PREFIX["authorized"] == "authz"
+    assert driver.CASE_PREFIX["unauthorized"] == "zerograve"
+    assert "root" not in driver.CASE_PREFIX.values()
