@@ -21,8 +21,8 @@ against the parser), and runners `drive_api_surface.py` + `explain_api_matrix.py
 (1000 users, 5 views + 5 generic tables/ns, plus a **verified zero-grant** principal) → archive the current
 matrix as a **tracked** file → `drive_api_surface.py --setup`, then restart-and-drive per case
 (**unauthorized, authorized, admin last**) → `explain_api_matrix.py` per case × both index states → Claude
-writes the report. Open: the `param_tuple` `", "` split bug leaves 3 write statements unreplayable
-(`.memory/active-issues.md`); fixing it is a shared-code decision, not a drive-by.
+writes the report. Of the 115 pairs, **112 replay**; the 3 refused are redacted
+secret-table statements and always will be.
 
 ## Where the detail is
 

@@ -270,7 +270,8 @@ Then tell Claude, and it writes the combined report and its verifier.
   would be `PRINCIPAL_ROLE:ALL`, which is root's scope: a non-root principal gets
   a 200 and a token with no effective role, and every later 403 becomes a
   statement about a scope string.
-- Three of the 115 pairs are **unreplayable for a fixable reason** (`param_tuple`
-  splits bound values on `", "`, and JSON property blobs contain it). They are
-  reported as refused-with-reason, not planned. Say the word and I fix the
-  splitter.
+- **Three of the 115 pairs are refused, and always will be.** They are the
+  `principal_authentication_data` statements whose parameters were redacted at
+  capture, because they carry secret material. Not a defect; the report says so
+  per statement. (The other three refusals were a `param_tuple` splitting bug,
+  fixed 2026-08-31 — 112 of 115 now replay.)
