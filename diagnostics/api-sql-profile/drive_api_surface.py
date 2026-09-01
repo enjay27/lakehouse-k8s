@@ -197,6 +197,30 @@ def authenticate_via(pc, identity, secret):
     return authenticate(pc, identity, secret)
 
 
+def capture_streams(capture):
+    """The three streams a `Tracer` wants, from a capture DIRECTORY.
+
+    `Tracer` takes stream objects -- polaris_log, pg_log, minio_trace -- not a
+    path. Handing it the directory raised `IsADirectoryError` on every one of 43
+    operations (2026-09-01), which the drive correctly reported as 43 ERRORS
+    rather than 43 refusals. That distinction is the only reason the run was not
+    mistaken for a flawless unauthorized pass.
+
+    `pg*.log` is a MultiStream because pgpool routes reads across the replicas
+    and capture.sh tails each one separately; older runs wrote a single pg.log,
+    so both shapes are accepted.
+    """
+    from api_trace import FileStream, MultiStream
+
+    capture = pathlib.Path(capture)
+    pg = sorted(capture.glob("pg*.log")) or [capture / "pg.log"]
+    return {
+        "polaris_log": FileStream(str(capture / "polaris.log")),
+        "pg_log": MultiStream(pg),
+        "minio_trace": FileStream(str(capture / "minio.json")),
+    }
+
+
 def do_setup(args):
     from iceberg_rest import build_create_table_payload, build_schema
     from polaris_test_utils import BUCKET, MINIO_ENDPOINT
@@ -222,7 +246,7 @@ def do_teardown(args):
 
 
 def do_drive(args):
-    from api_trace import FileStream, Tracer, api_table_matrix, find_capture_dir
+    from api_trace import Tracer, api_table_matrix, find_capture_dir
     from iceberg_rest import build_create_table_payload, build_scan_report
 
     fx = load_fixture()
@@ -241,7 +265,7 @@ def do_drive(args):
         pass
 
     ctx = fx.context(ic, pc, adm_ic, schema)
-    tracer = Tracer(FileStream(capture))
+    tracer = Tracer(**capture_streams(capture))
     ops = surf.operations(ctx, build_create_table_payload, build_scan_report)
     res = surf.drive(tracer, ops, ctx)
 

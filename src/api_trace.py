@@ -1284,6 +1284,35 @@ def pg_stat_snapshot(conn, min_calls=1):
 # ----------------------------------------------------------------------
 # tracer
 # ----------------------------------------------------------------------
+class MultiStream:
+    """A `FileStream` over SEVERAL files, concatenating each one's new output.
+
+    Pgpool load-balances reads, so a statement Polaris issues can execute on any
+    replica and its `duration:` line lands in THAT node's log. Reading one file
+    attributes timings to a fraction of the statements and silently leaves the
+    rest blank -- which looks identical to "durations are off" and sends you to
+    the wrong fix.
+
+    Lived in a cell of `01_api_access_map.ipynb` until 2026-09-01, where no
+    runner could reach it: `drive_api_surface.py` built a Tracer without it and
+    read one replica. Same interface as FileStream -- exists / mark /
+    read_since_mark -- so the two are interchangeable.
+    """
+
+    def __init__(self, paths):
+        self.streams = [FileStream(str(x)) for x in paths]
+
+    def exists(self):
+        return any(st.exists() for st in self.streams)
+
+    def mark(self):
+        for st in self.streams:
+            st.mark()
+
+    def read_since_mark(self):
+        return "".join(st.read_since_mark() for st in self.streams)
+
+
 class Tracer:
     """Wrap API calls in a trace window across the configured streams.
 

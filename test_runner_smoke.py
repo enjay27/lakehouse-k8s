@@ -582,3 +582,49 @@ def test_no_drivable_principal_names_the_no_catalog_reason(driver, monkeypatch):
         driver.resolve_identity("authorized", conn="C", schema="s", realm="R")
     assert "no_catalog" in str(e.value)
     assert "--client-id" in str(e.value)
+
+
+def test_capture_streams_hands_tracer_streams_not_a_directory(driver, tmp_path):
+    """The bug that turned 43 operations into 43 errors.
+
+    Tracer takes stream OBJECTS — polaris_log, pg_log, minio_trace — not a path.
+    Passing the capture directory raised IsADirectoryError on every operation.
+    Nothing caught it because nothing had ever called this path with a real
+    directory; the tests drove the catalogue with a stub tracer.
+    """
+    from api_trace import FileStream, MultiStream
+
+    for n in ("polaris.log", "pg-0.log", "pg-1.log", "pg-2.log", "minio.json"):
+        (tmp_path / n).write_text("x")
+    st = driver.capture_streams(tmp_path)
+    assert set(st) == {"polaris_log", "pg_log", "minio_trace"}
+    assert isinstance(st["polaris_log"], FileStream)
+    assert isinstance(st["minio_trace"], FileStream)
+    #: every replica, because pgpool routes reads across them and a statement's
+    #: duration line lands in whichever node ran it
+    assert isinstance(st["pg_log"], MultiStream)
+    assert len(st["pg_log"].streams) == 3
+    for s in st["pg_log"].streams:
+        assert not s.path.endswith(("polaris.log", "minio.json"))
+
+
+def test_capture_streams_accepts_an_older_single_pg_log(driver, tmp_path):
+    (tmp_path / "pg.log").write_text("x")
+    st = driver.capture_streams(tmp_path)
+    assert [s.path.split("/")[-1] for s in st["pg_log"].streams] == ["pg.log"]
+
+
+def test_multistream_concatenates_every_replica(tmp_path):
+    """Reading one file attributes timings to a fraction of the statements and
+    leaves the rest blank — indistinguishable from durations being off."""
+    from api_trace import MultiStream
+
+    a, b = tmp_path / "pg-0.log", tmp_path / "pg-1.log"
+    a.write_text("one\n")
+    b.write_text("two\n")
+    ms = MultiStream([a, b])
+    ms.mark()
+    a.write_text("one\nAAA\n")
+    b.write_text("two\nBBB\n")
+    got = ms.read_since_mark()
+    assert "AAA" in got and "BBB" in got
