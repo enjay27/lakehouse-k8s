@@ -628,3 +628,63 @@ def test_multistream_concatenates_every_replica(tmp_path):
     b.write_text("two\nBBB\n")
     got = ms.read_since_mark()
     assert "AAA" in got and "BBB" in got
+
+
+def test_the_admin_case_scopes_its_token_to_service_admin_not_its_own_role(
+    driver, monkeypatch
+):
+    """The trap privilege_scan names: a token is scoped to ONE principal-role.
+
+    admin{N}_principal holds two — its own (catalog-scoped on admin{N}_catalog)
+    and service_admin, which is the entire reason the tier exists.
+    load_identities builds the name from the seeder's convention and hands back
+    the own-role, so a token scoped to it carries no service-level authority and
+    the drive is refused on all 43 operations — a distribution byte-identical to
+    the zero-grant case.
+    """
+    import privilege_scan as ps
+
+    monkeypatch.setattr(
+        ps,
+        "load_identities",
+        lambda *a, **k: (
+            [
+                ps.Identity(
+                    index=1,
+                    principal="admin1_principal",
+                    principal_role="admin1_principal_role",
+                    client_id="cid",
+                    catalog="admin1_catalog",
+                )
+            ],
+            {},
+        ),
+    )
+    ident, _ = driver.resolve_identity("admin", conn="C", schema="s", realm="R")
+    assert ident.principal_role == ps.SERVICE_ADMIN_ROLE
+    assert ident.principal == "admin1_principal", "same identity, different role"
+
+
+def test_the_authorized_case_keeps_its_own_principal_role(driver, monkeypatch):
+    """Only admin holds a second role. Rewriting the scope for every tier would
+    hand a catalog-scoped principal a role it is not a member of."""
+    import privilege_scan as ps
+
+    monkeypatch.setattr(
+        ps,
+        "load_identities",
+        lambda *a, **k: (
+            [
+                ps.Identity(
+                    index=1,
+                    principal="authz1_principal",
+                    principal_role="authz1_principal_role",
+                    client_id="cid",
+                    catalog="authz1_catalog",
+                )
+            ],
+            {},
+        ),
+    )
+    ident, _ = driver.resolve_identity("authorized", conn="C", schema="s", realm="R")
+    assert ident.principal_role == "authz1_principal_role"

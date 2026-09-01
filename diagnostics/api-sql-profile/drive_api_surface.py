@@ -97,6 +97,8 @@ def resolve_identity(
     --principal-role rather than discovered, and the runner says which path it
     took.
     """
+    from dataclasses import replace
+
     from privilege_scan import Identity, load_identities
 
     if client_id:
@@ -123,7 +125,28 @@ def resolve_identity(
             f"  {prefix}N_catalog -- expected for a zero-grant principal, which\n"
             "  must be named with --client-id/--principal-role instead."
         )
-    return ids[0], problems
+    ident = ids[0]
+    if case == "admin":
+        #: THE TRAP privilege_scan documents by name: "A token is scoped to ONE
+        #: principal-role. An identity holding two gets the grants of the one it
+        #: asked for."
+        #:
+        #: An admin{N}_principal holds TWO -- its own admin{N}_principal_role,
+        #: which is catalog-scoped on admin{N}_catalog, and service_admin, which
+        #: is the entire reason the tier exists. load_identities builds the name
+        #: from the seeder's convention, so it hands back the own-role, and a
+        #: token scoped to that carries NO service-level authority. Driven
+        #: against the shared probe catalog it is refused on all 43 operations
+        #: and returns a distribution byte-identical to the ZERO-GRANT case.
+        #:
+        #: --footprint measures 3,377 for this identity because it walks every
+        #: role the principal holds. The TOKEN carries one of them. Potential
+        #: authority and exercised authority are different numbers, and only the
+        #: second one drives.
+        from privilege_scan import SERVICE_ADMIN_ROLE
+
+        ident = replace(ident, principal_role=SERVICE_ADMIN_ROLE)
+    return ident, problems
 
 
 def build_clients(case, args):
