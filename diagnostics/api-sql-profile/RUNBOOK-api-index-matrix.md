@@ -166,7 +166,10 @@ restart_polaris () {
   # report the PREVIOUS rollout complete. Wait for the patch to be observed:
   kubectl rollout status deploy/benchmarks-polaris -n datahub-hynix --timeout=300s
   # readiness is 8181 answering a TOKEN, not 8182 /q/health/ready:
+  # the Polaris-Realm header is REQUIRED — without it Polaris answers 404
+  # "Missing or invalid realm" and the gate can never pass
   until curl -sf -o /dev/null -X POST http://192.168.139.2:8181/api/catalog/v1/oauth/tokens \
+      -H 'Polaris-Realm: POLARIS' \
       -d 'grant_type=client_credentials&client_id=root&client_secret=polaris-secret&scope=PRINCIPAL_ROLE:ALL'; do
     sleep 3; echo -n .
   done; echo " polaris up"
