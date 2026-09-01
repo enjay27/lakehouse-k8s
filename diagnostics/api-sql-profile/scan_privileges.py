@@ -54,6 +54,7 @@ be reporting a number nobody may quote.
 """
 
 import argparse
+import collections
 import json
 import os
 import pathlib
@@ -229,8 +230,26 @@ def cmd_footprint(args):
     print(f"  p95    {pct(0.95)}")
     print(f"  max    {sizes[-1]}")
     distinct = sorted(set(sizes))
-    if len(distinct) <= 5:
-        print(f"  values {distinct}   (a uniform fixture, as seeded)")
+    #: "Uniform" means ONE value. The old test was `len(distinct) <= 5`, so a
+    #: fixture holding [52, 78] printed "a uniform fixture, as seeded" while
+    #: showing two numbers -- reassuring wrongly, which is worse than crying
+    #: wolf: nobody investigates a green light. That mattered on 2026-09-01,
+    #: when granting authz1 rights on the shared probe catalog moved it from 52
+    #: to 78 and made its tier non-uniform, which is exactly the kind of thing
+    #: this line exists to surface.
+    if len(distinct) == 1:
+        print(f"  values {distinct}   (uniform — every identity resolves the same)")
+    elif len(distinct) <= 5:
+        counts = collections.Counter(sizes)
+        spread = ", ".join(f"{v}\u00d7{counts[v]}" for v in distinct)
+        print(f"  values {distinct}   (NOT uniform: {spread})")
+        print(
+            "    A tier whose identities resolve different grant counts is not "
+            "footprint-comparable with itself."
+        )
+        print("    Say WHICH identity a run used, and at what footprint.")
+    else:
+        print(f"  {len(distinct)} distinct footprints — NOT uniform")
     return 0
 
 
