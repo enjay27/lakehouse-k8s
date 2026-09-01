@@ -663,6 +663,54 @@ def setup_fixture(
     return result
 
 
+def authorize_on_fixture(fx, adm_pc, principal_role, privileges=None, role_name=None):
+    """Grant a principal-role rights ON the probe catalog. Admin only.
+
+    WHY THIS IS NEEDED, and it is a correction to the plan rather than a
+    convenience (2026-09-01). "One fixture, three drives" isolates the variable
+    only for identities that can ACT on that fixture. A catalog-scoped principal
+    cannot: Polaris authorizes catalog operations against `grant_records` for
+    the TARGET catalog, and `authz1_principal` holds `owner_principal` on
+    `authz1_catalog`, not on the probe catalog. Driven against the probe
+    fixture it was refused on all 43 operations and produced a status
+    distribution byte-identical to the zero-grant case -- a second unauthorized
+    run wearing the authorized label, and nothing in either output said so.
+
+    Only `service_admin` can act on an arbitrary catalog, which is why the admin
+    case would have worked and hidden the problem entirely.
+
+    So the authorized tier is granted access to the shared fixture, as admin,
+    before it drives. That is a realistic shape -- a principal given rights on a
+    catalog it does not own -- and it keeps all three cases on ONE fixture,
+    which is what makes their parameters differ by the identity alone.
+
+    Catalog-scoped only, deliberately. The management operations still 403,
+    because that contrast with the admin case is the finding: administrative
+    authority and DATA authority are separate in Polaris.
+    """
+    if privileges is None:
+        try:
+            from polaris_seed import CORE_CATALOG_PRIVILEGES
+
+            privileges = list(CORE_CATALOG_PRIVILEGES)
+        except Exception:  # noqa: BLE001
+            privileges = ["CATALOG_MANAGE_CONTENT"]
+    role = role_name or f"{fx.prefix}_shared"
+
+    out = {"catalog_role": role, "granted": [], "failed": {}}
+    r = adm_pc.create_catalog_role(fx.cat, role)
+    out["create_catalog_role"] = r.status_code
+    for priv in privileges:
+        g = adm_pc.grant_privilege(fx.cat, role, priv)
+        if 200 <= g.status_code < 300:
+            out["granted"].append(priv)
+        else:
+            out["failed"][priv] = g.status_code
+    a = adm_pc.assign_catalog_role_to_principal_role(fx.cat, principal_role, role)
+    out["assign"] = a.status_code
+    return out
+
+
 def drop_catalog_tree(catalog, adm_pc, adm_ic):
     """Empty a catalog from the LEAVES UP, then delete it.
 

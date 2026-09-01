@@ -242,6 +242,28 @@ def do_setup(args):
     return 0
 
 
+def do_authorize(args):
+    """Give a principal-role rights on the probe catalog, as admin.
+
+    The authorized case cannot drive the shared fixture without this: it holds
+    grants on its OWN catalog, and Polaris authorizes against grant_records for
+    the target catalog. See api_surface.authorize_on_fixture.
+    """
+    _, _, adm_ic, adm_pc = build_clients("root", args)
+    fx = load_fixture()
+    role = args.principal_role or f"{CASE_PREFIX['authorized']}1_principal_role"
+    out = surf.authorize_on_fixture(fx, adm_pc, role)
+    print(f"authorized {role} on {fx.cat}")
+    print(f"  catalog role : {out['catalog_role']} [{out['create_catalog_role']}]")
+    print(f"  granted      : {len(out['granted'])} privileges")
+    if out["failed"]:
+        print(f"  REFUSED      : {out['failed']}")
+    print(f"  assign       : [{out['assign']}]")
+    if not out["granted"]:
+        sys.exit("no privilege was granted — the drive would still be refused")
+    return 0
+
+
 def do_teardown(args):
     _, _, adm_ic, adm_pc = build_clients("root", args)
     fx = load_fixture()
@@ -344,6 +366,13 @@ def main():
     ap.add_argument("--setup", action="store_true")
     ap.add_argument("--drive", action="store_true")
     ap.add_argument("--teardown", action="store_true")
+    ap.add_argument(
+        "--authorize",
+        action="store_true",
+        help="grant --principal-role rights on the probe catalog, as "
+        "admin. Required before the authorized case can drive the "
+        "shared fixture: it owns a different catalog.",
+    )
     ap.add_argument("--capture", default=None, help="capture directory")
     ap.add_argument(
         "--client-id",
@@ -367,6 +396,8 @@ def main():
     args = ap.parse_args()
     if args.setup:
         return do_setup(args)
+    if args.authorize:
+        return do_authorize(args)
     if args.teardown:
         return do_teardown(args)
     if args.drive:

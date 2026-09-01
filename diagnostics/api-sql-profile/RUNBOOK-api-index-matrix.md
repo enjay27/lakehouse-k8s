@@ -190,6 +190,17 @@ uv run python drive_api_surface.py --drive --case unauthorized \
 
 ### 4b. authorized
 
+**First, grant it rights on the shared fixture — as admin, once.** A
+catalog-scoped principal owns a DIFFERENT catalog, and Polaris authorizes
+against `grant_records` for the target catalog, so without this the drive is
+refused on all 43 operations and produces a run identical to the unauthorized
+case.
+
+```bash
+uv run python drive_api_surface.py --authorize \
+    --principal-role authz1_principal_role
+```
+
 ```bash
 restart_polaris
 ./capture.sh rotate capture-authz-$(date +%H%M%S)

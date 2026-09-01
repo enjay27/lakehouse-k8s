@@ -433,3 +433,40 @@ def test_a_none_status_counts_as_other_not_as_success():
     res.statuses = {"x": None}
     assert res.permitted == [] and res.refused == []
     assert list(res.other) == ["x"]
+
+
+def test_authorizing_a_role_on_the_fixture_grants_and_assigns_on_that_catalog():
+    """The correction that made the authorized case mean something.
+
+    A catalog-scoped principal holds owner_principal on its OWN catalog, and
+    Polaris authorizes against grant_records for the TARGET catalog — so driven
+    against the shared probe fixture it was refused on all 43 operations and
+    produced a status distribution byte-identical to the zero-grant case.
+    """
+    fx = surf.ProbeFixture(prefix="apiprofileTEST")
+    pc = FakeCatalogs()
+    out = surf.authorize_on_fixture(
+        fx, pc, "authz1_principal_role", privileges=["CATALOG_MANAGE_CONTENT", "X"]
+    )
+    assert out["catalog_role"] == "apiprofileTEST_shared"
+    #: granted on the PROBE catalog, not on the principal's own
+    assert all(c == fx.cat for c, _r, _p in pc.granted)
+    assert out["granted"] == ["CATALOG_MANAGE_CONTENT", "X"]
+    assert ("create_catalog_role", (fx.cat, "apiprofileTEST_shared"), {}) in [
+        (m, a, k) for m, a, k in pc.calls
+    ]
+
+
+def test_a_refused_privilege_is_reported_not_swallowed():
+    """Granting nothing and reporting success would send the operator to drive a
+    case that is still refused everywhere — the exact failure this fixes."""
+
+    class Refuses(FakeCatalogs):
+        def grant_privilege(self, cat, role, priv):
+            return Resp(403, text="nope")
+
+    out = surf.authorize_on_fixture(
+        surf.ProbeFixture(prefix="p"), Refuses(), "r", privileges=["A", "B"]
+    )
+    assert out["granted"] == []
+    assert out["failed"] == {"A": 403, "B": 403}
