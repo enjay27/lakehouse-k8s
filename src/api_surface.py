@@ -469,6 +469,35 @@ class DriveResult:
         )
 
     @property
+    def other(self):
+        """Statuses that are NEITHER 2xx nor 401/403, with their codes.
+
+        This property exists because the summary line lied. A run reporting
+        "driven 43/43  permitted 2  refused 22  errors 0" reads as complete and
+        omits 19 operations -- every one of them a 404, and every one of them
+        carrying statements the audit wants. Same failure as the reconciliation
+        that survived because two errors netted out: a total that looks right
+        while its composition is wrong.
+        """
+        return {
+            k: v
+            for k, v in self.statuses.items()
+            if v is None or (not (200 <= v < 300) and v not in (401, 403))
+        }
+
+    @property
+    def distribution(self):
+        """Every status code and how many operations returned it."""
+        import collections
+
+        return dict(
+            sorted(
+                collections.Counter(self.statuses.values()).items(),
+                key=lambda kv: -kv[1],
+            )
+        )
+
+    @property
     def driven(self):
         return len(self.statuses) + len(self.errors)
 

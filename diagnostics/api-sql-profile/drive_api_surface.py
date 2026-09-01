@@ -308,8 +308,21 @@ def do_drive(args):
 
     print(
         f"\n  driven {res.driven}/43  permitted {len(res.permitted)}  "
-        f"refused {len(res.refused)}  errors {len(res.errors)}"
+        f"refused {len(res.refused)}  other {len(res.other)}  "
+        f"errors {len(res.errors)}"
     )
+    print(f"  status distribution: {res.distribution}")
+    if res.permitted:
+        print("  PERMITTED:")
+        for _k in res.permitted:
+            print(f"    {res.statuses[_k]}  {_k}")
+    if res.other:
+        #: Usually SECOND-ORDER: a create was refused, so every operation
+        #: targeting what it would have made returns 404. Those are not
+        #: authorization outcomes and must not be read as any.
+        print("  OTHER (neither 2xx nor 401/403 — often a refused prerequisite):")
+        for _k, _v in sorted(res.other.items(), key=lambda kv: (kv[1] or 0)):
+            print(f"    {_v}  {_k}")
     if res.errors:
         print("  ERRORS (harness faults, NOT refusals — a 403 is a measurement):")
         for k, v in res.errors.items():

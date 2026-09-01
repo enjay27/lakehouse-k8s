@@ -409,3 +409,27 @@ def test_the_fixture_hands_the_drive_clients_to_the_context_and_keeps_adm_apart(
         if op.prepare:
             op.prepare(ctx)
         op.fn(ctx)
+
+
+def test_the_summary_accounts_for_every_operation_not_just_the_tidy_ones():
+    """The line "driven 43/43 permitted 2 refused 22 errors 0" omitted 19 ops.
+
+    Every one of them a 404, and every one carrying statements the audit wants.
+    A total that looks right while its composition is wrong is the same failure
+    as the reconciliation that survived because two errors netted out.
+    """
+    res = surf.DriveResult()
+    res.statuses = {"a": 200, "b": 403, "c": 404, "d": 500, "e": None}
+    assert res.permitted == ["a"]
+    assert res.refused == ["b"]
+    assert set(res.other) == {"c", "d", "e"}, "404/500/None are none of the above"
+    assert len(res.permitted) + len(res.refused) + len(res.other) == len(res.statuses)
+    assert res.distribution[404] == 1
+
+
+def test_a_none_status_counts_as_other_not_as_success():
+    """A request whose status never came back is not a 2xx."""
+    res = surf.DriveResult()
+    res.statuses = {"x": None}
+    assert res.permitted == [] and res.refused == []
+    assert list(res.other) == ["x"]
