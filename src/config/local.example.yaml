@@ -13,6 +13,10 @@ postgres_password: "<local postgres password>"
 
 # secrets (local only — convenient; shared envs use env vars instead)
 root_secret: "<local polaris root secret>"
+# The one secret EVERY seeded principal (user*/authz*/admin*) shares. Set by
+# hand in principal_authentication_data — the seeder discards the credentials
+# create_principal returns, so it cannot be recovered from the ledger.
+polaris_user_secret: "<shared secret for seeded principals>"
 minio_access_key: "<local minio access key>"
 minio_secret_key: "<local minio secret key>"
 

@@ -143,7 +143,12 @@ def build_clients(case, args):
     if case == "root":
         return adm_ic, adm_pc, adm_ic, adm_pc
 
-    secret = os.environ.get("POLARIS_USER_SECRET")
+    #: env first, then the env-specific config file. init_env already applies
+    #: that precedence; reading os.environ alone would ignore local.yaml and
+    #: report a missing secret that is sitting right there.
+    from polaris_test_utils import POLARIS_USER_SECRET as _cfg_secret
+
+    secret = os.environ.get("POLARIS_USER_SECRET") or _cfg_secret
     if not secret:
         sys.exit(
             "POLARIS_USER_SECRET is unset and has no default.\n"

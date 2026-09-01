@@ -69,7 +69,7 @@ WATCHDOG_TABLE = "watchdog-table"
 # Globals populated by init_env() — declared here so they always exist.
 ENV = None
 CFG = {}
-POLARIS_URL = REALM = ROOT_CLIENT = ROOT_SECRET = None
+POLARIS_URL = REALM = ROOT_CLIENT = ROOT_SECRET = POLARIS_USER_SECRET = None
 OPENSEARCH_HOST = None
 OPENSEARCH_PORT = 9200
 OPENSEARCH_USER = None
@@ -101,6 +101,7 @@ def init_env(env=None):
       POLARIS_ROOT_SECRET, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, OPENSEARCH_PASS
     """
     global ENV, CFG, POLARIS_URL, REALM, ROOT_CLIENT, ROOT_SECRET
+    global POLARIS_USER_SECRET
     global OPENSEARCH_HOST, OPENSEARCH_PORT, OPENSEARCH_USER, OPENSEARCH_PASS
     global LOG_INDEX, POLARIS_CONTAINER, BASE_MGMT, BASE_CAT
     global MINIO_ENDPOINT, MINIO_ENDPOINT_INTERNAL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, BUCKET
@@ -114,6 +115,17 @@ def init_env(env=None):
     REALM = CFG.get("realm", "POLARIS")
     ROOT_CLIENT = CFG.get("root_client", "root")
     ROOT_SECRET = os.environ.get("POLARIS_ROOT_SECRET", CFG.get("root_secret"))
+    #: The ONE secret every seeded principal (user/authz/admin) authenticates
+    #: with. It cannot be read back from the ledger: `polaris_seed` discards the
+    #: clientId/clientSecret `create_principal` returns, so this is set by hand
+    #: in `principal_authentication_data` and recorded here. Same env-overrides-
+    #: file shape as every other secret, so a shared env can supply it without
+    #: a file. NOT the same value as any single-purpose principal's own secret —
+    #: conflating them authenticates the wrong identity and reports 401 as if
+    #: the fixture were broken.
+    POLARIS_USER_SECRET = os.environ.get(
+        "POLARIS_USER_SECRET", CFG.get("polaris_user_secret")
+    )
 
     OPENSEARCH_HOST = CFG.get("opensearch_host", "localhost")
     OPENSEARCH_PORT = CFG.get("opensearch_port", 9200)
