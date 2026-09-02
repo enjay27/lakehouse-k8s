@@ -668,6 +668,49 @@ def capture_snapshot(capture_dir):
     return out
 
 
+def tail_lines(path, n=800, max_line=4096):
+    """The last `n` lines of a log, each truncated to `max_line` characters.
+
+    WHY NOT `read_text()[-40000:]`. That is what notebook 03 cell 9b's gate
+    used, and ONE log line defeated it. Polaris logs `listCatalogs returning:`
+    at INFO with the entire catalog list inlined; on this fixture that is a
+    single line of **1,292,023 bytes**. A 40,000-CHARACTER window landing
+    inside it contains no line boundary and none of the 19
+    `DatasourceOperations` lines sitting at the start of the same file. The
+    gate therefore counted zero and reported "the logger is above DEBUG, so no
+    SQL will ever be captured" -- a false diagnosis of a healthy capture, and
+    the origin of a whole session spent hunting a capture fault that did not
+    exist (2026-09-02).
+
+    A window measured in LINES cannot be swallowed by one line. Truncating each
+    line bounds what a pathological line costs while leaving every marker this
+    module greps for intact -- `DatasourceOperations`, `query:`, `statement:`,
+    `execute` all appear within the first few dozen characters of their line.
+
+    Streams rather than reading the file: captures here run to hundreds of MB.
+
+    Args:
+        path: the log file. A missing file yields "" rather than raising --
+            callers are gates, and "no such file" is one of the things they
+            are gating on.
+        n: how many trailing lines to keep.
+        max_line: characters kept per line.
+
+    Returns:
+        str -- the kept lines, newline-joined, oldest first.
+    """
+    import collections
+    import os
+
+    if not path or not os.path.isfile(str(path)):
+        return ""
+    keep = collections.deque(maxlen=n)
+    with open(str(path), "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            keep.append(line.rstrip("\n")[:max_line])
+    return "\n".join(keep)
+
+
 def capture_verdict(before, after, polaris_tail="", pg_tail=""):
     """Did a capture actually record the call that just happened?
 
@@ -713,9 +756,13 @@ def capture_verdict(before, after, polaris_tail="", pg_tail=""):
         )
     elif _POLARIS_SQL_MARKER not in polaris_tail:
         reasons.append(
-            f"polaris.log is growing but carries no {_POLARIS_SQL_MARKER} lines "
-            "— the logger is above DEBUG, so no SQL will ever be captured. "
-            "./capture.sh preflight"
+            f"polaris.log is growing but the window read carries no "
+            f"{_POLARIS_SQL_MARKER} lines. TWO different causes, and they have "
+            "different fixes: the logger is above DEBUG, so no SQL will ever be "
+            "captured (./capture.sh preflight); or the window simply missed "
+            "them. Read the tail by LINES, never by characters — one "
+            "`listCatalogs returning:` line has measured 1,292,023 bytes here "
+            "and swallows a character window whole. Use `tail_lines`."
         )
 
     if not any(n.startswith("pg-") for n in grew):

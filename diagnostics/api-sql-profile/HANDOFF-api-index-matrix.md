@@ -62,21 +62,61 @@ cell 9c passes, same cluster, and it worked — including two oversized
 `listCatalogs` dumps mid-sweep (548 KB → 1.88 MB → 2.46 MB) that the tail sailed
 straight through.
 
-### 1.3 What is left, and it is one difference
+### 1.3 THE FALSE DIAGNOSIS, found in the notebook's own saved output
 
-Cell 19 starts the tail through the notebook's `sh()` helper —
-`subprocess.run(cmd, shell=True, capture_output=True)` from the Jupyter kernel.
-The working run started it from an interactive shell. Nothing in Python kills
-anything (`pkill|killpg|.kill()|terminate()|SIGKILL|os.kill` across `src/` and
-this directory returns nothing), and the only `capture.sh stop` is at the top of
-cell 19, *before* the start. So the tail is started under a different parent and
-stops within a second of the gate's own probe.
+`sh()` is exonerated: `probe_capture_liveness.py` starts a capture twice,
+differing only in `capture_output`, and **both arms record**. The notebook's
+stored outputs from the 2026-09-01 session say why the run looked broken, and it
+is not what §1 previously claimed.
 
-**The probe that closes it, and it needs no drive and no restart:** run cell 19,
-then run NOTHING and poll `polaris.log` and the tail PID for 60 s. If the tail
-dies while idle, the fault is in how `sh()` backgrounds it, and the fix is to
-detach the tails (`setsid` / `nohup`, or `start_new_session=True`) rather than to
-change anything about the drive.
+**The gate did not pass. It FAILED, and it failed for a false reason.** Cell 19's
+saved output:
+
+```
+=== capture liveness ===
+  pg-0.log:     47,510 bytes  (+40233)
+  polaris.log: 1,311,110 bytes  (+1311110)
+  DatasourceOperations lines seen: 0
+  ! polaris.log is growing but carries no DatasourceOperations lines —
+    the logger is above DEBUG, so no SQL will ever be captured.
+--- error ---
+```
+
+`polaris.log` **holds 19 `DatasourceOperations` lines.** The gate counted zero
+because it read the tail by CHARACTERS:
+
+```python
+_ptail = _pl.read_text(errors="replace")[-40000:]      # the bug
+```
+
+The last 40,000 characters of that file lie **inside the single 1,292,023-byte
+`listCatalogs returning:` line**. No line boundary, no markers, and the 19
+statements sit at the *start* of the same file. So a working capture was
+reported as a dead logger, and that message — "the logger is above DEBUG" — is
+the origin of the entire wrong investigation, this handoff's first version
+included.
+
+**FIXED 2026-09-02.** `privilege_scan.tail_lines(path, n=800, max_line=4096)`
+windows by lines and truncates each one; a window measured in lines cannot be
+swallowed by one line, and every marker (`DatasourceOperations`, `query:`,
+`statement:`, `execute`) lives in a line's first few dozen characters. Cell 19
+uses it. `capture_verdict`'s reason text no longer asserts "logger above DEBUG"
+as *the* cause — it names both causes and their different fixes. Four
+regression tests reproduce the fault at 1/10 scale.
+
+### 1.3.1 STILL OPEN, and smaller than it looked
+
+With the gate raising, cell 20 was run anyway — and **the drive succeeded**:
+43/43, 39 permitted, 1 refused, `{200:22, 204:11, 201:6, 500:2, 404:1, 403:1}`.
+But `polaris.log` read 1,311,110 bytes both before and after it, and no `pg-*.log`
+grew either. Both stream families stopped together, and nothing found so far
+explains it: `sh()` records in both arms, the oversized line is survivable, a
+restart does not orphan the tail, and nothing in Python kills anything.
+
+Do not spend another session on it. The CLI path records correctly (§1.6, 859
+lines), and the corrected gate plus a per-operation liveness check (§1.5) will
+now report the truth on the next drive instead of a false cause. If it recurs
+there, it will say so on operation 2.
 
 ### 1.4 The previous §1.1 was NOT the fix
 

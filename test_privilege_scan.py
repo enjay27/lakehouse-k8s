@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from privilege_scan import (  # noqa: E402
+from privilege_scan import authenticate  # noqa: E402
+from privilege_scan import (
     Identity,
     OpStatus,
-    authenticate,
     authorized_ops,
     capture_snapshot,
     capture_verdict,
@@ -29,6 +29,7 @@ from privilege_scan import (  # noqa: E402
     render_scan_report,
     resolve_namespace,
     status_matrix,
+    tail_lines,
 )
 
 REALM = "POLARIS"
@@ -514,6 +515,51 @@ def test_polaris_logging_without_the_sql_logger_is_its_own_fault():
 def test_an_empty_capture_directory_says_so_once():
     ok, reasons = capture_verdict({}, {}, "", "")
     assert not ok and len(reasons) == 1 and "no .log files" in reasons[0]
+
+
+def test_one_giant_line_cannot_swallow_the_liveness_window(tmp_path):
+    """The 2026-09-02 fault, reproduced at 1/10 scale.
+
+    Nineteen real `DatasourceOperations` lines, then ONE line far longer than
+    any character window a gate would take. A character tail sees only the
+    giant line; a LINE tail still sees the nineteen. This is exactly the shape
+    of `capture-admin-latest/polaris.log`: 25 lines, one of them 1,292,023
+    bytes, 19 statements the gate reported as zero.
+    """
+    log = tmp_path / "polaris.log"
+    body = "".join(
+        f"line {i} DatasourceOperations query: SELECT {i}\n" for i in range(19)
+    )
+    log.write_text(
+        body + "PolarisServiceImpl listCatalogs returning: " + ("x" * 200_000) + "\n",
+        encoding="utf-8",
+    )
+
+    char_window = log.read_text(encoding="utf-8")[-40_000:]
+    assert (
+        char_window.count("DatasourceOperations") == 0
+    ), "the character window is supposed to fail here — that is the bug"
+
+    line_window = tail_lines(log, n=800)
+    assert line_window.count("DatasourceOperations") == 19
+
+
+def test_tail_lines_truncates_rather_than_holding_a_pathological_line(tmp_path):
+    log = tmp_path / "polaris.log"
+    log.write_text("DatasourceOperations " + ("y" * 100_000) + "\n", encoding="utf-8")
+    out = tail_lines(log, n=10, max_line=64)
+    assert len(out) <= 64
+    assert "DatasourceOperations" in out  # the marker survives truncation
+
+
+def test_tail_lines_keeps_only_the_last_n_lines_oldest_first(tmp_path):
+    log = tmp_path / "polaris.log"
+    log.write_text("".join(f"{i}\n" for i in range(10)), encoding="utf-8")
+    assert tail_lines(log, n=3) == "7\n8\n9"
+
+
+def test_tail_lines_on_a_missing_file_is_empty_not_an_error(tmp_path):
+    assert tail_lines(tmp_path / "nope.log") == ""
 
 
 def test_snapshot_measures_bytes_not_mtime(tmp_path):

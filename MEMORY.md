@@ -14,12 +14,14 @@ unauthorized), each from a restarted Polaris, plain EXPLAIN, both index states. 
 [`RUNBOOK-api-index-matrix.md`](diagnostics/api-sql-profile/RUNBOOK-api-index-matrix.md); driver:
 `03_api_index_matrix.ipynb`.
 
-**UNBLOCKED — drive from the CLI, not notebook 03.** The three empty drives were a capture fault: the tail
-dies when notebook 03 starts it (7 captures x 25 lines) and lives when a terminal does (**859 lines**,
-2026-09-02). The startup-burst diagnosis was wrong on every point — HANDOFF §1.2 lists what is falsified so it
-is not re-tested. Re-drive: `./capture.sh rotate <dir>` from a terminal, then
-`drive_api_surface.py --drive --case <c> --capture <dir>` (`--capture` must be explicit). Notebook 03 cell 19
-stays open — `sh()` backgrounds the tails; the closing probe costs nothing, HANDOFF §1.3.
+**ROOT CAUSE FOUND AND FIXED — the capture was working; the GATE was lying.** Cell 9b read its log tail by
+CHARACTERS (`[-40000:]`) and one **1,292,023-byte** `listCatalogs returning:` line filled the window, so it
+counted 0 of the file's 19 `DatasourceOperations` lines and reported "the logger is above DEBUG". That false
+message started the whole "drives recorded nothing" hunt. Fixed: `privilege_scan.tail_lines` windows by lines
+(+4 tests). The gate RAISED rather than passed, and the drive under it **succeeded** — 43/43, 39 permitted,
+**1 refused = `reset_principal_credentials`, the "admin is not a superset" finding, measured.**
+Drive from a terminal with `--capture` explicit (HANDOFF §1.6, 859 lines verified). Why both stream families
+stopped mid-drive is parked and unexplained — HANDOFF §1.2 lists what is already falsified.
 
 Measured and worth keeping: authorized is refused exactly the 5 service-scoped ops; **admin is NOT a superset**
 (`reset_principal_credentials` -> 403); footprints 1 / 78 / 3,377-ceiling; volume `grant_records` 60,819,
