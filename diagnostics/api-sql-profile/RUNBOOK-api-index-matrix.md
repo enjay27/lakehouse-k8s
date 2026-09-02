@@ -176,48 +176,87 @@ restart_polaris () {
 }
 ```
 
-### 4a. unauthorized
+### 4.0 Drive from a TERMINAL, and pass `--capture` (2026-09-02)
+
+Not from notebook 03. Its cell 9b gate read its log tail by characters and one
+1,292,023-byte `listCatalogs returning:` line filled the window, so it reported a
+working capture as a dead logger; that is fixed, but the CLI path is what has
+been *verified* end to end (859 log lines, tail alive). `--capture` must be
+explicit: `find_capture_dir()` requires a NON-EMPTY `polaris.log`, so a
+freshly-rotated directory is not a candidate and one of the 15 stale ones here
+can be chosen silently.
+
+Each drive now aborts on operation 3 if the tracer reads no SQL, and prints the
+statement total plus which tails are still alive when it finishes. **A 43/43 pass
+is not evidence any more — read those two lines.**
+
+Per case:
 
 ```bash
-restart_polaris
-./capture.sh pgon                                  # rotate alone does NOT do this
-./capture.sh rotate capture-unauth-$(date +%H%M%S)
-POLARIS_USER_SECRET='<zerograve secret from 1e>' \
-uv run python drive_api_surface.py --drive --case unauthorized \
-    --client-id '<zerograve clientId>' \
+cd diagnostics/api-sql-profile
+
+drive_case () {                        # $1 = unauthorized | authorized | admin
+  restart_polaris
+  PGDUR=1 ./capture.sh pgon            # rotate alone does NOT enable it
+  ./capture.sh rotate "capture-$1-$(date +%H%M%S)"
+  CAP=$(ls -td capture-$1-* | head -1)
+  echo "capture: $CAP"
+}
+```
+
+### 4a. unauthorized
+
+Credentials are in `capture/zerograve-credentials.json` (gitignored).
+
+```bash
+drive_case unauthorized
+ZG=capture/zerograve-credentials.json
+POLARIS_USER_SECRET="$(python3 -c "import json;print(json.load(open('$ZG'))['clientSecret'])")" \
+uv run python drive_api_surface.py --drive --case unauthorized --capture "$CAP" \
+    --client-id "$(python3 -c "import json;print(json.load(open('$ZG'))['clientId'])")" \
     --principal-role zerograve_principal_role
 ```
 
 ### 4b. authorized
 
-**First, grant it rights on the shared fixture — as admin, once.** A
-catalog-scoped principal owns a DIFFERENT catalog, and Polaris authorizes
-against `grant_records` for the target catalog, so without this the drive is
-refused on all 43 operations and produces a run identical to the unauthorized
-case.
+The grant on the shared fixture is required and is done ONCE, as admin — a
+catalog-scoped principal owns a different catalog and would otherwise be refused
+on all 43 operations, producing a run identical to the unauthorized case.
 
 ```bash
-uv run python drive_api_surface.py --authorize \
-    --principal-role authz1_principal_role
-```
+uv run python drive_api_surface.py --authorize --principal-role authz1_principal_role
 
-```bash
-restart_polaris
-./capture.sh rotate capture-authz-$(date +%H%M%S)
-uv run python drive_api_surface.py --drive --case authorized
+drive_case authorized
+export POLARIS_USER_SECRET='<the shared secret>'
+uv run python drive_api_surface.py --drive --case authorized --capture "$CAP"
 ```
 
 ### 4c. admin — LAST
 
+Only this one mutates.
+
 ```bash
-restart_polaris
-./capture.sh rotate capture-admin-$(date +%H%M%S)
-uv run python drive_api_surface.py --drive --case admin
+drive_case admin
+uv run python drive_api_surface.py --drive --case admin --capture "$CAP"
 ./capture.sh pgoff
 ```
 
-Each drive writes `reports/doc-api-sql-matrix-<case>-<stamp>.md` and
-`runs/apidrive-<case>-<stamp>.json`.
+Verify the scope line reads `PRINCIPAL_ROLE:service_admin` before trusting the
+admin report — an earlier run was scoped to `admin1_principal_role` and was a
+copy of the unauthorized case.
+
+### 4d. Before moving to phase 5, check all three
+
+```bash
+for c in unauthorized authorized admin; do
+  f=$(ls -t reports/doc-api-sql-matrix-$c-*.md | head -1)
+  printf '%-14s %s  statements: %s\n' "$c" "$(basename $f)" \
+    "$(grep -c '```sql' $f)"
+done
+```
+
+Zero on any of them means that case must be re-driven; do not run `explain_api_matrix.py`
+against it. Expect roughly 115 (SQL, params) pairs per case.
 
 ---
 
