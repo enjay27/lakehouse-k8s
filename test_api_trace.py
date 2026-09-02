@@ -39,6 +39,7 @@ from api_trace import (
     parse_minio_trace,
     parse_pg_log,
     parse_polaris_log,
+    reattribute_deferred,
     records_to_rows,
     redact_params,
     scrub_text,
@@ -964,3 +965,86 @@ def test_a_pg_duration_still_reaches_its_polaris_statement():
     ]
     _merge_pg_durations(polaris, parse_pg_log(FOREIGN_PG))
     assert polaris[0].duration_ms == 0.5
+
+
+# ----------------------------------------------------------------------
+# async writes -- routed by the request they NAME, not the window they hit
+# ----------------------------------------------------------------------
+EVENTS_SQL = (
+    "INSERT INTO POLARIS_SCHEMA.EVENTS (catalog_id, event_id, request_id, "
+    "event_type, timestamp_ms, principal_name, resource_type, "
+    "resource_identifier, additional_properties, realm_id) VALUES "
+    "($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+)
+EVENTS_LOG = (
+    "2026-09-02 08:26:31.056 GMT [313731] LOG:  execute <unnamed>: " + EVENTS_SQL + "\n"
+    "2026-09-02 08:26:31.056 GMT [313731] DETAIL:  Parameters: "
+    "$1 = 'probe_cat', $2 = 'e91d230f', $3 = 'req_046', "
+    "$4 = 'AfterCreateTableEvent', $5 = '1788337586027'\n"
+)
+
+
+def test_the_request_id_comes_from_the_rows_own_column():
+    """Positional: request_id is the 3rd column, so its value is $3."""
+    got = parse_pg_log(EVENTS_LOG)
+    assert len(got) == 1
+    assert got[0].request_id == "req_046"
+
+
+def test_a_statement_naming_another_request_is_not_appended_to_this_window():
+    """The 2026-09-02 fault: an AfterCreateTableEvent for request _046 executed
+    5.03 s later, inside request _062's window, and the report credited it to
+    mgmt.create_principal -- a 403 that wrote nothing."""
+    mine = [
+        SqlStatement(
+            seq=0, sql="SELECT 1 FROM POLARIS_SCHEMA.ENTITIES", request_id="req_062"
+        )
+    ]
+    strays = _merge_pg_durations(mine, parse_pg_log(EVENTS_LOG), {"req_062"})
+    assert len(mine) == 1, "the stray must not land here"
+    assert [s.request_id for s in strays] == ["req_046"]
+
+
+def test_a_deferred_statement_lands_on_the_record_that_owns_its_request():
+    owner = TraceRecord(api="iceberg.create_table")
+    owner.sql = [
+        SqlStatement(
+            seq=0, sql="SELECT 1 FROM POLARIS_SCHEMA.ENTITIES", request_id="req_046"
+        )
+    ]
+    other = TraceRecord(api="mgmt.create_principal")
+    other.sql = [
+        SqlStatement(
+            seq=0, sql="SELECT 2 FROM POLARIS_SCHEMA.ENTITIES", request_id="req_062"
+        )
+    ]
+    stray = parse_pg_log(EVENTS_LOG)
+    placed, lost = reattribute_deferred([other, owner], stray)
+    assert (placed, lost) == (1, 0)
+    assert len(owner.sql) == 2 and owner.sql[1].request_id == "req_046"
+    assert len(other.sql) == 1, "the 403 keeps its empty write list"
+
+
+def test_an_unplaceable_async_statement_is_counted_not_dropped_silently():
+    """A call that finished after the last window closed. The count is the
+    honest measure of what the capture missed."""
+    rec = TraceRecord(api="x")
+    rec.sql = [
+        SqlStatement(
+            seq=0, sql="SELECT 1 FROM POLARIS_SCHEMA.ENTITIES", request_id="req_999"
+        )
+    ]
+    placed, lost = reattribute_deferred([rec], parse_pg_log(EVENTS_LOG))
+    assert (placed, lost) == (0, 1)
+    assert len(rec.sql) == 1
+
+
+def test_a_statement_with_no_request_id_still_merges_normally():
+    """Only rows that NAME a request are routed; everything else is unchanged."""
+    pg = parse_pg_log(
+        "2026-09-02 08:26:31.056 GMT [1] LOG:  statement: "
+        "SELECT x FROM POLARIS_SCHEMA.ENTITIES WHERE id = 1\n"
+    )
+    mine = []
+    strays = _merge_pg_durations(mine, pg, {"req_062"})
+    assert strays == [] and len(mine) == 1

@@ -181,7 +181,12 @@ def parse_mdc(line):
 _PG_STATEMENT = re.compile(
     r"(?P<pid>\[\d+\])?.*?\bLOG:\s+(?:execute\s+\S+:|statement:)\s*(?P<sql>.+?)\s*$"
 )
-_PG_DETAIL_PARAMS = re.compile(r"\bDETAIL:\s+parameters:\s*(?P<params>.+?)\s*$")
+#: CASE-INSENSITIVE, and that is not cosmetic. PostgreSQL emits
+#: `DETAIL:  Parameters:` with a capital P on this cluster; the pattern
+#: matched only lower-case, so **no PG-side bound parameter was ever
+#: captured** (found 2026-09-02 while routing async event rows, which
+#: cannot be attributed without the request_id their parameters carry).
+_PG_DETAIL_PARAMS = re.compile(r"\bDETAIL:\s+parameters:\s*(?P<params>.+?)\s*$", re.I)
 _PG_DURATION = re.compile(r"\bLOG:\s+duration:\s+(?P<ms>[\d.]+)\s+ms")
 _PG_PID = re.compile(r"\[(?P<pid>\d+)\]")
 
@@ -488,6 +493,58 @@ class TraceRecord:
 # ----------------------------------------------------------------------
 # redaction
 # ----------------------------------------------------------------------
+#: Columns whose bound value names the API call a row DESCRIBES rather than
+#: the call that happened to be in flight when the row was written.
+_REQUEST_ID_COLUMN = "request_id"
+_PARAM_SLOT = r"\$%d\s*=\s*(?:'(?P<q>(?:[^']|'')*)'|(?P<b>[^,]+))"
+
+
+def request_id_from_params(sql, raw_params):
+    """The request_id an ASYNC row carries in its own bound parameters.
+
+    WHY THIS EXISTS (measured 2026-09-02). Polaris's event listener writes
+    `POLARIS_SCHEMA.EVENTS` asynchronously, and the row describes an API call
+    that has already finished. One `AfterCreateTableEvent` for request `_046`
+    fired at 08:26:26.027 and its INSERT executed at **08:26:31.056 -- a 5.03
+    second lag** -- by which time the drive was on request `_062`. The trace
+    window credited it to `mgmt.create_principal`, a **403 that wrote nothing**,
+    and the report said so.
+
+    A trace window cannot fix that: attribution by "which window was open" is
+    exactly the assumption an async write breaks. Nor can post-hoc correlation
+    on `mdc.requestId` -- this statement never reaches the Polaris log at all
+    and is visible only in the PostgreSQL one, so it carries no MDC.
+
+    The row carries the answer itself. `INSERT INTO ... (a, b, request_id, ...)
+    VALUES ($1, $2, $3, ...)` maps `request_id` to a positional slot, and the
+    `DETAIL: Parameters:` line binds it.
+
+    Args:
+        sql: the INSERT text, with its column list.
+        raw_params: the raw `$1 = 'x', $2 = 'y'` string, BEFORE redaction --
+            redaction can replace the value, and this needs the real one.
+
+    Returns:
+        The request id, or None when the statement has no such column or the
+        parameter was not logged.
+    """
+    if not sql or not raw_params:
+        return None
+    cols = re.search(r"\(([^()]*)\)\s*VALUES", sql, re.I | re.S)
+    if not cols:
+        return None
+    names = [c.strip().lower() for c in cols.group(1).split(",")]
+    if _REQUEST_ID_COLUMN not in names:
+        return None
+    slot = names.index(_REQUEST_ID_COLUMN) + 1  # $N is 1-based
+    m = re.search(_PARAM_SLOT % slot, raw_params)
+    if not m:
+        return None
+    val = m.group("q") if m.group("q") is not None else (m.group("b") or "")
+    val = val.replace("''", "'").strip()
+    return val or None
+
+
 def redact_params(sql, params):
     """Redact bound parameters that may carry secret material.
 
@@ -978,7 +1035,11 @@ def parse_pg_log(text, start_seq=0):
         if pm:
             stmt = last_by_pid.get(pid)
             if stmt is not None:
-                stmt.params = redact_params(stmt.sql, pm.group("params"))
+                raw = pm.group("params")
+                #: BEFORE redaction: redact_params can replace the value, and
+                #: the request id has to be read from the real one.
+                stmt.request_id = request_id_from_params(stmt.sql, raw)
+                stmt.params = redact_params(stmt.sql, raw)
             continue
 
         # A statement that wraps across lines is logged with the continuation
@@ -1417,6 +1478,10 @@ class Tracer:
         self.settle_s = settle_s
         self.require_logger = require_logger
         self.records = []
+        #: Statements naming a request id that is not this window's. Placed by
+        #: `reattribute_deferred` once every record exists -- an async write
+        #: can only be routed after the record it belongs to has been created.
+        self.deferred = []
 
     def _streams(self):
         return [s for s in (self.polaris_log, self.pg_log, self.minio_trace) if s]
@@ -1478,7 +1543,10 @@ class _TraceContext:
                 self.record.raw_log = "\n".join(kept)
         if t.pg_log:
             pg_stmts = parse_pg_log(t.pg_log.read_since_mark())
-            _merge_pg_durations(self.record.sql, pg_stmts)
+            known = {s.request_id for s in self.record.sql if s.request_id}
+            t.deferred.extend(
+                _merge_pg_durations(self.record.sql, pg_stmts, known) or []
+            )
         if t.minio_trace:
             self.record.minio.extend(parse_minio_trace(t.minio_trace.read_since_mark()))
         if self.reset_pg_stat and t.pg_conn is not None:
@@ -1488,7 +1556,7 @@ class _TraceContext:
         return False  # never swallow the caller's exception
 
 
-def _merge_pg_durations(polaris_stmts, pg_stmts):
+def _merge_pg_durations(polaris_stmts, pg_stmts, known_request_ids=None):
     """Attach server-side durations from stream B onto stream A's statements.
 
     Matched by normalized SQL, in order, so repeats of the same statement pair
@@ -1518,7 +1586,7 @@ def _merge_pg_durations(polaris_stmts, pg_stmts):
     """
     if not polaris_stmts:
         polaris_stmts.extend(p for p in pg_stmts if is_polaris_statement(p.sql))
-        return
+        return []
     buckets = {}
     for p in pg_stmts:
         buckets.setdefault(normalize_sql(p.sql), []).append(p)
@@ -1532,16 +1600,71 @@ def _merge_pg_durations(polaris_stmts, pg_stmts):
             if stmt.params is None and match.params is not None:
                 stmt.params = match.params
     leftovers = [p for q in buckets.values() for p in q if is_polaris_statement(p.sql)]
+    #: A statement that NAMES a request id belongs to THAT request, not to
+    #: whichever window it happened to land in. Held back rather than appended,
+    #: and returned so the caller can place it once every record exists.
+    strays = [
+        s
+        for s in leftovers
+        if s.request_id and known_request_ids and s.request_id not in known_request_ids
+    ]
+    if strays:
+        _stray = {id(s) for s in strays}
+        leftovers = [s for s in leftovers if id(s) not in _stray]
     next_seq = max((s.seq for s in polaris_stmts), default=-1) + 1
     for p in sorted(leftovers, key=lambda x: x.seq):
         p.seq = next_seq
         next_seq += 1
         polaris_stmts.append(p)
+    return strays
 
 
 # ----------------------------------------------------------------------
 # reporting
 # ----------------------------------------------------------------------
+def reattribute_deferred(records, deferred):
+    """Place async statements on the record whose request they actually name.
+
+    An async write cannot be attributed by trace window -- "which window was
+    open" is precisely the assumption it breaks. Polaris's event listener
+    writes `POLARIS_SCHEMA.EVENTS` up to seconds after the call it describes
+    (5.03 s measured 2026-09-02), so the row lands in a later operation's
+    window and the report credits the wrong API. One such row was credited to
+    `mgmt.create_principal`, a 403 that wrote nothing.
+
+    The row names its own request in a `request_id` COLUMN, so routing is
+    exact rather than heuristic. Statements whose request is not among the
+    records are returned rather than dropped silently: the usual reason is a
+    call that finished after the last window closed, and a count of those is
+    the honest measure of what the capture missed.
+
+    Args:
+        records: every `TraceRecord` from the drive, in order.
+        deferred: `Tracer.deferred` -- statements held back by the merge.
+
+    Returns:
+        (placed, unplaceable) -- counts of each.
+    """
+    if not deferred:
+        return 0, 0
+    owner = {}
+    for rec in records:
+        for s in rec.sql:
+            if s.request_id:
+                owner.setdefault(s.request_id, rec)
+    placed = 0
+    unplaceable = []
+    for stmt in deferred:
+        rec = owner.get(stmt.request_id)
+        if rec is None:
+            unplaceable.append(stmt)
+            continue
+        stmt.seq = max((s.seq for s in rec.sql), default=-1) + 1
+        rec.sql.append(stmt)
+        placed += 1
+    return placed, len(unplaceable)
+
+
 def records_to_rows(records):
     """Flatten TraceRecords into row dicts for a summary DataFrame."""
     return [r.to_row() for r in records]

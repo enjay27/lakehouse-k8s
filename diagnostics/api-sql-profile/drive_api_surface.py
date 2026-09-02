@@ -381,7 +381,12 @@ def do_sweep(args):
 
 
 def do_drive(args):
-    from api_trace import Tracer, api_table_matrix, find_capture_dir
+    from api_trace import (
+        Tracer,
+        api_table_matrix,
+        find_capture_dir,
+        reattribute_deferred,
+    )
     from iceberg_rest import build_create_table_payload, build_scan_report
 
     fx = load_fixture()
@@ -413,6 +418,16 @@ def do_drive(args):
     #: 2026-09-01 drives had a capture that was alive when the run started and
     #: dead by the time it finished, and nothing in the run's own output said
     #: so -- it reported 43/43 and zero errors into an empty report.
+    #: Async writes go to the request they NAME, not the window they landed in.
+    #: The event listener lags its call by seconds, so this must run after every
+    #: record exists -- it cannot be done inside a trace.
+    _placed, _lost = reattribute_deferred(res.records, tracer.deferred)
+    if _placed or _lost:
+        print(
+            f"\n  re-attributed {_placed} async statement(s) by request_id"
+            + (f"; {_lost} named a request outside this capture" if _lost else "")
+        )
+
     _reap = reap_report(capture)
     _sql = sum(r.sql_count for r in res.records)
     print(f"\n  captured {_sql:,} statements across {len(res.records)} records")
