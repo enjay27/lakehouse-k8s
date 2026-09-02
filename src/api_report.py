@@ -31,8 +31,54 @@ def _fmt_ms(v):
     return f"{v:.2f} ms" if v is not None else "no timing"
 
 
+def render_empty_window(rec):
+    """What to print when an API recorded NO statements.
+
+    A row reading `0 statements · tables: —` is the least useful line this
+    report can contain: it is equally consistent with an operation that issued
+    no SQL, a capture that was not recording, and a parser that dropped the
+    lines -- three faults with three different fixes. Three drives and most of
+    a session went into deciding which, and the answer was in the raw window
+    the whole time.
+
+    So an empty row now carries the verdict, the fix, and the raw text it was
+    read from. Nothing to re-derive.
+    """
+    from api_trace import diagnose_empty_window
+
+    raw = getattr(rec, "raw_log", None)
+    verdict, hint = diagnose_empty_window(raw or "")
+    out = [
+        "> **No SQL was captured for this operation.**",
+        f"> Verdict: {verdict}.",
+        f"> {hint}",
+        "",
+    ]
+    if raw:
+        out += [
+            "<details><summary>raw Polaris log for this trace window "
+            "(last 40 lines, each truncated)</summary>",
+            "",
+            "```",
+            raw,
+            "```",
+            "",
+            "</details>",
+            "",
+        ]
+    else:
+        out += [
+            "_No raw window was retained — this record predates the fallback, "
+            "or no Polaris stream was attached to the tracer._",
+            "",
+        ]
+    return out
+
+
 def render_statements(rec):
     """The per-statement blocks for one API record."""
+    if not rec.sql:
+        return render_empty_window(rec)
     out = []
     for s in rec.sql or []:
         out += [

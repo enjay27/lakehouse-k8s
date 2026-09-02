@@ -161,3 +161,64 @@ def test_write_report_can_refuse_to_touch_latest(tmp_path):
     assert (
         tmp_path / "doc-api-sql-matrix-S.md"
     ).read_text() == "x", "never overwritten"
+
+
+# ----------------------------------------------------------------------
+# the empty-row fallback -- an empty statement list must explain itself
+# ----------------------------------------------------------------------
+class _Empty:
+    """A record that captured nothing, with a raw window to explain it."""
+
+    def __init__(self, raw=None):
+        self.api = "iceberg.get_config"
+        self.method, self.path, self.status = "GET", "/v1/config", 200
+        self.sql = []
+        self.minio = []
+        self.raw_log = raw
+        self.wall_ms = 12.0
+        self.sql_count = 0
+        self.minio_count = 0
+        self.cache_shape = "n/a"
+        self.tables_touched = []
+
+
+def test_an_empty_row_that_recorded_nothing_says_the_stream_is_the_fault():
+    out = "\n".join(rep.render_empty_window(_Empty(raw="")))
+    assert "recorded NOTHING" in out
+    assert "--capture" in out, "names the stale-directory trap"
+    assert ".pids" in out, "names the dead-tail check"
+
+
+def test_an_empty_row_with_output_but_no_sql_logger_lines_says_which_two_causes():
+    raw = '{"loggerName":"io.quarkus.http.access-log","message":"GET /v1/config 400"}'
+    out = "\n".join(rep.render_empty_window(_Empty(raw=raw)))
+    assert "no DatasourceOperations lines" in out
+    assert "preflight" in out
+    assert raw in out, "the raw window is what settles it, so it must be shown"
+
+
+def test_an_empty_row_whose_window_HAS_sql_lines_is_named_a_parser_fault():
+    """The rarest of the three, and the only one where the raw text is the bug."""
+    raw = '{"loggerName":"org.apache.polaris...DatasourceOperations","message":"query: SELECT 1"}'
+    out = "\n".join(rep.render_empty_window(_Empty(raw=raw)))
+    assert "PARSER fault" in out
+    assert "require_logger" in out
+
+
+def test_a_record_with_no_raw_window_says_so_rather_than_implying_silence():
+    out = "\n".join(rep.render_empty_window(_Empty(raw=None)))
+    assert "No raw window was retained" in out
+
+
+def test_render_statements_falls_back_when_there_are_no_statements():
+    """The fallback must be on the path the report actually uses."""
+    out = "\n".join(rep.render_statements(_Empty(raw="")))
+    assert "No SQL was captured" in out
+
+
+def test_a_populated_record_is_unaffected_by_the_fallback():
+    rec = _records()[0]
+    assert rec.sql, "the shared fixture must actually carry statements"
+    out = "\n".join(rep.render_statements(rec))
+    assert "No SQL was captured" not in out
+    assert "```sql" in out

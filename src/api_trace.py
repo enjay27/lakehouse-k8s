@@ -300,6 +300,13 @@ class TraceRecord:
     sql: list = field(default_factory=list)
     minio: list = field(default_factory=list)
     pg_stat: list = field(default_factory=list)
+    #: The RAW Polaris window, kept ONLY when parsing produced no statements.
+    #: An empty statement list is ambiguous between three faults with three
+    #: different fixes (see `diagnose_empty_window`), and the raw text settles
+    #: it in a glance. Kept only on the empty path because a full drive's
+    #: windows run to megabytes -- this is a diagnostic, not a second copy of
+    #: the capture. Bounded in `_TraceContext.__exit__`.
+    raw_log: str = None
 
     # -- derived -------------------------------------------------------
     @property
@@ -745,6 +752,46 @@ def normalize_sql(sql):
 # ----------------------------------------------------------------------
 # parsers
 # ----------------------------------------------------------------------
+def diagnose_empty_window(text, marker="DatasourceOperations"):
+    """Why did a trace window yield no statements? Three answers, three fixes.
+
+    An operation whose statement list is empty is the single most expensive
+    thing in this repo's history -- three drives and most of a session went
+    into one, and every hour of it was spent deciding WHICH of these it was.
+    The raw window answers it immediately, so the report carries the answer
+    rather than the reader re-deriving it.
+
+    Returns:
+        (verdict, hint) -- a short label and the fix that goes with it.
+    """
+    if not text or not text.strip():
+        return (
+            "the capture recorded NOTHING in this window",
+            "The stream is not recording, or the drive is reading a different "
+            "directory than the one being written. Pass --capture explicitly "
+            "(find_capture_dir needs a NON-EMPTY polaris.log and will otherwise "
+            "pick a stale directory), then check the tails are alive: "
+            "kill -0 $(awk '{print $1}' <capture>/.pids)",
+        )
+    if marker not in text:
+        return (
+            f"the window has output but no {marker} lines",
+            "Either this operation genuinely issued no SQL -- a request refused "
+            "at the HTTP layer before the metastore does -- or the SQL logger is "
+            "above DEBUG. The access-log line below tells you which: a request "
+            "that reached Polaris and returned a status issued no SQL; no "
+            "request line at all means the window missed it. "
+            "Logger check: ./capture.sh preflight",
+        )
+    return (
+        f"{marker} lines ARE present and none parsed",
+        "This is a PARSER fault, not a capture fault -- the rarest of the three "
+        "and the only one where the raw text below is the bug report. Check "
+        "parse_polaris_log's require_logger against the logger name in the "
+        "lines below.",
+    )
+
+
 def parse_polaris_log(text, require_logger=True, start_seq=0):
     """Parse Polaris DEBUG output into SqlStatement records.
 
@@ -1398,11 +1445,17 @@ class _TraceContext:
             time.sleep(t.settle_s)
 
         if t.polaris_log:
+            window = t.polaris_log.read_since_mark()
             self.record.sql.extend(
-                parse_polaris_log(
-                    t.polaris_log.read_since_mark(), require_logger=t.require_logger
-                )
+                parse_polaris_log(window, require_logger=t.require_logger)
             )
+            #: Keep the raw window only when nothing parsed. By LINES and with
+            #: each line truncated: one `listCatalogs returning:` line has
+            #: measured 1,292,023 bytes here, and a diagnostic that blows up
+            #: the report it is meant to explain helps nobody.
+            if not self.record.sql:
+                kept = [ln[:600] for ln in (window or "").splitlines()[-40:]]
+                self.record.raw_log = "\n".join(kept)
         if t.pg_log:
             pg_stmts = parse_pg_log(t.pg_log.read_since_mark())
             _merge_pg_durations(self.record.sql, pg_stmts)
