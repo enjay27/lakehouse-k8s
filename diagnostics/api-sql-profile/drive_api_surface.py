@@ -318,11 +318,65 @@ def do_authorize(args):
     return 0
 
 
+def _catalog_gone(report):
+    """Did this `drop_catalog_tree` report actually remove the catalog?"""
+    c = report.get("catalog")
+    return c == "absent" or (isinstance(c, int) and 200 <= c < 300)
+
+
 def do_teardown(args):
+    """Remove the fixture. Keep the state file if the catalog SURVIVED.
+
+    WHY THE UNLINK IS CONDITIONAL (2026-09-02). It was unconditional, so a
+    teardown whose catalog delete answered 400 destroyed the only record of the
+    fixture it had just failed to remove -- and `--teardown` cannot run again
+    without one, because `load_fixture` exits. The stale-sweep that would have
+    cleaned it up lives INSIDE teardown, so the orphan became unreachable by
+    every path the tool offers. Losing the name of the thing you failed to
+    delete is a strictly worse outcome than leaving a stale file behind.
+    """
     _, _, adm_ic, adm_pc = build_clients("root", args)
     fx = load_fixture()
-    print("teardown:", json.dumps(surf.teardown_fixture(fx, adm_pc, adm_ic), indent=2))
+    out = surf.teardown_fixture(fx, adm_pc, adm_ic)
+    print("teardown:", json.dumps(out, indent=2))
+    if _catalog_gone(out.get("fixture", {})):
+        STATE.unlink(missing_ok=True)
+        return 0
+    print(
+        f"\n  KEPT {STATE.name}: {fx.cat} was NOT removed, so the fixture's name\n"
+        "  is still the only handle on it. `remaining` above says what is holding\n"
+        "  it. Re-run --teardown after clearing that, or --sweep to drop every\n"
+        "  apiprofile* catalog without needing a fixture at all."
+    )
+    return 1
+
+
+def do_sweep(args):
+    """Drop every `apiprofile*` catalog, with NO fixture required.
+
+    `--teardown`'s sweep needs a fixture it can no longer be given once the
+    state file is gone. This is the same operation without that requirement, so
+    residue is always reachable. Safe by prefix: `apiprofile*` is this
+    harness's own namespace and nothing else creates one.
+    """
+    _, _, adm_ic, adm_pc = build_clients("root", args)
+    names = [
+        c["name"] if isinstance(c, dict) else c
+        for c in adm_pc.list_catalogs().json().get("catalogs", [])
+    ]
+    mine = sorted(n for n in names if n.startswith("apiprofile"))
+    if not mine:
+        print("no apiprofile* catalogs — nothing to sweep")
+        return 0
+    print(f"sweeping {len(mine)}: {', '.join(mine)}")
+    out = {n: surf.drop_catalog_tree(n, adm_pc, adm_ic) for n in mine}
+    print(json.dumps(out, indent=2))
+    stuck = [n for n, r in out.items() if not _catalog_gone(r)]
+    if stuck:
+        print(f"\n  STILL PRESENT: {', '.join(stuck)} — see `remaining` above.")
+        return 1
     STATE.unlink(missing_ok=True)
+    print("\n  all clear")
     return 0
 
 
@@ -438,6 +492,13 @@ def main():
     ap.add_argument("--drive", action="store_true")
     ap.add_argument("--teardown", action="store_true")
     ap.add_argument(
+        "--sweep",
+        action="store_true",
+        help="drop every apiprofile* catalog, no fixture required. For "
+        "residue a failed --teardown left behind, which --teardown "
+        "itself cannot reach once the state file is gone.",
+    )
+    ap.add_argument(
         "--authorize",
         action="store_true",
         help="grant --principal-role rights on the probe catalog, as "
@@ -471,6 +532,8 @@ def main():
         return do_authorize(args)
     if args.teardown:
         return do_teardown(args)
+    if args.sweep:
+        return do_sweep(args)
     if args.drive:
         if not args.case:
             sys.exit("--drive needs --case")
