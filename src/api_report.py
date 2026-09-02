@@ -81,6 +81,23 @@ def render_statements(rec):
         return render_empty_window(rec)
     out = []
     for s in rec.sql or []:
+        #: Defensive, and it should now never fire: a statement with no text
+        #: rendered as a heading over an EMPTY code block, which reads as a
+        #: capture fault and is not one. The cause was Pgpool health-check
+        #: rows and is fixed in `parse_pg_log`; this says so out loud rather
+        #: than printing a blank box if anything else ever produces one.
+        if not (s.sql or "").strip():
+            out += [
+                f"**[{s.seq}]** _statement with no SQL text_ · "
+                f"{_fmt_ms(s.duration_ms)}",
+                "",
+                "> Not a captured query. A statement reaching the report with "
+                "no text is a parser or pooler artefact — see "
+                "`parse_pg_log`'s blank-statement guard — and must not be "
+                "counted as an operation's SQL.",
+                "",
+            ]
+            continue
         out += [
             f"**[{s.seq}]** `{s.table or DASH}` · {s.verb or DASH} · "
             f"{_fmt_ms(s.duration_ms)}",

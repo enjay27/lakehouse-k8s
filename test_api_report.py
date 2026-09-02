@@ -222,3 +222,16 @@ def test_a_populated_record_is_unaffected_by_the_fallback():
     out = "\n".join(rep.render_statements(rec))
     assert "No SQL was captured" not in out
     assert "```sql" in out
+
+
+def test_a_statement_with_no_text_is_named_not_rendered_as_a_blank_block():
+    """Pgpool health checks reached the report as `[8] — · — · 0.06 ms`.
+
+    35-38% of the statement entries in the 2026-09-02 reports were these.
+    Fixed at the parse boundary; this guard keeps the symptom legible if
+    anything else ever produces one.
+    """
+    rec = RecObj("x", "GET", "/x", 200, sql=[Stmt(8, None, None, " ", None, 0.06)])
+    out = "\n".join(rep.render_statements(rec))
+    assert "no SQL text" in out
+    assert "```sql\n\n```" not in out, "never an empty code block"

@@ -25,8 +25,9 @@ from api_trace import (
     REDACTED,
     MinioOp,
     StringStream,
-    Tracer,
+    Tracer,  # noqa: E402
     TraceRecord,
+    _merge_pg_durations,
     api_minio_matrix,
     api_table_matrix,
     explain,
@@ -859,3 +860,51 @@ def test_explain_pins_to_the_primary_and_refuses_analyze_on_request():
     conn = _ExplainConn([1.0])
     explain(conn, "DELETE FROM t", analyze=False)
     assert "ANALYZE" not in conn.executed[0]
+
+
+# ----------------------------------------------------------------------
+# Pgpool health checks -- 22.6% of a real capture's pg statements
+# ----------------------------------------------------------------------
+PGPOOL_HEALTH = """2026-09-02 07:54:24.019 GMT [210286] LOG:  statement: 
+2026-09-02 07:54:24.019 GMT [210286] LOG:  duration: 0.043 ms
+2026-09-02 07:54:24.020 GMT [210286] LOG:  statement: SELECT 1
+2026-09-02 07:54:24.020 GMT [210286] LOG:  duration: 0.105 ms
+2026-09-02 07:54:54.020 GMT [210286] LOG:  statement: 
+2026-09-02 07:54:54.020 GMT [210286] LOG:  duration: 0.084 ms
+"""
+
+
+def test_an_empty_statement_line_is_not_a_statement():
+    """`LOG:  statement: ` with nothing after it is Pgpool probing a backend.
+
+    It arrives on an exact 30-second cadence, carries no table, no verb and
+    nothing to EXPLAIN, and never matches a Polaris statement -- so it fell
+    through _merge_pg_durations into the report as a leftover and rendered as
+    `[8] — · — · 0.06 ms` over an empty code block. 35-38% of the statement
+    entries in the 2026-09-02 reports were these.
+    """
+    got = parse_pg_log(PGPOOL_HEALTH)
+    assert len(got) == 1, [s.sql for s in got]
+    assert got[0].sql == "SELECT 1"
+    assert got[0].duration_ms == 0.105, "the real statement keeps its own duration"
+
+
+def test_a_blank_statement_does_not_steal_the_next_duration():
+    """The skip must not leave the blank as `last_by_pid` for the pid.
+
+    Otherwise the following `duration:` line attaches to a dropped statement
+    and the real one loses its timing -- trading a visible artefact for an
+    invisible one.
+    """
+    got = parse_pg_log(PGPOOL_HEALTH)
+    assert got[0].duration_ms == 0.105
+
+
+def test_blank_statements_never_reach_a_merged_record():
+    """_merge_pg_durations appends unmatched pg statements; blanks must not be
+    among them, since a blank can never match a Polaris statement."""
+    polaris = parse_polaris_log("", require_logger=False)
+    pg = parse_pg_log(PGPOOL_HEALTH)
+    merged = list(polaris)
+    _merge_pg_durations(merged, pg)
+    assert all((s.sql or "").strip() for s in merged)

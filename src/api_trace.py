@@ -1002,6 +1002,26 @@ def parse_pg_log(text, start_seq=0):
         sm = _PG_STATEMENT.search(line)
         if sm:
             sql = sm.group("sql")
+            #: `LOG:  statement: ` with NOTHING after it is Pgpool's health
+            #: check, which probes a backend with an empty query string. It
+            #: arrives on an exact 30-second cadence from the same two pids
+            #: (measured 2026-09-02: 07:54:24, 07:54:54, 07:55:24) and made up
+            #: **22.6% of every pg statement parsed** in that capture.
+            #:
+            #: It is not Polaris's, carries no table, no verb and nothing to
+            #: EXPLAIN -- and because a blank never matches a Polaris statement
+            #: it fell straight through `_merge_pg_durations` into the report as
+            #: a leftover. **35-38% of the statement entries in the 2026-09-02
+            #: reports were these**, rendering as `[8] — · — · 0.06 ms` above an
+            #: empty code block and inflating every per-API statement count by
+            #: more than a third.
+            #:
+            #: Dropped at the parse boundary rather than in the renderer: a
+            #: statement with no text is not a measurement, and anything
+            #: downstream that counts statements would otherwise have to know
+            #: about it separately.
+            if not sql.strip():
+                continue
             stmt = SqlStatement(
                 seq=seq,
                 sql=sql,
