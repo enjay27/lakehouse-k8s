@@ -780,34 +780,159 @@ def authorize_on_fixture(fx, adm_pc, principal_role, privileges=None, role_name=
     return out
 
 
+def walk_namespaces(catalog, adm_ic, max_depth=8):
+    """Every namespace in a catalog, DEEPEST FIRST, as full level tuples.
+
+    `GET /namespaces` returns only the TOP level; children come from the same
+    endpoint with `?parent=`. The previous teardown listed once and then did
+    `ns[0] if isinstance(ns, list) else ns`, which is wrong twice over: it never
+    descended, and for a multi-level namespace `["a", "b"]` it took `"a"` and
+    tried to drop the PARENT -- refused, because the child still existed, and
+    the refusal was discarded.
+
+    Deepest first is what makes the result directly drop-ordered: a namespace
+    cannot be dropped while it holds children.
+
+    Args:
+        max_depth: recursion bound. Polaris does not limit namespace nesting,
+            and a cycle here would be a server bug rather than a fixture, but
+            an unbounded walk in a teardown is not worth the risk.
+
+    Returns:
+        list[tuple[str, ...]] -- deepest first, then arbitrary.
+    """
+    found = []
+
+    def descend(parent, depth):
+        if depth > max_depth:
+            return
+        r = adm_ic.list_namespaces(catalog, parent=list(parent) if parent else None)
+        if r.status_code >= 300:
+            return
+        for ns in r.json().get("namespaces", []):
+            levels = tuple(ns) if isinstance(ns, (list, tuple)) else (ns,)
+            found.append((depth, levels))
+            descend(levels, depth + 1)
+
+    descend((), 0)
+    found.sort(key=lambda dl: -dl[0])
+    return [levels for _, levels in found]
+
+
 def drop_catalog_tree(catalog, adm_pc, adm_ic):
     """Empty a catalog from the LEAVES UP, then delete it.
 
     Polaris refuses `DELETE /catalogs/{name}` while the catalog still holds
-    namespaces -- it answers **400**, not a cascade, and `purgeRequested` does
-    not cascade either. The captured log shows it plainly: three 400s in
-    `doc-api-sql-matrix.md`. So tables and views first, then namespaces, then
-    the catalog.
+    content -- it answers **400**, not a cascade, and `purgeRequested` does not
+    cascade either. So: tables and views, then namespaces deepest-first, then
+    catalog-roles, then the catalog.
+
+    THREE FAULTS THIS FIXES, all of which bit on 2026-09-02 when teardown
+    reported `{"tables": 1, "views": 0, "namespaces": 2, "catalog": 400,
+    "error": "... cannot be dropped, it is not empty"}`:
+
+    1. **Catalog-roles were never dropped.** `authorize_on_fixture` creates
+       `{prefix}_shared` on the probe catalog so the authorized tier can drive
+       it, and teardown had no idea it existed.
+    2. **The counts were ATTEMPTS, not successes.** Every drop's status was
+       discarded and the counter incremented unconditionally, so `"namespaces":
+       2` could mean "two tried, both refused". A teardown that cannot
+       distinguish those is a teardown whose report cannot be read -- which is
+       why the 400 arrived as a surprise rather than as the obvious consequence
+       of the line above it.
+    3. **Nested namespaces were invisible.** See `walk_namespaces`.
+
+    And when the catalog delete still fails, the report now says WHAT REMAINS
+    rather than only that something does. A failure that does not name its own
+    cause costs a session; this one costs a glance.
+
+    Returns:
+        dict with counts of what was successfully dropped, a `failed` map of
+        what refused and why, and on a failed catalog delete a `remaining`
+        listing.
     """
-    report = {"tables": 0, "views": 0, "namespaces": 0, "catalog": None}
-    r = adm_ic.list_namespaces(catalog)
-    if r.status_code == 404:
+    report = {
+        "tables": 0,
+        "views": 0,
+        "namespaces": 0,
+        "catalog_roles": 0,
+        "catalog": None,
+        "failed": {},
+    }
+
+    def _drop(kind, key, call):
+        """Run a drop and record its OUTCOME. Never counts an attempt."""
+        try:
+            r = call()
+        except Exception as exc:  # noqa: BLE001
+            report["failed"][f"{kind}:{key}"] = f"{type(exc).__name__}: {exc}"
+            return False
+        if r is not None and getattr(r, "status_code", 200) >= 300:
+            report["failed"][f"{kind}:{key}"] = getattr(r, "status_code", "?")
+            return False
+        report[kind] += 1
+        return True
+
+    probe = adm_ic.list_namespaces(catalog)
+    if probe.status_code == 404:
         report["catalog"] = "absent"
         return report
-    for ns in r.json().get("namespaces", []):
-        nsn = ns[0] if isinstance(ns, list) else ns
-        for t in adm_ic.list_tables(catalog, nsn).json().get("identifiers", []):
-            adm_ic.drop_table(catalog, nsn, t["name"], purge=True)
-            report["tables"] += 1
-        for v in adm_ic.list_views(catalog, nsn).json().get("identifiers", []):
-            adm_ic.drop_view(catalog, nsn, v["name"])
-            report["views"] += 1
-        adm_ic.drop_namespace(catalog, nsn)
-        report["namespaces"] += 1
+
+    for levels in walk_namespaces(catalog, adm_ic):
+        ns = list(levels)
+        label = ".".join(levels)
+        r = adm_ic.list_tables(catalog, ns)
+        if r.status_code < 300:
+            for tbl in r.json().get("identifiers", []):
+                _drop(
+                    "tables",
+                    f"{label}.{tbl['name']}",
+                    lambda n=tbl["name"], s=ns: adm_ic.drop_table(
+                        catalog, s, n, purge=True
+                    ),
+                )
+        r = adm_ic.list_views(catalog, ns)
+        if r.status_code < 300:
+            for vw in r.json().get("identifiers", []):
+                _drop(
+                    "views",
+                    f"{label}.{vw['name']}",
+                    lambda n=vw["name"], s=ns: adm_ic.drop_view(catalog, s, n),
+                )
+        _drop("namespaces", label, lambda s=ns: adm_ic.drop_namespace(catalog, s))
+
+    #: Catalog-roles last among the contents. Polaris creates a built-in role
+    #: per catalog, and whether it refuses deletion is not something to guess
+    #: at in a teardown -- every role is attempted and a refusal is recorded
+    #: rather than special-cased by a name this has not verified.
+    r = adm_pc.list_catalog_roles(catalog)
+    if r.status_code < 300:
+        for role in r.json().get("roles", []):
+            name = role["name"] if isinstance(role, dict) else role
+            _drop(
+                "catalog_roles",
+                name,
+                lambda n=name: adm_pc.delete_catalog_role(catalog, n),
+            )
+
     d = adm_pc.delete_catalog(catalog, purge=True)
     report["catalog"] = d.status_code
     if d.status_code >= 300:
         report["error"] = d.text[:200]
+        #: Say what is still there. "Not empty" without an inventory is the
+        #: message that sent 2026-09-02 looking for the residue by hand.
+        left = {}
+        try:
+            left["namespaces"] = [".".join(x) for x in walk_namespaces(catalog, adm_ic)]
+            rr = adm_pc.list_catalog_roles(catalog)
+            if rr.status_code < 300:
+                left["catalog_roles"] = [
+                    x["name"] if isinstance(x, dict) else x
+                    for x in rr.json().get("roles", [])
+                ]
+        except Exception as exc:  # noqa: BLE001
+            left["inventory_error"] = f"{type(exc).__name__}: {exc}"
+        report["remaining"] = left
     return report
 
 

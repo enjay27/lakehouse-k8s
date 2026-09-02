@@ -294,8 +294,9 @@ def test_an_admin_drive_is_the_same_object_for_both_clients():
 class FakeCatalogs:
     """A management client that remembers catalogs and answers list_catalogs."""
 
-    def __init__(self, names=()):
+    def __init__(self, names=(), roles=()):
         self.names = list(names)
+        self.roles = list(roles)
         self.deleted = []
         self.granted = []
         self.calls = []
@@ -312,6 +313,18 @@ class FakeCatalogs:
     def grant_privilege(self, cat, role, priv):
         self.granted.append((cat, role, priv))
         return Resp(200)
+
+    #: Catalog-roles are part of a catalog's CONTENT: Polaris refuses to delete
+    #: a catalog that still holds one, and `authorize_on_fixture` creates one on
+    #: the probe fixture. Teardown never dropped them, which stranded
+    #: apiprofile1788228475_cat on 2026-09-02. Modelled explicitly rather than
+    #: falling through __getattr__, so the drop path is actually exercised.
+    def list_catalog_roles(self, cat):
+        return Resp(200, {"roles": [{"name": n} for n in self.roles]})
+
+    def delete_catalog_role(self, cat, name):
+        self.roles.remove(name)
+        return Resp(204)
 
     def __getattr__(self, meth):
         def go(*a, **kw):
@@ -330,31 +343,50 @@ class FakeTree:
         self.dropped = []
         self.created = []
 
-    def list_namespaces(self, cat):
+    #: `parent` mirrors the real client: `GET /namespaces` returns the TOP
+    #: level, and children come from the same endpoint with `?parent=`. This
+    #: tree is flat, so a parented call has no children to report -- returning
+    #: the top level again would make the walk recurse forever.
+    def list_namespaces(self, cat, parent=None, **kw):
         if cat in self.missing:
             return Resp(404, {})
+        if parent:
+            return Resp(200, {"namespaces": []})
         return Resp(200, {"namespaces": [[n] for n in self.tree]})
 
-    def list_tables(self, cat, ns):
+    #: `ns` arrives as a LIST of levels from the walk, and as a bare string
+    #: from older callers. The real client accepts both (`_ns_path`), so the
+    #: double does too rather than forcing one shape on its callers.
+    @staticmethod
+    def _key(ns):
+        if isinstance(ns, (list, tuple)):
+            return ns[0] if len(ns) == 1 else ".".join(ns)
+        return ns
+
+    def list_tables(self, cat, ns, **kw):
+        key = self._key(ns)
         return Resp(
-            200, {"identifiers": [{"name": t} for t in self.tree.get(ns, ([], []))[0]]}
+            200,
+            {"identifiers": [{"name": t} for t in self.tree.get(key, ([], []))[0]]},
         )
 
-    def list_views(self, cat, ns):
+    def list_views(self, cat, ns, **kw):
+        key = self._key(ns)
         return Resp(
-            200, {"identifiers": [{"name": v} for v in self.tree.get(ns, ([], []))[1]]}
+            200,
+            {"identifiers": [{"name": v} for v in self.tree.get(key, ([], []))[1]]},
         )
 
     def drop_table(self, cat, ns, name, purge=False):
-        self.dropped.append(("table", ns, name))
+        self.dropped.append(("table", self._key(ns), name))
         return Resp(204)
 
     def drop_view(self, cat, ns, name):
-        self.dropped.append(("view", ns, name))
+        self.dropped.append(("view", self._key(ns), name))
         return Resp(204)
 
     def drop_namespace(self, cat, ns):
-        self.dropped.append(("namespace", ns, None))
+        self.dropped.append(("namespace", self._key(ns), None))
         return Resp(204)
 
     def create_namespace(self, cat, ns):
@@ -421,13 +453,23 @@ def test_teardown_empties_the_catalog_from_the_leaves_up():
     purge does NOT cascade. Order here is the whole point."""
     fx = surf.ProbeFixture(prefix="apiprofileTEST")
     ic = FakeTree({"probe_ns": (["probe_tbl"], ["probe_view"]), "probe_ns2": ([], [])})
-    pc = FakeCatalogs([fx.cat])
+    #: A catalog-role, as `authorize_on_fixture` leaves behind. The old
+    #: teardown ignored it and Polaris then refused the catalog delete.
+    pc = FakeCatalogs([fx.cat], roles=["apiprofileTEST_shared"])
     out = surf.teardown_fixture(fx, pc, ic, sweep_stale=False)
     kinds = [k for k, _ns, _n in ic.dropped]
     assert kinds.index("table") < kinds.index("namespace")
     assert kinds.index("view") < kinds.index("namespace")
     assert pc.deleted == [fx.cat], "the catalog goes last"
-    assert out["fixture"] == {"tables": 1, "views": 1, "namespaces": 2, "catalog": 204}
+    assert pc.roles == [], "the catalog-role is content and goes before the catalog"
+    assert out["fixture"] == {
+        "tables": 1,
+        "views": 1,
+        "namespaces": 2,
+        "catalog_roles": 1,
+        "catalog": 204,
+        "failed": {},
+    }
 
 
 def test_teardown_sweeps_probe_catalogs_an_aborted_run_left_behind():
@@ -521,3 +563,163 @@ def test_a_refused_privilege_is_reported_not_swallowed():
     )
     assert out["granted"] == []
     assert out["failed"] == {"A": 403, "B": 403}
+
+
+# ----------------------------------------------------------------------
+# teardown -- the three faults behind the 2026-09-02 stranded catalog
+# ----------------------------------------------------------------------
+class FakeCatalog:
+    """A catalog with nested namespaces, content, and catalog-roles.
+
+    `namespaces` maps a level-tuple to {"tables": [...], "views": [...]}.
+    Drops mutate it, so a test can assert on what a teardown actually removed
+    rather than on what it claimed.
+    """
+
+    def __init__(self, namespaces=None, roles=(), refuse=()):
+        self.namespaces = dict(namespaces or {})
+        self.roles = list(roles)
+        self.refuse = set(refuse)  # labels that answer 400
+        self.deleted_catalog = None
+
+    # -- iceberg side --
+    def list_namespaces(self, catalog, parent=None, **kw):
+        parent = tuple(parent) if parent else ()
+        kids = [
+            list(ns)
+            for ns in self.namespaces
+            if len(ns) == len(parent) + 1 and ns[: len(parent)] == parent
+        ]
+        return Resp(200, {"namespaces": kids})
+
+    def list_tables(self, catalog, ns, **kw):
+        got = self.namespaces.get(tuple(ns), {})
+        return Resp(200, {"identifiers": [{"name": n} for n in got.get("tables", [])]})
+
+    def list_views(self, catalog, ns, **kw):
+        got = self.namespaces.get(tuple(ns), {})
+        return Resp(200, {"identifiers": [{"name": n} for n in got.get("views", [])]})
+
+    def drop_table(self, catalog, ns, name, **kw):
+        self.namespaces[tuple(ns)]["tables"].remove(name)
+        return Resp(204, {})
+
+    def drop_view(self, catalog, ns, name, **kw):
+        self.namespaces[tuple(ns)]["views"].remove(name)
+        return Resp(204, {})
+
+    def drop_namespace(self, catalog, ns, **kw):
+        key = tuple(ns)
+        label = ".".join(key)
+        if label in self.refuse:
+            return Resp(400, {})
+        if any(k[: len(key)] == key and k != key for k in self.namespaces):
+            return Resp(400, {})  # Polaris refuses a non-empty parent
+        self.namespaces.pop(key, None)
+        return Resp(204, {})
+
+    # -- management side --
+    def list_catalog_roles(self, catalog, **kw):
+        return Resp(200, {"roles": [{"name": n} for n in self.roles]})
+
+    def delete_catalog_role(self, catalog, name, **kw):
+        self.roles.remove(name)
+        return Resp(204, {})
+
+    def delete_catalog(self, catalog, **kw):
+        if self.namespaces or self.roles:
+            return Resp(400, {})
+        self.deleted_catalog = catalog
+        return Resp(204, {})
+
+
+def test_teardown_drops_the_catalog_role_authorize_created():
+    """The 2026-09-02 stranded catalog.
+
+    `authorize_on_fixture` grants the authorized tier on the shared fixture by
+    creating a catalog-role. Teardown never dropped it, the catalog stayed
+    non-empty, and `DELETE /catalogs` answered 400 'it is not empty' with no
+    indication of what the content was.
+    """
+    fake = FakeCatalog(
+        namespaces={("probe_ns",): {"tables": ["t"], "views": []}},
+        roles=["apiprofile1_shared"],
+    )
+    rep = surf.drop_catalog_tree("apiprofile1_cat", fake, fake)
+    assert rep["catalog_roles"] == 1
+    assert rep["catalog"] == 204, rep
+    assert fake.deleted_catalog == "apiprofile1_cat"
+
+
+def test_teardown_descends_into_nested_namespaces():
+    """`list_namespaces` returns the TOP level only; children need ?parent=.
+
+    The old walk also took `ns[0]` of a multi-level namespace, so it tried to
+    drop the parent while the child still existed -- refused, and discarded.
+    """
+    fake = FakeCatalog(
+        namespaces={
+            ("a",): {"tables": [], "views": []},
+            ("a", "b"): {"tables": ["t"], "views": []},
+            ("a", "b", "c"): {"tables": [], "views": ["v"]},
+        }
+    )
+    rep = surf.drop_catalog_tree("c1", fake, fake)
+    assert rep["namespaces"] == 3, rep
+    assert rep["tables"] == 1 and rep["views"] == 1
+    assert fake.namespaces == {}, "every level removed, deepest first"
+    assert rep["catalog"] == 204
+
+
+def test_teardown_counts_successes_not_attempts():
+    """A refused drop must not increment the counter.
+
+    `"namespaces": 2` previously could mean "two tried, both refused", which is
+    why a 400 on the catalog arrived as a surprise rather than as the obvious
+    consequence of the line above it.
+    """
+    fake = FakeCatalog(
+        namespaces={
+            ("keep",): {"tables": [], "views": []},
+            ("go",): {"tables": [], "views": []},
+        },
+        refuse={"keep"},
+    )
+    rep = surf.drop_catalog_tree("c1", fake, fake)
+    assert rep["namespaces"] == 1, "only the one that actually dropped"
+    assert rep["failed"] == {"namespaces:keep": 400}
+
+
+def test_a_refused_catalog_delete_reports_what_is_still_there():
+    """ "Not empty" without an inventory is what cost the manual hunt."""
+    fake = FakeCatalog(
+        namespaces={("stuck",): {"tables": [], "views": []}},
+        roles=["leftover_role"],
+        refuse={"stuck"},
+    )
+    fake.delete_catalog_role = lambda *a, **kw: Resp(400, {})  # refuses too
+    rep = surf.drop_catalog_tree("c1", fake, fake)
+    assert rep["catalog"] == 400
+    assert rep["remaining"]["namespaces"] == ["stuck"]
+    assert rep["remaining"]["catalog_roles"] == ["leftover_role"]
+
+
+def test_walk_namespaces_returns_deepest_first():
+    fake = FakeCatalog(
+        namespaces={
+            ("a",): {},
+            ("a", "b"): {},
+            ("a", "b", "c"): {},
+        }
+    )
+    got = surf.walk_namespaces("c1", fake)
+    assert [len(x) for x in got] == [3, 2, 1], got
+
+
+def test_an_absent_catalog_is_reported_absent_not_dropped():
+    class Gone:
+        def list_namespaces(self, *a, **kw):
+            return Resp(404, {})
+
+    rep = surf.drop_catalog_tree("nope", Gone(), Gone())
+    assert rep["catalog"] == "absent" and rep["tables"] == 0
