@@ -4,25 +4,26 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-08-31
+## Now — 2026-09-01
 
-**Task: EXPLAIN every API in `doc-api-sql-matrix-latest.md`, under three identities.** Plan is standalone —
-read [`PLAN-api-index-matrix.md`](diagnostics/api-sql-profile/PLAN-api-index-matrix.md) first. 43 APIs, 505
-statement instances, **115 distinct (SQL, params) pairs** — the pair is the sweep unit, not the 27 SQL texts.
-Cases: admin (seeded `service_admin`, ~1,100 grants) / authorized (`authz`, 52) / unauthorized (zero grants),
-each from a **restarted Polaris**, then plain EXPLAIN (no ANALYZE, so writes are safe) in both index states.
+**Read [`HANDOFF-api-index-matrix.md`](diagnostics/api-sql-profile/HANDOFF-api-index-matrix.md) first — standalone.**
 
-**PHASE 3 IS DONE — 167 tests green, nothing has touched a cluster.** Built: `parse_api_statements`
-(pair-keyed + parse audit), `_summarise_plan` reporting every scan node, `explain_statements(analyze=False)`,
-`src/api_surface.py` (43 ops + fixture setup/teardown), `src/api_report.py` (renderer; round-trip tested
-against the parser), and runners `drive_api_surface.py` + `explain_api_matrix.py`.
+Task: EXPLAIN every API in `doc-api-sql-matrix-latest.md`, under three identities (admin / authorized /
+unauthorized), each from a restarted Polaris, plain EXPLAIN, both index states. Plan:
+[`PLAN-api-index-matrix.md`](diagnostics/api-sql-profile/PLAN-api-index-matrix.md); commands:
+[`RUNBOOK-api-index-matrix.md`](diagnostics/api-sql-profile/RUNBOOK-api-index-matrix.md); driver:
+`03_api_index_matrix.ipynb`.
 
-**NEXT IS KADE'S, and it is Phases 0–2 then 4–5:** dump + prove the restore → `--probe-policy` → seed
-(1000 users, 5 views + 5 generic tables/ns, plus a **verified zero-grant** principal) → archive the current
-matrix as a **tracked** file → `drive_api_surface.py --setup`, then restart-and-drive per case
-(**unauthorized, authorized, admin last**) → `explain_api_matrix.py` per case × both index states → Claude
-writes the report. Of the 115 pairs, **112 replay**; the 3 refused are redacted
-secret-table statements and always will be.
+**BLOCKED: all three drives completed cleanly and captured NO SQL.** Every API in all three reports reads
+`0 statements` / `tables: —`. `polaris.log` is ~1,311,11x bytes in all four runs — the Polaris startup burst
+and nothing after it — and the liveness gate passed because a restart's own dump supplies both the growth and
+the `DatasourceOperations` lines it checks for. **Fix first:** a TRACER-level preflight (01 cell 6 already has
+the pattern — `assert rec.sql_count > 0`), then re-drive. Do not re-drive before that; three runs have already
+produced nothing.
+
+Measured and worth keeping: authorized is refused exactly the 5 service-scoped ops; **admin is NOT a superset**
+(`reset_principal_credentials` → 403); footprints 1 / 78 / 3,377-ceiling; volume `grant_records` 60,819,
+`policy_mapping_record` 0 and unmeasurable. Tooling is done and green (183 tests).
 
 ## Where the detail is
 
