@@ -21,11 +21,11 @@ import os  # noqa: E402
 import time  # noqa: E402
 
 from api_trace import SqlStatement  # noqa: E402
+from api_trace import Tracer  # noqa: E402
 from api_trace import (
     REDACTED,
     MinioOp,
     StringStream,
-    Tracer,  # noqa: E402
     TraceRecord,
     _merge_pg_durations,
     api_minio_matrix,
@@ -579,7 +579,16 @@ def test_pg_durations_merge_onto_polaris_statements():
     entities = [s for s in rec.sql if s.table == "entities"]
     assert entities[0].duration_ms == 3.512, "server-side duration attached to stream A"
     verbs = [s.verb for s in rec.sql]
-    assert "COMMIT" in verbs, "PG-only statements are appended, not dropped"
+    #: CHANGED 2026-09-02, deliberately. PG-only statements used to be appended
+    #: unconditionally so BEGIN/COMMIT/SET counted as part of the real cost.
+    #: Measured against a real drive that admitted 390 of 780 statements (50%)
+    #: of repmgr/Pgpool/psql traffic -- and because it is TIMER-driven, the
+    #: amount landing in a window tracked how LONG an operation took rather
+    #: than what it did. Only statements naming the Polaris schema survive the
+    #: merge now; transaction control goes with the rest (`_NON_QUERY`). Kade
+    #: chose this over a keep-transaction-control variant.
+    assert "COMMIT" not in verbs, "PG-only non-Polaris statements are dropped"
+    assert verbs == ["SELECT"], verbs
 
 
 # ----------------------------------------------------------------------
@@ -908,3 +917,50 @@ def test_blank_statements_never_reach_a_merged_record():
     merged = list(polaris)
     _merge_pg_durations(merged, pg)
     assert all((s.sql or "").strip() for s in merged)
+
+
+FOREIGN_PG = """2026-09-02 07:54:24.019 GMT [210286] LOG:  statement: SELECT pg_catalog.pg_is_in_recovery()
+2026-09-02 07:54:24.019 GMT [210286] LOG:  duration: 0.043 ms
+2026-09-02 07:54:24.020 GMT [210286] LOG:  statement: SELECT repmgr.get_local_node_id()
+2026-09-02 07:54:24.020 GMT [210286] LOG:  duration: 0.105 ms
+2026-09-02 07:54:24.021 GMT [210286] LOG:  statement: SET synchronous_commit TO 'local'
+2026-09-02 07:54:24.021 GMT [210286] LOG:  duration: 0.020 ms
+2026-09-02 07:54:24.030 GMT [210286] LOG:  statement: SELECT id FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = 'POLARIS'
+2026-09-02 07:54:24.030 GMT [210286] LOG:  duration: 0.500 ms
+"""
+
+
+def test_only_polaris_statements_are_merged_in_from_the_pg_side():
+    """50% of a real report was repmgr/Pgpool traffic sharing the server log.
+
+    And it is TIMER-driven, so how much lands in an operation's window tracks
+    how long the operation took rather than what it did -- mgmt.grant_privilege
+    showed 178 foreign of 242. A count built that way is wall time wearing the
+    label of work.
+    """
+    merged = []
+    _merge_pg_durations(merged, parse_pg_log(FOREIGN_PG))
+    assert len(merged) == 1, [s.sql for s in merged]
+    assert "POLARIS_SCHEMA.ENTITIES" in merged[0].sql
+
+
+def test_foreign_leftovers_are_dropped_when_polaris_statements_exist_too():
+    """The non-empty branch is a separate code path and needs its own guard."""
+    polaris = [
+        SqlStatement(seq=0, sql="SELECT id FROM POLARIS_SCHEMA.ENTITIES WHERE id = ?")
+    ]
+    _merge_pg_durations(polaris, parse_pg_log(FOREIGN_PG))
+    assert len(polaris) == 2, [s.sql for s in polaris]
+    assert all("repmgr" not in s.sql and "pg_catalog" not in s.sql for s in polaris)
+
+
+def test_a_pg_duration_still_reaches_its_polaris_statement():
+    """Filtering leftovers must not break the matching that is the point."""
+    polaris = [
+        SqlStatement(
+            seq=0,
+            sql="SELECT id FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = 'POLARIS'",
+        )
+    ]
+    _merge_pg_durations(polaris, parse_pg_log(FOREIGN_PG))
+    assert polaris[0].duration_ms == 0.5

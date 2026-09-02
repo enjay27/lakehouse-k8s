@@ -1492,12 +1492,32 @@ def _merge_pg_durations(polaris_stmts, pg_stmts):
     """Attach server-side durations from stream B onto stream A's statements.
 
     Matched by normalized SQL, in order, so repeats of the same statement pair
-    up 1:1. Statements seen only by Postgres (BEGIN/COMMIT/SET, pooler
-    chatter) are appended rather than dropped -- they are part of the real
-    cost even though Polaris never logs them.
+    up 1:1.
+
+    STATEMENTS ONLY POSTGRES SAW ARE APPENDED ONLY IF THEY ARE POLARIS'S
+    (changed 2026-09-02, and this reverses an earlier decision). They used to be
+    appended unconditionally, on the argument that pooler chatter is part of the
+    real cost even though Polaris never logs it. Measured against a real drive,
+    that argument does not survive: **390 of 780 statements in
+    `doc-api-sql-matrix-unauthorized-20260902-170341.md` -- 50% -- were repmgr,
+    Pgpool and psql traffic sharing the same server log**, led by 87
+    `pg_is_in_recovery()`, 61 `repmgr.nodes` reads and 36
+    `SET synchronous_commit`.
+
+    The fatal part is not the volume, it is that this traffic is TIMER-DRIVEN.
+    How much of it lands in an operation's window is proportional to how long
+    that operation took, not to what it did: `mgmt.grant_privilege` showed
+    178 foreign statements of 242 (74%), `mgmt.list_catalogs` 58 of 65 (89%).
+    A per-API statement count built that way is a proxy for wall time wearing
+    the label of work, and it inverts the point of the matrix.
+
+    `is_polaris_statement` identifies them positively -- a statement counts only
+    if it names the Polaris schema or one of its tables -- and
+    `statement_inventory` has always used it. The record path did not, so the
+    inventory was clean while the per-API detail it is derived from was not.
     """
     if not polaris_stmts:
-        polaris_stmts.extend(pg_stmts)
+        polaris_stmts.extend(p for p in pg_stmts if is_polaris_statement(p.sql))
         return
     buckets = {}
     for p in pg_stmts:
@@ -1511,7 +1531,7 @@ def _merge_pg_durations(polaris_stmts, pg_stmts):
                 stmt.duration_ms = match.duration_ms
             if stmt.params is None and match.params is not None:
                 stmt.params = match.params
-    leftovers = [p for q in buckets.values() for p in q]
+    leftovers = [p for q in buckets.values() for p in q if is_polaris_statement(p.sql)]
     next_seq = max((s.seq for s in polaris_stmts), default=-1) + 1
     for p in sorted(leftovers, key=lambda x: x.seq):
         p.seq = next_seq
