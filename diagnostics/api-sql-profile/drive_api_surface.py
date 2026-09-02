@@ -249,6 +249,37 @@ def capture_streams(capture):
     }
 
 
+def reap_report(capture):
+    """Which tails `capture.sh` started are still alive, from `.pids`.
+
+    A capture that dies MID-DRIVE looks identical, from the drive's own output,
+    to one that never started: 43/43 operations, zero errors, an empty report.
+    `capture.sh status` answers this before a run; nothing answered it after
+    one, which is how three drives were published as complete.
+
+    Returns a short human string rather than a structure -- it is printed, and
+    a caller that wants to branch on it should be reading `.pids` itself.
+    """
+    pf = pathlib.Path(capture) / ".pids"
+    if not pf.exists():
+        return "no .pids file — capture.sh did not start these, or stop removed it"
+    alive, dead = [], []
+    for line in pf.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        pid, label = int(parts[0]), parts[1]
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            dead.append(label)
+        else:
+            alive.append(label)
+    if not dead:
+        return f"all {len(alive)} alive ({', '.join(alive)})"
+    return f"DEAD: {', '.join(dead)}  |  alive: {', '.join(alive) or 'none'}"
+
+
 def do_setup(args):
     from iceberg_rest import build_create_table_payload, build_schema
     from polaris_test_utils import BUCKET, MINIO_ENDPOINT
@@ -317,7 +348,24 @@ def do_drive(args):
     ctx = fx.context(ic, pc, adm_ic, schema)
     tracer = Tracer(**capture_streams(capture))
     ops = surf.operations(ctx, build_create_table_payload, build_scan_report)
-    res = surf.drive(tracer, ops, ctx)
+    try:
+        res = surf.drive(tracer, ops, ctx)
+    except surf.CaptureNotRecording as exc:
+        print(f"\n  ABORTED after {len(tracer.records)} operations.\n{exc}")
+        print(f"\n  tails: {reap_report(capture)}")
+        return 2
+
+    #: The tails are checked AFTER the sweep, not only before it. The
+    #: 2026-09-01 drives had a capture that was alive when the run started and
+    #: dead by the time it finished, and nothing in the run's own output said
+    #: so -- it reported 43/43 and zero errors into an empty report.
+    _reap = reap_report(capture)
+    _sql = sum(r.sql_count for r in res.records)
+    print(f"\n  captured {_sql:,} statements across {len(res.records)} records")
+    print(f"  tails: {_reap}")
+    if _sql == 0:
+        print("  ! ZERO statements captured. The report will be empty; do not")
+        print("    publish it. See HANDOFF-api-index-matrix.md §1.")
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     text = rep.render_matrix_report(

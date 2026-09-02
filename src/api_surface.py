@@ -502,13 +502,52 @@ class DriveResult:
         return len(self.statuses) + len(self.errors)
 
 
-def drive(tracer, ops, ctx, on_record=None):
+class CaptureNotRecording(RuntimeError):
+    """The tracer read no SQL for operations that certainly issued some.
+
+    Raised by `drive` rather than returned, because there is nothing useful to
+    do with the remaining operations: every one of them will produce an empty
+    row, and a report of 43 empty rows is indistinguishable from a report of a
+    cluster that issued no SQL.
+    """
+
+
+def drive(tracer, ops, ctx, on_record=None, assert_recording_within=3):
     """Issue every operation in order, recording outcomes, never stopping.
 
     A refusal is the measurement, not a failure: a 403 still pays the full
     authorization prelude and still says which tables the authorization path
     touched. An EXCEPTION is different -- the harness failed, and it is kept in
     `errors` so it can never be mistaken for a refusal.
+
+    WHY THE RECORDING CHECK IS PER-OPERATION AND NOT A PREFLIGHT (2026-09-02).
+    Three drives completed cleanly and captured nothing: 43/43 operations, zero
+    errors, and `0 statements` on every row. The gate that should have caught it
+    ran ONCE before the sweep, and a gate that passes once cannot notice a
+    stream that stops afterwards -- which is exactly what happened, and is still
+    unexplained. A preflight is also weak in a subtler way: the natural probe
+    call is `list_catalogs`, and that is the one call the broken captures DID
+    record, so a preflight built on it goes green on a capture that records
+    nothing else.
+
+    So the check runs inside the loop, on the operations actually being
+    measured. It is deliberately NOT "every 2xx must issue SQL" -- some
+    operations legitimately issue none, and a rule that fires on one of those
+    would be turned off within a week. It is: if the first
+    `assert_recording_within` records hold zero statements BETWEEN them, the
+    capture is not recording. Every authorized call here pays an authorization
+    prelude that touches `entities` and `grant_records`, so three consecutive
+    empty records is not a quiet cluster.
+
+    Costs one comparison per operation, fails in about five seconds rather than
+    after the 43rd, and the three wasted drives that motivated it each cost a
+    Polaris restart plus a capture.
+
+    Args:
+        assert_recording_within: how many leading records may hold zero
+            statements between them before `CaptureNotRecording` is raised.
+            Ignored when the tracer has no `polaris_log` stream, since nothing
+            is claiming to record. `None` disables it outright.
     """
     result = DriveResult()
     for op in ops:
@@ -526,6 +565,36 @@ def drive(tracer, ops, ctx, on_record=None):
         result.statuses[op.label] = rec.status
         if on_record:
             on_record(op, rec)
+
+        #: `polaris_log` guards the guard. A `Tracer` with no streams is a
+        #: documented, legitimate degradation -- it still yields wall-clock
+        #: timings -- and it is what every unit test of this function uses.
+        #: Firing on it would be an assertion about a capture nobody attached.
+        #: The fault this catches is narrower and worse: a stream IS attached
+        #: and reads nothing.
+        if (
+            assert_recording_within
+            and getattr(tracer, "polaris_log", None)
+            and len(result.records) == assert_recording_within
+            and not any(r.sql_count for r in result.records)
+        ):
+            raise CaptureNotRecording(
+                f"the tracer read NO SQL across the first {assert_recording_within} "
+                f"operations ({', '.join(r.api for r in result.records)}). Every "
+                "authorized call here pays an authorization prelude that touches "
+                "entities and grant_records, so this is the capture, not the "
+                "cluster.\n"
+                "  Check, in this order:\n"
+                "   1. is the capture directory the one being WRITTEN? Pass "
+                "--capture explicitly; find_capture_dir() needs a NON-EMPTY "
+                "polaris.log and will otherwise pick a stale directory.\n"
+                "   2. are the tails still alive?  kill -0 $(awk '{print $1}' "
+                "<capture>/.pids)\n"
+                "   3. is SQL logging on?  ./capture.sh preflight  (rotate does "
+                "NOT enable it; pgon is separate)\n"
+                "  Do NOT read a 43/43 pass as evidence -- three of them have "
+                "already produced empty reports."
+            )
     return result
 
 

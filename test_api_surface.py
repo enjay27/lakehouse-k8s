@@ -72,9 +72,14 @@ class Forbidden:
 
 
 class Rec:
-    def __init__(self):
+    def __init__(self, api="op", sql_count=0):
         self.status = None
         self.core = False
+        #: `api` and `sql_count` mirror the real TraceRecord: drive's recording
+        #: guard reads both, and a double that lacks them would make the guard
+        #: untestable rather than making the test pass.
+        self.api = api
+        self.sql_count = sql_count
 
 
 class Tracer:
@@ -227,6 +232,52 @@ def test_a_raised_exception_is_an_error_not_a_refusal():
     assert all("ConnectionError" in v for v in res.errors.values())
     assert res.refused == [], "an exception must never count as a refusal"
     assert res.permitted, "the mgmt half still drove"
+
+
+class CapturingTracer(Tracer):
+    """A `Tracer` that HAS a stream attached, and records `sql_count` per op.
+
+    The distinction matters to `drive`'s recording guard: a stream-less tracer
+    is a documented degradation and claims nothing, so the guard ignores it.
+    Only a tracer that is supposed to be recording can fail to.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.polaris_log = object()  # merely present; never read here
+
+
+def test_a_capture_that_records_nothing_aborts_early_not_after_43_ops():
+    """The 2026-09-01 fault: 43/43, zero errors, and an empty report.
+
+    Three drives cost a Polaris restart each and produced nothing readable.
+    The guard turns that into a failure on operation 3.
+    """
+    ctx = _ctx()
+    tracer = CapturingTracer()
+    with pytest.raises(surf.CaptureNotRecording) as exc:
+        surf.drive(tracer, _ops(ctx), ctx)
+    assert len(tracer.traced) == 3, "aborts at the threshold, not at the end"
+    msg = str(exc.value)
+    assert "--capture" in msg, "names the stale-directory trap"
+    assert "preflight" in msg, "names the log_statement trap"
+
+
+def test_the_guard_ignores_a_tracer_with_no_stream_attached():
+    """A stream-less Tracer is a legitimate degradation, not a broken capture.
+
+    Firing here would be an assertion about a capture nobody attached -- and it
+    would make the guard the first thing anyone switched off.
+    """
+    ctx = _ctx()
+    res = surf.drive(Tracer(), _ops(ctx), ctx)
+    assert res.driven == 43
+
+
+def test_the_guard_can_be_disabled_outright():
+    ctx = _ctx()
+    res = surf.drive(CapturingTracer(), _ops(ctx), ctx, assert_recording_within=None)
+    assert res.driven == 43
 
 
 def test_an_admin_drive_is_the_same_object_for_both_clients():
