@@ -627,7 +627,11 @@ class FakeCatalog:
         return Resp(204, {})
 
     def delete_catalog(self, catalog, **kw):
-        if self.namespaces or self.roles:
+        #: `catalog_admin` goes WITH the catalog and never blocks it -- that is
+        #: why teardown skips it. Modelling it as blocking would make the skip
+        #: look like a bug.
+        blocking = [r for r in self.roles if r != "catalog_admin"]
+        if self.namespaces or blocking:
             return Resp(400, {})
         self.deleted_catalog = catalog
         return Resp(204, {})
@@ -702,6 +706,29 @@ def test_a_refused_catalog_delete_reports_what_is_still_there():
     assert rep["catalog"] == 400
     assert rep["remaining"]["namespaces"] == ["stuck"]
     assert rep["remaining"]["catalog_roles"] == ["leftover_role"]
+
+
+def test_the_builtin_catalog_role_is_skipped_not_reported_as_a_failure():
+    """`catalog_admin` refuses DELETE with 400 and goes with the catalog.
+
+    Measured on two catalogs 2026-09-02. Attempting it put a permanent
+    `catalog_roles:catalog_admin: 400` in every clean teardown's failed map,
+    and a failure map that is never empty is one nobody reads.
+    """
+    fake = FakeCatalog(namespaces={}, roles=["catalog_admin", "apiprofile1_shared"])
+    rep = surf.drop_catalog_tree("c1", fake, fake)
+    assert rep["catalog_roles"] == 1, "only the real one"
+    assert rep["failed"] == {}, "the builtin must not look like a fault"
+    assert rep["builtin_role_skipped"] == "catalog_admin"
+    assert fake.roles == ["catalog_admin"], "left for the catalog delete to remove"
+
+
+def test_any_other_role_that_refuses_is_still_a_failure():
+    """Only `catalog_admin` is skipped. A real refusal must stay visible."""
+    fake = FakeCatalog(namespaces={}, roles=["catalog_admin", "stubborn"])
+    fake.delete_catalog_role = lambda *a, **kw: Resp(400, {})
+    rep = surf.drop_catalog_tree("c1", fake, fake)
+    assert rep["failed"] == {"catalog_roles:stubborn": 400}
 
 
 def test_walk_namespaces_returns_deepest_first():

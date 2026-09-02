@@ -780,6 +780,13 @@ def authorize_on_fixture(fx, adm_pc, principal_role, privileges=None, role_name=
     return out
 
 
+#: The catalog-role Polaris creates with every catalog. It cannot be deleted
+#: on its own (400, measured on two catalogs 2026-09-02) and does not need to
+#: be -- deleting the catalog removes it. Named here so teardown can skip it
+#: without burying the constant in a conditional.
+BUILTIN_CATALOG_ROLE = "catalog_admin"
+
+
 def walk_namespaces(catalog, adm_ic, max_depth=8):
     """Every namespace in a catalog, DEEPEST FIRST, as full level tuples.
 
@@ -901,14 +908,21 @@ def drop_catalog_tree(catalog, adm_pc, adm_ic):
                 )
         _drop("namespaces", label, lambda s=ns: adm_ic.drop_namespace(catalog, s))
 
-    #: Catalog-roles last among the contents. Polaris creates a built-in role
-    #: per catalog, and whether it refuses deletion is not something to guess
-    #: at in a teardown -- every role is attempted and a refusal is recorded
-    #: rather than special-cased by a name this has not verified.
+    #: Catalog-roles last among the contents, and `catalog_admin` is SKIPPED.
+    #: Polaris creates it with every catalog and refuses to delete it -- 400,
+    #: measured on two separate catalogs 2026-09-02 -- and removes it with the
+    #: catalog itself, which both of those then deleted 204. So attempting it
+    #: puts a permanent `catalog_roles:catalog_admin: 400` in every clean
+    #: teardown's `failed` map, and a failure map that is never empty is a
+    #: failure map nobody reads. Skipped by NAME and only this name: any other
+    #: role that refuses is a real fault and still lands in `failed`.
     r = adm_pc.list_catalog_roles(catalog)
     if r.status_code < 300:
         for role in r.json().get("roles", []):
             name = role["name"] if isinstance(role, dict) else role
+            if name == BUILTIN_CATALOG_ROLE:
+                report["builtin_role_skipped"] = name
+                continue
             _drop(
                 "catalog_roles",
                 name,
