@@ -4,7 +4,7 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-01
+## Now — 2026-09-02
 
 **Read [`HANDOFF-api-index-matrix.md`](diagnostics/api-sql-profile/HANDOFF-api-index-matrix.md) first — standalone.**
 
@@ -14,15 +14,15 @@ unauthorized), each from a restarted Polaris, plain EXPLAIN, both index states. 
 [`RUNBOOK-api-index-matrix.md`](diagnostics/api-sql-profile/RUNBOOK-api-index-matrix.md); driver:
 `03_api_index_matrix.ipynb`.
 
-**BLOCKED: all three drives completed cleanly and captured NO SQL.** Every API in all three reports reads
-`0 statements` / `tables: —`. `polaris.log` is ~1,311,11x bytes in all four runs — the Polaris startup burst
-and nothing after it — and the liveness gate passed because a restart's own dump supplies both the growth and
-the `DatasourceOperations` lines it checks for. **Fix first:** a TRACER-level preflight (01 cell 6 already has
-the pattern — `assert rec.sql_count > 0`), then re-drive. Do not re-drive before that; three runs have already
-produced nothing.
+**UNBLOCKED — drive from the CLI, not notebook 03.** The three empty drives were a capture fault: the tail
+dies when notebook 03 starts it (7 captures x 25 lines) and lives when a terminal does (**859 lines**,
+2026-09-02). The startup-burst diagnosis was wrong on every point — HANDOFF §1.2 lists what is falsified so it
+is not re-tested. Re-drive: `./capture.sh rotate <dir>` from a terminal, then
+`drive_api_surface.py --drive --case <c> --capture <dir>` (`--capture` must be explicit). Notebook 03 cell 19
+stays open — `sh()` backgrounds the tails; the closing probe costs nothing, HANDOFF §1.3.
 
 Measured and worth keeping: authorized is refused exactly the 5 service-scoped ops; **admin is NOT a superset**
-(`reset_principal_credentials` → 403); footprints 1 / 78 / 3,377-ceiling; volume `grant_records` 60,819,
+(`reset_principal_credentials` -> 403); footprints 1 / 78 / 3,377-ceiling; volume `grant_records` 60,819,
 `policy_mapping_record` 0 and unmeasurable. Tooling is done and green (183 tests).
 
 ## Where the detail is
