@@ -72,3 +72,19 @@ What has been done and what is next, newest first. Session narratives live in
   - **The grantee lookup rises monotonically with authority** — 1.33 → 1.74 → 2.44 per request — and fires on every one of the 43 operations in all three cases. It is the single statement the index question turns on.
   - **`principal_authentication_data` appears ONLY in admin** (3 statements: SELECT/INSERT/DELETE), correctly `<redacted>` — the 3 permanently unreplayable pairs. Every other statement in all three reports carries usable params.
   - No 500s in the admin run: the PG-HA read-after-write signature that produced 2x500 on 2026-09-01 did not recur.
+
+- [x] **THE FINDING — the primary key indexes the direction Polaris almost never queries (2026-09-03, stock schema, `04_explain_sweep.ipynb`).** Index-absent sweep at `grant_records` = **60,815 rows**, all three identities, plain EXPLAIN. **129 of 129 (case, API) pairs sequentially scan `grant_records`** — all 43 operations, in all three cases, including every refusal.
+
+  `grant_records_pkey` is `btree(realm_id, securable_catalog_id, securable_id, grantee_catalog_id, grantee_id)`. Two predicates, two fates:
+
+  | lookup | predicate | plan | cost |
+  |---|---|---|---:|
+  | **grantee** (every request) | `realm_id, grantee_catalog_id, grantee_id` | **Seq Scan** | **1638.58** |
+  | securable (a few writes) | `realm_id, securable_catalog_id, securable_id` | Index Scan, `grant_records_pkey` | — |
+  | OR-delete (cascade) | `(grantee…) OR (securable…) AND realm_id` | ModifyTable + **Seq Scan** | **1943.02** |
+
+  The securable lookup matches the key's LEADING columns and is served. The grantee lookup needs columns 1, 4 and 5 — the prefix breaks after `realm_id` — so PostgreSQL cannot use the key at all. **`plan_rows = 1`: the planner expects a single row and reads all 60,815 to find it.** Occurrences of the grantee lookup: unauthorized **51x across 43 APIs**, authorized 45x/43, admin 45x/43.
+  - **This is the authorization prelude, so a 403 pays it in full** — consistent with the 2026-08-24 measurement of 6,000 refusals at 1.00 grantee lookup each, now with the plan behind it.
+  - **`entities` is well served** by contrast: `entities_pkey`, `idx_entities`, `constraint_name` all used, no sequential scans anywhere.
+  - **This is what `idx_grant_records_grantee (realm_id, grantee_catalog_id, grantee_id)` was reconstructing** — the missing prefix. It is in no schema file; upstream Polaris ships without it.
+  - Upstream-worthy: the key's column order serves the direction queried on a handful of write paths and not the direction queried on every single request.
