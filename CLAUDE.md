@@ -10,11 +10,16 @@
   3 replicas + **Pgpool-II** connection pooler (**not** PgBouncer; corrected 2026-08-18).
 - **MinIO:** local chart — S3 for the Iceberg warehouse (`data-catalog-bucket`) and Argo
   artifacts (`argo-artifacts`).
-- **Fluent Bit:** DaemonSet in `datahub-hynix`, confirmed running 2026-09-03.
+- **Fluent Bit — two releases, on purpose, both in `datahub-hynix`:**
+  `fb-polaris-shipper` (chart `fluent-bit-0.58.1`, app **5.1.1**, Deployment) tails the
+  Polaris log PVC into **VictoriaLogs**; a second DaemonSet release tails
+  `/var/log/containers/*.log` into **OpenSearch**. Values: `logging/fb-values.yaml` and
+  `fluent-bit/values.yaml` respectively — different deployments, not duplicates.
 - **VictoriaLogs:** log sink in namespace `logging` (9428).
 - **OpenSearch:** runs in **Docker, outside the cluster and outside this repo** — no compose
-  file is versioned here. Which of the two sinks Fluent Bit actually ships to is an open
-  question; see `.memory/active-issues.md` #2 before writing either into a runbook.
+  file is versioned here. It is the DaemonSet's sink; VictoriaLogs is the shipper's. That
+  question is settled — but **neither values file matches its live release**; see
+  `.memory/active-issues.md` #5 before trusting one.
 - **Values-only against upstream charts:** DataHub + prerequisites (Kafka / Elasticsearch /
   MySQL / ZooKeeper), Kafka, Schema Registry, Spark, Airflow, Argo Workflows, Jupyter.
   *Service versions are declared explicitly in each chart's `values.yaml`; several charts

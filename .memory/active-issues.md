@@ -25,15 +25,18 @@ the cluster**. Two of them are worth checking on disk regardless: a plaintext
 secret key stays a leaked secret even after the cluster stops using it, and an
 unpinned image is still unpinned for the next install.
 
-**#2 — Which sink does Fluent Bit ship to? ANSWERED FROM THE REPO, not yet from the cluster.**
-It is not one shipper choosing a sink — it is **two releases**:
-`fluent-bit/values.yaml` is a **DaemonSet** tailing `/var/log/containers/*.log` into
-**OpenSearch in Docker** (`192.168.194.1:9200`), and `logging/fb-values.yaml` is a
-**single-replica Deployment** tailing a shared PVC into **VictoriaLogs** in `logging`.
-Confirmed by reading both files; **not** confirmed that both releases are installed —
-`helm list -A` settles that and this session has no cluster reach. Once confirmed, say it
-plainly in `CLAUDE.md`'s tech stack. Note #5 below: today the VictoriaLogs release has no
-input, so everything that lands anywhere lands in OpenSearch.
+**#2 — Which sink does Fluent Bit ship to? SETTLED for the shipper.**
+Not one shipper choosing a sink — **two releases**. Confirmed from `helm list` on
+2026-09-03: **`fb-polaris-shipper`**, namespace **`datahub-hynix`**, chart
+`fluent-bit-0.58.1` / app **5.1.1**, **revision 10**, deployed 2026-08-22 — the Deployment
+that tails the Polaris log PVC into VictoriaLogs (`logging/fb-values.yaml`). The DaemonSet
+release (`fluent-bit/values.yaml`) ships container logs to OpenSearch in Docker; its release
+name has not been quoted yet. `CLAUDE.md`'s tech stack now says so.
+
+Two things that follow. The shipper is in `datahub-hynix`, which is the only namespace it
+could be in — #6 was a real constraint and is already satisfied. And **revision 10** on a
+file that has never matched the cluster is the shape of #5: ten upgrades of configuration
+this repo cannot account for.
 
 **#3 — `minio/values.yaml` defeats its own chart's credential guard. OPEN (low).**
 `minio/templates/secret.yaml` refuses to render when `auth.rootPassword` is empty —

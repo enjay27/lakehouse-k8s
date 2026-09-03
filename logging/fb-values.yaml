@@ -1,23 +1,30 @@
 # ============================================================
-# Fluent Bit — Polaris log shipper (Deployment, 1 replica)
-# Tails the shared Polaris log PVC -> VictoriaLogs in namespace `logging`.
+# Fluent Bit — Polaris log shipper
+#   release   fb-polaris-shipper
+#   namespace datahub-hynix          (NOT `logging` — the log PVC is namespaced,
+#                                     and Polaris lives here)
+#   chart     fluent-bit-0.58.1      app 5.1.1
 #
-# This is NOT the DaemonSet. fluent-bit/values.yaml is that one
+# This is NOT the DaemonSet. `fluent-bit/values.yaml` is that one
 # (container logs -> OpenSearch in Docker). Two releases, on purpose.
 #
 # !! THIS FILE HAS NOT BEEN RECONCILED WITH THE LIVE RELEASE. !!
-# The cluster has been shown three times to be configured differently from
-# what is written here (.memory/active-issues.md #5). Diff before installing:
-#   helm -n datahub-hynix get values <release> > /tmp/fb-live.yaml
+# The cluster has been shown three times to be configured differently from what
+# is written here (.memory/active-issues.md #5), and the live release is at
+# revision 10. Diff before installing:
+#   helm -n datahub-hynix get values fb-polaris-shipper > /tmp/fb-live.yaml
 #
-# The Lua script is NOT inlined here on purpose — one authoritative copy,
-# at logging/scripts/polaris_access_log.lua, which is directly testable.
-# Pass it at install time:
-#   helm upgrade --install <release> fluent/fluent-bit \
-#     -n datahub-hynix -f logging/fb-values.yaml \
+# The Lua script is NOT inlined here on purpose — one authoritative copy, at
+# logging/scripts/polaris_access_log.lua, which is directly runnable and tested.
+# Pass it at install time; chart 0.58.1 mounts `luaScripts` at /fluent-bit/scripts/:
+#
+#   helm upgrade --install fb-polaris-shipper fluent/fluent-bit \
+#     --version 0.58.1 -n datahub-hynix -f logging/fb-values.yaml \
 #     --set-file luaScripts."polaris_access_log\.lua"=logging/scripts/polaris_access_log.lua
-# The chart mounts luaScripts at /fluent-bit/scripts/. A missing script makes
-# Fluent Bit fail to start, which is the failure mode you want here.
+#
+# A missing script makes Fluent Bit fail to start, which is the failure mode you
+# want here. Chart 0.58.1 offers classic `config:` only — there is no YAML-config
+# switch to migrate to.
 # ============================================================
 
 kind: Deployment

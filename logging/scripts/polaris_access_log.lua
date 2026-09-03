@@ -26,13 +26,13 @@ local PATTERN = '^(%S+) %S+ (%S+) %[[^%]]*%] "(%u+) (%S+)[^"]*" (%d+) (%S+)'
 
 function polaris_access_log(tag, timestamp, record)
     if record["loggerName"] ~= ACCESS_LOGGER then
-        return 0, timestamp, record          -- 0 = untouched, keep
+        return 0, timestamp, record   -- 0 = not modified, keep as-is
     end
 
     local msg = record["_msg"]
     if type(msg) ~= "string" then
         record["access_log_parse_error"] = true
-        return 1, timestamp, record
+        return 2, timestamp, record
     end
 
     local ip, user, method, path, status, size = string.match(msg, PATTERN)
@@ -42,7 +42,7 @@ function polaris_access_log(tag, timestamp, record)
         -- pattern change, and it should be findable with
         --   access_log_parse_error:true
         record["access_log_parse_error"] = true
-        return 1, timestamp, record
+        return 2, timestamp, record
     end
 
     record["client_ip"]            = ip
@@ -54,5 +54,8 @@ function polaris_access_log(tag, timestamp, record)
     -- %b writes "-" for a zero-byte body, which is CLF for 0, not for unknown.
     record["response_size"]        = tonumber(size) or 0
 
-    return 1, timestamp, record          -- 1 = record modified
+    -- 2, not 1: 1 tells Fluent Bit to take the timestamp we return as well, which
+    -- round-trips it through a Lua double. 2 means "record changed, timestamp
+    -- untouched", which is what actually happened here.
+    return 2, timestamp, record
 end
