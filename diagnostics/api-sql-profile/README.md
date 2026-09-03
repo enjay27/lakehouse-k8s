@@ -185,3 +185,23 @@ own evidence. A report whose numbers are typed by hand drifts from the runs that
 produced them and nobody notices until someone tries to reproduce it.
 
 Re-run it after any sweep; it always reflects the newest runs on disk.
+
+## `05_merge_explain.ipynb` — plans back into the matrix
+
+Puts each statement's EXPLAIN line directly under the statement, in the matrix
+report that recorded it. Writes
+`reports/doc-api-sql-matrix-<case>-explained-<stamp>.md` and the tracked
+`-latest.md`.
+
+**Touches no database and no cluster** — two files in, one out. Safe to run
+anywhere, any number of times; annotations are replaced, never stacked.
+
+Set the filenames by hand in cell 2, one pair per case. Cell 3 refuses a pair
+whose run was taken against a different case or a different matrix: a report
+annotated with another identity's plans reads as correct and is not.
+
+The join is on `(normalised SQL, params)` — a real key, since that is what
+`query_profile` groups on. Position is unusable: `explains` and the matrix's
+pairs were zipped at write time and neither list survives re-reading in order.
+Cell 4 asserts every miss is a redacted secret-table statement; anything else
+means the wrong two files were paired.

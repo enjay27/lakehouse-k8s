@@ -116,6 +116,118 @@ def render_statements(rec):
     return out
 
 
+def explain_index(explains):
+    """Index EXPLAIN results by `(normalised SQL, params)` — the pair key.
+
+    The run file's `explains` and the matrix's pairs are produced by zipping two
+    lists, so position is meaningless once either is re-read from disk. But each
+    explain carries its own `sql` and `params`, and that pair is what
+    `query_profile` groups on in the first place, so it is a real key rather
+    than an alignment assumption.
+
+    Measured on the 2026-09-03 admin pair: 561 of 564 statement blocks join, and
+    the 3 that do not are the `principal_authentication_data` statements whose
+    parameters were redacted at capture.
+    """
+    from api_trace import normalize_sql
+
+    out = {}
+    for e in explains or []:
+        out.setdefault((normalize_sql(e.get("sql") or ""), e.get("params")), e)
+    return out
+
+
+def format_explain(e, index_state):
+    """One EXPLAIN result as a single readable line.
+
+    Deliberately one line per statement. The full plan is in the run JSON; a
+    report that inlines it becomes unreadable at 500+ statements, and the
+    question a reader has here is "did this use an index or scan the table".
+    """
+    if e is None:
+        return None
+    if e.get("skipped") or e.get("error"):
+        why = e.get("error") or e.get("skipped")
+        return f"EXPLAIN ({index_state}) — not planned: {why}"
+    scans = e.get("scans") or []
+    bits = []
+    for s in scans:
+        node, rel, idx = s.get("node"), s.get("relation"), s.get("index")
+        bits.append(f"{node} on {rel}" + (f" using {idx}" if idx else ""))
+    if not bits:
+        bits = [", ".join(e.get("node_types") or []) or "no scan node"]
+    plan = (e.get("plan") or {}).get("Plan", {})
+    extra = []
+    if e.get("plan_rows") is not None:
+        extra.append(f"est. {e['plan_rows']:,} row(s)")
+    if isinstance(plan.get("Total Cost"), (int, float)):
+        extra.append(f"cost {plan['Total Cost']:.2f}")
+    if e.get("rows_removed_by_filter"):
+        extra.append(f"{e['rows_removed_by_filter']:,} rows removed by filter")
+    tail = " · ".join(extra)
+    return (
+        f"EXPLAIN ({index_state}) — " + "; ".join(bits) + (f" · {tail}" if tail else "")
+    )
+
+
+#: Why a statement carries no plan, in the reader's terms rather than the
+#: tool's. A blank line here would read as a capture fault, which is what the
+#: whole 2026-09-02 session was spent proving something was not.
+NO_EXPLAIN_REDACTED = (
+    "_No EXPLAIN: parameters were redacted at capture (secret table), so this "
+    "statement can never be replayed._"
+)
+NO_EXPLAIN_UNMATCHED = (
+    "_No EXPLAIN: this statement was not in the sweep's worklist — it was "
+    "refused as unreplayable. See the run's refusal list._"
+)
+
+
+def annotate_with_explains(text, explains, index_state="index absent"):
+    """Insert an EXPLAIN line under every statement block in a matrix report.
+
+    Works on the RENDERED report rather than on records, so everything the
+    report already says is preserved byte-for-byte and only the annotation is
+    added. Re-running is safe: an existing annotation is replaced, not stacked.
+
+    Returns:
+        (annotated_text, stats) where stats counts matched / redacted /
+        unmatched — a silent join is a join nobody checked.
+    """
+    import re as _re
+
+    from api_trace import REDACTED, normalize_sql
+
+    idx = explain_index(explains)
+    stats = {"matched": 0, "redacted": 0, "unmatched": 0}
+
+    #: A statement block: the fenced SQL, an optional `params:` line, and any
+    #: annotation a previous run left behind.
+    block = _re.compile(
+        r"(```sql\n(?P<sql>.*?)\n```\n)"
+        r"(?P<params>params: `(?P<pv>.*?)`\n)?"
+        r"(?P<old>(?:(?:EXPLAIN \(|_No EXPLAIN)[^\n]*\n)*)",
+        _re.S,
+    )
+
+    def sub(m):
+        sql, pv = m.group("sql"), m.group("pv")
+        head = m.group(1) + (m.group("params") or "")
+        e = idx.get((normalize_sql(sql), pv))
+        if e is not None:
+            stats["matched"] += 1
+            line = format_explain(e, index_state)
+        elif pv and REDACTED in pv:
+            stats["redacted"] += 1
+            line = NO_EXPLAIN_REDACTED
+        else:
+            stats["unmatched"] += 1
+            line = NO_EXPLAIN_UNMATCHED
+        return head + line + "\n"
+
+    return block.sub(sub, text), stats
+
+
 def render_api_detail(records):
     out = ["## Per-API detail", ""]
     for rec in records:

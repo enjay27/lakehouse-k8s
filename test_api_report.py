@@ -235,3 +235,87 @@ def test_a_statement_with_no_text_is_named_not_rendered_as_a_blank_block():
     out = "\n".join(rep.render_statements(rec))
     assert "no SQL text" in out
     assert "```sql\n\n```" not in out, "never an empty code block"
+
+
+# ----------------------------------------------------------------------
+# merging EXPLAIN results back into a matrix report
+# ----------------------------------------------------------------------
+MATRIX = """### `iceberg.get_config`
+
+- `GET /v1/config` → **200**
+
+**[0]** `grant_records` · SELECT · 0.31 ms
+
+```sql
+SELECT a FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_id = ? AND realm_id = ?
+```
+params: `1002, POLARIS`
+
+**[1]** `principal_authentication_data` · SELECT · 0.02 ms
+
+```sql
+SELECT s FROM POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA WHERE realm_id = ?
+```
+params: `<redacted>`
+"""
+
+EXPLAINS = [
+    {
+        "sql": "SELECT a FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_id = ? AND realm_id = ?",
+        "params": "1002, POLARIS",
+        "scans": [{"node": "Seq Scan", "relation": "grant_records", "index": None}],
+        "node_types": ["Seq Scan"],
+        "plan_rows": 1,
+        "plan": {"Plan": {"Total Cost": 1637.26}},
+        "rows_removed_by_filter": 60814,
+    }
+]
+
+
+def test_a_plan_lands_under_the_statement_it_belongs_to():
+    out, stats = rep.annotate_with_explains(MATRIX, EXPLAINS, "index absent")
+    assert stats["matched"] == 1
+    line = [x for x in out.splitlines() if x.startswith("EXPLAIN")][0]
+    assert "Seq Scan on grant_records" in line
+    assert "cost 1637.26" in line
+    assert "60,814 rows removed by filter" in line
+    #: directly beneath its own params line, not floating at the end
+    body = out.split("**[0]**")[1]
+    assert body.index("EXPLAIN") > body.index("params:")
+    assert body.index("EXPLAIN") < body.index("**[1]**")
+
+
+def test_a_redacted_statement_says_why_rather_than_going_blank():
+    """A blank line here reads as a capture fault, which is precisely what the
+    2026-09-02 session was spent proving something was NOT."""
+    out, stats = rep.annotate_with_explains(MATRIX, EXPLAINS, "index absent")
+    assert stats["redacted"] == 1 and stats["unmatched"] == 0
+    assert "never be replayed" in out
+
+
+def test_re_running_replaces_the_annotation_rather_than_stacking_it():
+    once, _ = rep.annotate_with_explains(MATRIX, EXPLAINS, "index absent")
+    twice, _ = rep.annotate_with_explains(once, EXPLAINS, "index absent")
+    assert twice == once
+    assert once.count("EXPLAIN (index absent)") == 1
+
+
+def test_a_statement_with_no_plan_and_no_redaction_is_counted_unmatched():
+    """The signal that a report and a run come from different drives."""
+    out, stats = rep.annotate_with_explains(MATRIX, [], "index absent")
+    assert stats == {"matched": 0, "redacted": 1, "unmatched": 1}
+    assert "not in the sweep's worklist" in out
+
+
+def test_the_join_ignores_placeholder_dialect():
+    """The pg log writes $1/$2 where Polaris writes ?; normalize_sql unifies
+    them, so a statement captured from either stream joins."""
+    ex = [
+        dict(
+            EXPLAINS[0],
+            sql="SELECT a FROM POLARIS_SCHEMA.GRANT_RECORDS "
+            "WHERE grantee_id = $1 AND realm_id = $2",
+        )
+    ]
+    out, stats = rep.annotate_with_explains(MATRIX, ex, "index absent")
+    assert stats["matched"] == 1
