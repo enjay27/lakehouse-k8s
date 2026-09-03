@@ -96,6 +96,40 @@ def scan_summary(e):
     return head
 
 
+def plan_node(e):
+    """The top plan node, or {}."""
+    return ((e.get("plan") or {}).get("Plan")) or {}
+
+
+def cond_and_filter(e):
+    """`Index Cond` and `Filter` from anywhere in the plan tree.
+
+    THE PAIR IS THE FINDING, at row level. `Index Cond` is what the planner
+    pushed INTO the index -- a seek. `Filter` is what it had to test on every
+    row it read. The grantee lookup has NO Index Cond and carries its whole
+    predicate in Filter, which is what "no usable index" means concretely; the
+    securable lookup is the reverse. Sorting on these two columns separates the
+    served statements from the unserved without opening a single plan.
+
+    Read from the whole tree: on a Bitmap plan the condition sits on the Bitmap
+    Index Scan child, not on the heap node above it.
+    """
+    conds, filters = [], []
+
+    def walk(n):
+        if not isinstance(n, dict):
+            return
+        if n.get("Index Cond"):
+            conds.append(n["Index Cond"])
+        if n.get("Filter"):
+            filters.append(n["Filter"])
+        for c in n.get("Plans") or []:
+            walk(c)
+
+    walk(plan_node(e))
+    return " AND ".join(conds), " AND ".join(filters)
+
+
 def parse_matrix(text):
     """Every statement occurrence in a rendered matrix report, in order.
 
@@ -241,10 +275,11 @@ def build(case, matrix_path, explain_path, dest):
                 ", ".join((e or {}).get("indexes_used") or []) or "",
                 bool(e and e.get("seq_scanned")),
                 (e or {}).get("plan_rows"),
+                plan_node(e).get("Startup Cost") if e else None,
                 plan_cost(e) if e else None,
-                (e or {}).get("rows_removed_by_filter"),
-                (e or {}).get("shared_hit_blocks"),
-                (e or {}).get("shared_read_blocks"),
+                bool(e and e.get("parallel")),
+                truncate(cond_and_filter(e)[0]) if e else "",
+                truncate(cond_and_filter(e)[1]) if e else "",
                 truncate(" ".join((o["sql"] or "").split()))[:120],
                 truncate(o["params"]),
                 truncate(" ".join((o["sql"] or "").split())),
@@ -264,16 +299,17 @@ def build(case, matrix_path, explain_path, dest):
             "index_used",
             "seq_scan",
             "plan_rows",
+            "startup_cost",
             "total_cost",
-            "rows_filtered",
-            "shared_hit",
-            "shared_read",
+            "parallel",
+            "index_cond",
+            "filter",
             "sql_short",
             "params",
             "sql_full",
         ],
         rows,
-        [13, 40, 11, 6, 22, 8, 12, 46, 30, 10, 11, 11, 13, 11, 12, 60, 34, 60],
+        [13, 40, 11, 6, 22, 8, 12, 46, 30, 10, 11, 12, 11, 10, 56, 56, 60, 34, 60],
         flag_col=10,
     )
 
@@ -293,8 +329,13 @@ def build(case, matrix_path, explain_path, dest):
                 ", ".join(e.get("indexes_used") or []) or "",
                 bool(e.get("seq_scanned")),
                 e.get("plan_rows"),
+                plan_node(e).get("Startup Cost"),
                 plan_cost(e),
-                e.get("rows_removed_by_filter"),
+                bool(e.get("parallel")),
+                truncate(cond_and_filter(e)[0]),
+                truncate(cond_and_filter(e)[1]),
+                truncate(", ".join(sorted(e.get("apis") or {}))),
+                bool(e.get("params_observed")),
                 truncate(where_of(e.get("sql"))),
                 truncate(e.get("params")),
                 not bool(refused),
@@ -314,8 +355,13 @@ def build(case, matrix_path, explain_path, dest):
             "index_used",
             "seq_scan",
             "plan_rows",
+            "startup_cost",
             "total_cost",
-            "rows_filtered",
+            "parallel",
+            "index_cond",
+            "filter",
+            "api_list",
+            "params_observed",
             "where_clause",
             "params",
             "replayable",
@@ -323,7 +369,29 @@ def build(case, matrix_path, explain_path, dest):
             "sql_full",
         ],
         rows,
-        [13, 24, 8, 12, 10, 46, 30, 10, 11, 11, 13, 60, 34, 11, 40, 60],
+        [
+            13,
+            24,
+            8,
+            12,
+            10,
+            46,
+            30,
+            10,
+            11,
+            12,
+            11,
+            10,
+            56,
+            56,
+            70,
+            16,
+            60,
+            34,
+            11,
+            40,
+            60,
+        ],
         flag_col=8,
     )
 
@@ -401,6 +469,7 @@ def build(case, matrix_path, explain_path, dest):
                 e.get("verb"),
                 kind,
                 truncate(str(why)),
+                bool(e.get("params_observed")),
                 truncate(e.get("params")),
                 truncate(" ".join((e.get("sql") or "").split())),
             ]
@@ -417,15 +486,25 @@ def build(case, matrix_path, explain_path, dest):
                 o["verb"],
                 kind,
                 "not in the sweep's worklist",
+                bool(o["params"]),
                 truncate(o["params"]),
                 truncate(" ".join((o["sql"] or "").split())),
             ]
         )
     write_rows(
         ws,
-        ["case", "table", "verb", "kind", "reason", "params", "sql_full"],
+        [
+            "case",
+            "table",
+            "verb",
+            "kind",
+            "reason",
+            "params_observed",
+            "params",
+            "sql_full",
+        ],
         rows,
-        [13, 30, 8, 12, 46, 34, 70],
+        [13, 30, 8, 12, 46, 16, 34, 70],
     )
 
     # ---- Schema ------------------------------------------------------------

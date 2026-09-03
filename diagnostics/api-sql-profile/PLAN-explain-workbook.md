@@ -53,9 +53,21 @@ The detail sheet. One row per statement as it appears in a matrix report, so
 repeats are repeated — this is the sheet for "what does `mgmt.grant_privilege`
 actually issue, in order".
 
-`case · api · seq · table · verb · duration_ms · node · index_used ·
-seq_scan (bool) · plan_rows · total_cost · rows_filtered · shared_hit ·
-shared_read · sql_short · params · sql_full`
+`case · api · http_status · seq · table · verb · duration_ms · plan ·
+index_used · seq_scan · plan_rows · startup_cost · total_cost · parallel ·
+index_cond · filter · sql_short · params · sql_full`
+
+**`index_cond` and `filter` are the pair that matters.** `Index Cond` is what
+the planner pushed INTO the index — a seek. `Filter` is what it tested on every
+row it read. A served lookup has the first and not the second; the grantee
+lookup is the reverse, and that is what "no usable index" means concretely.
+Sorting on these two separates the served statements from the unserved without
+opening a plan.
+
+**Dropped after measuring: `rows_filtered`, `shared_hit`, `shared_read`.** All
+three are ANALYZE-only and were null in **264 of 264** explains — plain EXPLAIN
+does not execute. An always-empty column reads as a failed measurement, and
+invites "0 rows filtered" where the truth is "not measured".
 
 - `sql_short` is the first 120 characters, for reading; `sql_full` carries the
   text. Both, because a column wide enough to hold the statement makes every

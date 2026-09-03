@@ -794,3 +794,60 @@ def test_scan_summary_collapses_a_bitmapor_rather_than_listing_it_five_times():
     got = w.scan_summary(e)
     assert got == "Bitmap Heap Scan on entities using entities_pkey ×2, idx_entities"
     assert "None" not in got
+
+
+def test_index_cond_and_filter_separate_a_served_lookup_from_an_unserved_one():
+    """The pair IS the finding, at row level. Index Cond is what the planner
+    pushed into the index; Filter is what it tested on every row it read. A
+    served lookup has the first and not the second; the grantee lookup is the
+    reverse, which is what "no usable index" means concretely."""
+    w = _load("render_explain_workbook")
+    served = {
+        "plan": {
+            "Plan": {
+                "Node Type": "Index Only Scan",
+                "Index Cond": "((realm_id = 'X') AND (securable_id = 1))",
+            }
+        }
+    }
+    unserved = {
+        "plan": {
+            "Plan": {
+                "Node Type": "Seq Scan",
+                "Filter": "((grantee_id = 1) AND (realm_id = 'X'))",
+            }
+        }
+    }
+    assert w.cond_and_filter(served) == (
+        "((realm_id = 'X') AND (securable_id = 1))",
+        "",
+    )
+    assert w.cond_and_filter(unserved) == (
+        "",
+        "((grantee_id = 1) AND (realm_id = 'X'))",
+    )
+
+
+def test_a_bitmap_plans_condition_is_found_on_the_child_not_the_heap_node():
+    """On a Bitmap plan the condition sits on the Bitmap Index Scan child. Only
+    reading the top node would report no condition at all."""
+    w = _load("render_explain_workbook")
+    e = {
+        "plan": {
+            "Plan": {
+                "Node Type": "Bitmap Heap Scan",
+                "Relation Name": "entities",
+                "Plans": [
+                    {"Node Type": "Bitmap Index Scan", "Index Cond": "(realm_id = 'X')"}
+                ],
+            }
+        }
+    }
+    cond, filt = w.cond_and_filter(e)
+    assert cond == "(realm_id = 'X')" and filt == ""
+
+
+def test_a_statement_with_no_plan_yields_empty_strings_not_a_crash():
+    w = _load("render_explain_workbook")
+    assert w.cond_and_filter({}) == ("", "")
+    assert w.plan_node({}) == {}
