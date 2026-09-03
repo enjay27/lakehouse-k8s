@@ -201,3 +201,51 @@ Genuinely wrong, now on evidence rather than inference:
 Still unverified either way: the tail `DB`, `Skip_Long_Lines`, and buffering settings — the
 records give no evidence about them, and the repo's copy of `fb-values.yaml` has now been
 shown twice not to be the live config.
+
+---
+
+## Built: access-log field extraction
+
+Kade's ask: split the Quarkus access-log line into fields, only for records from
+`io.quarkus.http.access-log`, keeping IP, user, method, path, status and body size, and
+dropping the timestamp and the HTTP version. (He said "loggerClass" — the value lives in
+**`loggerName`**; `loggerClassName` on those records is `org.jboss.logging.Logger`, which
+identifies nothing.) DEBUG SQL is being turned off in production, so the volume question
+is closed and did not need routing after all.
+
+**Why Lua and not the spec's `parser` filter.** Fluent Bit's `parser` filter matches on
+**tag**, not on a field value, so restricting it to one logger needs `rewrite_tag` plus an
+emitter plus a second tag in the output `Match` — three moving parts to express one
+condition. A Lua filter expresses it directly and, unlike a regex parser, can normalise
+`%b`'s `-` to `0` (CLF means zero bytes, not unknown) and emit real integers. Two bugs in
+the spec's §4.3 also argued against reusing it: `Inline` is not a Fluent Bit key (the
+option is `code`, or `script`), and `Reserve_Data On` without `Preserve_Key On` consumes
+`message`, so every access-log record would have reached VictoriaLogs with an empty `_msg`.
+
+`logging/scripts/polaris_access_log.lua`, applied via
+`--set-file luaScripts."polaris_access_log\.lua"=...`. Deliberately **not** inlined into
+`fb-values.yaml`: one authoritative copy, and one that can be run directly — which it was.
+The container has no Lua, but the device VM ships `luatex`, and `luatex --luaonly` is a
+standalone Lua 5.3. Six cases, all passing:
+
+| input | result |
+|---|---|
+| `... "DELETE /api/management/v1/principals/... HTTP/1.1" 404 133` | all six fields, `http_status=404`, `response_size=133` |
+| `... 200 -` (zero-byte body) | `response_size=0` — the case the spec's `(?<response_size>\d+)` could never match |
+| `10.0.0.5 - - [...] "GET /...tables/t1?snapshots=all HTTP/1.1" 200 51234` | query string kept in `api_path`, `user_principal_name=-` |
+| IPv6 client, `HTTP/2.0` | parsed; version consumed and discarded |
+| access-log line in an unknown format | `access_log_parse_error: true`, record kept |
+| a `DatasourceOperations` record | returned untouched, return code 0 |
+
+Field names are the spec's (`client_ip`, `user_principal_name`, `http_method`, `api_path`,
+`http_status`, `response_size`) so §7's LogsQL recipes work unchanged. `type_int_key` is
+set on the two numeric fields — without it Fluent Bit encodes Lua numbers as doubles and
+VictoriaLogs stores `404.0`, which `http_status:>=500` then misses.
+
+Two decisions worth keeping: `_msg` is preserved rather than consumed, because the raw line
+is what you read when the parse is wrong; and a non-matching line from that logger is
+**tagged, not dropped** — `access_log_parse_error:true` is findable, a silent drop is not.
+Every fault in this session was silent, which is the argument.
+
+Still not reconciled: `fb-values.yaml` carries this change as *intent*. The live release has
+differed three times, so `helm get values` before installing.

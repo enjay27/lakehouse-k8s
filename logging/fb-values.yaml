@@ -1,3 +1,25 @@
+# ============================================================
+# Fluent Bit — Polaris log shipper (Deployment, 1 replica)
+# Tails the shared Polaris log PVC -> VictoriaLogs in namespace `logging`.
+#
+# This is NOT the DaemonSet. fluent-bit/values.yaml is that one
+# (container logs -> OpenSearch in Docker). Two releases, on purpose.
+#
+# !! THIS FILE HAS NOT BEEN RECONCILED WITH THE LIVE RELEASE. !!
+# The cluster has been shown three times to be configured differently from
+# what is written here (.memory/active-issues.md #5). Diff before installing:
+#   helm -n datahub-hynix get values <release> > /tmp/fb-live.yaml
+#
+# The Lua script is NOT inlined here on purpose — one authoritative copy,
+# at logging/scripts/polaris_access_log.lua, which is directly testable.
+# Pass it at install time:
+#   helm upgrade --install <release> fluent/fluent-bit \
+#     -n datahub-hynix -f logging/fb-values.yaml \
+#     --set-file luaScripts."polaris_access_log\.lua"=logging/scripts/polaris_access_log.lua
+# The chart mounts luaScripts at /fluent-bit/scripts/. A missing script makes
+# Fluent Bit fail to start, which is the failure mode you want here.
+# ============================================================
+
 kind: Deployment
 replicaCount: 1
 
@@ -40,6 +62,8 @@ config:
         Skip_Long_Lines   Off
 
   filters: |
+    # 1. Standardize keys for VictoriaLogs.
+    #    Must run before the Lua filter below, which reads _msg.
     [FILTER]
         Name          modify
         Match         polaris.vlogs
@@ -47,12 +71,34 @@ config:
         Rename        message _msg
         Rename        timestamp _time
 
+    # 2. Split the Quarkus access-log line out of _msg into typed fields.
+    #
+    #    Gated inside the script on loggerName == io.quarkus.http.access-log;
+    #    every other Polaris record returns untouched. Field names match §7 of
+    #    logging/polaris-logging-architecture-spec.md, so the LogsQL recipes
+    #    there work as written:
+    #      client_ip  user_principal_name  http_method  api_path
+    #      http_status (int)  response_size (int)
+    #
+    #    _msg is kept — it is the raw line, and it is what you read when the
+    #    parse is wrong. A line from that logger that does NOT parse is tagged
+    #    access_log_parse_error:true rather than dropped silently.
+    #
+    #    type_int_key stops Fluent Bit encoding these as doubles; without it
+    #    VictoriaLogs stores "404.0" and numeric LogsQL filters miss.
+    [FILTER]
+        Name          lua
+        Match         polaris.vlogs
+        script        /fluent-bit/scripts/polaris_access_log.lua
+        call          polaris_access_log
+        type_int_key  http_status response_size
+
   outputs: |
     [OUTPUT]
         Name          http
         Match         polaris.vlogs
         Host          vlsingle-victoria-logs-single-server.logging.svc.cluster.local
         Port          9428
-        URI           /insert/jsonline?_msg_field=_msg&_time_field=_time&_stream_fields=app,level,loggerName
+        URI           /insert/jsonline?_msg_field=_msg&_time_field=_time&_stream_fields=app,level
         Format        json_lines
         Header        Content-Type application/json
