@@ -148,23 +148,24 @@ The **schema-drift check** should also be split into `availability/` as a small 
 it is PROD-safe and independently useful for answering "is this deployment's schema what we think it
 is" on the company clusters, where this suite must never run.
 
-## `04_explain_sweep.ipynb` — the EXPLAIN sweep
+## `04_explain_sweep.ipynb` — the EXPLAIN sweep, default schema
 
-Plans every `(SQL, params)` pair the three matrix reports recorded, in both
-index states, and reports the contrast. Does not drive APIs and needs no
-Polaris restart — it replays statements with plain `EXPLAIN`, never
-`EXPLAIN ANALYZE`, which is what makes the write half askable and leaves no
-clock to misquote.
+Plans every `(SQL, params)` pair the three matrix reports recorded, against the
+schema **as this cluster runs it**, and reports what scans what. Drives no APIs
+and needs no Polaris restart — plain `EXPLAIN`, never `EXPLAIN ANALYZE`, which
+is what makes the write half askable and leaves no clock to misquote.
 
-`Restart & Run All`. It works from **whatever index state the cluster is in**,
-sweeps that, toggles, sweeps the other, and restores what it found. It never
-assumes the index is present at the start.
+**It does not change the schema.** No index is created and none dropped. The
+question is what this deployment does, and an experiment that adds an index is a
+different question — one whose answer is worthless if the measurement it is
+compared against was taken on a mutated schema.
 
-- **`ARM_TOGGLE = False`** (the default) sweeps only the current state and
-  stops, touching nothing. Set it `True` for the full contrast.
-- Cell 9 restores the starting state and asserts it took. **Run it even after a
-  failure above** — leaving `grant_records` without its index is not neutral,
-  it silently makes every later measurement on this cluster an index-absent one.
-- Cell 5's dry run touches no database. Read its refusals before continuing: the
-  3 `principal_authentication_data` pairs are redacted at capture and permanent,
-  anything else is a parser fault worth stopping for.
+Testing a proposed index is legitimate and lives elsewhere on purpose:
+`drop_grantee_index.py` removes one and a `CREATE INDEX CONCURRENTLY` puts it
+back. Run those knowingly from a shell and re-run the notebook afterwards —
+never as a side effect of the measurement.
+
+`Restart & Run All`; read-only against the schema, so re-running is always safe.
+Cell 5's dry run touches no database and is where refusals are read: the 3
+`principal_authentication_data` pairs are redacted at capture and permanent,
+anything else is a parser fault worth stopping for.
