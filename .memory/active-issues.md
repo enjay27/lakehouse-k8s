@@ -55,27 +55,33 @@ is a Secret plus `${VAR}` expansion in the Fluent Bit config, not a different li
 `polaris/values.yaml:408-409` (`minioadmin`/`minioadmin`) is the same class of problem and
 should go the same way.
 
-**#5 — The repo says the Polaris log path is off; the cluster shows it running. OPEN.**
-Corrected within the session it was filed in. The first version of this issue claimed the
-VictoriaLogs path had no input, reasoning from the tree. A VMUI capture then showed
-**1,636 records in 30 minutes, streams `{app, level}`, Polaris DEBUG SQL and INFO lines, and
-a Quarkus access-log line**. The pipeline works.
+**#5 — `polaris/values.yaml` does not describe the running Polaris. OPEN — and NARROWER
+than it was written.**
 
-The tree still says otherwise, and that is the actual issue — this is **#1 demonstrated**:
+Filed first as "the VictoriaLogs path has no input" (wrong — it runs), then rewritten as
+"the repo and the cluster disagree", which over-reached: it said *the repo*, on evidence
+about *one file*. The `helm get values fb-polaris-shipper` diff on 2026-09-03 settles that
+half and it went the other way.
 
-| what the repo says | what the cluster shows |
-|---|---|
-| `polaris/values.yaml` `logging.file.enabled: false`, so `configmap.yaml:132-147` renders `quarkus.log.file.enabled=false` | a file is being tailed and shipped |
-| `quarkus.http.access-log.enabled` appears nowhere; `values.yaml:302` only sets the category level | access-log lines are arriving |
-| `polaris/values.yaml:200` and `logging/fb-values.yaml:15` mount `polaris-shared-logs-pvc`; **nothing in this repo creates it** | the mount evidently resolves |
+**`logging/fb-values.yaml` is RECONCILED.** Live revision 10 matched it line for line apart
+from `helm`'s alphabetical key ordering and **one** real difference: the live output streams
+on `_stream_fields=app,level` where the file asked for `app,level,loggerName`. The file now
+says `app,level`. Nothing else about the shipper was ever divergent — the tail with no `DB`,
+`Read_from_Head true` and `Skip_Long_Lines Off` are all genuinely deployed, so #5b's
+open questions about them are answered: they are live, and they are still worth changing.
 
-So the live release was configured outside these files — an overlay, a `--set`, or a hand
-edit — and `helm -n datahub-hynix get values benchmarks-polaris` is the only thing that says
-which. Until that diff is done, **editing `polaris/values.yaml` risks reverting whatever is
-actually running.** Do the diff before the edit, not after.
+What remains open is narrower and still real:
 
-The read-side lesson: *verify against the running object, never against the values file*
-applies to reading the repo as much as to writing it.
+- **`polaris/values.yaml`** says `logging.file.enabled: false`, sets
+  `quarkus.http.access-log.enabled` nowhere, and carries `logging.mdc: {}` — yet the file is
+  written, access-log lines arrive, and `mdc.requestId` / `mdc.realmId` are on every record.
+  That configuration is somewhere else. `helm -n datahub-hynix get values benchmarks-polaris`
+  has not been run. **Do it before editing that file.**
+- **`polaris-shared-logs-pvc`** is mounted by both releases and created by no manifest here.
+  It exists in the cluster; the repo cannot rebuild it.
+
+The generalisable part: a claim about "the repo" needed evidence about the repo. One file
+diffing clean is exactly the outcome that a broad claim could not have predicted.
 
 **#5b — What is actually wrong in the shipped records. OPEN.**
 Established from two raw records off the VMUI JSON tab, after two earlier readings of the
@@ -103,9 +109,9 @@ Actually wrong:
 | `response_size` is `-` for zero-byte responses | `"... 200 -"` | regex `[\d-]+`, not `\d+` |
 | no latency token in the access-log pattern | the access-log `_msg` | add `%D`; the spec's own P99 panels need it |
 
-No evidence either way on the tail `DB`, `Skip_Long_Lines` or buffering — the repo's
-`fb-values.yaml` has now twice been shown not to be the live config, so those get settled by
-`helm get values`, not by reading it.
+The tail `DB`, `Skip_Long_Lines Off` and the absent buffering are now **confirmed live** by
+the revision-10 diff, not merely suspected. Unchanged as faults: a restart replays the file
+from byte 0, and a line over `Buffer_Max_Size` stops the tail rather than being skipped.
 
 **#6 — A shared PVC cannot cross namespaces. OPEN (design constraint, decide before building).**
 PVCs are namespaced. Polaris runs in `datahub-hynix`, so the file-tailing shipper must run

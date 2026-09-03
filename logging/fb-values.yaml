@@ -8,22 +8,22 @@
 # This is NOT the DaemonSet. `fluent-bit/values.yaml` is that one
 # (container logs -> OpenSearch in Docker). Two releases, on purpose.
 #
-# !! THIS FILE HAS NOT BEEN RECONCILED WITH THE LIVE RELEASE. !!
-# The cluster has been shown three times to be configured differently from what
-# is written here (.memory/active-issues.md #5), and the live release is at
-# revision 10. Diff before installing:
-#   helm -n datahub-hynix get values fb-polaris-shipper > /tmp/fb-live.yaml
+# RECONCILED against live revision 10 on 2026-09-03. `helm get values` matched
+# this file exactly, apart from key ordering and one real difference, since
+# corrected here: the live release streams on `app,level`, this file had asked
+# for `app,level,loggerName`. Everything below is what is deployed, plus the
+# luaScripts block and the lua filter, which are new.
 #
-# The Lua script is NOT inlined here on purpose — one authoritative copy, at
-# logging/scripts/polaris_access_log.lua, which is directly runnable and tested.
-# Pass it at install time; chart 0.58.1 mounts `luaScripts` at /fluent-bit/scripts/:
+# Still NOT accounted for by this repo: `polaris-shared-logs-pvc`, mounted below
+# and created by no manifest here (.memory/active-issues.md #5).
 #
+# Install — no --set flags, everything is in this file:
 #   helm upgrade --install fb-polaris-shipper fluent/fluent-bit \
-#     --version 0.58.1 -n datahub-hynix -f logging/fb-values.yaml \
-#     --set-file luaScripts."polaris_access_log\.lua"=logging/scripts/polaris_access_log.lua
+#     --version 0.58.1 -n datahub-hynix -f logging/fb-values.yaml
 #
-# A missing script makes Fluent Bit fail to start, which is the failure mode you
-# want here. Chart 0.58.1 offers classic `config:` only — there is no YAML-config
+# Chart 0.58.1 renders `luaScripts` into a ConfigMap mounted at
+# /fluent-bit/scripts/<key>, which is what the lua filter's `script` path points
+# at. Classic `config:` is the chart's only format — there is no YAML-config
 # switch to migrate to.
 # ============================================================
 
@@ -47,6 +47,75 @@ extraVolumeMounts:
   - name: polaris-logs
     mountPath: /logs
     readOnly: true
+
+# Rendered by the chart into a ConfigMap and mounted at /fluent-bit/scripts/.
+# This is the ONE authoritative copy of the script. To re-run its test cases:
+#   python3 logging/scripts/test-access-log-parser.py
+# which extracts the Lua from this file and executes it, so the tests can never
+# drift from what is deployed.
+luaScripts:
+  polaris_access_log.lua: |
+    -- polaris_access_log.lua — Fluent Bit Lua filter
+    --
+    -- Splits the Quarkus HTTP access-log line out of _msg into typed fields, and only
+    -- for records whose loggerName is io.quarkus.http.access-log. Every other Polaris
+    -- record passes through untouched.
+    --
+    -- Input _msg, as emitted by the pattern %h %l %u %t "%r" %s %b :
+    --   192.168.194.1 - root [03/Sep/2026:06:37:47 +0000] "DELETE /api/... HTTP/1.1" 404 133
+    --   \________/   ^  \__/  \____________________/       \____/ \_____/ \______/   \_/ \_/
+    --    client_ip   |  user      timestamp (dropped)      method  path   version    |   |
+    --                |                                                    (dropped)  |   |
+    --         %l, always "-", dropped                               http_status ------+   |
+    --                                                              response_size ---------+
+    --
+    -- Field names match §7 of logging/polaris-logging-architecture-spec.md so the
+    -- LogsQL recipes there work unchanged.
+    --
+    -- _msg is left in place: it is the raw line, and it is what you read when the
+    -- parse is wrong.
+
+    local ACCESS_LOGGER = "io.quarkus.http.access-log"
+
+    -- Lua patterns, not regex. %S non-space, %u uppercase, %d digit, %[ a literal [.
+    -- The version token inside the quotes is consumed by [^"]* without capturing.
+    local PATTERN = '^(%S+) %S+ (%S+) %[[^%]]*%] "(%u+) (%S+)[^"]*" (%d+) (%S+)'
+
+    function polaris_access_log(tag, timestamp, record)
+        if record["loggerName"] ~= ACCESS_LOGGER then
+            return 0, timestamp, record   -- 0 = not modified, keep as-is
+        end
+
+        local msg = record["_msg"]
+        if type(msg) ~= "string" then
+            record["access_log_parse_error"] = true
+            return 2, timestamp, record
+        end
+
+        local ip, user, method, path, status, size = string.match(msg, PATTERN)
+
+        if ip == nil then
+            -- Never fail silently: a line from this logger that does not parse is a
+            -- pattern change, and it should be findable with
+            --   access_log_parse_error:true
+            record["access_log_parse_error"] = true
+            return 2, timestamp, record
+        end
+
+        record["client_ip"]            = ip
+        record["user_principal_name"]  = user
+        record["http_method"]          = method
+        record["api_path"]             = path
+        record["http_status"]          = tonumber(status)
+
+        -- %b writes "-" for a zero-byte body, which is CLF for 0, not for unknown.
+        record["response_size"]        = tonumber(size) or 0
+
+        -- 2, not 1: 1 tells Fluent Bit to take the timestamp we return as well, which
+        -- round-trips it through a Lua double. 2 means "record changed, timestamp
+        -- untouched", which is what actually happened here.
+        return 2, timestamp, record
+    end
 
 config:
   service: |

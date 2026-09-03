@@ -5,32 +5,35 @@
 
 ## Now — 2026-09-03
 
-**Live thread: the Polaris → VictoriaLogs pipeline**, built against Kade's design doc, now
-filed at `logging/polaris-logging-architecture-spec.md`. Order of work:
-[`roadmap.md`](.memory/roadmap.md) *Next*; the audit and its two corrections,
+**Live thread: the Polaris → VictoriaLogs pipeline**, built against Kade's design doc, filed
+at `logging/polaris-logging-architecture-spec.md`. What to do next:
+[`roadmap.md`](.memory/roadmap.md). The audit and its three corrections:
 [`sessions/2026-09-03-polaris-vlogs-audit.md`](.memory/sessions/2026-09-03-polaris-vlogs-audit.md).
 
-**It runs, and it runs better than this repo describes.** VMUI carries Polaris records with
-correct `_time`, `_msg`, `loggerName`, and **`mdc.requestId` / `mdc.realmId`** — so the
-spec's §7 end-to-end trace query works today. Yet `polaris/values.yaml` still says
-`logging.file.enabled: false`, sets `quarkus.http.access-log.enabled` nowhere, carries
-`logging.mdc: {}`, and mounts a PVC nothing here creates. The live release was configured
-outside these files. **Diff `helm -n datahub-hynix get values` before editing anything in
-`polaris/` or `logging/`, or the edit reverts what is deployed**
-([`active-issues.md`](.memory/active-issues.md) #5 — #1 caught in the act, three times).
+**It runs, and the repo half-describes it.** `logging/fb-values.yaml` is **reconciled** —
+it matched live revision 10 of `fb-polaris-shipper` bar one line. **`polaris/values.yaml` is
+not**: it says file logging and the access log are off, and carries `logging.mdc: {}`, while
+the file is written, access-log lines arrive and `mdc.requestId` / `mdc.realmId` are on every
+record. Run `helm -n datahub-hynix get values benchmarks-polaris` **before editing it**, or
+the edit reverts what is running. `polaris-shared-logs-pvc` is mounted by both releases and
+created by no manifest here. ([`active-issues.md`](.memory/active-issues.md) #5.)
 
-**The real faults** (#5b): the **DEBUG SQL from `DatasourceOperations` — ~1.5KB a record,
-nearly every row, bound parameter values included** — is the volume problem, but **not a
-lever**: `polaris-learning` needs that logger at DEBUG, so it has to be *routed*, not
-silenced. The spec's Lua dedup meanwhile targets poll traffic this cluster does not have.
-Then per-record waste (`date`
-duplicating `_time`, `processName` on every line), and the access log needing `%D` plus a
-parser that accepts `%b`'s `-`. Also open: a committed plaintext OpenSearch password (#4), a
-PVC that cannot cross namespaces (#6), VictoriaLogs sized from the doc's 140M/day column (#7).
+**Built:** access-log field extraction — a Lua filter inline in `fb-values.yaml` (no `--set`;
+the values file is the definition), gated on `loggerName`, emitting the spec's §7 field
+names. `logging/scripts/test-access-log-parser.py` reads the Lua *out of the values file*, so
+tests cannot drift from what ships. 6/6.
+
+**Next faults, all confirmed live** (#5b): tail has no `DB` with `Read_from_Head true`
+(restart replays from byte 0) and `Skip_Long_Lines Off` (a long line stops the tail);
+per-record waste (`date` duplicates `_time`, `processName` on every line); no `%D`, so §7's
+P99 panels cannot exist. DEBUG SQL volume is closed — Kade is disabling DEBUG in production.
+Also open: a committed plaintext OpenSearch password (#4); VictoriaLogs sized from the doc's
+140M/day column, no disk cap, unauthenticated `LoadBalancer` on 9428 (#7).
 
 **The rule, and it cuts both ways:** verify against the running object, never the values file
-— when *reading* as much as writing. And a rendered view is not the object: **a `_stream` is
-not a field list, a histogram bucket is not a clock.** Read the record.
+— when *reading* as much as writing. A rendered view is not the object (**a `_stream` is not
+a field list, a histogram bucket is not a clock**), and a claim about "the repo" needs
+evidence about the repo, not about one file in it.
 
 ## Where the detail is
 

@@ -249,3 +249,44 @@ Every fault in this session was silent, which is the argument.
 
 Still not reconciled: `fb-values.yaml` carries this change as *intent*. The live release has
 differed three times, so `helm get values` before installing.
+
+---
+
+## The reconciliation, and a third correction — this one narrowing a claim, not reversing it
+
+Kade ran the diff. `helm -n datahub-hynix get values fb-polaris-shipper` against
+`logging/fb-values.yaml`: **identical**, apart from `helm`'s alphabetical key ordering and
+exactly one real difference — the live output streams on `_stream_fields=app,level` where
+the file asked for `app,level,loggerName`. That one line had already been fixed here, from
+reading the `_stream` in a record.
+
+So the file matched revision 10 all along. The claim in the previous two commits — "the repo
+has been shown three times not to match the live release" — was **over-reach**: it said *the
+repo* on evidence about *`polaris/values.yaml`*. One file diffing clean is precisely the
+outcome a claim that broad could not have predicted. #5 is narrowed to what is actually
+unaccounted for: `polaris/values.yaml`, and `polaris-shared-logs-pvc`.
+
+A useful side effect: the shipper's tail settings are now **confirmed deployed** rather than
+suspected. `Read_from_Head true` with no `DB`, and `Skip_Long_Lines Off`, are what is
+running. Both are still worth changing, and now on evidence.
+
+## Everything in the values file, no `--set`
+
+Kade's rule: no `--set` flags, the values file is the definition. So the Lua moved inline
+into `luaScripts:` in `fb-values.yaml` and the standalone `.lua` was deleted — chart 0.58.1
+renders `luaScripts` into a ConfigMap at `/fluent-bit/scripts/<key>`, which is where the
+filter's `script` path already pointed, so the filter block is unchanged.
+
+That would normally cost the testability that justified the separate file. It does not,
+because the test now reads the Lua **out of the values file**:
+`logging/scripts/test-access-log-parser.py` loads `fb-values.yaml`, pulls
+`luaScripts["polaris_access_log.lua"]`, generates a harness and runs it under whichever Lua
+it can find (`luatex --luaonly` on this Mac). One authoritative copy, still executable, and
+the tests cannot drift from what ships. 6/6 pass.
+
+The install is now a single command with no flags to forget:
+
+```bash
+helm upgrade --install fb-polaris-shipper fluent/fluent-bit \
+  --version 0.58.1 -n datahub-hynix -f logging/fb-values.yaml
+```
