@@ -18,17 +18,20 @@ nothing in this repo creates. The live release was configured outside these file
 `helm get values` before editing `polaris/values.yaml`, or the edit reverts what is
 deployed** ([`active-issues.md`](.memory/active-issues.md) #5 — which is #1 caught in the act).
 
-**Faults visible in the capture** (#5b): `_time` is stamped at ingest, not read from the
-record — all 1,636 in one 15s bucket, so event time is being lost now; no `loggerName` on
-any record though the output asks for it as a stream field; no tail `DB` with
-`Read_from_Head true`; the access-log regex cannot match `%b`'s `-`; and the local volume
-driver is DEBUG SQL from `DatasourceOperations`, not the poll traffic the spec's Lua dedup
-targets. Also open: a committed plaintext OpenSearch password (#4), a PVC that cannot cross
-namespaces (#6), VictoriaLogs sized from the doc's 140M/day column (#7).
+**What is actually wrong** (#5b, from raw records — two earlier readings off the *rendered*
+VMUI were both wrong): `_time` and `loggerName` are **fine**, as are `mdc.requestId` /
+`mdc.realmId`, which make the spec's §7 trace query work today. The real faults are
+per-record waste (`date` duplicating `_time`, `processName` on every line) and above all the
+**DEBUG SQL from `DatasourceOperations` — ~1.5KB a record, nearly every row, bound parameter
+values included.** That is the volume lever here; the spec's Lua dedup targets poll traffic
+this cluster does not have. Access log needs `%D`, and its parser needs `[\d-]+` because
+`%b` emits `-`. Also open: a committed plaintext OpenSearch password (#4), a PVC that cannot
+cross namespaces (#6), VictoriaLogs sized from the doc's 140M/day column (#7).
 
-**Still the rule, and it cuts both ways:** verify against the running object, never
-against the values file — when reading it as much as when writing it. The repo has not been
-reconciled against the rebuilt cluster (#1).
+**Still the rule, and it cuts both ways:** verify against the running object, never against
+the values file — when *reading* it as much as when writing it. And a rendered view is not
+the object: **a `_stream` is not a field list, a histogram bucket is not a clock.** Read the
+record. The repo has not been reconciled against the rebuilt cluster (#1).
 
 ## Where the detail is
 

@@ -74,24 +74,35 @@ actually running.** Do the diff before the edit, not after.
 The read-side lesson: *verify against the running object, never against the values file*
 applies to reading the repo as much as to writing it.
 
-**#5b — Faults visible in the VMUI capture itself. OPEN.**
-Independent of the divergence above, and each one silent rather than an error:
+**#5b — What is actually wrong in the shipped records. OPEN.**
+Established from two raw records off the VMUI JSON tab, after two earlier readings of the
+same pipeline from a *rendered* view were both wrong. `_time` is **not** an ingest stamp —
+it is the record's own Quarkus time (`...13.911654221Z`), 178µs *earlier* than Fluent Bit's
+own `date` (`...13.911832Z`), which an ingest stamp cannot be; the nanoseconds are the JBoss
+JSON formatter printing the full `Instant`. And every record **does** carry `loggerName` —
+the stream-fields panel was showing the *stream* (`{app, level}`), not the field list.
+**A `_stream` is not a field list and a histogram bucket is not a clock. Read the record.**
 
-- **`_time` is assigned at ingest, not taken from the record.** All 1,636 records sit in one
-  15s bucket with 30 empty minutes behind them, and carry nanosecond precision
-  (`15:35:13.911654221`) where Quarkus emits milliseconds. `Rename timestamp _time` is not
-  landing. Real event time is lost and every shipper restart re-stamps history to "now".
-- **No `loggerName` on any record**, though the output URI asks for it as a stream field.
-  The Quarkus JSON formatter always emits it, so these records are not in that shape.
-  Either the file is not JSON, or the tail's `Parser json` is not applying.
-- **No tail `DB` with `Read_from_Head true`** — the single burst is the expected signature.
-- **The access-log regex cannot match a zero-byte response.** `%b` emits `-`
-  (`... 200 -` in the capture); the spec ends `(?<response_size>\d+)`. Needs `[\d-]+`.
-- **The local volume driver is DEBUG SQL**, from
-  `org.apache.polaris.persistence.relational.jdbc.DatasourceOperations` at
-  `polaris/values.yaml:290` — nearly every row. The spec's 11M/day `GET /tables/` poll
-  traffic, which the Lua deduplicator exists to remove, has no local analogue. **Dedup is
-  the wrong first lever on this cluster; the category level is the right one.**
+Working, and not to be "fixed": Quarkus JSON file logging, `_time`, `_msg`, `_stream` on
+`{app, level}` (low-cardinality, the right choice), and **`mdc.requestId` + `mdc.realmId`,
+which make the spec's §7 end-to-end trace query work today**. Note `polaris/values.yaml` has
+`logging.mdc: {}` and `_stream_fields=app,level,loggerName` — the cluster is right and the
+repo is wrong on both, which is #5 again.
+
+Actually wrong:
+
+| what | evidence | fix |
+|---|---|---|
+| `date` duplicates `_time` on every record | `"date": "1788417313.911832"` beside `_time` | `json_date_key false` on the HTTP output |
+| `processName` is a 60-byte JVM path on every record; `loggerClassName`, `processId` near-valueless | in every record | `record_modifier` `Remove_key` |
+| **DEBUG SQL records are ~1.5KB each** — full statement, every bound parameter, an embedded JSON blob escaped four deep — and are nearly every row | the sample `_msg` | `DatasourceOperations` to INFO, or route it to its own stream. **The real volume lever here; the spec's Lua dedup targets poll traffic this cluster does not have.** |
+| bound parameter values are written to the log | S3 paths and internal properties in the sample | same fix; worth knowing before this pattern reaches anything with real data in it |
+| `response_size` is `-` for zero-byte responses | `"... 200 -"` | regex `[\d-]+`, not `\d+` |
+| no latency token in the access-log pattern | the access-log `_msg` | add `%D`; the spec's own P99 panels need it |
+
+No evidence either way on the tail `DB`, `Skip_Long_Lines` or buffering — the repo's
+`fb-values.yaml` has now twice been shown not to be the live config, so those get settled by
+`helm get values`, not by reading it.
 
 **#6 — A shared PVC cannot cross namespaces. OPEN (design constraint, decide before building).**
 PVCs are namespaced. Polaris runs in `datahub-hynix`, so the file-tailing shipper must run

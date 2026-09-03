@@ -129,3 +129,75 @@ reading just as much as to writing, and I read.
 Unsettled, and one VMUI JSON-tab click away: the actual field shape of a record, which
 decides whether `loggerName` and event time are recoverable by fixing the shipper or need
 the file format changed at Polaris.
+
+---
+
+## SECOND CORRECTION — the raw record, and two more of my inferences falsified
+
+Kade pulled two records from the VMUI JSON tab. They settle the shape question and overturn
+two claims from the first correction, both of which were inferred from the histogram rather
+than observed.
+
+```json
+{ "_msg": "query: INSERT INTO POLARIS_SCHEMA.ENTITIES (...) VALUES (?, ...)\n  5790236183908929095\n  ...",
+  "_stream": "{app=\"polaris\",level=\"DEBUG\"}",
+  "_time": "2026-09-03T06:35:13.911654221Z",
+  "date": "1788417313.911832",
+  "app": "polaris", "level": "DEBUG",
+  "hostName": "benchmarks-polaris-585587454b-nhzdr",
+  "loggerName": "org.apache.polaris.persistence.relational.jdbc.DatasourceOperations",
+  "loggerClassName": "org.slf4j.spi.DefaultLoggingEventBuilder",
+  "mdc.realmId": "POLARIS",
+  "mdc.requestId": "dce356e7-539d-444f-a854-c9b17cf4a0a2_0000000000000000107",
+  "processId": "1", "processName": "/usr/lib/jvm/java-21-openjdk-.../bin/java",
+  "sequence": "3724", "threadId": "27", "threadName": "executor-thread-1" }
+```
+
+**Wrong: "`_time` is stamped at ingest."** It is the record's own time.
+`_time` = `...13.911654221Z`; Fluent Bit's own `date` = `1788417313.911832` =
+`...13.911832Z`. They differ by **178µs**, with `_time` the *earlier* of the two — an ingest
+stamp cannot precede the shipper's own read. So `Rename timestamp _time` works, and the
+nanosecond precision is Quarkus's: the JBoss JSON formatter prints the `Instant` at full
+precision, not milliseconds as I assumed. The single 15:35 histogram bar is simply
+**15:35 KST = 06:35 UTC** — a real burst of catalog activity (`sequence` 3723/3724, so
+~3.7k records since JVM start), not a replay.
+
+**Wrong: "no record carries `loggerName`."** Every record carries it. What the stream-fields
+panel showed was the *stream* — `{app, level}` — and the live output is therefore configured
+`_stream_fields=app,level`, **not** the `app,level,loggerName` in `logging/fb-values.yaml`.
+Another repo/cluster divergence, and one where the cluster is already right: `loggerName`
+belongs as a searchable field, not a stream field.
+
+The lesson, twice over in one session: a rendered UI is a projection. `_stream` is not the
+field list, and a histogram bucket is not a clock. Read the record.
+
+## What the record actually establishes
+
+Working, and better than either the repo or the first audit implied:
+
+- **Quarkus JSON file logging is on and correct** — this is unmistakably the JBoss JSON
+  formatter's shape.
+- **`mdc.requestId` and `mdc.realmId` are both present.** The spec's §7 end-to-end trace
+  query works *today*. `polaris/values.yaml` has `logging.mdc: {}`, so this too came from
+  outside the repo.
+- `_msg`, `_time`, `_stream`, `hostName`, `threadName`, `sequence` all sound.
+
+Genuinely wrong, now on evidence rather than inference:
+
+- **`date` duplicates `_time` on every record.** Fluent Bit's `json_date_key` default.
+  `json_date_key false` removes it.
+- **`processName` is a 60-byte absolute JVM path repeated on every record**; `loggerClassName`
+  and `processId` are near-valueless too. A `record_modifier` `Remove_key` pays for itself at
+  volume.
+- **The DEBUG SQL records are enormous** — the sample `_msg` is ~1.5KB: full statement, every
+  bound parameter, and an embedded JSON blob escaped four levels deep. This is the volume
+  driver, and it puts **bound parameter values into the log** — S3 paths and internal
+  properties here, which is the shape of a leak even where this instance's contents are dull.
+- **`response_size` is `-`** (`"... 200 -"`), so the spec's `(?<response_size>\d+)` cannot
+  match a zero-byte response. Needs `[\d-]+`.
+- **No latency token** in the access-log pattern, so the spec's own P99-by-endpoint panels
+  cannot be built from it.
+
+Still unverified either way: the tail `DB`, `Skip_Long_Lines`, and buffering settings — the
+records give no evidence about them, and the repo's copy of `fb-values.yaml` has now been
+shown twice not to be the live config.
