@@ -122,80 +122,32 @@ def rows_scanned(e, vol):
     return rows, "index match" + (", lower bound" if n.get("Filter") else "")
 
 
-def indexed_baseline(explains, vol):
-    """Per relation: the cheapest INDEXED access to it measured in THIS run.
-
-    The denominator of every ratio in this workbook, and deliberately NOT a
-    hypothetical. No index was created for this analysis and none exists on the
-    grantee columns -- the schema is the plain upstream one. The comparison is
-    between two plans the planner really chose, against the same table, at the
-    same volume, in the same sweep: `grant_records` is reached BOTH ways here,
-    sequentially for the grantee direction and through `grant_records_pkey` for
-    the securable one. That is what makes the ratio a measurement rather than a
-    projection.
-
-    A relation only ever seq-scanned gets no baseline and no ratio, rather than
-    a borrowed one.
-    """
-    best = {}
-    for e in explains or []:
-        if e.get("skipped") or e.get("error"):
-            continue
-        n = relation_scan_node(e)
-        rel, node = n.get("Relation Name"), n.get("Node Type")
-        if not rel or not node or node == "Seq Scan":
-            continue
-        cost = n.get("Total Cost")
-        rows, _ = rows_scanned(e, vol)
-        if cost is None or rows is None:
-            continue
-        cur = best.get(rel)
-        if cur is None or cost < cur["cost"]:
-            best[rel] = {
-                "label": node
-                + (f" using {n['Index Name']}" if n.get("Index Name") else ""),
-                "cost": cost,
-                "rows": rows,
-            }
-    return best
+#: Three columns, in the order they are written to every statement sheet.
+READ_HEADERS = ("rows_scanned", "rows_basis", "scales_with_table")
+READ_WIDTHS = (13, 23, 18)
+READ_BLANK = (None, "", None)
 
 
-#: Seven columns, in the order they are written to both statement sheets.
-RATIO_HEADERS = (
-    "rows_scanned",
-    "rows_basis",
-    "indexed_baseline",
-    "baseline_rows",
-    "baseline_cost",
-    "rows_x",
-    "cost_x",
-)
-RATIO_WIDTHS = (13, 21, 38, 13, 13, 9, 9)
-RATIO_BLANK = (None, "", "", None, None, None, None)
+def read_width(e, vol):
+    """(rows read, why that number, whether that number grows with the table).
 
+    NO RATIO, ON PURPOSE. Rows and cost sit side by side and the reader draws
+    the line between them; a ratio against some other statement's plan buries
+    the two numbers that actually forecast anything under an arithmetic nobody
+    can re-derive from the sheet.
 
-def ratios(e, vol, base):
-    """One plan's read-width and cost against the indexed baseline for its table.
-
-    `rows_x` and `cost_x` answer two different questions and can disagree by an
-    order of magnitude. `rows_x` is how much WIDER the read is. `cost_x` is what
-    the planner thinks that costs, and it is the smaller number because a
-    sequential read of 60,815 rows is far cheaper per row than 60,815 random
-    index descents would be. Neither is a latency: plain EXPLAIN does not
-    execute, so nothing here was timed.
+    `scales_with_table` is the column to sort on before a reseed. TRUE means
+    the plan reads the WHOLE relation, so its rows_scanned and its cost both
+    move with the row count -- seeding 10,000 principals multiplies these and
+    leaves the FALSE rows where they are. It is a statement about plan SHAPE,
+    which is what plain EXPLAIN measures reliably, not about the estimates.
     """
     if not e or e.get("skipped") or e.get("error"):
-        return RATIO_BLANK
-    n = relation_scan_node(e)
-    rel = n.get("Relation Name")
+        return READ_BLANK
     rows, basis = rows_scanned(e, vol)
-    cost = n.get("Total Cost")
-    b = base.get(rel)
-    if not b:
-        return (rows, basis, "", None, None, None, None)
-    rx = round(rows / b["rows"], 1) if rows and b["rows"] else None
-    cx = round(cost / b["cost"], 1) if cost and b["cost"] else None
-    return (rows, basis, b["label"], b["rows"], b["cost"], rx, cx)
+    if not basis:
+        return READ_BLANK
+    return (rows, basis, basis == "whole table")
 
 
 def scan_summary(e):
@@ -347,7 +299,6 @@ def build(case, matrix_path, explain_path, dest):
     occurrences = parse_matrix(text)
     per_api = run.get("per_api", {})
     vol = run.get("volume") or {}
-    base = indexed_baseline(run.get("explains") or [], vol)
 
     wb = Workbook()
     wb.remove(wb.active)
@@ -404,7 +355,7 @@ def build(case, matrix_path, explain_path, dest):
     rows = []
     for o in occurrences:
         e = idx.get((normalize_sql(o["sql"]), o["params"]))
-        rt = ratios(e, vol, base)
+        rt = read_width(e, vol)
         rows.append(
             [
                 case,
@@ -445,7 +396,7 @@ def build(case, matrix_path, explain_path, dest):
             "plan_rows",
             "startup_cost",
             "total_cost",
-            *RATIO_HEADERS,
+            *READ_HEADERS,
             "parallel",
             "index_cond",
             "filter",
@@ -455,7 +406,7 @@ def build(case, matrix_path, explain_path, dest):
         ],
         rows,
         [13, 40, 11, 6, 22, 8, 12, 46, 30, 10, 11, 12, 11]
-        + list(RATIO_WIDTHS)
+        + list(READ_WIDTHS)
         + [10, 56, 56, 60, 34, 60],
         flag_col=10,
     )
@@ -465,7 +416,7 @@ def build(case, matrix_path, explain_path, dest):
     rows = []
     for e in run.get("explains") or []:
         refused = e.get("error") or e.get("skipped")
-        rt = ratios(e, vol, base)
+        rt = read_width(e, vol)
         rows.append(
             [
                 case,
@@ -506,7 +457,7 @@ def build(case, matrix_path, explain_path, dest):
             "plan_rows",
             "startup_cost",
             "total_cost",
-            *RATIO_HEADERS,
+            *READ_HEADERS,
             "parallel",
             "index_cond",
             "filter",
@@ -531,7 +482,7 @@ def build(case, matrix_path, explain_path, dest):
             11,
             12,
             11,
-            *RATIO_WIDTHS,
+            *READ_WIDTHS,
             10,
             56,
             56,
@@ -547,10 +498,17 @@ def build(case, matrix_path, explain_path, dest):
     )
 
     # ---- Cost --------------------------------------------------------------
-    #: The one sheet that answers "which statement is expensive, and next to
-    #: what". Every other sheet lists; this one RANKS, and it ranks on
-    #: `cost_share` rather than `cost_x` because a 194x statement issued once is
-    #: not the problem a 194x statement issued 163 times is.
+    #: Rows and cost, ranked. Every other sheet lists; this one puts the two
+    #: numbers side by side and stops there -- no ratio, because the reader
+    #: drawing the line between rows and cost themselves is the point, and a
+    #: ratio against another statement's plan buries both under an arithmetic
+    #: they cannot re-derive from the sheet.
+    #:
+    #: THE RESEED QUESTION. Sort on `scales_with_table`, then `cost_units`.
+    #: TRUE means the plan reads the whole relation, so both its numbers move
+    #: with the row count; seeding 10,000 principals multiplies those rows and
+    #: leaves the FALSE ones where they are. That split, not today's estimates,
+    #: is what forecasts.
     ws = wb.create_sheet("Cost")
     planned = [
         e
@@ -558,15 +516,15 @@ def build(case, matrix_path, explain_path, dest):
         if not (e.get("skipped") or e.get("error"))
     ]
     #: Planner cost units, summed over occurrences. NOT time, and not additive
-    #: across cases -- a within-case denominator for `cost_share` and nothing
-    #: else. It is here because "163 x 1637.26" is the shape of the finding and
-    #: leaving the reader to multiply it in their head loses it.
+    #: across cases -- a within-case weight and nothing else. It is here because
+    #: "51 x 1637.26" is the shape of the finding, and leaving the reader to
+    #: multiply it in their head loses it.
     total_units = (
         sum((plan_cost(e) or 0) * (e.get("occurrences") or 0) for e in planned) or 1
     )
     rows = []
     for e in planned:
-        rt = ratios(e, vol, base)
+        rows_read, basis, scales = read_width(e, vol)
         occ = e.get("occurrences") or 0
         cost = plan_cost(e)
         units = (cost or 0) * occ
@@ -578,25 +536,19 @@ def build(case, matrix_path, explain_path, dest):
                 occ,
                 len(e.get("apis") or {}),
                 scan_summary(e),
-                bool(e.get("seq_scanned")),
-                rt[0],
-                rt[1],
-                rt[2],
-                rt[3],
-                rt[4],
+                rows_read,
+                basis,
+                scales,
                 cost,
-                rt[5],
-                rt[6],
                 round(units, 2),
                 round(units / total_units, 4),
                 ", ".join(predicate_columns(e.get("sql"))),
                 truncate(where_of(e.get("sql")))[:120],
             ]
         )
-    #: Sorted by share, then by cost_x, so the two ways of being expensive --
-    #: often, and badly -- both surface at the top instead of one hiding the
-    #: other.
-    rows.sort(key=lambda r: (-(r[16] or 0), -(r[14] or 0)))
+    #: Weight first, then raw cost. The two ways of being expensive -- often,
+    #: and badly -- both surface at the top instead of one hiding the other.
+    rows.sort(key=lambda r: (-(r[10] or 0), -(r[9] or 0)))
     write_rows(
         ws,
         [
@@ -606,26 +558,21 @@ def build(case, matrix_path, explain_path, dest):
             "occurrences",
             "api_count",
             "plan",
-            "seq_scan",
             "rows_scanned",
             "rows_basis",
-            "indexed_baseline",
-            "baseline_rows",
-            "baseline_cost",
+            "scales_with_table",
             "total_cost",
-            "rows_x",
-            "cost_x",
             "cost_units",
             "cost_share",
             "predicate_columns",
             "where_clause",
         ],
         rows,
-        [13, 22, 8, 12, 10, 44, 10, 13, 21, 38, 13, 13, 12, 9, 9, 13, 11, 46, 60],
-        flag_col=7,
+        [13, 22, 8, 12, 10, 44, 13, 23, 18, 12, 13, 11, 46, 60],
+        flag_col=9,
     )
     for r in range(2, len(rows) + 2):
-        ws.cell(row=r, column=17).number_format = "0.0%"
+        ws.cell(row=r, column=12).number_format = "0.0%"
 
     # ---- Shapes ------------------------------------------------------------
     ws = wb.create_sheet("Shapes")
@@ -796,40 +743,38 @@ def build(case, matrix_path, explain_path, dest):
             "rows_scanned",
             "Rows the plan READS from its table. For a Seq Scan that is the "
             "whole table (the count(*) above) — NOT its plan_rows, which is "
-            "what survives the Filter and reads 1 on a 60,815-row table. For "
+            "what SURVIVES the Filter and reads 1 on a 60,815-row table. For "
             "an index node it is the node's plan_rows, i.e. what the Index "
             "Cond matched; where a Filter also remains it is a lower bound and "
             "rows_basis says so.",
         ],
         [
-            "indexed_baseline — no index was created",
-            "The denominator is not hypothetical. The schema here is the plain "
-            "upstream one and nothing was added for this analysis. It is the "
-            "cheapest INDEXED access to the SAME table measured in THIS run: "
-            "grant_records is reached both ways here, sequentially for the "
-            "grantee direction and via grant_records_pkey for the securable "
-            "one. A table only ever seq-scanned gets no baseline and no ratio "
-            "rather than a borrowed one.",
+            "rows and cost, no ratio",
+            "The two numbers sit side by side and the reader draws the line. "
+            "They are not proportional and should not be treated as though "
+            "they were: reading 60,815 rows sequentially costs 194x a "
+            "single-row index seek, not 60,815x, because a sequential read is "
+            "far cheaper PER ROW than the same number of random index "
+            "descents. Neither number is a latency — plain EXPLAIN does not "
+            "execute, so nothing here was timed.",
         ],
         [
-            "rows_x vs cost_x — they disagree, on purpose",
-            "rows_x is how much WIDER the read is. cost_x is what the planner "
-            "thinks that width costs, and it is much the smaller number "
-            "because a sequential read is far cheaper per row than the same "
-            "number of random index descents. Quote both or neither; quoting "
-            "rows_x alone overstates it and cost_x alone understates it.",
-        ],
-        [
-            "baseline_rows is an estimate with a floor of 1",
-            "PostgreSQL never estimates below one row, so a baseline_rows of 1 "
-            "may stand for a true footprint of more. The real grant footprints in "
-            "these realms are 1 (unauthorized), 78 (authorized) and a ceiling "
-            "of 3,377 (admin) — divide rows_x by the footprint that applies "
-            "before quoting it as a per-request number.",
+            "scales_with_table — the column to sort on before a reseed",
+            "TRUE means the plan reads the WHOLE relation, so its rows and its "
+            "cost both move with the row count. Seeding 10,000 principals "
+            "multiplies the TRUE rows and leaves the FALSE ones where they "
+            "are. This is a statement about plan SHAPE, which is what plain "
+            "EXPLAIN measures reliably — unlike the estimates beside it. Two "
+            "cautions: a shape can FLIP at volume (an unindexed scan may "
+            "escalate to a parallel Seq Scan past roughly 160k rows, a "
+            "different regime rather than more of this one), and growth is not "
+            "uniform — grant_records grows with principals x grants, entities "
+            "with catalogs and tables. Re-run the sweep after the reseed; do "
+            "not extrapolate these numbers.",
         ],
         [
             "cost_units / cost_share (Cost sheet)",
-            "total_cost × occurrences, and that as a share of the case total. "
+            "total_cost × occurrences, and that as a share of the case. "
             "Planner cost units, NOT milliseconds, and not comparable across "
             "cases — a within-case ranking of which statement dominates.",
         ],
