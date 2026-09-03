@@ -25,7 +25,10 @@ import collections
 import json
 import pathlib
 import re
+import shutil
 import sys
+
+from datetime import datetime
 
 from openpyxl import Workbook
 from openpyxl.formatting.rule import CellIsRule
@@ -708,6 +711,12 @@ def build(case, matrix_path, explain_path, dest):
     ws = wb.create_sheet("Provenance")
     n = len(per_api)
     prov = [
+        #: First two rows, because "am I looking at the current one" has to be
+        #: answerable without leaving the workbook. Three generations of these
+        #: files once sat in reports/ under near-identical stamped names, and
+        #: the oldest sorted first.
+        ["workbook_file", dest.name],
+        ["workbook_built", datetime.now().isoformat(timespec="seconds")],
         ["case", case],
         ["matrix_report", matrix_path.name],
         ["explain_run", explain_path.name],
@@ -830,14 +839,26 @@ def main():
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    from datetime import datetime
-
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = pathlib.Path(
         args.out or HERE / "reports" / f"api-explain-{args.case}-{stamp}.xlsx"
     )
     counts = build(args.case, HERE / args.matrix, HERE / args.explain, dest)
+    #: The same `-latest` convention the markdown reports use, and for the same
+    #: reason: stamped names accumulate, sort by stamp rather than by recency in
+    #: most file pickers, and whoever opens the wrong one gets a workbook that
+    #: is internally consistent and silently a generation old. Only written for
+    #: the default destination -- an explicit --out is a deliberate name and
+    #: should not quietly claim to be latest.
+    latest = None
+    if args.out is None:
+        latest = dest.parent / f"api-explain-{args.case}-latest.xlsx"
+        shutil.copyfile(dest, latest)
+    #: Line 1 stays exactly `-> <stamped name>`. Notebook 06 parses it, and
+    #: a suffix appended here would silently poison the name it records.
     print(f"-> {dest.name}")
+    if latest:
+        print(f"   latest: {latest.name}")
     for k, v in counts.items():
         print(f"   {k}: {v}")
     return 0
