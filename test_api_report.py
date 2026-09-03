@@ -278,7 +278,10 @@ def test_a_plan_lands_under_the_statement_it_belongs_to():
     line = [x for x in out.splitlines() if x.startswith("EXPLAIN")][0]
     assert "Seq Scan on grant_records" in line
     assert "cost 1637.26" in line
-    assert "60,814 rows removed by filter" in line
+    assert "60,814 rows filtered" in line
+    #: Its OWN paragraph. Without the blank line markdown joins it onto the
+    #: `params:` line above and the report reads as a wall of prose.
+    assert "`\n\nEXPLAIN" in out
     #: directly beneath its own params line, not floating at the end
     body = out.split("**[0]**")[1]
     assert body.index("EXPLAIN") > body.index("params:")

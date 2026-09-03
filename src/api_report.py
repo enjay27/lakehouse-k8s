@@ -141,33 +141,57 @@ def format_explain(e, index_state):
     """One EXPLAIN result as a single readable line.
 
     Deliberately one line per statement. The full plan is in the run JSON; a
-    report that inlines it becomes unreadable at 500+ statements, and the
-    question a reader has here is "did this use an index or scan the table".
+    report that inlines it is unreadable at 500+ statements, and the question a
+    reader has here is "did this use an index, or read the table".
+
+    TWO THINGS THIS HAS TO COLLAPSE, both from real output (2026-09-03):
+
+      * a `Bitmap Index Scan` node has no `Relation Name` -- only the heap node
+        above it does -- so naming each scan produced
+        `Bitmap Index Scan on None using entities_pkey`, five times in one line.
+      * a `BitmapOr` repeats the same index once per branch. The five sub-scans
+        of one plan were entities_pkey, idx_entities, entities_pkey,
+        entities_pkey, idx_entities -- read as five scans, meaning two.
+
+    So: name the node that touches the relation, then list the indexes with
+    their multiplicity.
     """
     if e is None:
         return None
     if e.get("skipped") or e.get("error"):
         why = e.get("error") or e.get("skipped")
         return f"EXPLAIN ({index_state}) — not planned: {why}"
+
     scans = e.get("scans") or []
-    bits = []
+    heap = next((s for s in scans if s.get("relation")), None)
+    if heap:
+        head = f"{heap.get('node')} on {heap.get('relation')}"
+    else:
+        head = ", ".join(e.get("node_types") or []) or "no scan node"
+
+    #: Index multiplicity, in first-seen order. A dict preserves that and a
+    #: Counter's ordering is not guaranteed to be meaningful to a reader.
+    counts = {}
     for s in scans:
-        node, rel, idx = s.get("node"), s.get("relation"), s.get("index")
-        bits.append(f"{node} on {rel}" + (f" using {idx}" if idx else ""))
-    if not bits:
-        bits = [", ".join(e.get("node_types") or []) or "no scan node"]
+        name = s.get("index")
+        if name:
+            counts[name] = counts.get(name, 0) + 1
+    if counts:
+        head += " using " + ", ".join(
+            f"{n}" + (f" ×{c}" if c > 1 else "") for n, c in counts.items()
+        )
+
     plan = (e.get("plan") or {}).get("Plan", {})
     extra = []
     if e.get("plan_rows") is not None:
-        extra.append(f"est. {e['plan_rows']:,} row(s)")
+        n = e["plan_rows"]
+        extra.append(f"est. {n:,} row" + ("" if n == 1 else "s"))
     if isinstance(plan.get("Total Cost"), (int, float)):
         extra.append(f"cost {plan['Total Cost']:.2f}")
     if e.get("rows_removed_by_filter"):
-        extra.append(f"{e['rows_removed_by_filter']:,} rows removed by filter")
+        extra.append(f"{e['rows_removed_by_filter']:,} rows filtered")
     tail = " · ".join(extra)
-    return (
-        f"EXPLAIN ({index_state}) — " + "; ".join(bits) + (f" · {tail}" if tail else "")
-    )
+    return f"EXPLAIN ({index_state}) — {head}" + (f" · {tail}" if tail else "")
 
 
 #: Why a statement carries no plan, in the reader's terms rather than the
@@ -204,9 +228,11 @@ def annotate_with_explains(text, explains, index_state="index absent"):
     #: A statement block: the fenced SQL, an optional `params:` line, and any
     #: annotation a previous run left behind.
     block = _re.compile(
-        r"(```sql\n(?P<sql>.*?)\n```\n)"
-        r"(?P<params>params: `(?P<pv>.*?)`\n)?"
-        r"(?P<old>(?:(?:EXPLAIN \(|_No EXPLAIN)[^\n]*\n)*)",
+        r"(```sql\n(?P<sql>.*?)\n```\n)" r"(?P<params>params: `(?P<pv>.*?)`\n)?"
+        #: `\n?` swallows the blank line a previous annotation inserted, so a
+        #: re-run REPLACES it instead of adding another. Without it, running
+        #: twice grows a blank line each time.
+        r"(?P<old>\n?(?:(?:EXPLAIN \(|_No EXPLAIN)[^\n]*\n)*)",
         _re.S,
     )
 
@@ -223,7 +249,10 @@ def annotate_with_explains(text, explains, index_state="index absent"):
         else:
             stats["unmatched"] += 1
             line = NO_EXPLAIN_UNMATCHED
-        return head + line + "\n"
+        #: BLANK LINE FIRST. Without it markdown joins the annotation onto the
+        #: `params:` line above and the report renders as a wall of prose --
+        #: 561 of them in the first merged admin report.
+        return head + "\n" + line + "\n"
 
     return block.sub(sub, text), stats
 
