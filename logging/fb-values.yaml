@@ -9,7 +9,6 @@ resources:
     cpu: 500m
     memory: 512Mi
 
-# Mount the shared Polaris log PVC
 extraVolumes:
   - name: polaris-logs
     persistentVolumeClaim:
@@ -20,7 +19,6 @@ extraVolumeMounts:
     mountPath: /logs
     readOnly: true
 
-# Fluent Bit Pipeline Configuration
 config:
   service: |
     [SERVICE]
@@ -45,19 +43,16 @@ config:
     [FILTER]
         Name          modify
         Match         polaris.vlogs
-        Add           _stream_fields app,level
         Add           app polaris
         Rename        message _msg
         Rename        timestamp _time
 
   outputs: |
     [OUTPUT]
-        Name                es
-        Match               polaris.vlogs
-        Host                vlsingle-victoria-logs-single-server.logging.svc.cluster.local
-        Port                9428
-        Path                /insert/elasticsearch
-        Index               polaris
-        Type                _doc
-        Replace_Dots        On
-        Suppress_Type_Name  On
+        Name          http
+        Match         polaris.vlogs
+        Host          vlsingle-victoria-logs-single-server.logging.svc.cluster.local
+        Port          9428
+        URI           /insert/jsonline?_msg_field=_msg&_time_field=_time&_stream_fields=app,level,loggerName
+        Format        json_lines
+        Header        Content-Type application/json
