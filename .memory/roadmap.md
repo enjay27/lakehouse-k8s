@@ -21,12 +21,13 @@ gaps is [`sessions/2026-09-03-polaris-vlogs-audit.md`](sessions/2026-09-03-polar
 
 | # | step | why it is next |
 |---|---|---|
-| 1 | **Done** — access-log field extraction, and the shipper's silent faults: tail `DB`, `Skip_Long_Lines On`, `Rotate_Wait`, filesystem buffering, `json_date_key false`, per-record `Remove_key` | all in `logging/fb-values.yaml`, all Fluent-Bit-side. Install and confirm in VMUI. |
-| 2 | Give the tail DB a PVC instead of the emptyDir | the emptyDir survives a container restart but not `helm upgrade`, and a fresh DB with `Read_from_Head true` re-posts the whole file. The block to uncomment is in `fb-values.yaml`. |
+| 1 | **Done** — access-log field extraction, the retention policy (`polaris_noise_filter`), and the shipper's silent faults: tail `DB`, `Skip_Long_Lines On`, `Rotate_Wait`, filesystem buffering, `json_date_key false`, per-record `Remove_key` | all in `logging/fb-values.yaml`; 30/30 in `logging/scripts/test-polaris-filters.py`. Install, then watch `fluentbit_filter_drop_records_total`. |
+| 2 | Give the tail DB a PVC instead of the emptyDir | the emptyDir survives a container restart but not `helm upgrade`, and a fresh DB with `Read_from_Head true` re-posts the whole file. Block to uncomment is in `fb-values.yaml`. |
 | 3 | Harden VictoriaLogs: `retention.maxDiskSpaceUsageBytes`, right-size 50Gi/4Gi, decide on the 9428 `LoadBalancer` | `active-issues.md` #7. 9428 is unauthenticated ingest **and** query; `persistence.size` is now-or-never. |
 | 4 | Rotate the OpenSearch password (#4), the JDBC password (#9), the MinIO keys | a committed credential stays leaked after the file is edited. Three places now. |
 | 5 | Decide on `autoscaling` vs the shared log file | `active-issues.md` #8. Three Polaris pods appending to one file; RWO does not stop it on one node. Needs a Polaris change, so it waits. |
-| 6 | `%D` in the access-log pattern, then the 24h Lua table dedup | spec §4.2 and §7. Both need Polaris-side changes; parked with #5. |
+| 6 | `%D` in the access-log pattern — **then exempt slow requests from dedup** | spec §7's P99 panels need it, and a table GET that normally takes 8ms taking 4s is exactly the record daily dedup discards. Needs a Polaris change, so parked with #5. |
+| 6b | The "Deprecated Config" WARN exclusion, and PUT request bodies | hook is in the filter, marked TODO. Request bodies are not in the access log at all — Kade is locating the source. |
 | 7 | `vmalert` + log→metric downsampling | spec §8. Nothing exists yet. |
 | 8 | Hand back to `polaris-learning` | The platform exists to serve that suite; see below. |
 

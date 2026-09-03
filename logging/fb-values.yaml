@@ -140,6 +140,167 @@ luaScripts:
         return 2, timestamp, record
     end
 
+    -- ===========================================================================
+    -- polaris_noise_filter — decide what is worth storing
+    -- ===========================================================================
+    -- Evaluated in strict order; the first rule that matches wins.
+    --
+    --   1. level ERROR or WARN ............................. keep
+    --   2. not an access-log record ........................ keep (untouched)
+    --   3. http_status >= 400 .............................. keep  <- outranks dedup
+    --   4. PUT / DELETE / PATCH ............................ keep
+    --   5. POST on the table/view API ...................... keep
+    --      POST anywhere else (2xx) ........................ DROP
+    --   6. GET / HEAD on a table or view ................... first per KST day, rest DROP
+    --   7. anything else ................................... keep
+    --
+    -- Rule 3 above rule 6 is deliberate: a 404 on a table GET is both "a table
+    -- read" and "an error", and errors win. A client hammering a missing table
+    -- stays visible instead of being deduplicated into silence.
+
+    -- ── Tunables ───────────────────────────────────────────────────────────────
+    local UTC_OFFSET_HOURS = 9          -- KST. A KST day starts at 15:00 UTC.
+    local DAY_ROLLOVER_UTC_HOUR = 24 - UTC_OFFSET_HOURS
+
+    local DEDUP_METHODS       = { GET = true, HEAD = true }
+    local ALWAYS_KEEP_METHODS = { PUT = true, DELETE = true, PATCH = true }
+
+    -- Reads of these are kept once per KST day. Scoped to tables and views for
+    -- now; widen here once fluentbit_filter_drop_records_total shows what actually
+    -- dominates the volume.
+    local DEDUP_PATH_PATTERNS = {
+        "/namespaces/[^/]+/tables/[^/?]+",
+        "/namespaces/[^/]+/views/[^/?]+",
+    }
+
+    -- POSTs that are always kept. Every other successful POST is dropped, which is
+    -- what removes the per-connect OAuth token traffic.
+    --   NOTE: the views line is an addition, not in the original requirement — a
+    --   view commit is a mutation, and dropping mutations silently is worse than
+    --   keeping a few extra records. Delete that line to follow the spec literally.
+    local KEEP_POST_PATTERNS = {
+        "/namespaces/[^/]+/tables",
+        "/namespaces/[^/]+/views",
+    }
+
+    -- ── KST day number ─────────────────────────────────────────────────────────
+    -- Taken from the record's own _time, never from os.time(): a shipper replay
+    -- must re-evaluate historical records against their own day, not against now.
+    -- No tzdata, no os.date, no dependence on the container's TZ.
+    local function days_from_civil(y, m, d)
+        if m <= 2 then y = y - 1 end
+        local era = math.floor(y / 400)
+        local yoe = y - era * 400
+        local mp  = (m > 2) and (m - 3) or (m + 9)
+        local doy = math.floor((153 * mp + 2) / 5) + d - 1
+        local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
+        return era * 146097 + doe - 719468
+    end
+
+    local function kst_day(rfc3339)
+        if type(rfc3339) ~= "string" then return nil end
+        local y, m, d, h = rfc3339:match("^(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d)")
+        if not y then return nil end
+        local day = days_from_civil(tonumber(y), tonumber(m), tonumber(d))
+        if tonumber(h) >= DAY_ROLLOVER_UTC_HOUR then day = day + 1 end
+        return day
+    end
+
+    -- ── State: two day buckets ─────────────────────────────────────────────────
+    -- Keyed by day, so rollover drops a whole bucket instead of sweeping expired
+    -- entries. Memory is bounded by one day of distinct paths. `previous` exists so
+    -- a straggler arriving just after midnight does not re-log everything.
+    --
+    -- In memory, per pod: a shipper restart re-logs the first hit per table for the
+    -- rest of that day. Accepted — the duplicate is harmless and marks the restart.
+    local dedup = { day = nil, current = {}, previous = {} }
+
+    local function seen_before(day, key)
+        if dedup.day == nil then dedup.day = day end
+
+        if day > dedup.day then
+            if day == dedup.day + 1 then
+                dedup.previous, dedup.current = dedup.current, {}
+            else
+                dedup.previous, dedup.current = {}, {}
+            end
+            dedup.day = day
+        end
+
+        local bucket
+        if day == dedup.day then
+            bucket = dedup.current
+        elseif day == dedup.day - 1 then
+            bucket = dedup.previous
+        else
+            return false     -- older than we track: keep it, do not grow state
+        end
+
+        if bucket[key] then return true end
+        bucket[key] = true
+        return false
+    end
+
+    local function matches_any(path, patterns)
+        for _, p in ipairs(patterns) do
+            if path:find(p) then return true end
+        end
+        return false
+    end
+
+    -- ── Entry point ────────────────────────────────────────────────────────────
+    function polaris_noise_filter(tag, timestamp, record)
+        local level = record["level"]
+
+        -- 1. Errors and warnings always survive.
+        --    TODO: the "Deprecated Config" exclusion goes here, once the exact
+        --    message is known. Match it narrowly — a broad pattern here silently
+        --    discards real errors.
+        if level == "ERROR" or level == "WARN" then
+            return 0, timestamp, record
+        end
+
+        -- 2. Application logs pass through untouched.
+        if record["loggerName"] ~= ACCESS_LOGGER then
+            return 0, timestamp, record
+        end
+
+        -- 3. Anything that failed is kept. Also covers a line that did not parse,
+        --    where http_status is absent — never drop what you could not read.
+        local status = tonumber(record["http_status"])
+        if status == nil or status >= 400 then
+            return 0, timestamp, record
+        end
+
+        local method = record["http_method"]
+        local path   = record["api_path"] or ""
+
+        -- 4. Mutations other than POST always survive.
+        if ALWAYS_KEEP_METHODS[method] then
+            return 0, timestamp, record
+        end
+
+        -- 5. POST: the table/view API only.
+        if method == "POST" then
+            if matches_any(path, KEEP_POST_PATTERNS) then
+                return 0, timestamp, record
+            end
+            return -1, timestamp, record
+        end
+
+        -- 6. Reads of a table or view: one per KST day.
+        if DEDUP_METHODS[method] and matches_any(path, DEDUP_PATH_PATTERNS) then
+            local day = kst_day(record["_time"])
+            if day == nil then return 0, timestamp, record end
+            if seen_before(day, method .. " " .. path) then
+                return -1, timestamp, record
+            end
+            return 0, timestamp, record
+        end
+
+        -- 7. Everything else survives.
+        return 0, timestamp, record
+    end
 config:
   service: |
     [SERVICE]
@@ -217,7 +378,19 @@ config:
         call          polaris_access_log
         type_int_key  http_status response_size
 
-    # 3. Drop fields that cost storage on every single record and answer nothing.
+    # 3. Decide what is worth storing. Drops before the field trimming below,
+    #    so nothing is spent tidying a record that is about to go.
+    #    Order (first match wins): ERROR/WARN keep -> non-access-log keep ->
+    #    4xx/5xx keep -> PUT/DELETE/PATCH keep -> POST table/view keep, other
+    #    POST drop -> GET|HEAD on table/view once per KST day -> keep.
+    #    The full rule list and the tunables are at the top of the function.
+    [FILTER]
+        Name          lua
+        Match         polaris.vlogs
+        script        /fluent-bit/scripts/polaris_access_log.lua
+        call          polaris_noise_filter
+
+    # 4. Drop fields that cost storage on every single record and answer nothing.
     #    processName is a ~60-byte absolute JVM path; loggerClassName is the
     #    logging facade, not the logger; processId is always 1 in a container.
     #    hostName, threadName and sequence are kept — sequence in particular makes

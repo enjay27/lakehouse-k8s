@@ -422,3 +422,60 @@ which finally puts the PVC **under version control** — closing the "mounted by
 created by no manifest here" issue for good. The shipper's `claimName` follows in the same
 change. Check `kubectl get sc` first: `logging.file.storage.className: standard` must exist on
 OrbStack or the PVC stays `Pending` and **Polaris will not start**.
+
+---
+
+## Built: the retention policy (`polaris_noise_filter`)
+
+Kade's rules, plus four decisions worth recording. Second function in the same
+`luaScripts` entry, running after the parser and **before** `record_modifier` — no point
+trimming fields off a record about to be dropped.
+
+Order, first match wins: **ERROR/WARN keep → non-access-log keep → 4xx/5xx keep →
+PUT/DELETE/PATCH keep → POST on table/view keep, other POST drop → GET/HEAD on a table or
+view once per KST day → keep.**
+
+**Errors outrank dedup, and that ordering is the point.** The record Kade sent to confirm the
+parser was a **404 on a table GET** — under his rules simultaneously "a table read" (dedup)
+and "an error" (keep). Errors win, so a client hammering a missing table stays fully visible
+instead of being deduplicated into one line a day.
+
+Four departures from the spec's §4.2, each for a reason:
+
+1. **The day comes from the record's `_time`, never `os.time()`.** The spec compares against
+   wall-clock, so a shipper replay re-evaluates history against "now" and drops it wrongly.
+   Reading the record's own timestamp makes the decision deterministic and replay-safe.
+2. **KST via arithmetic, not tzdata.** KST is UTC+9, so a KST day begins at 15:00 UTC: the
+   whole conversion is "the UTC date, plus one if the UTC hour ≥ 15". `days_from_civil`
+   yields an integer day number; no `os.date`, no timezone database, no dependence on the
+   container's TZ. Verified against epoch 0, the 15:00 boundary, year rollover, 2024's leap
+   day, and 2100 correctly *not* being a leap year.
+3. **Two day buckets instead of a probabilistic sweep.** The spec sweeps expired entries on a
+   1-in-1000 dice roll. Keying by day makes rollover drop a whole bucket: O(1), bounded to
+   one day of distinct paths. `previous` is kept so a straggler arriving just after midnight
+   does not re-log everything. State only ever moves forward, so an old record cannot reset
+   today's.
+4. **Key on `method .. " " .. api_path`, not the table name.** The spec's
+   `string.match(path, "/tables/([^/?]+)")` collides same-named tables in different catalogs,
+   and merges `/tables/t1` with `/tables/t1/metrics`.
+
+One addition beyond the requirement, flagged in the code and removable in one line: **view
+commits (`POST .../views/{v}`) are kept alongside table commits.** The rule as given —
+"POST Table only, ignore other 2xx POSTs" — would silently drop a view commit, and dropping
+a mutation silently is worse than storing a few extra records.
+
+Accepted limits: dedup state is per-pod and in memory, so a shipper restart re-logs the first
+hit per table for the rest of that day (Kade's call; the duplicate also marks the restart).
+Suppression volume is not annotated in-band — Fluent Bit already exposes it at
+`/api/v1/metrics` as `fluentbit_filter_drop_records_total`.
+
+Tests moved to `logging/scripts/test-polaris-filters.py`, still reading the Lua out of
+`fb-values.yaml`. 30/30: six on field extraction, twenty-four on the policy, run in order in
+one process because the dedup is stateful — including the 14:59Z/15:00Z boundary pair, the
+post-midnight straggler, and both oauth cases.
+
+**Still needs Polaris-side changes, so parked:** `%D` for latency (and with it the
+recommendation that slow requests be exempt from dedup entirely — a table GET that normally
+takes 8ms taking 4s is exactly the record daily dedup would throw away), the "Deprecated
+Config" exclusion (hook is in place, marked TODO), and PUT request bodies, which are not in
+the access log at all.
