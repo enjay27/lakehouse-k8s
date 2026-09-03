@@ -1,5 +1,11 @@
 # HANDOFF — the capture dies when the notebook starts it, not when a terminal does
 
+> **SUPERSEDED 2026-09-03 by `HANDOFF-explain-at-scale.md`.** The blocker this
+> file diagnoses is CLOSED — drive from a terminal and the sweep runs. Keep
+> reading here only for §1.2, the table of theories already falsified by
+> measurement, and §1.6 / RUNBOOK §4.0, the terminal-drive workaround. The
+> notebook `03` defect itself is still open.
+
 Written 2026-09-01, **diagnosis corrected 2026-09-02**. Standalone. Companion to
 `PLAN-api-index-matrix.md` (design) and `RUNBOOK-api-index-matrix.md` (commands).
 Read this one first.

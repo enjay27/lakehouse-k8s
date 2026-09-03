@@ -773,13 +773,24 @@ def build(case, matrix_path, explain_path, dest):
             "cost both move with the row count. Seeding 10,000 principals "
             "multiplies the TRUE rows and leaves the FALSE ones where they "
             "are. This is a statement about plan SHAPE, which is what plain "
-            "EXPLAIN measures reliably — unlike the estimates beside it. Two "
-            "cautions: a shape can FLIP at volume (an unindexed scan may "
-            "escalate to a parallel Seq Scan past roughly 160k rows, a "
-            "different regime rather than more of this one), and growth is not "
-            "uniform — grant_records grows with principals x grants, entities "
-            "with catalogs and tables. Re-run the sweep after the reseed; do "
-            "not extrapolate these numbers.",
+            "EXPLAIN measures reliably — unlike the estimates beside it. "
+            "Growth is not uniform: grant_records grows with principals x "
+            "grants, entities with catalogs and tables. Re-run the sweep after "
+            "a reseed; do not extrapolate these numbers.",
+        ],
+        [
+            "THE SHAPE FLIPS AT VOLUME — AND THIS SWEEP CANNOT SEE IT",
+            "02b measured the unindexed grantee scan planning as a plain "
+            "Seq Scan at 125,235 rows and as a PARALLEL Gather at 233,237 — a "
+            "different regime, not more of this one. This sweep cannot "
+            "reproduce that at any volume: explain_statements pins "
+            "max_parallel_workers_per_gather = 0 for the session (deliberately "
+            "— 02b measured parallel timings as unusable, identical cost and "
+            "buffers with a 3-10x clock spread). So `parallel` is structurally "
+            "FALSE here and a post-reseed sweep will still report Seq Scan. "
+            "That is the pin, not the planner. To ask whether it escalates, "
+            "run one unpinned pass — or read "
+            "reports/doc-grant-scale-sweep-latest.md, which already did.",
         ],
         [
             "cost_units / cost_share (Cost sheet)",
