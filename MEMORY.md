@@ -5,25 +5,30 @@
 
 ## Now — 2026-09-03
 
-**Live thread: the Polaris → VictoriaLogs pipeline.** VictoriaLogs and a Fluent Bit file
-shipper are deployed (`logging/`) against Kade's design, filed at
-`logging/polaris-logging-architecture-spec.md`. Order of work:
-[`roadmap.md`](.memory/roadmap.md) *Next*; the audit behind it,
+**Live thread: the Polaris → VictoriaLogs pipeline**, built against Kade's design doc, now
+filed at `logging/polaris-logging-architecture-spec.md`. Order of work:
+[`roadmap.md`](.memory/roadmap.md) *Next*; the audit and its correction,
 [`sessions/2026-09-03-polaris-vlogs-audit.md`](.memory/sessions/2026-09-03-polaris-vlogs-audit.md).
 
-**That half carries nothing today — written-but-inert, not broken** ([`active-issues.md`](.memory/active-issues.md) #5).
-Three switches are off: `logging.file.enabled: false` renders `quarkus.log.file.enabled=false`,
-so no `polaris.log` is written; the same flag gates the log PVC, so `polaris-shared-logs-pvc`
-— named by both Polaris and the shipper — **is created by nothing in this repo**; and
-`quarkus.http.access-log.enabled` is set nowhere, so the access log the spec's dedup filter
-consumes does not exist. Everything that reaches OpenSearch does so by the **console** path
-via the DaemonSet — which answers the old open question: **two Fluent Bit releases, not
-one** (#2). Also new: a committed plaintext OpenSearch password (#4); a PVC cannot cross
-namespaces, so the file shipper must live in `datahub-hynix` (#6); VictoriaLogs sized from
-the doc's 140M/day column, no disk cap, unauthenticated `LoadBalancer` on 9428 (#7).
+**It runs — and the repo says it cannot.** VMUI shows 1,636 records in 30 minutes, streams
+`{app, level}`, with Polaris DEBUG SQL and Quarkus access-log lines. Meanwhile
+`polaris/values.yaml` still carries `logging.file.enabled: false`, sets
+`quarkus.http.access-log.enabled` nowhere, and mounts a `polaris-shared-logs-pvc` that
+nothing in this repo creates. The live release was configured outside these files. **Diff
+`helm get values` before editing `polaris/values.yaml`, or the edit reverts what is
+deployed** ([`active-issues.md`](.memory/active-issues.md) #5 — which is #1 caught in the act).
 
-**Still the rule:** verify against the **subchart default**, never against the values file —
-and the repo has not been reconciled against the rebuilt cluster (#1).
+**Faults visible in the capture** (#5b): `_time` is stamped at ingest, not read from the
+record — all 1,636 in one 15s bucket, so event time is being lost now; no `loggerName` on
+any record though the output asks for it as a stream field; no tail `DB` with
+`Read_from_Head true`; the access-log regex cannot match `%b`'s `-`; and the local volume
+driver is DEBUG SQL from `DatasourceOperations`, not the poll traffic the spec's Lua dedup
+targets. Also open: a committed plaintext OpenSearch password (#4), a PVC that cannot cross
+namespaces (#6), VictoriaLogs sized from the doc's 140M/day column (#7).
+
+**Still the rule, and it cuts both ways:** verify against the running object, never
+against the values file — when reading it as much as when writing it. The repo has not been
+reconciled against the rebuilt cluster (#1).
 
 ## Where the detail is
 

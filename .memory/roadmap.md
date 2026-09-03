@@ -21,15 +21,16 @@ gaps is [`sessions/2026-09-03-polaris-vlogs-audit.md`](sessions/2026-09-03-polar
 
 | # | step | why it is next |
 |---|---|---|
-| 1 | Decide the shape: **shared-PVC file tail** (spec as written) vs **second OUTPUT on the existing DaemonSet** | `active-issues.md` #6. Everything below branches on this, and only the file path can carry the access-log parser and the Lua dedup filter. |
-| 2 | Turn on the three switches the file path needs — `logging.file.enabled`, a PVC that actually exists, `quarkus.http.access-log.enabled` | `active-issues.md` #5. Until all three are on, `logging/fb-values.yaml` ships an empty file and VictoriaLogs stays at zero Polaris records. |
-| 3 | Harden the shipper: tail `DB` + `Skip_Long_Lines On`, `custom_parsers.conf` loaded, filesystem buffering, `_stream_fields` cut to `app,level` | restart-replay, a tail that stops on a long stack trace, and stream cardinality are each a silent data fault, not an error. |
-| 4 | Harden VictoriaLogs: `retention.maxDiskSpaceUsageBytes`, right-size 50Gi/4Gi to this node, decide `LoadBalancer` vs `ClusterIP` on 9428 | `active-issues.md` #7. 9428 is unauthenticated ingest **and** query, and `persistence.size` is now-or-never. |
-| 5 | Rotate the OpenSearch password out of `fluent-bit/values.yaml`, and the MinIO keys out of `polaris/values.yaml:408` | `active-issues.md` #4. A committed credential stays leaked after the file is edited. |
-| 6 | Build the access-log parser + the 24h Lua table dedup | spec §4.1–4.2 — the reason the file path exists at all. Blocked on 1 and 2. |
-| 7 | Reconcile the repo against the live cluster — `helm get values` per release, diffed | `active-issues.md` #1. The rebuild's fixes live in the releases; the repo is not yet evidence of anything. |
-| 8 | `vmalert` + log→metric downsampling | spec §8. Nothing exists yet; worth doing only once 1–6 land. |
-| 9 | Hand back to `polaris-learning` | The platform exists to serve that suite; see below. |
+| 1 | `helm -n datahub-hynix get values benchmarks-polaris` and the Fluent Bit release, diffed against the files | `active-issues.md` #5. VMUI shows the pipeline running; the repo says it is switched off. **Editing `polaris/values.yaml` before this diff risks reverting what is actually deployed.** |
+| 2 | Fix `_time`: make the shipper take event time from the record instead of letting VictoriaLogs stamp at ingest | #5b. 1,636 records in one 15s bucket with nanosecond timestamps. Event time is being lost right now, and it is unrecoverable after the fact. |
+| 3 | Tail `DB` + `Rotate_Wait`, `Skip_Long_Lines On`, `custom_parsers.conf` loaded, filesystem buffering | restart-replay, a tail that stops on a long stack trace, and a parser file that is never read. All silent. |
+| 4 | Settle the record shape (one VMUI JSON-tab click), then either restore `loggerName` or drop it from `_stream_fields` | #5b. The URI asks for a stream field no record carries. |
+| 5 | Cut the DEBUG SQL firehose — `DatasourceOperations` to INFO, or route DEBUG to its own stream | #5b. It is nearly every row in the capture and the only real volume driver on this node. |
+| 6 | Harden VictoriaLogs: `retention.maxDiskSpaceUsageBytes`, right-size 50Gi/4Gi, decide on the 9428 `LoadBalancer` | `active-issues.md` #7. 9428 is unauthenticated ingest **and** query; `persistence.size` is now-or-never. |
+| 7 | Rotate the OpenSearch password out of `fluent-bit/values.yaml` and the MinIO keys out of `polaris/values.yaml:408` | `active-issues.md` #4. A committed credential stays leaked after the file is edited. |
+| 8 | Access-log parser (`response_size` as `[\d-]+`, latency token added) and only then the 24h Lua table dedup | spec §4.1–4.2. Dedup targets poll traffic this cluster does not have — it is a rehearsal of the prod design, not a local win. |
+| 9 | `vmalert` + log→metric downsampling | spec §8. Nothing exists yet. |
+| 10 | Hand back to `polaris-learning` | The platform exists to serve that suite; see below. |
 
 Numbers worth holding on to, from the design doc: the pipeline is specified for **10M/day
 normal and 140M/day peak at 30-day retention**, with the `GET .../tables/{t}` poll traffic

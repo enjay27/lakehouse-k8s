@@ -52,18 +52,46 @@ is a Secret plus `${VAR}` expansion in the Fluent Bit config, not a different li
 `polaris/values.yaml:408-409` (`minioadmin`/`minioadmin`) is the same class of problem and
 should go the same way.
 
-**#5 — The Polaris → VictoriaLogs path has no input. Three switches, all off. OPEN.**
-Written and inert, exactly the failure mode #F1 is kept for. In order:
+**#5 — The repo says the Polaris log path is off; the cluster shows it running. OPEN.**
+Corrected within the session it was filed in. The first version of this issue claimed the
+VictoriaLogs path had no input, reasoning from the tree. A VMUI capture then showed
+**1,636 records in 30 minutes, streams `{app, level}`, Polaris DEBUG SQL and INFO lines, and
+a Quarkus access-log line**. The pipeline works.
 
-| # | where | what is wrong |
-|---|---|---|
-| a | `polaris/values.yaml` `logging.file.enabled: false` | `templates/configmap.yaml:132-147` renders `quarkus.log.file.enabled=false`. `QUARKUS_LOG_FILE_JSON_ENABLED=true` (`values.yaml:193`) sets the format of a handler that is off. **No `polaris.log` exists.** |
-| b | same flag gates `templates/storage.yaml` | the chart's log PVC does not render. `polaris/values.yaml:200` and `logging/fb-values.yaml:15` both mount **`polaris-shared-logs-pvc`, which nothing in this repo creates**; the chart would render `benchmarks-polaris-logs`. |
-| c | `quarkus.http.access-log.enabled` set nowhere | `polaris/values.yaml:302` sets the *category level* `io.quarkus.http.access-log: INFO`, a different switch. **The access log the spec's regex parser and Lua deduplicator consume does not exist.** |
+The tree still says otherwise, and that is the actual issue — this is **#1 demonstrated**:
 
-So the whole of `logging/fb-values.yaml` is currently a shipper pointed at an absent file.
-What reaches OpenSearch today goes by the **console** path — Polaris stdout as JSON via
-`QUARKUS_LOG_CONSOLE_JSON_ENABLED=true` → container log → the DaemonSet.
+| what the repo says | what the cluster shows |
+|---|---|
+| `polaris/values.yaml` `logging.file.enabled: false`, so `configmap.yaml:132-147` renders `quarkus.log.file.enabled=false` | a file is being tailed and shipped |
+| `quarkus.http.access-log.enabled` appears nowhere; `values.yaml:302` only sets the category level | access-log lines are arriving |
+| `polaris/values.yaml:200` and `logging/fb-values.yaml:15` mount `polaris-shared-logs-pvc`; **nothing in this repo creates it** | the mount evidently resolves |
+
+So the live release was configured outside these files — an overlay, a `--set`, or a hand
+edit — and `helm -n datahub-hynix get values benchmarks-polaris` is the only thing that says
+which. Until that diff is done, **editing `polaris/values.yaml` risks reverting whatever is
+actually running.** Do the diff before the edit, not after.
+
+The read-side lesson: *verify against the running object, never against the values file*
+applies to reading the repo as much as to writing it.
+
+**#5b — Faults visible in the VMUI capture itself. OPEN.**
+Independent of the divergence above, and each one silent rather than an error:
+
+- **`_time` is assigned at ingest, not taken from the record.** All 1,636 records sit in one
+  15s bucket with 30 empty minutes behind them, and carry nanosecond precision
+  (`15:35:13.911654221`) where Quarkus emits milliseconds. `Rename timestamp _time` is not
+  landing. Real event time is lost and every shipper restart re-stamps history to "now".
+- **No `loggerName` on any record**, though the output URI asks for it as a stream field.
+  The Quarkus JSON formatter always emits it, so these records are not in that shape.
+  Either the file is not JSON, or the tail's `Parser json` is not applying.
+- **No tail `DB` with `Read_from_Head true`** — the single burst is the expected signature.
+- **The access-log regex cannot match a zero-byte response.** `%b` emits `-`
+  (`... 200 -` in the capture); the spec ends `(?<response_size>\d+)`. Needs `[\d-]+`.
+- **The local volume driver is DEBUG SQL**, from
+  `org.apache.polaris.persistence.relational.jdbc.DatasourceOperations` at
+  `polaris/values.yaml:290` — nearly every row. The spec's 11M/day `GET /tables/` poll
+  traffic, which the Lua deduplicator exists to remove, has no local analogue. **Dedup is
+  the wrong first lever on this cluster; the category level is the right one.**
 
 **#6 — A shared PVC cannot cross namespaces. OPEN (design constraint, decide before building).**
 PVCs are namespaced. Polaris runs in `datahub-hynix`, so the file-tailing shipper must run

@@ -87,3 +87,45 @@ actually installed — that is a `helm list` away and this session cannot run it
 No values file was edited. No cluster command was run and none could be — `device_bash` is an
 isolated VM with only the repo mounted. Every conclusion above is a read of the tree, not an
 observation of the cluster.
+
+---
+
+## CORRECTION, same session — the audit above is wrong about the cluster
+
+Kade produced a VMUI screenshot: **1,636 records over 30 minutes, `_stream:{app, level}`,
+Polaris DEBUG SQL and INFO lines, and a Quarkus access-log line among them.** The pipeline
+works. "The VictoriaLogs path has no input" is false as a statement about the cluster.
+
+What it is *not* wrong about is the tree: `logging.file.enabled: false` is still what
+`polaris/values.yaml` says, and `quarkus.http.access-log.enabled` still appears nowhere in
+it. So the live release was configured somewhere other than these files — an overlay, a
+`--set`, or a hand edit. **This is active-issues #1 caught in the act**: the repo is not
+evidence of what is deployed, and I treated it as evidence. The lesson the repo already
+carries — verify against the running object, never against the values file — applies to
+reading just as much as to writing, and I read.
+
+#5 is rewritten accordingly: not a dead pipeline, a repo/cluster divergence.
+
+## What the screenshot does establish, on its own terms
+
+- **`loggerName` is absent.** The stream-fields panel lists `app` (1.6K) and `level` (1.6K)
+  and nothing else, while the output URI asks for `_stream_fields=app,level,loggerName`.
+  No record carries it. Whatever shape these records have, it is not the Quarkus JSON
+  formatter's, which always emits `loggerName`.
+- **All 1,636 land in a single 15s bucket** at 15:35 with 30 empty minutes behind them,
+  and their `_time` values carry **nanosecond** precision (`15:35:13.911654221`) where
+  Quarkus emits milliseconds. Both point the same way: `_time` is being assigned at
+  **ingest**, not taken from the record — so `Rename timestamp _time` is not landing, real
+  event time is lost, and a shipper restart re-stamps everything to "now". Consistent with
+  the missing tail `DB` replaying the file from byte 0.
+- **The access log's `%b` emits `-`** for zero-byte responses — visible as `... 200 -`.
+  The spec's regex ends `(?<response_size>\d+)`, which cannot match `-`, so exactly the
+  responses with no body would fail to parse. Needs `[\d-]+`.
+- **The local volume driver is not the table-poll traffic the spec's Lua dedup targets.**
+  It is DEBUG SQL from `org.apache.polaris.persistence.relational.jdbc.DatasourceOperations`
+  (`polaris/values.yaml:290`) — nearly every row in the capture. ~1.6K per 30min of catalog
+  activity. The 11M/day `GET /tables/` figure is a production number with no local analogue.
+
+Unsettled, and one VMUI JSON-tab click away: the actual field shape of a record, which
+decides whether `loggerName` and event time are recoverable by fixing the shipper or need
+the file format changed at Polaris.
