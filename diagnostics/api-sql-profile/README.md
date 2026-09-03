@@ -169,3 +169,19 @@ never as a side effect of the measurement.
 Cell 5's dry run touches no database and is where refusals are read: the 3
 `principal_authentication_data` pairs are redacted at capture and permanent,
 anything else is a parser fault worth stopping for.
+
+## `render_index_findings.py` — the findings report
+
+```bash
+uv run python render_index_findings.py --latest
+```
+
+Renders `reports/doc-api-index-findings-<stamp>.md` (and the tracked
+`-latest.md`) from the newest `runs/apiexplain-<case>-*.json` per case.
+
+**Generated, not written.** Every figure is read from the run files at render
+time and the document names the files it used, so it can be checked against its
+own evidence. A report whose numbers are typed by hand drifts from the runs that
+produced them and nobody notices until someone tries to reproduce it.
+
+Re-run it after any sweep; it always reflects the newest runs on disk.
