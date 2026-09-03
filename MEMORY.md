@@ -34,7 +34,7 @@ untracked.
 | read | when |
 |---|---|
 | [`.memory/environments.md`](.memory/environments.md) | **before running anything** — context, namespaces, ports, and the no-cluster-reach constraint on Cowork sessions |
-| [`.memory/active-issues.md`](.memory/active-issues.md) | before trusting a value or a runbook (1 open, 1 open question, 2 resolved-but-instructive) |
+| [`.memory/active-issues.md`](.memory/active-issues.md) | before trusting a value or a runbook (2 open, 1 open question, 2 resolved-but-instructive) |
 | [`.memory/roadmap.md`](.memory/roadmap.md) | what is next, and the PostgreSQL verification assertions |
 | [`.memory/repository-map.md`](.memory/repository-map.md) | looking for where something lives, or which duplicate values file is current |
 | [`.memory/goal.md`](.memory/goal.md) | the standing objective and the structural model |

@@ -32,6 +32,15 @@ output; the committed version points at Elasticsearch; and OpenSearch is running
 Docker outside the cluster. One `kubectl -n datahub-hynix get cm <fb-configmap> -o yaml`
 settles it, and then the tech stack in `CLAUDE.md` can say so plainly.
 
+**#3 — `minio/values.yaml` defeats its own chart's credential guard. OPEN (low).**
+`minio/templates/secret.yaml` refuses to render when `auth.rootPassword` is empty —
+CLAUDE.md's Zero Hardcoded Credentials rule, enforced at install time, which is the
+right place for it. But the committed values carry `rootUser: "minio"` /
+`rootPassword: "minio"` as defaults, so the guard never fires and an install with no
+`--set-string` quietly comes up with a publicly known password. Either blank the
+defaults so the guard does its job, or accept that this cluster's object store has a
+guessable root credential. Cheap either way; just pick one deliberately.
+
 ## Resolved, kept because they recur
 
 **#F1 — An entire values block was inert for months. RESOLVED-INSTRUCTIVE.**

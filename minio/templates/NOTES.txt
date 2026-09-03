@@ -1,0 +1,29 @@
+{{ .Chart.Name }} installed as release "{{ .Release.Name }}" in namespace {{ .Release.Namespace }}.
+
+Credentials secret: {{ include "minio.secretName" . }}
+  Consumed by BOTH:
+    polaris/values.yaml  minio.existingSecret        keys: access-key-id / secret-access-key
+    argo/values.yaml     artifactRepository.s3.*     keys: access-key   / secret-key
+  All four keys hold the same credential pair. Do not prune "unused" keys.
+
+In-cluster endpoint:
+  http://{{ include "minio.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+Buckets provisioned:
+{{- range .Values.buckets }}
+  - {{ .name }}
+{{- end }}
+
+Verify before installing Polaris:
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "minio.secretName" . }}
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "minio.fullname" . }}-provision
+{{- if .Values.buckets }}
+{{- $found := false }}
+{{- range .Values.buckets }}{{ if eq .name "data-catalog-bucket" }}{{ $found = true }}{{ end }}{{ end }}
+{{- if not $found }}
+
+  !! WARNING: no bucket named "data-catalog-bucket" is declared, but
+     polaris/values.yaml sets warehouse: s3://data-catalog-bucket/
+     Polaris will fail to write. Add it to .Values.buckets.
+{{- end }}
+{{- end }}

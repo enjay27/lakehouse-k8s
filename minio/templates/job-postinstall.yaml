@@ -1,0 +1,112 @@
+{{- if .Values.postInstall.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "minio.fullname" . }}-provision
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "minio.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "minio.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: provision
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "minio.serviceAccountName" . }}
+      containers:
+        - name: mc
+          image: "{{ .Values.postInstall.image.repository }}:{{ .Values.postInstall.image.tag }}"
+          imagePullPolicy: {{ .Values.postInstall.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.postInstall.resources | nindent 12 }}
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "minio.secretName" . }}
+                  key: root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "minio.secretName" . }}
+                  key: root-password
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              MC="mc --config-dir /tmp/.mc"
+              ENDPOINT="http://{{ include "minio.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}"
+
+              echo "--> waiting for MinIO at $ENDPOINT"
+              i=0
+              until $MC alias set local "$ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+                i=$((i+1))
+                if [ $i -ge 60 ]; then
+                  echo "!! MinIO did not become reachable after 300s"
+                  $MC alias set local "$ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" || true
+                  exit 1
+                fi
+                echo "    not ready yet (attempt $i/60)"
+                sleep 5
+              done
+              echo "--> connected"
+
+              {{- range .Values.buckets }}
+              echo "--> bucket: {{ .name }}"
+              $MC mb --ignore-existing {{ if .objectlocking }}--with-lock {{ end }}local/{{ .name }}
+              {{- if .versioning }}
+              $MC version enable local/{{ .name }}
+              {{- end }}
+              {{- if and .policy (ne .policy "none") }}
+              $MC anonymous set {{ .policy }} local/{{ .name }}
+              {{- end }}
+              {{- end }}
+
+              {{- if .Values.policies }}
+              {{- range .Values.policies }}
+              echo "--> policy: {{ .name }}"
+              $MC admin policy create local {{ .name }} /policies/{{ .name }}.json 2>/dev/null \
+                || $MC admin policy update local {{ .name }} /policies/{{ .name }}.json 2>/dev/null \
+                || echo "    policy {{ .name }} already present, skipping"
+              {{- end }}
+              {{- end }}
+
+              {{- range .Values.users }}
+              echo "--> user: {{ .accessKey }}"
+              $MC admin user add local {{ .accessKey }} {{ .secretKey }} || true
+              {{- if .policy }}
+              $MC admin policy attach local {{ .policy }} --user {{ .accessKey }} || true
+              {{- end }}
+              {{- end }}
+
+              echo "--> final bucket list"
+              $MC ls local/
+              echo "--> provisioning complete"
+          volumeMounts:
+            {{- if .Values.policies }}
+            - name: policies
+              mountPath: /policies
+            {{- end }}
+            - name: mc-config
+              mountPath: /tmp/.mc
+      volumes:
+        {{- if .Values.policies }}
+        - name: policies
+          configMap:
+            name: {{ include "minio.fullname" . }}-policies
+        {{- end }}
+        - name: mc-config
+          emptyDir: {}
+{{- end }}
