@@ -350,3 +350,75 @@ the release's user-supplied values. OPEN.**
 Same class as #4 and #3. Also `minio.accessKeyId/secretAccessKey: minioadmin` sit *beside*
 `existingSecret: benchmarks-minio-credentials` — two credential sources for one client, which
 is how #1's "three conflicting MinIO credential sets" started.
+
+---
+
+## The running object, and the resolution: there is no hidden config
+
+Kade ran the ConfigMap and pod-env greps. The result:
+
+```
+quarkus.log.category."io.quarkus.http.access-log".level=INFO
+quarkus.log.console.enabled=true
+quarkus.log.console.format=...
+quarkus.log.console.level=DEBUG
+quarkus.log.file.enabled=false          <-- the running config
+QUARKUS_LOG_FILE_JSON_PRETTY_PRINT=false
+QUARKUS_LOG_FILE_JSON_ENABLED=true
+QUARKUS_LOG_CONSOLE_JSON_ENABLED=true
+```
+
+**There is no hidden configuration.** The ConfigMap, the pod env, the live release values and
+`polaris/values.yaml` on disk all agree: `quarkus.log.file.enabled=false`. #10 dissolves, and
+so does the last of the divergence story — **the repo does describe this cluster.** Five
+readings of this pipeline, and the thing I kept reaching for (a config source somewhere else)
+never existed.
+
+**And it inverts what Kade believed.** He said the `logging.console` / `logging.file` blocks
+"are not applied at all, just extraEnv applied". The opposite is true, and provably from his
+own output: `quarkus.log.file.enabled=false` in the ConfigMap is rendered by
+`polaris/templates/configmap.yaml:132-147` *from* `logging.file.enabled: false`. That block is
+not inert — **it is the switch holding the pipeline off**, which is exactly why it looked
+inert: it only ever writes the value that produces no visible effect. The three `extraEnv`
+vars are real but orthogonal: they set JSON *formatting*, on a handler that is disabled.
+
+## What is actually true of the running system
+
+The JVM has no file handler. Nothing is appending to `/deployments/logs/polaris.log` under
+the current configuration. Yet records with `_time` spanning 06:35:13–06:37:47 UTC today are
+in VictoriaLogs. Two possibilities remain and one command separates them:
+
+```bash
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -l --full-time /deployments/logs/
+sleep 30
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -l --full-time /deployments/logs/
+```
+
+- **Size unchanged → the file is stale.** The shipper is replaying a dead file: with
+  `Read_from_Head true` and no `DB` it re-reads from byte 0 on every restart. Everything in
+  VictoriaLogs is history, re-stamped nowhere because `_time` is the record's own — which is
+  precisely why 1,636 records share a two-minute span. The pipeline *looks* alive and ingests
+  the same dead file repeatedly.
+- **Size growing → the pod predates the current ConfigMap.** Quarkus reads
+  `application.properties` once, at startup; a kubelet ConfigMap sync does not reload it. The
+  running JVM would then be holding a configuration that no longer exists on disk anywhere.
+
+**Both answers carry the same consequence, and it does not depend on which is true: the next
+restart of the Polaris pod leaves file logging off, and no new record ever reaches
+VictoriaLogs again.** In the stale case the shipper keeps replaying, so VictoriaLogs stays
+populated and the failure is invisible. That is the thing to fix, and it is now safe to fix,
+because there is no divergence left to preserve.
+
+## The fix, unblocked
+
+With repo and cluster agreeing, editing `polaris/values.yaml` reverts nothing. Set
+`logging.file.enabled: true` and `logging.file.json: true`, and **delete the
+`extraVolumes`/`extraVolumeMounts` pair** — with the flag on, the chart mounts its own
+`logs-storage` volume at `logging.file.logsDir`, and two volumeMounts on `/deployments/logs`
+is a rejected pod, not a warning.
+
+That moves the claim from `polaris-shared-logs-pvc` to the chart's `benchmarks-polaris-logs`,
+which finally puts the PVC **under version control** — closing the "mounted by both releases,
+created by no manifest here" issue for good. The shipper's `claimName` follows in the same
+change. Check `kubectl get sc` first: `logging.file.storage.className: standard` must exist on
+OrbStack or the PVC stays `Pending` and **Polaris will not start**.

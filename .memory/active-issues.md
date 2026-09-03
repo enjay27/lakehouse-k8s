@@ -100,29 +100,47 @@ as #3 and #4. Separately, `minio.accessKeyId`/`secretAccessKey: minioadmin` sit 
 `minio.existingSecret: benchmarks-minio-credentials` — two credential sources for one client,
 which is how #1's "three conflicting MinIO credential sets" began.
 
-**#10 — Something configures the Polaris pod that `helm get values` does not show. OPEN, and
-the most dangerous item here.**
-`quarkus.log.file.enabled` is the correct Quarkus property and defaults to **false**; the
-chart renders it from `logging.file.enabled: false`. The live values carry no
-`QUARKUS_LOG_FILE_ENABLED` and no `QUARKUS_HTTP_ACCESS_LOG_ENABLED`, and the chart templates
-`quarkus.http.access-log.*` nowhere. On these inputs both are off. Both are demonstrably on.
+**#10 — RESOLVED-INSTRUCTIVE: there was never a hidden config source.**
+The ConfigMap and pod env, read directly, say `quarkus.log.file.enabled=false` — matching the
+live release values *and* `polaris/values.yaml` on disk. Everything agrees. The divergence
+story that ran through five readings of this pipeline was wrong at every level; **the repo
+does describe this cluster.**
 
-`helm get values` shows **inputs**, not the running object — it is an intent artifact too.
-Read the pod:
+**And the belief it rested on is backwards.** Kade's read was that the chart's
+`logging.console` / `logging.file` blocks "are not applied at all, just extraEnv applied".
+His own ConfigMap disproves it: `quarkus.log.file.enabled=false` is rendered by
+`templates/configmap.yaml:132-147` *from* `logging.file.enabled: false`. The block is not
+inert — **it is the switch holding the pipeline off.** It reads as inert precisely because
+the only value it has ever written is the one with no visible effect. `QUARKUS_LOG_FILE_JSON_*`
+is real but orthogonal: JSON formatting for a handler that is disabled.
+
+**#11 — The pipeline dies at the next Polaris pod restart, silently. OPEN, urgent.**
+The running config has no file handler, yet records dated today are in VictoriaLogs. One
+command separates the two explanations:
 
 ```bash
-kubectl -n datahub-hynix get cm benchmarks-polaris \
-  -o jsonpath='{.data.application\.properties}' | grep -E 'log\.(file|console)|access-log'
-kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- env | grep -i 'quarkus_log\|access_log'
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -l --full-time /deployments/logs/
+sleep 30 && kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -l --full-time /deployments/logs/
 ```
 
-If the ConfigMap says `enabled=true` where the values say `false`, it was hand-edited after
-install — **and the next `helm upgrade` of Polaris reverts it and kills the log pipeline,
-silently, with no error and no failing pod.**
+- **not growing** → the file is stale and the shipper is **replaying a dead file**
+  (`Read_from_Head true`, no `DB`, so from byte 0 on every restart). VictoriaLogs stays
+  populated with history and the failure is invisible.
+- **growing** → the pod predates the current ConfigMap. Quarkus reads
+  `application.properties` once at startup and a kubelet sync does not reload it, so the JVM
+  holds a config that exists nowhere on disk.
 
-Not a divergence, and previously miscounted as one: **`logging.mdc: {}` is correct.**
-`mdc.requestId` and `mdc.realmId` are populated by Polaris itself; the chart's `logging.mdc`
-adds *extra static* entries and does not switch MDC on.
+Either way **the next Polaris restart ends ingestion**, and in the stale case nothing looks
+wrong. Fix per #12.
+
+**#12 — The fix is now safe to make. OPEN.**
+Repo and cluster agree, so editing `polaris/values.yaml` reverts nothing. `logging.file.enabled:
+true` + `logging.file.json: true`, and **delete `extraVolumes`/`extraVolumeMounts`** — with the
+flag on, the chart mounts `logs-storage` at `logging.file.logsDir` and two volumeMounts on one
+path is a rejected pod. The claim moves to the chart's `benchmarks-polaris-logs`, which puts the
+PVC under version control at last; the shipper's `claimName` follows. **Check `kubectl get sc`
+first** — `storage.className: standard` must exist or the PVC stays Pending and Polaris will
+not start.
 
 **#5b — What is actually wrong in the shipped records. OPEN.**
 Established from two raw records off the VMUI JSON tab, after two earlier readings of the
