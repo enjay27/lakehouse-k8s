@@ -7,31 +7,28 @@
 
 **Live thread: the Polaris → VictoriaLogs pipeline**, built against Kade's design doc, now
 filed at `logging/polaris-logging-architecture-spec.md`. Order of work:
-[`roadmap.md`](.memory/roadmap.md) *Next*; the audit and its correction,
+[`roadmap.md`](.memory/roadmap.md) *Next*; the audit and its two corrections,
 [`sessions/2026-09-03-polaris-vlogs-audit.md`](.memory/sessions/2026-09-03-polaris-vlogs-audit.md).
 
-**It runs — and the repo says it cannot.** VMUI shows 1,636 records in 30 minutes, streams
-`{app, level}`, with Polaris DEBUG SQL and Quarkus access-log lines. Meanwhile
-`polaris/values.yaml` still carries `logging.file.enabled: false`, sets
-`quarkus.http.access-log.enabled` nowhere, and mounts a `polaris-shared-logs-pvc` that
-nothing in this repo creates. The live release was configured outside these files. **Diff
-`helm get values` before editing `polaris/values.yaml`, or the edit reverts what is
-deployed** ([`active-issues.md`](.memory/active-issues.md) #5 — which is #1 caught in the act).
+**It runs, and it runs better than this repo describes.** VMUI carries Polaris records with
+correct `_time`, `_msg`, `loggerName`, and **`mdc.requestId` / `mdc.realmId`** — so the
+spec's §7 end-to-end trace query works today. Yet `polaris/values.yaml` still says
+`logging.file.enabled: false`, sets `quarkus.http.access-log.enabled` nowhere, carries
+`logging.mdc: {}`, and mounts a PVC nothing here creates. The live release was configured
+outside these files. **Diff `helm -n datahub-hynix get values` before editing anything in
+`polaris/` or `logging/`, or the edit reverts what is deployed**
+([`active-issues.md`](.memory/active-issues.md) #5 — #1 caught in the act, three times).
 
-**What is actually wrong** (#5b, from raw records — two earlier readings off the *rendered*
-VMUI were both wrong): `_time` and `loggerName` are **fine**, as are `mdc.requestId` /
-`mdc.realmId`, which make the spec's §7 trace query work today. The real faults are
-per-record waste (`date` duplicating `_time`, `processName` on every line) and above all the
-**DEBUG SQL from `DatasourceOperations` — ~1.5KB a record, nearly every row, bound parameter
-values included.** That is the volume lever here; the spec's Lua dedup targets poll traffic
-this cluster does not have. Access log needs `%D`, and its parser needs `[\d-]+` because
-`%b` emits `-`. Also open: a committed plaintext OpenSearch password (#4), a PVC that cannot
-cross namespaces (#6), VictoriaLogs sized from the doc's 140M/day column (#7).
+**The real faults** (#5b): the **DEBUG SQL from `DatasourceOperations` — ~1.5KB a record,
+nearly every row, bound parameter values included** — is the volume lever here; the spec's
+Lua dedup targets poll traffic this cluster does not have. Then per-record waste (`date`
+duplicating `_time`, `processName` on every line), and the access log needing `%D` plus a
+parser that accepts `%b`'s `-`. Also open: a committed plaintext OpenSearch password (#4), a
+PVC that cannot cross namespaces (#6), VictoriaLogs sized from the doc's 140M/day column (#7).
 
-**Still the rule, and it cuts both ways:** verify against the running object, never against
-the values file — when *reading* it as much as when writing it. And a rendered view is not
-the object: **a `_stream` is not a field list, a histogram bucket is not a clock.** Read the
-record. The repo has not been reconciled against the rebuilt cluster (#1).
+**The rule, and it cuts both ways:** verify against the running object, never the values file
+— when *reading* as much as writing. And a rendered view is not the object: **a `_stream` is
+not a field list, a histogram bucket is not a clock.** Read the record.
 
 ## Where the detail is
 
