@@ -732,3 +732,65 @@ def test_the_focus_index_is_named_once():
     """A second spelling would be a second thing to keep in agreement."""
     pq = _load("profile_queries")
     assert pq.FOCUS_INDEX == "idx_grant_records_grantee"
+
+
+# ----------------------------------------------------------------------
+# the EXPLAIN workbook
+# ----------------------------------------------------------------------
+def test_predicate_columns_collapses_the_three_orderings_to_one_shape():
+    """The predicate column ORDER varies between runs: the same grantee lookup
+    appeared as three different texts across the three identities. Comparing
+    text reports differences that do not exist, which is the entire reason the
+    Shapes sheet canonicalises by column SET."""
+    w = _load("render_explain_workbook")
+    a = "SELECT x FROM g WHERE grantee_id = ? AND realm_id = ? AND grantee_catalog_id = ?"
+    b = "SELECT x FROM g WHERE realm_id = ? AND grantee_id = ? AND grantee_catalog_id = ?"
+    c = "SELECT x FROM g WHERE grantee_catalog_id = ? AND grantee_id = ? AND realm_id = ?"
+    assert w.predicate_columns(a) == w.predicate_columns(b) == w.predicate_columns(c)
+    assert w.predicate_columns(a) == ("grantee_catalog_id", "grantee_id", "realm_id")
+
+
+def test_predicate_columns_reads_both_placeholder_dialects():
+    """Polaris logs `?`; PostgreSQL logs `$1`. Statements arrive from both."""
+    w = _load("render_explain_workbook")
+    assert w.predicate_columns("... WHERE a = $1 AND b = $2") == ("a", "b")
+
+
+def test_a_statement_with_no_predicate_yields_an_empty_shape_not_a_crash():
+    w = _load("render_explain_workbook")
+    assert w.predicate_columns("INSERT INTO t (a, b) VALUES (?, ?)") == ()
+    assert w.predicate_columns(None) == ()
+
+
+def test_an_oversized_cell_is_truncated_visibly():
+    """Excel's limit is 32,767 characters. A SILENTLY truncated cell is worse
+    than a short one -- the marker names the real length so the reader knows to
+    go to the run file."""
+    w = _load("render_explain_workbook")
+    out = w.truncate("x" * 40_000)
+    assert len(out) < 40_000
+    assert "truncated" in out and "40000 chars" in out
+
+
+def test_a_short_cell_is_untouched():
+    w = _load("render_explain_workbook")
+    assert w.truncate("SELECT 1") == "SELECT 1"
+    assert w.truncate(None) == ""
+
+
+def test_scan_summary_collapses_a_bitmapor_rather_than_listing_it_five_times():
+    """A Bitmap Index Scan node has no Relation Name, and a BitmapOr repeats the
+    same index once per branch -- five sub-scans meaning two indexes."""
+    w = _load("render_explain_workbook")
+    e = {
+        "scans": [
+            {"node": "Bitmap Heap Scan", "relation": "entities", "index": None},
+            {"node": "Bitmap Index Scan", "relation": None, "index": "entities_pkey"},
+            {"node": "Bitmap Index Scan", "relation": None, "index": "idx_entities"},
+            {"node": "Bitmap Index Scan", "relation": None, "index": "entities_pkey"},
+        ],
+        "node_types": ["Bitmap Heap Scan", "BitmapOr"],
+    }
+    got = w.scan_summary(e)
+    assert got == "Bitmap Heap Scan on entities using entities_pkey ×2, idx_entities"
+    assert "None" not in got

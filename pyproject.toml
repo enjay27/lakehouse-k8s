@@ -7,8 +7,10 @@ requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.43.8",
     "fastavro>=1.12.2",
+    "ipykernel>=7.2.0",
     "jupyterlab>=4.5.7",
     "matplotlib>=3.11.1",
+    "openpyxl>=3.1.5",
     "opensearch-py>=3.2.0",
     "pandas>=3.0.3",
     "psycopg2-binary>=2.9.12",

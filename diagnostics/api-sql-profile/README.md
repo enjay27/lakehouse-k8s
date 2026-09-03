@@ -205,3 +205,25 @@ The join is on `(normalised SQL, params)` — a real key, since that is what
 pairs were zipped at write time and neither list survives re-reading in order.
 Cell 4 asserts every miss is a redacted secret-table statement; anything else
 means the wrong two files were paired.
+
+## `06_explain_workbook.ipynb` / `render_explain_workbook.py` — the comparison workbook
+
+```bash
+uv run python render_explain_workbook.py --case admin \
+    --matrix reports/doc-api-sql-matrix-admin-<stamp>.md \
+    --explain runs/apiexplain-admin-<stamp>.json
+```
+
+Writes `reports/api-explain-<case>-<stamp>.xlsx`, **one file per case**. Seven
+sheets: `Summary`, `Statements`, `Distinct`, `Shapes`, `Unplanned`, `Schema`,
+`Provenance`. Design in `PLAN-explain-workbook.md`.
+
+**A view, not a source.** Every figure is read from the matrix report and the
+run file at build time; the run JSON stays authoritative. Refuses a run whose
+`case` or `matrix` disagrees with the report — a workbook built from a
+mismatched pair looks entirely correct.
+
+**Open `Provenance` first.** `total_cost` and `plan_rows` are planner estimates
+that move with `ANALYZE` (11 of 264 changed between two sweeps while 0 changed
+in plan shape), and `duration_ms` comes from the capture rather than the
+EXPLAIN, which does not execute. The sheet says so where the reader will see it.
