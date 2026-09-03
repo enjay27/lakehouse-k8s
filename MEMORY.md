@@ -5,35 +5,31 @@
 
 ## Now — 2026-09-03
 
-**Live thread: the Polaris → VictoriaLogs pipeline**, built against Kade's design doc, filed
-at `logging/polaris-logging-architecture-spec.md`. What to do next:
-[`roadmap.md`](.memory/roadmap.md). The audit and its three corrections:
+**Live thread: the Polaris → VictoriaLogs pipeline**, built against
+`logging/polaris-logging-architecture-spec.md`. Next steps in
+[`roadmap.md`](.memory/roadmap.md); the audit and its four corrections in
 [`sessions/2026-09-03-polaris-vlogs-audit.md`](.memory/sessions/2026-09-03-polaris-vlogs-audit.md).
 
-**It runs, and the repo half-describes it.** `logging/fb-values.yaml` is **reconciled** —
-it matched live revision 10 of `fb-polaris-shipper` bar one line. **`polaris/values.yaml` is
-not**: it says file logging and the access log are off, and carries `logging.mdc: {}`, while
-the file is written, access-log lines arrive and `mdc.requestId` / `mdc.realmId` are on every
-record. Run `helm -n datahub-hynix get values benchmarks-polaris` **before editing it**, or
-the edit reverts what is running. `polaris-shared-logs-pvc` is mounted by both releases and
-created by no manifest here. ([`active-issues.md`](.memory/active-issues.md) #5.)
+**It runs, and nothing on disk explains why.** `logging/fb-values.yaml` is reconciled — it
+matched live revision 10 of `fb-polaris-shipper` bar one line, and now carries the access-log
+Lua filter inline under `luaScripts` (no `--set`; the values file is the definition; tests in
+`logging/scripts/test-access-log-parser.py` read the Lua *out of* it, 6/6). But for Polaris,
+`helm get values` shows `logging.file.enabled: false`, no `QUARKUS_LOG_FILE_ENABLED`, no
+`QUARKUS_HTTP_ACCESS_LOG_ENABLED` — and the chart templates `quarkus.http.access-log.*`
+nowhere. **On those inputs both handlers are off; both are demonstrably on.** Read the pod,
+not the release ([`active-issues.md`](.memory/active-issues.md) **#10**). If that ConfigMap
+was hand-edited, **the next `helm upgrade` of Polaris silently reverts it and the logs stop**
+— no error, no failing pod. Sharpest thing known about this setup.
 
-**Built:** access-log field extraction — a Lua filter inline in `fb-values.yaml` (no `--set`;
-the values file is the definition), gated on `loggerName`, emitting the spec's §7 field
-names. `logging/scripts/test-access-log-parser.py` reads the Lua *out of the values file*, so
-tests cannot drift from what ships. 6/6.
+**Then** (#5b, #8, #9): the tail has no `DB` with `Read_from_Head true` and
+`Skip_Long_Lines Off`, both confirmed live; per-record waste; no `%D`, so §7's P99 panels
+cannot exist. **#8 — HPA can scale Polaris to 3 pods appending to one log file**; RWO does
+not stop that on one node. Plaintext credentials now in three places (#3, #4, #9).
 
-**Next faults, all confirmed live** (#5b): tail has no `DB` with `Read_from_Head true`
-(restart replays from byte 0) and `Skip_Long_Lines Off` (a long line stops the tail);
-per-record waste (`date` duplicates `_time`, `processName` on every line); no `%D`, so §7's
-P99 panels cannot exist. DEBUG SQL volume is closed — Kade is disabling DEBUG in production.
-Also open: a committed plaintext OpenSearch password (#4); VictoriaLogs sized from the doc's
-140M/day column, no disk cap, unauthenticated `LoadBalancer` on 9428 (#7).
-
-**The rule, and it cuts both ways:** verify against the running object, never the values file
-— when *reading* as much as writing. A rendered view is not the object (**a `_stream` is not
-a field list, a histogram bucket is not a clock**), and a claim about "the repo" needs
-evidence about the repo, not about one file in it.
+**The rule, at its fourth setting this session:** verify against the running object, never an
+intent artifact — and `helm get values` is one too, showing *inputs*. Nor is a rendered view
+the object: a `_stream` is not a field list, a histogram bucket is not a clock. And a claim
+about "the repo" needs evidence about the repo, not one file in it.
 
 ## Where the detail is
 

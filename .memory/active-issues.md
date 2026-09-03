@@ -83,6 +83,47 @@ What remains open is narrower and still real:
 The generalisable part: a claim about "the repo" needed evidence about the repo. One file
 diffing clean is exactly the outcome that a broad claim could not have predicted.
 
+**#8 — HPA can scale Polaris to 3 pods sharing one log file. OPEN.**
+`autoscaling.enabled: true`, `maxReplicas: 3` at 80% CPU — and every replica mounts
+`polaris-shared-logs-pvc` and appends to the same `/deployments/logs/polaris.log`.
+`ReadWriteOnce` does **not** prevent this: RWO allows many pods on the *same node*, and this
+is a single-node cluster with `ScheduleAnyway` spreading. Two JBoss file handlers with
+independent descriptors and independent rotation state on one file means interleaved records,
+and a rotation by one pod pulling the file out from under the other and from under the
+shipper's inode. Unbitten only because nothing has pushed Polaris past 80% CPU. Fix: pin
+`replicaCount` and disable autoscaling while the shared-file design stands, or give each pod
+its own filename and let the shipper glob.
+
+**#9 — A plaintext database password in the live release. OPEN.**
+`persistence.relationalJdbc.secret.password: polaris` in `helm get values` output. Same class
+as #3 and #4. Separately, `minio.accessKeyId`/`secretAccessKey: minioadmin` sit beside
+`minio.existingSecret: benchmarks-minio-credentials` — two credential sources for one client,
+which is how #1's "three conflicting MinIO credential sets" began.
+
+**#10 — Something configures the Polaris pod that `helm get values` does not show. OPEN, and
+the most dangerous item here.**
+`quarkus.log.file.enabled` is the correct Quarkus property and defaults to **false**; the
+chart renders it from `logging.file.enabled: false`. The live values carry no
+`QUARKUS_LOG_FILE_ENABLED` and no `QUARKUS_HTTP_ACCESS_LOG_ENABLED`, and the chart templates
+`quarkus.http.access-log.*` nowhere. On these inputs both are off. Both are demonstrably on.
+
+`helm get values` shows **inputs**, not the running object — it is an intent artifact too.
+Read the pod:
+
+```bash
+kubectl -n datahub-hynix get cm benchmarks-polaris \
+  -o jsonpath='{.data.application\.properties}' | grep -E 'log\.(file|console)|access-log'
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- env | grep -i 'quarkus_log\|access_log'
+```
+
+If the ConfigMap says `enabled=true` where the values say `false`, it was hand-edited after
+install — **and the next `helm upgrade` of Polaris reverts it and kills the log pipeline,
+silently, with no error and no failing pod.**
+
+Not a divergence, and previously miscounted as one: **`logging.mdc: {}` is correct.**
+`mdc.requestId` and `mdc.realmId` are populated by Polaris itself; the chart's `logging.mdc`
+adds *extra static* entries and does not switch MDC on.
+
 **#5b — What is actually wrong in the shipped records. OPEN.**
 Established from two raw records off the VMUI JSON tab, after two earlier readings of the
 same pipeline from a *rendered* view were both wrong. `_time` is **not** an ingest stamp —

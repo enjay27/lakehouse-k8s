@@ -290,3 +290,63 @@ The install is now a single command with no flags to forget:
 helm upgrade --install fb-polaris-shipper fluent/fluent-bit \
   --version 0.58.1 -n datahub-hynix -f logging/fb-values.yaml
 ```
+
+---
+
+## `helm get values benchmarks-polaris` — and a fourth correction, plus a question it cannot answer
+
+Kade supplied the live Polaris values. **`helm get values` shows user-supplied *inputs*, not
+the running object** — so it is still an intent artifact, one level closer to the truth than
+the repo but not the truth itself. Asking for it was the right first step and the wrong last
+one.
+
+**Correction: `logging.mdc: {}` was never a divergence.** I listed it three times as
+evidence that the live config came from outside the repo, because `mdc.requestId` and
+`mdc.realmId` are on every record. They are put there by **Polaris itself** — the chart's
+`logging.mdc` block adds *additional static* MDC entries via `polaris.log.mdc."<k>"`, it does
+not switch MDC on. `{}` is the correct and expected value. Nothing to reconcile; the claim
+was mine, not the repo's.
+
+**Confirmed, and it deepens rather than settles the question.** `quarkus.log.file.enabled` is
+the real Quarkus property (default **false**), and `quarkus.log.console.enabled` (default
+true) — so the chart's ConfigMap writes *valid* keys, and `logging.file.enabled: false`
+renders `quarkus.log.file.enabled=false`. Meanwhile the live values contain **no**
+`QUARKUS_LOG_FILE_ENABLED` and **no** `QUARKUS_HTTP_ACCESS_LOG_ENABLED` env var, and the
+chart templates `quarkus.http.access-log.*` nowhere at all.
+
+So on these inputs the file handler is off and the access log is off — and both are
+demonstrably on. **Something is configuring this pod that `helm get values` cannot show.**
+The two candidates, and both are settled by reading the pod rather than the release:
+
+```bash
+kubectl -n datahub-hynix get cm benchmarks-polaris \
+  -o jsonpath='{.data.application\.properties}' | grep -E 'log\.(file|console)|access-log'
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- env | grep -i 'quarkus_log\|access_log'
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -l /deployments/logs/
+```
+
+If the ConfigMap says `enabled=true` while the values say `false`, it was **hand-edited after
+install** — and then **the next `helm upgrade` of Polaris silently reverts it and kills the
+log pipeline**, with no error and no failing pod. That is the single most dangerous thing
+currently known about this setup, and it is one `kubectl get cm` from being confirmed or
+dismissed.
+
+## Two real faults in the live Polaris values, independent of the above
+
+**#8 — HPA can scale Polaris to 3 pods that share one log file. OPEN.**
+`autoscaling.enabled: true`, `minReplicas: 1`, `maxReplicas: 3`, at 80% CPU against a 1000m
+limit — and every replica mounts the same `polaris-shared-logs-pvc` and appends to the same
+`/deployments/logs/polaris.log`. `ReadWriteOnce` does not prevent this: RWO permits many pods
+on the *same* node, and `topologySpreadConstraints` is `ScheduleAnyway` on a single-node
+cluster, so they all land together. Two JBoss file handlers with independent descriptors and
+independent rotation state, appending and rotating the same file: interleaved records, and a
+rotation by one pod pulling the file out from under the other and from under the shipper's
+inode. It has not bitten because nothing has driven Polaris past 80% CPU. Either pin
+`replicaCount` with autoscaling off while the shared-file design stands, or give each pod its
+own file (`%h`-style suffix) and let the shipper glob.
+
+**#9 — `persistence.relationalJdbc.secret.password: polaris` is a plaintext DB password in
+the release's user-supplied values. OPEN.**
+Same class as #4 and #3. Also `minio.accessKeyId/secretAccessKey: minioadmin` sit *beside*
+`existingSecret: benchmarks-minio-credentials` — two credential sources for one client, which
+is how #1's "three conflicting MinIO credential sets" started.
