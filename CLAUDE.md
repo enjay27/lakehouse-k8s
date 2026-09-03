@@ -10,8 +10,11 @@
   3 replicas + **Pgpool-II** connection pooler (**not** PgBouncer; corrected 2026-08-18).
 - **MinIO:** local chart — S3 for the Iceberg warehouse (`data-catalog-bucket`) and Argo
   artifacts (`argo-artifacts`).
-- **VictoriaLogs + Fluent Bit:** log sink in namespace `logging` (9428) and the DaemonSet
-  that ships Polaris logs into it.
+- **Fluent Bit:** DaemonSet in `datahub-hynix`, confirmed running 2026-09-03.
+- **VictoriaLogs:** log sink in namespace `logging` (9428).
+- **OpenSearch:** runs in **Docker, outside the cluster and outside this repo** — no compose
+  file is versioned here. Which of the two sinks Fluent Bit actually ships to is an open
+  question; see `.memory/active-issues.md` #2 before writing either into a runbook.
 - **Values-only against upstream charts:** DataHub + prerequisites (Kafka / Elasticsearch /
   MySQL / ZooKeeper), Kafka, Schema Registry, Spark, Airflow, Argo Workflows, Jupyter.
   *Service versions are declared explicitly in each chart's `values.yaml`; several charts

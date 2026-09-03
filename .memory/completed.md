@@ -41,6 +41,20 @@ address families, a real 1G `/dev/shm` emptyDir mounted, `persistence.size` set 
 LoadBalancer on 9428) and `logging/fb-values.yaml` committed as the replacement for
 the heavier Elasticsearch-shaped log path.
 
+## 2026-09-03 — the cluster was reset and rebuilt
+
+Done by Kade directly, **not** by following `RESET-AND-CLEAN-INSTALL.md`. The whole
+OrbStack cluster including the K8s services was reset and brought back; the four
+config blockers (#1 Polaris root credential, #3 MinIO credential sets, #4 stale
+persistence secret, #2 unpinned images) were resolved during the install. Fluent Bit
+was deployed as a K8s DaemonSet and confirmed working. OpenSearch was not part of it —
+it runs in Docker, outside the cluster and outside this repo.
+
+Not done, deliberately: the verification assertions were not run, and the repo was not
+reconciled against the live releases. Both are `active-issues.md` #1. The two root
+runbooks become historical here — they are still the best account of *why* the rebuild
+was needed (#F1, #F2), but they are no longer a procedure anyone should follow.
+
 ## 2026-09-03 — memory convention aligned with `polaris-learning`
 
 `MEMORY.md` reduced to a ~40-line index, this `.memory/` tree created, `CLAUDE.md`

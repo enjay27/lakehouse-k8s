@@ -4,29 +4,29 @@ A line here needs a **number or a verified state**. Anything still hypothetical
 belongs in [`active-issues.md`](active-issues.md); the story of how it was found
 belongs in [`sessions/`](sessions/).
 
-## Next — the cluster rebuild
+## Done
 
-The plan is written and approved in shape; **nothing has been torn down and
-nothing has been installed.** `RESET-AND-CLEAN-INSTALL.md` is the procedure.
+**The cluster rebuild closed on 2026-09-03.** Kade reset the whole OrbStack cluster
+and rebuilt the K8s services himself, outside the runbook, resolving the four config
+blockers along the way. Fluent Bit runs as a DaemonSet and is confirmed working.
+OpenSearch runs in Docker, outside the cluster. Detail in
+[`completed.md`](completed.md); `RESET-AND-CLEAN-INSTALL.md` and
+`local-k8s-HANDOFF.md` are now historical.
 
-| # | step | gate | state |
-|---|---|---|---|
-| 0 | Decide the three open blockers | Polaris root secret, one MinIO credential set, the stale PG secret | **blocked on developer** — `active-issues.md` #1, #3, #4 |
-| 1 | Pre-flight image audit | zero `UNAVAILABLE` in §1.2 / `preflight-triage.sh` | not run |
-| 2 | Insurance | image tarball, chart tarballs, `helm get values` per release, PG + MinIO dumps | not run |
-| 3 | Teardown | releases uninstalled, namespace deleted, full OrbStack K8s reset | not run |
-| 4 | Reinstall, 12 steps in order | each row `Running` before the next starts | not run |
-| 5 | Verification block | the seven `MUST show` assertions in §5 | not run |
-| 6 | Documentation | `MEMORY.md` *Now*, this file, `CLAUDE.md` tech stack | this convention rewrite is step 6's prerequisite |
+## Next
 
-Reinstall order, because it is load-bearing and one-directional:
-`minio → postgresql → polaris → datahub-prerequisites → kafka → schema-registry →
-datahub → spark → airflow → argo → jupyter → fluent-bit`.
+| # | step | why it is next |
+|---|---|---|
+| 1 | Reconcile the repo against the live cluster — `helm get values` per release, diffed against each `values.yaml` | `active-issues.md` #1. The rebuild's fixes live in the releases; the repo is not yet evidence of anything. |
+| 2 | Rotate the MinIO key at `spark/values.yaml:30` and pin images in `kafka/` / `schema-registry/` / `datahub/` | A committed plaintext key stays leaked after the cluster stops using it, and an unpinned image is still unpinned next install. |
+| 3 | Settle which sink the Fluent Bit DaemonSet ships to, then write it into `CLAUDE.md` | `active-issues.md` #2 — one `kubectl get cm` answers it. |
+| 4 | Hand back to `polaris-learning` | The platform exists to serve that suite; see below. |
 
-## Verification assertions worth keeping
+## PostgreSQL verification assertions
 
-These are the checks that would have caught #F1 years earlier. Each is a fact, not
-an intention — run them after any PostgreSQL change:
+Not run against the rebuilt cluster — Kade's call, to be run if a PostgreSQL setting
+needs changing. Kept here because these are the checks that would have caught #F1
+years earlier. Each is a fact, not an intention:
 
 | assertion | expected | proves |
 |---|---|---|
@@ -39,10 +39,14 @@ an intention — run them after any PostgreSQL change:
 | repmgr cluster show | 3 nodes healthy, exactly one primary | replication is real |
 | Polaris `/q/health` on **8182** | green | Polaris reached its metastore and its bucket |
 
-## After the rebuild
+Install order, kept because it is one-directional and still true for any reinstall:
+`minio → postgresql → polaris → datahub-prerequisites → kafka → schema-registry →
+datahub → spark → airflow → argo → jupyter → fluent-bit`.
 
-Hand back to `polaris-learning` (HANDOFF §8): tail
-`deploy/benchmarks-polaris` into `capture/polaris.log`, then
-`check_sql_logging.py` should print *SQL DEBUG logging is WORKING*. Two
-corrections to carry across: `polaris-learning/CLAUDE.md` says PgBouncer and must
-say **Pgpool-II**, and its pre-rebuild configuration table becomes historical.
+## Handing back to `polaris-learning`
+
+Tail `deploy/benchmarks-polaris` into `capture/polaris.log`, then
+`check_sql_logging.py` should print *SQL DEBUG logging is WORKING*. Two corrections
+to carry across: `polaris-learning/CLAUDE.md` says PgBouncer and must say
+**Pgpool-II**, and its pre-rebuild configuration table is now historical — the
+cluster it describes no longer exists.

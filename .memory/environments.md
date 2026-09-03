@@ -27,6 +27,11 @@ plausible-looking name.
 - **Pgpool-II, not PgBouncer.** It load-balances SELECTs across all three
   replicas, so a PostgreSQL server log tailed from one pod misses statements.
 - VictoriaLogs UI/ingest: `9428`, namespace `logging`, LoadBalancer.
+- **OpenSearch runs in Docker**, not in Kubernetes — outside this repo, so no compose
+  file is versioned here. It survives a cluster reset because nothing in the cluster
+  owns it.
+- **Fluent Bit runs as a K8s DaemonSet** (confirmed working 2026-09-03). Which sink it
+  ships to is `active-issues.md` #2.
 
 ## Secrets
 

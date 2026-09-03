@@ -39,7 +39,7 @@ either.
 
 | file | what it is |
 |---|---|
-| `local-k8s-HANDOFF.md` | **why** the rebuild is needed: Fault 1 (inert values nesting) and Fault 2 (IPv4-only pg_hba), plus the operational gotchas. Self-contained. |
-| `RESET-AND-CLEAN-INSTALL.md` | **how**: pre-flight image audit (blocking gate), teardown, 12-step reinstall order, verification block. Self-contained. |
+| `local-k8s-HANDOFF.md` | **HISTORICAL** (rebuild done 2026-09-03, outside it). Still the best account of *why*: Fault 1 (inert values nesting), Fault 2 (IPv4-only pg_hba), and the operational gotchas. |
+| `RESET-AND-CLEAN-INSTALL.md` | **HISTORICAL** — the procedure that was not followed. Its install order and verification block are still valid for any future reinstall. |
 | `shm-exhaustion-orbstack-leg-runbook.md` | the `/dev/shm` exhaustion repro + fix verification (S5 pending item). |
 | `preflight-triage.sh` | script form of the RESET §1 pre-flight checks. |
