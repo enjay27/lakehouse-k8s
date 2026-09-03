@@ -1128,3 +1128,62 @@ def test_a_polaris_statement_is_never_relocated():
     placed, lost = reattribute_deferred([a, b], [])
     assert (placed, lost) == (0, 0)
     assert stray_polaris in b.sql
+
+
+# ----------------------------------------------------------------------
+# duration lines that also carry a statement
+# ----------------------------------------------------------------------
+WRAPPED_PARSE = (
+    "2026-09-03 00:41:04.626 GMT [639] LOG:  execute <unnamed>: SELECT a FROM "
+    "POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = $1 AND realm_id = $2\n"
+    "2026-09-03 00:41:04.626 GMT [639] DETAIL:  Parameters: $1 = '7', $2 = 'POLARIS'\n"
+    "2026-09-03 00:41:24.054 GMT [639] LOG:  duration: 0.099 ms  parse <unnamed>: "
+    "DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE (\n"
+    "\t    (grantee_id = $1 AND grantee_catalog_id = $2) OR\n"
+    "\t    (securable_id = $3 AND securable_catalog_id = $4)\n"
+    "\t) AND realm_id = $5\n"
+)
+
+
+def test_a_wrapped_parse_line_does_not_weld_itself_onto_the_previous_statement():
+    """PostgreSQL logs `duration: X ms  parse <unnamed>: DELETE ...` when
+    log_min_duration_statement is on. Treating it as duration-only discarded
+    the SQL and left its indented continuations to attach to whatever came
+    before -- producing a securable lookup with half an OR-shaped DELETE welded
+    on, 13 placeholders against 5 values. 6 such corruptions in the admin
+    capture, all on grant_records, the table this audit is about."""
+    got = parse_pg_log(WRAPPED_PARSE)
+    assert len(got) == 1, [s.sql for s in got]
+    sql = " ".join(got[0].sql.split())
+    assert sql.endswith("realm_id = $2"), sql
+    assert "grantee_id" not in sql, "the DELETE's predicate must not be welded on"
+
+
+def test_a_parse_line_emits_no_statement_of_its_own():
+    """`parse`/`bind` are not executions -- the `execute` line for the same
+    statement follows. Emitting here too doubled the pg statement count."""
+    got = parse_pg_log(WRAPPED_PARSE)
+    assert all("DELETE" not in (s.verb or "") for s in got)
+
+
+def test_a_continuation_with_no_owner_is_dropped_not_parsed_as_a_statement():
+    """Letting it fall through means _PG_STATEMENT parses a bare predicate
+    fragment as a statement in its own right."""
+    got = parse_pg_log(
+        "2026-09-03 00:41:24.054 GMT [639] LOG:  duration: 0.099 ms  parse "
+        "<unnamed>: DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE (\n"
+        "\t    (grantee_id = $1 AND grantee_catalog_id = $2) OR\n"
+    )
+    assert got == []
+
+
+def test_pg_parameters_are_stored_as_bare_values_like_the_polaris_side():
+    """Polaris logs `a, b`; PostgreSQL logs `$1 = 'a', $2 = 'b'`. param_tuple
+    splits on ", " expecting the first shape, so a pg statement stored raw
+    binds the STRING "$1 = 'a'" as its first value."""
+    got = parse_pg_log(
+        "2026-09-03 00:41:04.626 GMT [639] LOG:  execute <unnamed>: SELECT a FROM "
+        "POLARIS_SCHEMA.ENTITIES WHERE id = $1 AND realm_id = $2\n"
+        "2026-09-03 00:41:04.626 GMT [639] DETAIL:  Parameters: $1 = '7', $2 = 'POLARIS'\n"
+    )
+    assert got[0].params == "7, POLARIS"

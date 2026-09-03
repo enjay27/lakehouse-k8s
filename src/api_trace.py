@@ -992,6 +992,37 @@ def split_query_message(body):
     return first.strip(), (", ".join(values) if values else None)
 
 
+#: A `duration:` line can ALSO carry the statement, which PostgreSQL does when
+#: `log_min_duration_statement` is on: `duration: 0.099 ms  parse <unnamed>:
+#: DELETE FROM ...`. Treating those as duration-only discarded the SQL AND left
+#: the following indented continuation lines to glue themselves onto whatever
+#: statement came before -- which is how the admin capture produced a
+#: `grant_records` SELECT with 13 placeholders and 5 values, its text a
+#: securable lookup with half an OR-shaped DELETE welded to the end.
+_PG_EMBEDDED = re.compile(
+    r"\bduration:\s+[\d.]+\s+ms\s+(?P<kind>statement|parse|bind|execute)\s*"
+    r"(?:<[^>]*>|S_\d+)?\s*:\s*(?P<sql>.*)$",
+    re.I,
+)
+
+#: Parameters as PostgreSQL logs them: `$1 = 'a', $2 = 'b'`. Polaris logs bare
+#: comma-joined values, and `param_tuple` splits on ", " expecting that shape --
+#: so a pg-side statement stored raw binds the STRING "$1 = 'a'" as its first
+#: value. Normalised at the parse boundary so both sources agree.
+_PG_PARAM_SLOT = re.compile(r"\$\d+\s*=\s*(?:'((?:[^']|'')*)'|([^,]+))")
+
+
+def pg_params_to_values(raw):
+    """`$1 = 'a', $2 = 'b'` -> `a, b`. Returns None when nothing parses."""
+    if not raw:
+        return raw
+    vals = []
+    for q, bare in _PG_PARAM_SLOT.findall(raw):
+        v = q.replace("''", "'") if q else (bare or "").strip()
+        vals.append(v)
+    return ", ".join(vals) if vals else raw
+
+
 def parse_pg_log(text, start_seq=0, carry=None):
     """Parse a PostgreSQL server-log chunk into SqlStatement records.
 
@@ -1035,6 +1066,18 @@ def parse_pg_log(text, start_seq=0, carry=None):
 
         dm = _PG_DURATION.search(line)
         if dm:
+            if _PG_EMBEDDED.search(line):
+                #: This line carries a statement as well as a duration, and
+                #: NOTHING is emitted for it. With log_statement='all' the same
+                #: statement already arrives on its own `LOG:  execute ...`
+                #: line, and emitting here too doubled the pg statement count
+                #: (13,177 -> 34,423 on the admin capture). What matters is
+                #: clearing `last_by_pid`: this line's SQL may WRAP, and its
+                #: indented continuations would otherwise be appended to the
+                #: previous statement -- which is exactly how a securable
+                #: lookup ended up with half an OR-shaped DELETE welded on.
+                last_by_pid[pid] = None
+                continue
             stmt = last_by_pid.get(pid)
             if stmt is not None and stmt.duration_ms is None:
                 stmt.duration_ms = float(dm.group("ms"))
@@ -1048,7 +1091,7 @@ def parse_pg_log(text, start_seq=0, carry=None):
                 #: BEFORE redaction: redact_params can replace the value, and
                 #: the request id has to be read from the real one.
                 stmt.request_id = request_id_from_params(stmt.sql, raw)
-                stmt.params = redact_params(stmt.sql, raw)
+                stmt.params = redact_params(stmt.sql, pg_params_to_values(raw))
             continue
 
         # A statement that wraps across lines is logged with the continuation
@@ -1057,16 +1100,18 @@ def parse_pg_log(text, start_seq=0, carry=None):
         # grant_records OR-delete arrived as the unparseable fragment
         # "DELETE FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE (" and then failed
         # EXPLAIN with "syntax error at end of input".
-        if (
-            line[:1] in ("\t", " ")
-            and line.strip()
-            and not _PG_PID.search(line)
-            and last_by_pid.get(pid) is not None
-        ):
-            cont = last_by_pid[pid]
-            cont.sql = cont.sql + " " + line.strip()
-            cont.table = extract_table(cont.sql) or cont.table
-            cont.verb = extract_verb(cont.sql) or cont.verb
+        if line[:1] in ("\t", " ") and line.strip() and not _PG_PID.search(line):
+            #: ALWAYS consumed, even with no owner. When the wrapped statement
+            #: was a `duration: ... parse <unnamed>:` line -- which emits
+            #: nothing and clears the pid -- letting the continuation fall
+            #: through means `_PG_STATEMENT` parses the SQL FRAGMENT as a
+            #: statement of its own. That turned 13,177 pg statements into
+            #: 34,840 of which thousands were half-predicates.
+            cont = last_by_pid.get(pid)
+            if cont is not None:
+                cont.sql = cont.sql + " " + line.strip()
+                cont.table = extract_table(cont.sql) or cont.table
+                cont.verb = extract_verb(cont.sql) or cont.verb
             continue
 
         sm = _PG_STATEMENT.search(line)

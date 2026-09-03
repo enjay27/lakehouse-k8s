@@ -895,3 +895,45 @@ def test_the_real_matrix_report_parses_clean_with_the_counts_it_is_known_to_have
     #: redacted secret-table params, which are unreplayable forever.
     assert len(r.replayable) == 112
     assert len(r.refused) == 3
+
+
+# ----------------------------------------------------------------------
+# both placeholder dialects -- pg-only statements use $N, not ?
+# ----------------------------------------------------------------------
+def test_dollar_placeholders_are_counted():
+    """Some statements reach the report ONLY from the PostgreSQL log: the
+    grant_records reads on the cascade-delete path, which Polaris never logs,
+    and the async events INSERT. Counting `?` alone called those
+    "0 placeholders, 5 values" and refused 7 of 138 pairs in the admin case --
+    six of them on grant_records, the table the audit is about."""
+    sql = (
+        "SELECT x FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = $1 "
+        "AND securable_catalog_id = $2 AND realm_id = $3"
+    )
+    assert qp.placeholder_count(sql) == 3
+    assert qp.to_psycopg(sql).endswith("realm_id = %s")
+
+
+def test_jdbc_placeholders_are_unchanged():
+    assert qp.placeholder_count("a = ? AND b = ?") == 2
+    assert qp.to_psycopg("a = ? AND b = ?") == "a = %s AND b = %s"
+
+
+def test_mixed_dialects_are_refused_not_guessed():
+    """Should never occur. If it does, refusing is the honest answer."""
+    assert qp.placeholder_count("a = ? AND b = $1") == -1
+
+
+def test_non_sequential_dollar_markers_are_refused():
+    """param_tuple yields values in logged order, so a sequential $N -> %s
+    rewrite is sound only when the markers are sequential. A repeat or a swap
+    would bind the wrong value to the wrong slot -- a replay that SUCCEEDS
+    against a different statement than the one reported, which is worse than
+    refusing."""
+    assert qp.dollar_params_are_positional("a = $1 AND b = $2")
+    assert not qp.dollar_params_are_positional("a = $2 AND b = $1")
+    assert not qp.dollar_params_are_positional("a = $1 AND b = $1")
+
+
+def test_a_percent_literal_is_still_escaped_before_dollar_rewriting():
+    assert qp.to_psycopg("name LIKE 'x%' AND id = $1") == "name LIKE 'x%%' AND id = %s"

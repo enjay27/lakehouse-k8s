@@ -559,7 +559,12 @@ class StatementProfile:
         """
         if not (self.sample_sql and self.params_observed):
             return False
-        return self.sample_sql.count("?") == len(param_tuple(self.sample_params))
+        n = placeholder_count(self.sample_sql)
+        if n < 0:
+            return False  # mixed dialects -- never seen, never guessed at
+        if "$" in self.sample_sql and not dollar_params_are_positional(self.sample_sql):
+            return False
+        return n == len(param_tuple(self.sample_params))
 
     def replay(self):
         """(sql, params) ready for psycopg2, or (None, None) if not replayable."""
@@ -647,6 +652,44 @@ def param_tuple(sample_params):
     return tuple(p for p in parts if p)
 
 
+_DOLLAR_PLACEHOLDER = re.compile(r"\$(\d+)")
+
+
+def placeholder_count(sql):
+    """How many bound values a statement expects, in EITHER dialect.
+
+    Polaris logs `?` (JDBC). PostgreSQL's own log writes the extended-protocol
+    form, `$1 $2 ...`, and some statements reach the report ONLY from the
+    PostgreSQL side -- the `grant_records` reads on the cascade-delete path,
+    which Polaris never logs at all, and the async `events` INSERT. Counting
+    `?` alone called those "0 placeholders, 5 values" and refused them
+    (measured 2026-09-03: 7 of 138 pairs in the admin case, six of them on
+    `grant_records`, the table this whole audit is about).
+
+    Returns:
+        int, or -1 when the two dialects are MIXED in one statement -- which
+        should never happen and must not be guessed at.
+    """
+    q = sql.count("?")
+    d = _DOLLAR_PLACEHOLDER.findall(sql)
+    if q and d:
+        return -1
+    return q if q else len(d)
+
+
+def dollar_params_are_positional(sql):
+    """True when `$N` markers are exactly $1..$k, each once, in order.
+
+    `param_tuple` yields values in logged order, so a sequential `$N` -> `%s`
+    rewrite is only sound when the markers are themselves sequential. A
+    repeated or out-of-order `$N` would bind the wrong value to the wrong
+    slot -- a replay that SUCCEEDS against a different statement than the one
+    being reported, which is worse than refusing.
+    """
+    nums = [int(x) for x in _DOLLAR_PLACEHOLDER.findall(sql)]
+    return nums == list(range(1, len(nums) + 1))
+
+
 def to_psycopg(sql):
     """JDBC `?` placeholders into psycopg2 `%s`.
 
@@ -660,7 +703,11 @@ def to_psycopg(sql):
     Any literal `%` is escaped first, since psycopg2 treats `%` as its own
     placeholder introducer once parameters are passed.
     """
-    return sql.replace("%", "%%").replace("?", "%s")
+    out = sql.replace("%", "%%").replace("?", "%s")
+    #: `$N` too: statements that reach the report only from the PostgreSQL log
+    #: carry the extended-protocol form. Sequential by construction --
+    #: `replayable` refuses anything else -- so a positional rewrite is sound.
+    return _DOLLAR_PLACEHOLDER.sub("%s", out)
 
 
 def statement_profile(profiles):
@@ -1357,8 +1404,9 @@ class MatrixStatements:
                     "parameters were redacted at capture (secret table)"
                     if not p.params_observed
                     else (
-                        f"placeholder/parameter mismatch: {p.sql.count('?')} "
-                        f"placeholders, {len(param_tuple(p.params))} values"
+                        f"placeholder/parameter mismatch: "
+                        f"{placeholder_count(p.sql)} placeholders, "
+                        f"{len(param_tuple(p.params))} values"
                     )
                 )
             )
