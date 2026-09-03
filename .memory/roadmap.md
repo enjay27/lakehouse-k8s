@@ -21,16 +21,14 @@ gaps is [`sessions/2026-09-03-polaris-vlogs-audit.md`](sessions/2026-09-03-polar
 
 | # | step | why it is next |
 |---|---|---|
-| 1 | `helm -n datahub-hynix get values benchmarks-polaris`, diffed against `polaris/values.yaml` | `active-issues.md` #5. **The shipper half is done** — `fb-values.yaml` matched live revision 10 exactly bar one line. Polaris is the half still unaccounted for: the file says file-logging and the access log are off, and both are demonstrably on. Diff before editing, or the edit reverts them. |
-| 2 | Decide what to do with the DEBUG SQL firehose — **route it, do not silence it** | `active-issues.md` #5b. ~1.5KB per record, nearly every row. But `polaris-learning` needs `DatasourceOperations` at DEBUG (see *Handing back* below), so the category level is not available as a lever. Own stream, own retention, or leave it to the OpenSearch path. |
-| 3 | Trim per-record waste: `json_date_key false`, `Remove_key processName loggerClassName processId` | #5b. `date` duplicates `_time`; the rest is a JVM path repeated forever. |
-| 4 | Access log: add `%D`, and fix the parser's `response_size` to `[\d-]+` | #5b. `%b` emits `-`, so zero-byte responses never parse; and §7's P99 panels need a latency field that is not being emitted. |
-| 5 | Add the tail `DB` + `Rotate_Wait`, `Skip_Long_Lines On`, and filesystem buffering | #5b, now **confirmed live** by the revision-10 diff rather than suspected. A restart replays the file from byte 0; a line over `Buffer_Max_Size` stops the tail instead of being skipped. Needs a writable mount — the log PVC is `readOnly`. |
-| 6 | Harden VictoriaLogs: `retention.maxDiskSpaceUsageBytes`, right-size 50Gi/4Gi, decide on the 9428 `LoadBalancer` | `active-issues.md` #7. 9428 is unauthenticated ingest **and** query; `persistence.size` is now-or-never. |
-| 7 | Rotate the OpenSearch password out of `fluent-bit/values.yaml` and the MinIO keys out of `polaris/values.yaml:408` | `active-issues.md` #4. A committed credential stays leaked after the file is edited. |
-| 8 | Access-log parser (`response_size` as `[\d-]+`, latency token added) and only then the 24h Lua table dedup | spec §4.1–4.2. Dedup targets poll traffic this cluster does not have — it is a rehearsal of the prod design, not a local win. |
-| 9 | `vmalert` + log→metric downsampling | spec §8. Nothing exists yet. |
-| 10 | Hand back to `polaris-learning` | The platform exists to serve that suite; see below. |
+| 1 | **Done** — access-log field extraction, and the shipper's silent faults: tail `DB`, `Skip_Long_Lines On`, `Rotate_Wait`, filesystem buffering, `json_date_key false`, per-record `Remove_key` | all in `logging/fb-values.yaml`, all Fluent-Bit-side. Install and confirm in VMUI. |
+| 2 | Give the tail DB a PVC instead of the emptyDir | the emptyDir survives a container restart but not `helm upgrade`, and a fresh DB with `Read_from_Head true` re-posts the whole file. The block to uncomment is in `fb-values.yaml`. |
+| 3 | Harden VictoriaLogs: `retention.maxDiskSpaceUsageBytes`, right-size 50Gi/4Gi, decide on the 9428 `LoadBalancer` | `active-issues.md` #7. 9428 is unauthenticated ingest **and** query; `persistence.size` is now-or-never. |
+| 4 | Rotate the OpenSearch password (#4), the JDBC password (#9), the MinIO keys | a committed credential stays leaked after the file is edited. Three places now. |
+| 5 | Decide on `autoscaling` vs the shared log file | `active-issues.md` #8. Three Polaris pods appending to one file; RWO does not stop it on one node. Needs a Polaris change, so it waits. |
+| 6 | `%D` in the access-log pattern, then the 24h Lua table dedup | spec §4.2 and §7. Both need Polaris-side changes; parked with #5. |
+| 7 | `vmalert` + log→metric downsampling | spec §8. Nothing exists yet. |
+| 8 | Hand back to `polaris-learning` | The platform exists to serve that suite; see below. |
 
 Numbers worth holding on to, from the design doc: the pipeline is specified for **10M/day
 normal and 140M/day peak at 30-day retention**, with the `GET .../tables/{t}` poll traffic

@@ -43,10 +43,33 @@ extraVolumes:
     persistentVolumeClaim:
       claimName: polaris-shared-logs-pvc
 
+  # Writable scratch for the tail offset DB and the filesystem buffer. The log
+  # PVC above is readOnly, so neither can live there.
+  #
+  # emptyDir survives a container restart (crash, OOM) but NOT pod replacement —
+  # and `helm upgrade` replaces the pod. On a fresh pod the DB is empty and
+  # `Read_from_Head true` re-reads the whole file, which VictoriaLogs does not
+  # deduplicate. To make that survive upgrades too, create a small PVC and swap
+  # the emptyDir for it:
+  #     kubectl -n datahub-hynix create -f - <<'EOF'
+  #     apiVersion: v1
+  #     kind: PersistentVolumeClaim
+  #     metadata: {name: fb-polaris-shipper-state}
+  #     spec:
+  #       accessModes: [ReadWriteOnce]
+  #       resources: {requests: {storage: 1Gi}}
+  #     EOF
+  #   then:  persistentVolumeClaim: {claimName: fb-polaris-shipper-state}
+  - name: flb-storage
+    emptyDir:
+      sizeLimit: 2Gi
+
 extraVolumeMounts:
   - name: polaris-logs
     mountPath: /logs
     readOnly: true
+  - name: flb-storage
+    mountPath: /var/log/flb-storage
 
 # Rendered by the chart into a ConfigMap and mounted at /fluent-bit/scripts/.
 # This is the ONE authoritative copy of the script. To re-run its test cases:
@@ -127,6 +150,14 @@ config:
         HTTP_Listen   0.0.0.0
         HTTP_Port     2020
 
+        # Buffer to disk, not only to memory: a VictoriaLogs restart or a network
+        # stall no longer costs whatever was queued.
+        storage.path              /var/log/flb-storage/
+        storage.sync              normal
+        storage.checksum          off
+        storage.max_chunks_up     64
+        storage.backlog.mem_limit 32M
+
   inputs: |
     [INPUT]
         Name              tail
@@ -134,8 +165,25 @@ config:
         Tag               polaris.vlogs
         Read_from_Head    true
         Parser            json
+        Buffer_Chunk_Size 256k
         Buffer_Max_Size   10MB
-        Skip_Long_Lines   Off
+
+        # On: a line longer than Buffer_Max_Size is skipped.
+        # Off (the old value): the tail STOPS on the file. Not "drops the line" —
+        # stops, and stays stopped. Stack traces are the long lines.
+        Skip_Long_Lines   On
+
+        # Offset DB. Without it, every restart re-reads from byte 0 and re-posts
+        # the file; VictoriaLogs does not deduplicate on ingest.
+        DB                /var/log/flb-storage/polaris_tail.db
+        DB.sync           normal
+
+        # Quarkus rotates polaris.log at maxFileSize. Give the tailer time to
+        # finish the rotated inode instead of losing its tail.
+        Refresh_Interval  5
+        Rotate_Wait       10
+
+        storage.type      filesystem
 
   filters: |
     # 1. Standardize keys for VictoriaLogs.
@@ -169,6 +217,18 @@ config:
         call          polaris_access_log
         type_int_key  http_status response_size
 
+    # 3. Drop fields that cost storage on every single record and answer nothing.
+    #    processName is a ~60-byte absolute JVM path; loggerClassName is the
+    #    logging facade, not the logger; processId is always 1 in a container.
+    #    hostName, threadName and sequence are kept — sequence in particular makes
+    #    a gap in ingestion visible.
+    [FILTER]
+        Name          record_modifier
+        Match         polaris.vlogs
+        Remove_key    processName
+        Remove_key    loggerClassName
+        Remove_key    processId
+
   outputs: |
     [OUTPUT]
         Name          http
@@ -178,3 +238,13 @@ config:
         URI           /insert/jsonline?_msg_field=_msg&_time_field=_time&_stream_fields=app,level
         Format        json_lines
         Header        Content-Type application/json
+
+        # Fluent Bit otherwise adds its own `date` key, which duplicates _time on
+        # every record (observed: date=1788417313.911832 beside
+        # _time=...13.911654221Z — 178us apart, same event).
+        json_date_key false
+
+        # With storage.type filesystem above, a VictoriaLogs outage queues to disk
+        # and drains afterwards instead of being dropped.
+        Retry_Limit              5
+        storage.total_limit_size 1G

@@ -114,33 +114,25 @@ inert — **it is the switch holding the pipeline off.** It reads as inert preci
 the only value it has ever written is the one with no visible effect. `QUARKUS_LOG_FILE_JSON_*`
 is real but orthogonal: JSON formatting for a handler that is disabled.
 
-**#11 — The pipeline dies at the next Polaris pod restart, silently. OPEN, urgent.**
-The running config has no file handler, yet records dated today are in VictoriaLogs. One
-command separates the two explanations:
+**#11 — Unexplained, NOT pursued: file logging reads as off, and ships anyway.**
+The running config says `quarkus.log.file.enabled=false`, and Polaris is nonetheless writing
+a file that the shipper tails — **Kade confirms the pipeline works and ships continuously**,
+which is an observation, where the prediction that it would break at the next restart was an
+inference. This session's inferences about this pipeline were wrong four times; his
+observation wins. **Polaris config is not to be changed.**
 
-```bash
-kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -l --full-time /deployments/logs/
-sleep 30 && kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -l --full-time /deployments/logs/
-```
+Left here because it is genuinely unexplained, not because it needs action. Whoever picks it
+up: `ls -l --full-time /deployments/logs/` twice, thirty seconds apart, says whether the file
+is live or stale, and the Polaris pod's start time against the ConfigMap's last write says
+whether the JVM predates it. Do not turn it into a change on the strength of the reasoning
+alone.
 
-- **not growing** → the file is stale and the shipper is **replaying a dead file**
-  (`Read_from_Head true`, no `DB`, so from byte 0 on every restart). VictoriaLogs stays
-  populated with history and the failure is invisible.
-- **growing** → the pod predates the current ConfigMap. Quarkus reads
-  `application.properties` once at startup and a kubelet sync does not reload it, so the JVM
-  holds a config that exists nowhere on disk.
-
-Either way **the next Polaris restart ends ingestion**, and in the stale case nothing looks
-wrong. Fix per #12.
-
-**#12 — The fix is now safe to make. OPEN.**
-Repo and cluster agree, so editing `polaris/values.yaml` reverts nothing. `logging.file.enabled:
-true` + `logging.file.json: true`, and **delete `extraVolumes`/`extraVolumeMounts`** — with the
-flag on, the chart mounts `logs-storage` at `logging.file.logsDir` and two volumeMounts on one
-path is a rejected pod. The claim moves to the chart's `benchmarks-polaris-logs`, which puts the
-PVC under version control at last; the shipper's `claimName` follows. **Check `kubectl get sc`
-first** — `storage.className: standard` must exist or the PVC stays Pending and Polaris will
-not start.
+**#12 — WITHDRAWN.** Proposed flipping `logging.file.enabled: true` and deleting the
+`extraVolumes` pair. Kade's call: Polaris works, leave it. The reasoning behind it is in the
+session file if the situation ever changes; the mount-path collision it warns about
+(`logging.file.enabled: true` makes the chart mount `logs-storage` at `logsDir`, colliding
+with the existing `extraVolumeMounts` on the same path) stays true and would bite anyone who
+enables that flag without removing the pair.
 
 **#5b — What is actually wrong in the shipped records. OPEN.**
 Established from two raw records off the VMUI JSON tab, after two earlier readings of the

@@ -17,14 +17,9 @@ inverts Kade's belief that the chart's `logging.file` block is inert: it is the 
 the pipeline off**, rendered straight into the ConfigMap. `QUARKUS_LOG_FILE_JSON_*` sets
 formatting on a disabled handler.
 
-**#11, urgent:** no file handler is running, yet today's records are in VictoriaLogs — so
-either the shipper is replaying a stale file (`Read_from_Head true`, no `DB`) or the pod
-predates the ConfigMap. `ls -l` twice, 30s apart, separates them. Either way **the next
-Polaris restart ends ingestion**, and in the stale case nothing looks wrong. **#12:** the fix
-is now safe — `logging.file.enabled: true`, `json: true`, delete the `extraVolumes` pair (the
-chart mounts its own at `logsDir`; two mounts on one path is a rejected pod). That moves the
-claim to `benchmarks-polaris-logs` and finally puts the PVC under version control. Check
-`kubectl get sc` first, or the PVC stays Pending and Polaris will not start.
+**Polaris is not to be changed** — it works and ships continuously (Kade's observation;
+#11 is left unexplained rather than acted on, since this session's inferences about this
+pipeline were wrong four times and his observation wins). #12 withdrawn.
 
 **Then** (#5b, #8, #9): the tail has no `DB` with `Read_from_Head true` and
 `Skip_Long_Lines Off`, both confirmed live; per-record waste; no `%D`, so §7's P99 panels
