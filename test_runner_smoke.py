@@ -688,3 +688,47 @@ def test_the_authorized_case_keeps_its_own_principal_role(driver, monkeypatch):
     )
     ident, _ = driver.resolve_identity("authorized", conn="C", schema="s", realm="R")
     assert ident.principal_role == "authz1_principal_role"
+
+
+# ----------------------------------------------------------------------
+# the index-state guard that could never fail in one direction
+# ----------------------------------------------------------------------
+class _FakeIndexConn:
+    """A connection whose grant_records carries only the named indexes."""
+
+    def __init__(self, names):
+        self._names = list(names)
+
+    def cursor(self):
+        return self
+
+    def execute(self, *a, **k):
+        pass
+
+    def fetchall(self):
+        return [(n, f"CREATE INDEX {n} ...") for n in self._names]
+
+    def close(self):
+        pass
+
+
+def test_has_index_is_not_a_truthiness_test_on_every_index():
+    """`bool(index_state(conn))` was the test, and grant_records ALWAYS has a
+    primary key -- so `explain_api_matrix`'s --index-state guard answered
+    "present" in both halves of every sweep. It could not detect the state it
+    exists to guard against, and it blocked the index-absent pass outright
+    (notebook 04's first run, 2026-09-03). A guard that cannot fail in one
+    direction is not a guard."""
+    pq = _load("profile_queries")
+    only_pkey = _FakeIndexConn(["grant_records_pkey"])
+    assert pq.index_state(only_pkey), "the table does have indexes"
+    assert not pq.has_index(only_pkey), "but not THE one"
+
+    with_it = _FakeIndexConn(["grant_records_pkey", pq.FOCUS_INDEX])
+    assert pq.has_index(with_it)
+
+
+def test_the_focus_index_is_named_once():
+    """A second spelling would be a second thing to keep in agreement."""
+    pq = _load("profile_queries")
+    assert pq.FOCUS_INDEX == "idx_grant_records_grantee"

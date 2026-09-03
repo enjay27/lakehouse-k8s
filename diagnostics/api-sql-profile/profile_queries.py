@@ -76,6 +76,10 @@ REPORTS_DIR = HERE / "reports"
 #: to be an index scan already; the value of sweeping all of them is confirming
 #: that, and catching anything that is not.
 FOCUS_TABLE = "grant_records"
+#: The index the whole audit toggles. Named ONCE, here, because
+#: `explain_api_matrix` refuses a run whose declared state disagrees with the
+#: live one and a second spelling would be a second thing to keep in agreement.
+FOCUS_INDEX = "idx_grant_records_grantee"
 
 
 # ----------------------------------------------------------------------
@@ -177,6 +181,22 @@ def index_state(conn, table=FOCUS_TABLE):
     rows = cur.fetchall()
     cur.close()
     return [{"name": n, "def": d} for n, d in rows]
+
+
+def has_index(conn, name=FOCUS_INDEX, table=FOCUS_TABLE):
+    """Is THAT index on the table right now?
+
+    NOT `bool(index_state(conn))`. `index_state` returns EVERY index on the
+    table and `grant_records` always has at least its primary key, so a
+    truthiness test on it is `True` unconditionally -- which is what
+    `explain_api_matrix` was doing. Its `--index-state` guard therefore
+    reported "present" in both halves of the sweep: it could never detect the
+    absent state it exists to protect, and it blocked the legitimate
+    index-absent pass outright (2026-09-03, notebook 04's first run).
+
+    A guard that cannot fail in one direction is not a guard.
+    """
+    return any(i["name"] == name for i in index_state(conn, table))
 
 
 def table_rows(conn, table=FOCUS_TABLE):

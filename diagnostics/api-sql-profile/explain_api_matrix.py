@@ -162,13 +162,21 @@ def main():
     conn = pqm.pg_connect(args.host)
     pqm.assert_primary(conn)
 
+    #: Every index on the focus table, recorded for provenance...
     live = pqm.index_state(conn)
-    live_state = "present" if live else "absent"
+    #: ...but the STATE is whether the ONE index this audit toggles is there.
+    #: `bool(live)` was the test, and `grant_records` always has a primary key,
+    #: so it answered "present" in both halves of every sweep -- unable to
+    #: detect the state it guards against, and blocking the index-absent pass
+    #: outright.
+    live_state = "present" if pqm.has_index(conn) else "absent"
     if live_state != args.index_state:
         sys.exit(
             f"--index-state {args.index_state} but pg_indexes says {live_state}.\n"
+            f"  Indexes on {pqm.FOCUS_TABLE} right now: "
+            f"{', '.join(i['name'] for i in live) or '(none)'}\n"
             "  EXPLAIN replays against the database as it IS. Planning this\n"
-            "  report now would staple {live_state} plans onto a drive taken\n"
+            f"  report now would staple {live_state} plans onto a drive taken\n"
             "  in another state, and the document would not say so."
         )
 
