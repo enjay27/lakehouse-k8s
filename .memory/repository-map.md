@@ -15,9 +15,16 @@ and one directory per service. A service directory is either a **local chart**
 ## Values-only — upstream chart, local values
 
 `airflow/`, `argo/`, `jupyter/`, `kafka/`, `schema-registry/`, `spark/`,
-`fluent-bit/`, `logging/` (VictoriaLogs + the Fluent Bit values that ship Polaris
-logs into it), `datahub/` (chart README, `datahub-values.yaml`,
+`fluent-bit/`, `logging/`, `datahub/` (chart README, `datahub-values.yaml`,
 `prerequisites-values.yaml`, logback configmap).
+
+**There are two Fluent Bit values files and they are different deployments, not
+duplicates** — `fluent-bit/values.yaml` is the **DaemonSet** (container logs →
+OpenSearch in Docker); `logging/fb-values.yaml` is a **single-replica Deployment**
+(shared-PVC file tail → VictoriaLogs). `logging/` also holds
+`victoria-values.yaml` and `polaris-logging-architecture-spec.md`, the design doc
+those two are built against (filed 2026-09-03). Only `fluent-bit/values.yaml.bak`
+is an actual backup.
 
 **Duplicate values files are a live hazard here.** `datahub-values.yaml`,
 `datahub-values (2).yaml`, `datahub/datahub-values (4).yaml`,

@@ -15,12 +15,27 @@ OpenSearch runs in Docker, outside the cluster. Detail in
 
 ## Next
 
+Polaris logging is the live thread. The design it is being built against is
+`logging/polaris-logging-architecture-spec.md` (filed 2026-09-03); the audit that found the
+gaps is [`sessions/2026-09-03-polaris-vlogs-audit.md`](sessions/2026-09-03-polaris-vlogs-audit.md).
+
 | # | step | why it is next |
 |---|---|---|
-| 1 | Reconcile the repo against the live cluster — `helm get values` per release, diffed against each `values.yaml` | `active-issues.md` #1. The rebuild's fixes live in the releases; the repo is not yet evidence of anything. |
-| 2 | Rotate the MinIO key at `spark/values.yaml:30` and pin images in `kafka/` / `schema-registry/` / `datahub/` | A committed plaintext key stays leaked after the cluster stops using it, and an unpinned image is still unpinned next install. |
-| 3 | Settle which sink the Fluent Bit DaemonSet ships to, then write it into `CLAUDE.md` | `active-issues.md` #2 — one `kubectl get cm` answers it. |
-| 4 | Hand back to `polaris-learning` | The platform exists to serve that suite; see below. |
+| 1 | Decide the shape: **shared-PVC file tail** (spec as written) vs **second OUTPUT on the existing DaemonSet** | `active-issues.md` #6. Everything below branches on this, and only the file path can carry the access-log parser and the Lua dedup filter. |
+| 2 | Turn on the three switches the file path needs — `logging.file.enabled`, a PVC that actually exists, `quarkus.http.access-log.enabled` | `active-issues.md` #5. Until all three are on, `logging/fb-values.yaml` ships an empty file and VictoriaLogs stays at zero Polaris records. |
+| 3 | Harden the shipper: tail `DB` + `Skip_Long_Lines On`, `custom_parsers.conf` loaded, filesystem buffering, `_stream_fields` cut to `app,level` | restart-replay, a tail that stops on a long stack trace, and stream cardinality are each a silent data fault, not an error. |
+| 4 | Harden VictoriaLogs: `retention.maxDiskSpaceUsageBytes`, right-size 50Gi/4Gi to this node, decide `LoadBalancer` vs `ClusterIP` on 9428 | `active-issues.md` #7. 9428 is unauthenticated ingest **and** query, and `persistence.size` is now-or-never. |
+| 5 | Rotate the OpenSearch password out of `fluent-bit/values.yaml`, and the MinIO keys out of `polaris/values.yaml:408` | `active-issues.md` #4. A committed credential stays leaked after the file is edited. |
+| 6 | Build the access-log parser + the 24h Lua table dedup | spec §4.1–4.2 — the reason the file path exists at all. Blocked on 1 and 2. |
+| 7 | Reconcile the repo against the live cluster — `helm get values` per release, diffed | `active-issues.md` #1. The rebuild's fixes live in the releases; the repo is not yet evidence of anything. |
+| 8 | `vmalert` + log→metric downsampling | spec §8. Nothing exists yet; worth doing only once 1–6 land. |
+| 9 | Hand back to `polaris-learning` | The platform exists to serve that suite; see below. |
+
+Numbers worth holding on to, from the design doc: the pipeline is specified for **10M/day
+normal and 140M/day peak at 30-day retention**, with the `GET .../tables/{t}` poll traffic
+(**~11M/day**) deduplicated at the shipper. On this single OrbStack node none of those
+numbers apply — the local instance is a correctness rehearsal for that design, not a load
+test of it, and sizing should be chosen for the laptop, not copied from the doc.
 
 ## PostgreSQL verification assertions
 

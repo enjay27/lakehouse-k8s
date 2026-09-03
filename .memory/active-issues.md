@@ -25,12 +25,15 @@ the cluster**. Two of them are worth checking on disk regardless: a plaintext
 secret key stays a leaked secret even after the cluster stops using it, and an
 unpinned image is still unpinned for the next install.
 
-**#2 — Which sink does the Fluent Bit DaemonSet actually ship to? OPEN QUESTION.**
-Kade confirmed the DaemonSet runs and works. `logging/fb-values.yaml` on disk (still
-uncommitted) points at VictoriaLogs in namespace `logging` via an HTTP `jsonline`
-output; the committed version points at Elasticsearch; and OpenSearch is running in
-Docker outside the cluster. One `kubectl -n datahub-hynix get cm <fb-configmap> -o yaml`
-settles it, and then the tech stack in `CLAUDE.md` can say so plainly.
+**#2 — Which sink does Fluent Bit ship to? ANSWERED FROM THE REPO, not yet from the cluster.**
+It is not one shipper choosing a sink — it is **two releases**:
+`fluent-bit/values.yaml` is a **DaemonSet** tailing `/var/log/containers/*.log` into
+**OpenSearch in Docker** (`192.168.194.1:9200`), and `logging/fb-values.yaml` is a
+**single-replica Deployment** tailing a shared PVC into **VictoriaLogs** in `logging`.
+Confirmed by reading both files; **not** confirmed that both releases are installed —
+`helm list -A` settles that and this session has no cluster reach. Once confirmed, say it
+plainly in `CLAUDE.md`'s tech stack. Note #5 below: today the VictoriaLogs release has no
+input, so everything that lands anywhere lands in OpenSearch.
 
 **#3 — `minio/values.yaml` defeats its own chart's credential guard. OPEN (low).**
 `minio/templates/secret.yaml` refuses to render when `auth.rootPassword` is empty —
@@ -40,6 +43,46 @@ right place for it. But the committed values carry `rootUser: "minio"` /
 `--set-string` quietly comes up with a publicly known password. Either blank the
 defaults so the guard does its job, or accept that this cluster's object store has a
 guessable root credential. Cheap either way; just pick one deliberately.
+
+**#4 — `fluent-bit/values.yaml` carries a plaintext OpenSearch password. OPEN.**
+`HTTP_Passwd Str0ngP@ssw0rd123!` appears twice, in a **committed** file — the Zero
+Hardcoded Credentials rule broken in tracked history. Rewriting the file does not unleak
+it; the credential has to be rotated on the OpenSearch side as well. The fix in the values
+is a Secret plus `${VAR}` expansion in the Fluent Bit config, not a different literal.
+`polaris/values.yaml:408-409` (`minioadmin`/`minioadmin`) is the same class of problem and
+should go the same way.
+
+**#5 — The Polaris → VictoriaLogs path has no input. Three switches, all off. OPEN.**
+Written and inert, exactly the failure mode #F1 is kept for. In order:
+
+| # | where | what is wrong |
+|---|---|---|
+| a | `polaris/values.yaml` `logging.file.enabled: false` | `templates/configmap.yaml:132-147` renders `quarkus.log.file.enabled=false`. `QUARKUS_LOG_FILE_JSON_ENABLED=true` (`values.yaml:193`) sets the format of a handler that is off. **No `polaris.log` exists.** |
+| b | same flag gates `templates/storage.yaml` | the chart's log PVC does not render. `polaris/values.yaml:200` and `logging/fb-values.yaml:15` both mount **`polaris-shared-logs-pvc`, which nothing in this repo creates**; the chart would render `benchmarks-polaris-logs`. |
+| c | `quarkus.http.access-log.enabled` set nowhere | `polaris/values.yaml:302` sets the *category level* `io.quarkus.http.access-log: INFO`, a different switch. **The access log the spec's regex parser and Lua deduplicator consume does not exist.** |
+
+So the whole of `logging/fb-values.yaml` is currently a shipper pointed at an absent file.
+What reaches OpenSearch today goes by the **console** path — Polaris stdout as JSON via
+`QUARKUS_LOG_CONSOLE_JSON_ENABLED=true` → container log → the DaemonSet.
+
+**#6 — A shared PVC cannot cross namespaces. OPEN (design constraint, decide before building).**
+PVCs are namespaced. Polaris runs in `datahub-hynix`, so the file-tailing shipper must run
+in `datahub-hynix` too — only VictoriaLogs stays in `logging`, which is what
+`environments.md` already says that namespace is for. `ReadWriteOnce` is survivable only
+because OrbStack is one node; it stops being survivable the moment anything is scheduled
+elsewhere. The alternative that avoids the PVC entirely is to add a second OUTPUT to the
+existing DaemonSet and drop the Deployment — at the cost of the access-log field extraction
+and the dedup filter, which need the file path to be worth building.
+
+**#7 — `logging/victoria-values.yaml` is sized for the spec's peak, not for this laptop. OPEN (low).**
+50Gi PV and a 4Gi memory limit come from the 140M-records/day column of the design doc, on
+the single OrbStack node that already needs >7GB for the full platform set. Two specific
+gaps rather than just the sizing: there is **no `retention.maxDiskSpaceUsageBytes`**, so
+30-day retention alone does not stop the PV filling and wedging the pod; and
+`service.type: LoadBalancer` on 9428 publishes an **unauthenticated ingest *and* query**
+endpoint onto the Mac, since VictoriaLogs single has no auth. **`persistence.size` is
+now-or-never** — if the PVC is already bound at 50Gi, that is what this cluster has.
+
 
 ## Resolved, kept because they recur
 
