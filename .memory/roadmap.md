@@ -57,3 +57,18 @@ What has been done and what is next, newest first. Session narratives live in
   - **WRITE SHAPES NOW OBSERVED** (absent from the unauthorized case by construction): `UPDATE entities WHERE realm_id, catalog_id, id, entity_version` (optimistic concurrency), `DELETE entities WHERE catalog_id, realm_id, id`, `DELETE grant_records WHERE ((grantee_id, grantee_catalog_id) OR (securable_id, securable_catalog_id))` — the OR-shaped delete no single-column index serves — `DELETE policy_mapping_record WHERE target_catalog_id, target_id, realm_id`, plus INSERTs into `entities`, `grant_records`, `events`. INSERT plans to a Result node, so only the UPDATE/DELETE shapes are index-measurable.
   - **`policy_mapping_record` IS EXERCISED after all** — 2 SELECT + 2 DELETE, issued by `iceberg.drop_namespace` and `iceberg.drop_table`. Its texts now have real params. **It is still NOT plan-measurable at this fixture** (0 rows; every plan against an empty table looks identical) — the earlier note stands, but the statements are no longer hypothetical.
   - **5 statements carry NO params and cannot be replayed** — all the same `entities` SELECT shape, one each in `drop_namespace`, `drop_table`, `drop_view`, `create_principal`, `delete_catalog_role`. 5 of 460 (1.1%). Unlike the unauthorized case, which was 390/390 replayable.
+
+- [x] **ALL THREE MATRICES COMPLETE, ONE FIXTURE, 2026-09-02/03.** `apiprofile1788334618_cat` drove all three — the comparison is valid. **0 foreign statements in every report.**
+
+  | case | permitted | refused | other | statements | logical shapes | (sql,params) pairs | grantee lookups/req | tables |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|
+  | unauthorized | 2 | 22 | 19 | 390 | 6 | 33 | 1.33 | 2 |
+  | authorized | 29 | 5 | 9 | 460 | 18 | 93 | 1.74 | 4 |
+  | admin | 41 | 1 | 1 | 564 | 21 | 138 | 2.44 | 5 |
+
+  - **ADMIN IS NOT A SUPERSET — CONFIRMED.** Its single refusal is `mgmt.reset_principal_credentials` (403). `service_admin` reads every management API and is refused credential vending; the catalog-scoped owner is the reverse. Neither tier contains the other, and that is the headline the three-identity design existed to produce. Admin's only non-2xx besides it is `iceberg.load_table[missing]`, which is intentional — **admin has NO second-order 404s**, because it created everything the later operations address.
+  - **AUTHORIZED's 5 refusals are exactly the SERVICE-scoped operations** (`list_catalogs`, `create_principal`, `list_principals`, `create_principal_role`, `list_principal_roles`). Third independent reproduction.
+  - **THE LOGICAL SURFACE IS PERFECTLY NESTED: unauthorized ⊆ authorized ⊆ admin**, once predicates are canonicalised by column SET. It is NOT nested textually — see the predicate-order entry in active-issues.
+  - **The grantee lookup rises monotonically with authority** — 1.33 → 1.74 → 2.44 per request — and fires on every one of the 43 operations in all three cases. It is the single statement the index question turns on.
+  - **`principal_authentication_data` appears ONLY in admin** (3 statements: SELECT/INSERT/DELETE), correctly `<redacted>` — the 3 permanently unreplayable pairs. Every other statement in all three reports carries usable params.
+  - No 500s in the admin run: the PG-HA read-after-write signature that produced 2x500 on 2026-09-01 did not recur.
