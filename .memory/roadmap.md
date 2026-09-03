@@ -22,7 +22,7 @@ gaps is [`sessions/2026-09-03-polaris-vlogs-audit.md`](sessions/2026-09-03-polar
 | # | step | why it is next |
 |---|---|---|
 | 1 | `helm -n datahub-hynix get values benchmarks-polaris` and the Fluent Bit release, diffed against the files | `active-issues.md` #5. VMUI shows the pipeline running; the repo says it is switched off. **Editing `polaris/values.yaml` before this diff risks reverting what is actually deployed.** |
-| 2 | Cut the DEBUG SQL firehose — `DatasourceOperations` to INFO, or route it to its own stream | `active-issues.md` #5b. ~1.5KB per record, nearly every row, and it writes bound parameter values into the log. The one real volume lever on this cluster. |
+| 2 | Decide what to do with the DEBUG SQL firehose — **route it, do not silence it** | `active-issues.md` #5b. ~1.5KB per record, nearly every row. But `polaris-learning` needs `DatasourceOperations` at DEBUG (see *Handing back* below), so the category level is not available as a lever. Own stream, own retention, or leave it to the OpenSearch path. |
 | 3 | Trim per-record waste: `json_date_key false`, `Remove_key processName loggerClassName processId` | #5b. `date` duplicates `_time`; the rest is a JVM path repeated forever. |
 | 4 | Access log: add `%D`, and fix the parser's `response_size` to `[\d-]+` | #5b. `%b` emits `-`, so zero-byte responses never parse; and §7's P99 panels need a latency field that is not being emitted. |
 | 5 | Settle the tail `DB` / `Skip_Long_Lines` / buffering from `helm get values`, not from the repo copy | #5b. The repo's `fb-values.yaml` has twice been shown not to be live. |

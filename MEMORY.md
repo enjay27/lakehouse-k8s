@@ -20,8 +20,10 @@ outside these files. **Diff `helm -n datahub-hynix get values` before editing an
 ([`active-issues.md`](.memory/active-issues.md) #5 — #1 caught in the act, three times).
 
 **The real faults** (#5b): the **DEBUG SQL from `DatasourceOperations` — ~1.5KB a record,
-nearly every row, bound parameter values included** — is the volume lever here; the spec's
-Lua dedup targets poll traffic this cluster does not have. Then per-record waste (`date`
+nearly every row, bound parameter values included** — is the volume problem, but **not a
+lever**: `polaris-learning` needs that logger at DEBUG, so it has to be *routed*, not
+silenced. The spec's Lua dedup meanwhile targets poll traffic this cluster does not have.
+Then per-record waste (`date`
 duplicating `_time`, `processName` on every line), and the access log needing `%D` plus a
 parser that accepts `%b`'s `-`. Also open: a committed plaintext OpenSearch password (#4), a
 PVC that cannot cross namespaces (#6), VictoriaLogs sized from the doc's 140M/day column (#7).
