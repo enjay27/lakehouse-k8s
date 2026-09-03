@@ -118,6 +118,14 @@ def per_api_rollup(explains, ms):
     for row in out.values():
         for k in ("seq_scanned", "indexes_used", "relations"):
             row[k] = sorted(row[k])
+        #: NOT "used an Index Only Scan". This means: nothing this API issued
+        #: scanned a table sequentially, AND at least one statement used an
+        #: index -- i.e. the API is fully index-served. PostgreSQL's
+        #: `Index Only Scan` is a different, specific node type (satisfied from
+        #: the index without touching the heap) and appears in these same plans,
+        #: so the two are easy to confuse. The name is kept for compatibility
+        #: with run files already on disk; the workbook renames it to
+        #: `fully_index_served` on the way out.
         row["uses_index_only"] = not row["seq_scanned"] and bool(row["indexes_used"])
     return out
 

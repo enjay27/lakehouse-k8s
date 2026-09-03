@@ -234,6 +234,14 @@ def build(case, matrix_path, explain_path, dest):
                 r.get("skipped"),
                 ", ".join(seq) or "",
                 ", ".join(r.get("indexes_used") or []) or "",
+                #: The run file's key is `uses_index_only`, which does NOT
+                #: mean "used an Index Only Scan". It means nothing this API
+                #: issued scanned a table sequentially AND at least one
+                #: statement used an index -- fully index-served. PostgreSQL's
+                #: `Index Only Scan` is a different node type, satisfied from
+                #: the index without touching the heap, and it appears 12 times
+                #: in these very plans. Renamed on the way out; the collision
+                #: is a trap either way round.
                 bool(r.get("uses_index_only")),
                 "grant_records" in seq,
             ]
@@ -249,11 +257,11 @@ def build(case, matrix_path, explain_path, dest):
             "skipped",
             "seq_scanned",
             "indexes_used",
-            "uses_index_only",
+            "fully_index_served",
             "scans_grant_records",
         ],
         rows,
-        [13, 42, 12, 11, 9, 9, 22, 46, 15, 20],
+        [13, 42, 12, 11, 9, 9, 22, 46, 19, 20],
         flag_col=10,
     )
 
@@ -549,6 +557,17 @@ def build(case, matrix_path, explain_path, dest):
         ["APIs that seq-scan grant_records", f"=COUNTIF(Summary!J2:J{n + 1},TRUE)"],
         ["", ""],
         ["READ THIS", ""],
+        [
+            "fully_index_served (Summary)",
+            "TRUE means every statement that API issued was served by an index "
+            "and NONE scanned a table sequentially. It does NOT mean 'used an "
+            "Index Only Scan' — that is a different PostgreSQL node type, "
+            "satisfied from the index without touching the heap, and it appears "
+            "in these plans under `plan` on the Statements sheet. The run file "
+            "calls this key uses_index_only; renamed here because the collision "
+            "is a trap. FALSE for every API in every case here, because all 43 "
+            "issue the grantee lookup and that scans grant_records.",
+        ],
         [
             "total_cost / plan_rows are planner ESTIMATES",
             "They move with ANALYZE. Two sweeps 25 min apart differed in 11 of 264 "
