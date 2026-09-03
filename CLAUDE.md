@@ -44,6 +44,32 @@ Rules:
 - Mutating notebooks call `require_not_prod(...)` right after setup so they hard-fail against `prod`; PROD is restricted to the availability suite.
 - `admin/` teardown notebooks are **`local`-only** and hardcoded to localhost by design (see `admin/README.md`), with an `assert`-based host guard that refuses any non-local `POLARIS_URL`; they are never pointed at a shared environment, and must **not** be wired to `init_env()`.
 
+## Schema Policy — PLAIN UPSTREAM, NO CUSTOM INDEXES
+
+**Every measurement is taken on the schema Polaris ships.** The authority is
+`$HOME/hynix/local-k8s/postgresql/schema/schema_v3.sql` (ASF-licensed, the
+Apache Polaris file); Kade's `schema.sql` beside it is structurally identical —
+all 12 statements match, differing only in idempotency and `COMMENT ON`.
+
+Upstream creates exactly three non-key indexes — `idx_entities`,
+`idx_locations`, `idx_policy_mapping_record` — and gives `grant_records`
+**nothing but its 6-column primary key**. `src/schema_audit.STOCK_INDEX_NAMES`
+is that set in code; `custom_indexes(live)` names anything outside it.
+
+- **Do not create an index as part of a measurement.** A plan taken on a
+  mutated schema is a statement about a database nobody runs, and it is
+  indistinguishable afterwards from one that is not.
+- **Notebooks must not change the schema.** `04_explain_sweep.ipynb` is the
+  model: read-only, safe to re-run. `02_index_audit.ipynb` and
+  `02b_grant_scale_sweep.ipynb` exist to measure a *proposed* index and are
+  therefore OFF-POLICY for the API-SQL audit — they may only run deliberately,
+  from a shell, never as a step in a measurement.
+- **Before measuring, confirm the schema is plain:**
+  `uv run python drop_grantee_index.py --list` (exits non-zero if anything is
+  custom), and `--all-custom` to remove it.
+- Proposing an index is fine and belongs in `schema_audit.INDEX_HYPOTHESES` as
+  a remedy — a recommendation, never an applied change.
+
 ## Environment Commands
 *Always execute commands within your active local virtual environment (`.venv`); dependencies are managed with `uv` (`pyproject.toml` / `uv.lock`).*
 - **Install Dependencies:** `uv sync`  (add a package: `uv add <pkg>`)

@@ -87,7 +87,14 @@ EXPECTED_INDEXES = [
     ("version_pkey", "version", ["version_key"], "pk"),
     ("entities_pkey", "entities", ["realm_id", "id"], "pk"),
     (
-        "entities_realm_id_catalog_id_parent_id_type_code_name_key",
+        #: NAMED in the DDL -- `CONSTRAINT constraint_name UNIQUE (...)` -- so
+        #: PostgreSQL uses that name verbatim rather than generating
+        #: `entities_realm_id_..._key`, which is what this entry used to claim.
+        #: A schema audit against the generated name reports the real index as
+        #: unexpected AND the expected one as missing: two findings, both wrong,
+        #: from one bad string. Confirmed against schema_v3.sql 2026-09-03, and
+        #: the live sweep records `constraint_name` among the indexes used.
+        "constraint_name",
         "entities",
         ["realm_id", "catalog_id", "parent_id", "type_code", "name"],
         "unique",
@@ -144,7 +151,28 @@ EXPECTED_INDEXES = [
         ],
         "index",
     ),
+    #: `events` is the v3 addition. It is excluded from the TABLE comparison as
+    #: an event-listener table, which left its primary key out of the index list
+    #: as well -- so a live `events_pkey` read as custom.
+    ("events_pkey", "events", ["event_id"], "pk"),
 ]
+
+#: Every index the upstream schema creates, by name. THE authority for "is this
+#: index ours or Polaris's" -- the audit runs on the plain upstream schema and
+#: anything outside this set was added by hand.
+STOCK_INDEX_NAMES = frozenset(name for (name, _t, _c, _k) in EXPECTED_INDEXES)
+
+
+def custom_indexes(live_index_names):
+    """Index names present live that the upstream schema does not create.
+
+    The measurement policy is a PLAIN upstream schema: a custom index makes
+    every plan a statement about a database nobody runs. This names the
+    offenders rather than asserting, because the caller decides whether to drop
+    them or to abort.
+    """
+    return sorted(set(live_index_names) - set(STOCK_INDEX_NAMES))
+
 
 #: Documented suspicions, derived from reading the 1.3.0 DDL against
 #: JdbcBasePersistenceImpl's query predicates. These are HYPOTHESES to confirm
