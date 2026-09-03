@@ -1048,3 +1048,83 @@ def test_a_statement_with_no_request_id_still_merges_normally():
     mine = []
     strays = _merge_pg_durations(mine, pg, {"req_062"})
     assert strays == [] and len(mine) == 1
+
+
+def test_a_detail_line_arriving_in_the_next_read_still_reaches_its_statement():
+    """A statement and its DETAIL line are adjacent in the FILE, not
+    necessarily in the same READ. kubectl's pipe decides, and on 2026-09-03 it
+    split the admin drive's events row from its parameters -- so the row had no
+    request_id and kept the wrong API."""
+    carry = {}
+    first = parse_pg_log(
+        "2026-09-03 00:41:31.930 GMT [639] LOG:  execute <unnamed>: "
+        + EVENTS_SQL
+        + "\n",
+        carry=carry,
+    )
+    assert first[0].request_id is None, "nothing to read it from yet"
+    parse_pg_log(
+        "2026-09-03 00:41:31.930 GMT [639] DETAIL:  Parameters: "
+        "$1 = 'c', $2 = 'e', $3 = 'req_046', $4 = 'AfterCreateTableEvent'\n",
+        carry=carry,
+    )
+    assert first[0].request_id == "req_046", "the late DETAIL reached it"
+    assert first[0].params is not None
+
+
+def test_a_statement_already_on_the_wrong_record_is_relocated():
+    """Route 2: it had no request_id when the merge ran, so holding strays back
+    could not have caught it. Only a post-pass over finished records can."""
+    owner = TraceRecord(api="iceberg.create_table")
+    owner.sql = [
+        SqlStatement(
+            seq=0,
+            sql="SELECT 1 FROM POLARIS_SCHEMA.ENTITIES",
+            request_id="req_046",
+            source="polaris",
+        )
+    ]
+    wrong = TraceRecord(api="mgmt.create_principal")
+    misplaced = SqlStatement(
+        seq=1, sql=EVENTS_SQL, request_id="req_046", source="postgres"
+    )
+    wrong.sql = [
+        SqlStatement(
+            seq=0,
+            sql="SELECT 2 FROM POLARIS_SCHEMA.ENTITIES",
+            request_id="req_062",
+            source="polaris",
+        ),
+        misplaced,
+    ]
+
+    placed, lost = reattribute_deferred([wrong, owner], [])
+    assert (placed, lost) == (1, 0)
+    assert misplaced not in wrong.sql, "the 403 must not keep another call's write"
+    assert misplaced in owner.sql
+
+
+def test_a_polaris_statement_is_never_relocated():
+    """Only pg-side rows are routed. A Polaris statement carries mdc.requestId
+    because it was logged INSIDE its own request -- moving one would be moving
+    the evidence that defines ownership."""
+    a = TraceRecord(api="one")
+    a.sql = [
+        SqlStatement(
+            seq=0,
+            sql="SELECT 1 FROM POLARIS_SCHEMA.ENTITIES",
+            request_id="req_a",
+            source="polaris",
+        )
+    ]
+    b = TraceRecord(api="two")
+    stray_polaris = SqlStatement(
+        seq=0,
+        sql="SELECT 2 FROM POLARIS_SCHEMA.ENTITIES",
+        request_id="req_a",
+        source="polaris",
+    )
+    b.sql = [stray_polaris]
+    placed, lost = reattribute_deferred([a, b], [])
+    assert (placed, lost) == (0, 0)
+    assert stray_polaris in b.sql

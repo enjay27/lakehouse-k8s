@@ -992,7 +992,7 @@ def split_query_message(body):
     return first.strip(), (", ".join(values) if values else None)
 
 
-def parse_pg_log(text, start_seq=0):
+def parse_pg_log(text, start_seq=0, carry=None):
     """Parse a PostgreSQL server-log chunk into SqlStatement records.
 
     Handles the three-line shape the JDBC driver produces:
@@ -1012,7 +1012,16 @@ def parse_pg_log(text, start_seq=0):
     """
     out = []
     seq = start_seq
-    last_by_pid = {}
+    #: STATE ACROSS CALLS, when the caller supplies it. A statement and its
+    #: `DETAIL:  Parameters:` line are adjacent in the file but not necessarily
+    #: in the same READ: `read_since_mark()` returns whatever has arrived
+    #: through kubectl's pipe at that instant, so an `execute` line can end one
+    #: trace window with its DETAIL arriving in the next. The statement then
+    #: has no params -- and for `POLARIS_SCHEMA.EVENTS`, no `request_id`, so
+    #: the async row cannot be routed to the request it names. Measured
+    #: 2026-09-03: the admin drive's events row kept the wrong API for exactly
+    #: this reason, while parsing the same log in ONE call extracts it fine.
+    last_by_pid = carry if carry is not None else {}
     last_pid = "-"
     for line in text.splitlines():
         pidm = _PG_PID.search(line)
@@ -1482,6 +1491,10 @@ class Tracer:
         #: `reattribute_deferred` once every record exists -- an async write
         #: can only be routed after the record it belongs to has been created.
         self.deferred = []
+        #: `parse_pg_log`'s last-statement-per-pid, threaded between windows so
+        #: a DETAIL line that arrives in the next read still reaches its
+        #: statement. See parse_pg_log's `carry`.
+        self._pg_carry = {}
 
     def _streams(self):
         return [s for s in (self.polaris_log, self.pg_log, self.minio_trace) if s]
@@ -1542,7 +1555,7 @@ class _TraceContext:
                 kept = [ln[:600] for ln in (window or "").splitlines()[-40:]]
                 self.record.raw_log = "\n".join(kept)
         if t.pg_log:
-            pg_stmts = parse_pg_log(t.pg_log.read_since_mark())
+            pg_stmts = parse_pg_log(t.pg_log.read_since_mark(), carry=t._pg_carry)
             known = {s.request_id for s in self.record.sql if s.request_id}
             t.deferred.extend(
                 _merge_pg_durations(self.record.sql, pg_stmts, known) or []
@@ -1638,23 +1651,58 @@ def reattribute_deferred(records, deferred):
     call that finished after the last window closed, and a count of those is
     the honest measure of what the capture missed.
 
+    TWO ROUTES IN, because there are two ways a row goes astray and only one
+    of them can be caught while the window is open:
+
+      1. the row arrived with its `request_id` already parsed, so the merge
+         held it back as a stray -- `deferred`;
+      2. the row's `DETAIL:  Parameters:` line arrived in the NEXT read, so it
+         had no request_id when the merge saw it and was appended to the wrong
+         record before its id was known. Only a post-pass over the finished
+         records can see that one, which is why this is a post-pass.
+
+    Route 2 is what actually bit on 2026-09-03: the mechanism for route 1 was
+    correct and simply never fired.
+
     Args:
         records: every `TraceRecord` from the drive, in order.
         deferred: `Tracer.deferred` -- statements held back by the merge.
 
     Returns:
-        (placed, unplaceable) -- counts of each.
+        (placed, unplaceable) -- how many were routed, and how many named a
+        request that is not in this capture at all.
     """
-    if not deferred:
-        return 0, 0
+    #: Ownership comes from the POLARIS-side statements, which carry
+    #: `mdc.requestId` and are logged synchronously inside their own request.
     owner = {}
     for rec in records:
         for s in rec.sql:
-            if s.request_id:
+            if s.request_id and s.source != "postgres":
                 owner.setdefault(s.request_id, rec)
+
     placed = 0
     unplaceable = []
-    for stmt in deferred:
+
+    #: PASS 1 -- statements ALREADY on a record but on the WRONG one. A pg
+    #: statement whose DETAIL line arrived a window late gains its request_id
+    #: only after it was appended (see parse_pg_log's `carry`), so holding
+    #: strays back at merge time cannot catch it. Checking placement here
+    #: catches both routes, and is the reason this runs as a post-pass at all.
+    for rec in records:
+        for s in list(rec.sql):
+            if not s.request_id or s.source != "postgres":
+                continue
+            target = owner.get(s.request_id)
+            if target is None or target is rec:
+                continue
+            rec.sql.remove(s)
+            s.seq = max((x.seq for x in target.sql), default=-1) + 1
+            target.sql.append(s)
+            placed += 1
+
+    #: PASS 2 -- statements held back by the merge because they named another
+    #: window's request and were never appended anywhere.
+    for stmt in deferred or []:
         rec = owner.get(stmt.request_id)
         if rec is None:
             unplaceable.append(stmt)
@@ -1662,6 +1710,7 @@ def reattribute_deferred(records, deferred):
         stmt.seq = max((s.seq for s in rec.sql), default=-1) + 1
         rec.sql.append(stmt)
         placed += 1
+
     return placed, len(unplaceable)
 
 
