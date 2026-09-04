@@ -104,7 +104,7 @@ class IcebergREST:
     `requests` call and returns the raw `requests.Response`.
     """
 
-    def __init__(self, base_url, realm, token=None):
+    def __init__(self, base_url, realm, token=None, extra_headers=None):
         """
         Args:
             base_url: Polaris server root, e.g. "http://192.168.139.2:8181"
@@ -113,10 +113,15 @@ class IcebergREST:
             token: bearer token used by default on every call. Optional here —
                 pass `token=` per method instead when juggling principals, or
                 set `self.token` after an OAuth exchange.
+            extra_headers: headers merged into EVERY request. Same contract as
+                `polaris_rest.PolarisREST` -- see there. Used by the
+                log-coverage notebook for per-call `Polaris-Request-Id`.
         """
         self.base_url = base_url.rstrip("/")
         self.realm = realm
         self.token = token
+        #: Never overrides Authorization / Polaris-Realm / Content-Type.
+        self.extra_headers = dict(extra_headers or {})
         self.base_cat = f"{self.base_url}/api/catalog/v1"
 
     # ------------------------------------------------------------------
@@ -144,11 +149,14 @@ class IcebergREST:
                 "IcebergREST: no token available (pass token= at construction, "
                 "on the call, or set ic.token after an OAuth exchange)."
             )
-        h = {
-            "Authorization": f"Bearer {tok}",
-            "Polaris-Realm": self.realm,
-            "Content-Type": "application/json",
-        }
+        h = dict(self.extra_headers)
+        h.update(
+            {
+                "Authorization": f"Bearer {tok}",
+                "Polaris-Realm": self.realm,
+                "Content-Type": "application/json",
+            }
+        )
         if delegation:
             h["X-Iceberg-Access-Delegation"] = delegation
         return h

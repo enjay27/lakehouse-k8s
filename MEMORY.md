@@ -4,28 +4,34 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-02
+## Now — 2026-09-04
 
-**Read [`HANDOFF-api-index-matrix.md`](diagnostics/api-sql-profile/HANDOFF-api-index-matrix.md) first — standalone.**
+**Read [`log-coverage/PLAN-log-coverage.md`](log-coverage/PLAN-log-coverage.md) first — standalone.**
 
-Task: EXPLAIN every API in `doc-api-sql-matrix-latest.md`, under three identities (admin / authorized /
-unauthorized), each from a restarted Polaris, plain EXPLAIN, both index states. Plan:
-[`PLAN-api-index-matrix.md`](diagnostics/api-sql-profile/PLAN-api-index-matrix.md); commands:
-[`RUNBOOK-api-index-matrix.md`](diagnostics/api-sql-profile/RUNBOOK-api-index-matrix.md); driver:
-`03_api_index_matrix.ipynb`.
+Handed over from `local-k8s` roadmap step 2: drive every Polaris API, then report what the
+Fluent Bit → VictoriaLogs pipeline stored and what it discarded. **Built, not yet run** —
+`log-coverage/polaris_log_coverage.ipynb` cells 0–10, new `src/vlogs.py` + `src/log_coverage.py`,
+and `extra_headers` on `PolarisREST`/`IcebergREST` for per-call `Polaris-Request-Id`.
 
-**ROOT CAUSE FOUND AND FIXED — the capture was working; the GATE was lying.** Cell 9b read its log tail by
-CHARACTERS (`[-40000:]`) and one **1,292,023-byte** `listCatalogs returning:` line filled the window, so it
-counted 0 of the file's 19 `DatasourceOperations` lines and reported "the logger is above DEBUG". That false
-message started the whole "drives recorded nothing" hunt. Fixed: `privilege_scan.tail_lines` windows by lines
-(+4 tests). The gate RAISED rather than passed, and the drive under it **succeeded** — 43/43, 39 permitted,
-**1 refused = `reset_principal_credentials`, the "admin is not a superset" finding, measured.**
-Drive from a terminal with `--capture` explicit (HANDOFF §1.6, 859 lines verified). Why both stream families
-stopped mid-drive is parked and unexplained — HANDOFF §1.2 lists what is already falsified.
+**MEASURED offline against the deployed Lua** (`fb-values.yaml` sha256 `b56c135b87d6281b…`,
+under `luatex --luaonly`): **10 mutations produce no record at all** — 8 of the 43 driven
+operations plus the fixture's `POST /v1/catalogs` and the token exchange. The source plan names
+one (principals created invisibly, deleted visibly); the two it misses matter more —
+**`POST /v1/principals/{p}/reset`, so a credential reset leaves no trace**, and both rename
+endpoints, whose paths carry no `/namespaces/{ns}/tables` segment. Rule 5's drop was aimed at
+the OAuth endpoint and its blast radius was never bounded to it.
 
-Measured and worth keeping: authorized is refused exactly the 5 service-scoped ops; **admin is NOT a superset**
-(`reset_principal_credentials` -> 403); footprints 1 / 78 / 3,377-ceiling; volume `grant_records` 60,819,
-`policy_mapping_record` 0 and unmeasurable. Tooling is done and green (183 tests).
+The expected column is not a table anyone typed — `log_coverage.Policy` runs the filter out of
+the values file, with **no Python re-implementation to fall back on**. 111 tests green under a
+stand-in runner; **`pytest`/`black`/`isort` could not be run — no package index from Cowork.**
+
+Still true from the API→SQL matrix, and it is the same endpoint twice over: **1 refused =
+`reset_principal_credentials`, so admin is NOT a superset** — and that call is also one of the
+ten this pipeline does not record. Detail in
+[`HANDOFF-api-index-matrix.md`](diagnostics/api-sql-profile/HANDOFF-api-index-matrix.md).
+
+**Open:** the notebook has never touched the cluster; whether `mdc.requestId` round-trips is
+still `[assumed]`, and is cell 1's first question.
 
 ## Where the detail is
 

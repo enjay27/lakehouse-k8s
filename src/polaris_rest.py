@@ -68,7 +68,7 @@ class PolarisREST:
     doing their own `.status_code` / `.json()` checks, same as before.
     """
 
-    def __init__(self, base_url, realm, token=None):
+    def __init__(self, base_url, realm, token=None, extra_headers=None):
         """
         Args:
             base_url: Polaris server root, e.g. "http://192.168.139.2:8181"
@@ -81,10 +81,24 @@ class PolarisREST:
                 juggling multiple principals (e.g. root vs. a worker
                 principal in a privilege test), or leave unset and populate
                 `self.token` after calling `get_token()`.
+            extra_headers: headers merged into EVERY request this client
+                makes, including the token exchange. Also settable after
+                construction as `pc.extra_headers = {...}`. Added for the
+                log-coverage notebook, which tags each call with
+                `Polaris-Request-Id: nb-<run>-<case>-<n>` so the access-log
+                record and the application log lines the request produced can
+                be joined on `mdc.requestId` in VictoriaLogs. Defaults to
+                none, so every existing call site sends exactly the three
+                headers it did before -- `test_polaris_rest.py` asserts that.
         """
         self.base_url = base_url.rstrip("/")
         self.realm = realm
         self.token = token
+        #: Merged into every request. A caller-supplied header NEVER overrides
+        #: Authorization / Polaris-Realm / Content-Type: those are the client's
+        #: identity, and a request that silently changed realm would be a very
+        #: expensive kind of confusing.
+        self.extra_headers = dict(extra_headers or {})
         self.base_mgmt = f"{self.base_url}/api/management/v1"
         self.base_cat = f"{self.base_url}/api/catalog/v1"
 
@@ -97,7 +111,7 @@ class PolarisREST:
         """
         return requests.post(
             f"{self.base_cat}/oauth/tokens",
-            headers={"Polaris-Realm": self.realm},
+            headers={**self.extra_headers, "Polaris-Realm": self.realm},
             data={
                 "grant_type": "client_credentials",
                 "client_id": client_id,
@@ -116,11 +130,15 @@ class PolarisREST:
                 "PolarisREST: no token available (pass token= at construction, "
                 "on the call, or set pc.token after an OAuth exchange)."
             )
-        return {
-            "Authorization": f"Bearer {tok}",
-            "Polaris-Realm": self.realm,
-            "Content-Type": "application/json",
-        }
+        h = dict(self.extra_headers)
+        h.update(
+            {
+                "Authorization": f"Bearer {tok}",
+                "Polaris-Realm": self.realm,
+                "Content-Type": "application/json",
+            }
+        )
+        return h
 
     @staticmethod
     def _ns_path(ns):

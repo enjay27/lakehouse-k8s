@@ -144,9 +144,15 @@ reuses the cheapest reliable one rather than inventing a new way to break Polari
 
 ## 3. The predicted matrix — computed offline from the deployed Lua
 
-**This is a prediction, not a result.** It is here so the run has something to falsify: a
-notebook that only reports what it saw cannot tell you the pipeline surprised you. Every row is the
-first matching rule in `polaris_noise_filter` applied to the 43 operations in
+**This started as a hand-computed prediction, and it has since been VERIFIED against the
+deployed Lua** — 2026-09-04, running `polaris_noise_filter` out of `fb-values.yaml`
+(sha256 `b56c135b87d6281b…`) under `luatex --luaonly` over the whole sequence in issue order.
+Every row below came back as written, and the totals with it: 8 of the 43 driven operations
+dropped, 10 including the fixture's catalog create and the token exchange. It is still a
+prediction about the RUN, not a result: what the run adds is whether VictoriaLogs actually
+holds what the filter says it kept.
+
+Every row is the first matching rule in `polaris_noise_filter` applied to the 43 operations in
 `api_surface.operations()`, assuming a 2xx unless stated.
 
 Legend: **✓** stored every call · **1/day** stored once per KST day per key · **✗ DROPPED**.
@@ -358,6 +364,41 @@ VictoriaLogs is a `LoadBalancer` and may already be reachable without the first.
    count is 8-of-43, including a credential reset. Rewrite it after the run, with the number.
 
 ---
+
+## 8b. Decisions taken (2026-09-04), and what was built
+
+Kade said proceed without picking between the section 8 options, so these were taken as the
+plan recommended and are recorded here rather than left implicit.
+
+1. **The header change went into the shipped modules**, not a local subclass.
+   `PolarisREST.__init__` and `IcebergREST.__init__` gained `extra_headers=None`, merged in
+   `_h()` and in `PolarisREST.get_token`. A caller-supplied header can never override
+   `Authorization` / `Polaris-Realm` / `Content-Type` — those are the client's identity, and a
+   request that silently changed realm is an expensive kind of confusing. Existing call sites
+   send exactly the three headers they did before; a test asserts it. A subclass would have
+   had to override `_h` in both clients and would have left the capability unavailable to
+   every other suite.
+2. **The 500 is `create_catalog_no_endpoint`** (`error-cases/09_500_null_pointer`): a catalog
+   without `endpointInternal` throws a NullPointerException on table create. Cheapest reliable
+   500 in this repo, self-contained, and reversible — the catalog is deleted in the same cell.
+3. **Vendored specs are gitignored**; `fetch_specs.sh` and `spec/inventory.json` (with each
+   file's sha256) are tracked. They are ASF-licensed, so committing them would be permitted —
+   they are excluded as downloads, not for licence reasons.
+
+Two things the build added that this plan did not anticipate:
+
+- **The drive identity is elected, not chosen.** `%u` is the fallback correlation key, so the
+  run wants its own principal; but `polaris_test_utils.get_token` records that a non-root
+  principal generally cannot request `PRINCIPAL_ROLE:ALL` — it yields a token with no
+  effective role and everything 403s. A 403 here would be a fixture bug wearing a finding's
+  clothes: endpoints would be reported "not callable" when they were merely unauthorized.
+  So `log_coverage.elect_drive_identity` provisions the principal, proves it can do one
+  management read AND one catalog read, and demotes to root loudly if it cannot.
+- **Probe expectations are predicted across the whole run, not per probe.** Rule 6's dedup
+  state spans the run: cell 3 already reads `probe_tbl` once, so cell 5's twenty reads are the
+  second through twenty-first of the day and the honest expectation is ZERO, not one. A
+  per-probe prediction starts from a fresh interpreter, says one, and the mismatch reads as a
+  pipeline finding when it is an artifact of predicting in the wrong scope.
 
 ## 9. Definition of Done for this task
 

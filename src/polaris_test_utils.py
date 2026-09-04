@@ -86,6 +86,7 @@ PG_USER = "polaris"
 PG_PASSWORD = None
 PG_URL = None
 PG_CONFIG = {}
+VLOGS_URL = FB_METRICS_URL = FB_VALUES_PATH = None
 BASE_MGMT = BASE_CAT = None
 PURGE_DELETES_FILES = None
 POLARIS_VERSION = None
@@ -107,6 +108,7 @@ def init_env(env=None):
     global MINIO_ENDPOINT, MINIO_ENDPOINT_INTERNAL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, BUCKET
     global PG_HOST, PG_PORT, PG_DB, PG_USER, PG_PASSWORD, PG_URL, PG_CONFIG
     global PURGE_DELETES_FILES, POLARIS_VERSION, mc
+    global VLOGS_URL, FB_METRICS_URL, FB_VALUES_PATH
 
     ENV = env or os.environ.get("POLARIS_ENV", "local")
     CFG = _load_config(ENV)
@@ -163,6 +165,18 @@ def init_env(env=None):
 
     PURGE_DELETES_FILES = CFG.get("purge_deletes_files", False)
     POLARIS_VERSION = CFG.get("polaris_version", "unknown")
+
+    # Polaris -> VictoriaLogs pipeline (log-coverage/). All non-secret: 9428 is
+    # an unauthenticated LoadBalancer, which is local-k8s active-issues #7 and
+    # is reported by that notebook rather than worked around.
+    VLOGS_URL = os.environ.get("VICTORIALOGS_URL", CFG.get("victorialogs_url"))
+    FB_METRICS_URL = os.environ.get(
+        "FLUENTBIT_METRICS_URL", CFG.get("fluentbit_metrics_url")
+    )
+    #: expanduser here, not at the call site: the value is a per-machine path
+    #: and every consumer would otherwise have to remember.
+    _fb = os.environ.get("FB_VALUES_PATH", CFG.get("fb_values_path"))
+    FB_VALUES_PATH = os.path.expanduser(_fb) if _fb else None
 
     BASE_MGMT = f"{POLARIS_URL}/api/management/v1"
     BASE_CAT = f"{POLARIS_URL}/api/catalog/v1"
