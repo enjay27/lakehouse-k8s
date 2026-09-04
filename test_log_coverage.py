@@ -582,3 +582,21 @@ def test_what_v3_gave_up_to_get_it(policy):
         ("POST", f"{CAT}/oauth/tokens", 200),
     ]
     assert _verdicts(policy, counted) == ["drop"] * len(counted)
+
+
+def test_victorialogs_metadata_is_not_read_as_schema_drift(policy):
+    #: VictoriaLogs stamps `_stream` and `_stream_id` onto every record it
+    #: returns. They are not fields the filter emitted. The 2026-09-04 verify
+    #: run reported all six stored rows as carrying "unexpected fields" because
+    #: of them -- a harness bug that would have fired on EVERY window of the
+    #: real run and read as the report drifting from its own schema.
+    _, reports = _window(policy, [("GET", T, 200), ("PUT", T, 200)])
+    stored = [
+        dict(r, _stream='{app="polaris-shipper-report",level="REPORT"}',
+             _stream_id="0000000000000000d2093bd84cc34837")
+        for r in reports["w1"]
+    ]
+    assert lc.check_invariants(stored) == []
+    #: but a field that is NOT VictoriaLogs metadata still fails
+    tampered = [dict(r, surprise=1) for r in stored]
+    assert any("unexpected fields" in b for b in lc.check_invariants(tampered))

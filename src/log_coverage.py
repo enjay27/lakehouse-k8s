@@ -1261,6 +1261,13 @@ FIELDS_BY_TYPE = {
     "principal": PRINCIPAL_FIELDS,
 }
 
+#: VictoriaLogs adds these to every record it returns -- they are not fields the
+#: filter emitted, so a strict field check must not read them as schema drift.
+#: The verify run on 2026-09-04 reported all six stored rows as carrying
+#: "unexpected fields" because of exactly this, which would have fired on every
+#: window of the real run.
+VLOGS_META = frozenset({"_stream", "_stream_id"})
+
 #: Properties of the PROCESS that emitted the report, not of the window. The
 #: oracle runs on a laptop and the pipeline runs in a pod, so comparing these
 #: would report a mismatch on every row. `hostname` is
@@ -1452,7 +1459,11 @@ def check_invariants(rows, strict_fields=True):
         if missing:
             bad.append(f"{kind} row missing envelope fields: {sorted(missing)}")
         if strict_fields and kind in FIELDS_BY_TYPE:
-            body = set(r) - ENVELOPE_FIELDS
+            body = {
+                f
+                for f in set(r) - ENVELOPE_FIELDS - VLOGS_META
+                if not f.startswith("_stream")
+            }
             want = FIELDS_BY_TYPE[kind]
             if body - want:
                 bad.append(f"{kind} row has unexpected fields: {sorted(body - want)}")

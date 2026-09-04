@@ -28,9 +28,12 @@ interval, and it explains the first observed report exactly. (2) `access_kept + 
 access_seen` is **tautological** (`build_report` computes `access_kept` by subtraction); the only
 real self-check is the resource/principal margin pair.
 
-**STILL OPEN, and only the cluster answers it: does Fluent Bit split the array return?** The
-oracle proves the filter *returns* three types; the pipeline must prove it *stores* three
-records. The one window flushed so far saw `access_seen: 0`. Cell 0b gates, cell 11 settles.
+**THE ARRAY SPLITS — settled live 2026-09-04 08:23Z.** `{summary: 1, resource: 3,
+principal: 2}` for one window; VictoriaLogs indexes the numbers as numbers (`requests:>0`
+matched); no tick leak; **zero-carry and carry decay hold in the pipeline**, 3 of 3 rows carried
+at an explicit 0 and none carried a third time; `report_seq` 20→21, counters reset, one summary
+per window per host. **68 tests green under real `pytest`.** Nothing about the report is
+unverified now except a full driven run.
 
 **Fast-run settings written 2026-09-04** (sha `063c184df3f9…`): `WINDOW_SECONDS` 1800→**30**,
 dummy `Interval_Sec` 30→**5** (6 ticks per window, so jitter cannot skip one). **TEMPORARY —
@@ -38,9 +41,13 @@ revert both together.** Nothing hardcodes them; `Policy.window_seconds`/`tick_se
 deployed file, and the tick-rate test broke correctly on the change instead of passing
 vacuously. **68 tests green at the new settings.**
 
-**Next:** `helm upgrade` the shipper — the values are WRITTEN, NOT RUNNING, which is this
-repo's signature failure and exactly what cell 0 aborts on. Then run cells 0–15.
-`pytest`/`black` still not runnable from Cowork; the gate is Kade's.
+**Two harness bugs the verify run caught**, both of which would have fired on every window of
+the real run: `check_invariants` read VictoriaLogs' own `_stream`/`_stream_id` as schema drift,
+and the skipped-window check compared window starts across a shipper restart and the 1800→30
+change, reporting the switch itself as a skipped window. Both fixed, both now tested.
+
+**Next:** run the notebook, cells 0–15. `black`/`isort` still not runnable from Cowork; `pytest`
+runs on Kade's machine and is green.
 
 ## Where the detail is
 

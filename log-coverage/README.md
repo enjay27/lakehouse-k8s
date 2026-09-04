@@ -188,6 +188,24 @@ hardcodes either number: `Policy.window_seconds` and `Policy.tick_seconds` read 
 deployed file, and `test_the_tick_rate_is_not_the_report_period` broke correctly on the change
 rather than passing vacuously.
 
+**Verified end to end, 2026-09-04 08:23–08:25Z** (`verify_v3_settings.ipynb`, since deleted):
+the fast-run settings are DEPLOYED (pod `…68b4959db4-4f7tf`, up 08:14:13Z), **Fluent Bit splits
+the array** — `{summary: 1, resource: 3, principal: 2}` for one window — VictoriaLogs indexes
+the numbers as numbers (`requests:>0` matched 3 rows), no raw tick leaks, and **zero-carry and
+carry decay hold in the pipeline**, not only in the oracle: 3 of 3 resources carried at an
+explicit 0 into the next window and none carried into the one after. `report_seq` 20 → 21,
+counters reset, one summary per window per host at six ticks per window. **68 tests green under
+real `pytest`.** The last open question from the previous session is closed.
+
+Two things that run corrected, both harness bugs rather than pipeline findings, and the reason
+the verify notebook was worth running: `check_invariants` read VictoriaLogs' own `_stream` /
+`_stream_id` as schema drift and would have failed on **every** window of the real run; and the
+skipped-window check compared window starts across a shipper restart and a `WINDOW_SECONDS`
+change, so it reported the 1800→30 switch as a skipped window.
+
+Also observed, and worth knowing before reading a principal row: the OAuth token exchange is
+attributed to principal **`-`** — `%u` writes a dash when no principal is authenticated yet.
+
 **Next:** `helm upgrade` the shipper — the new values are written, not yet running, and cell 0
 aborts until the ConfigMap carries them. Then run the notebook: three 30-second boundaries
 instead of three 30-minute ones.

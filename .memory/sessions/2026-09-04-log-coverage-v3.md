@@ -59,3 +59,28 @@ providing `fixture`/`skip`/`raises`) over the two changed files only — the oth
 `monkeypatch` and `tmp_path`, which the shim does not provide, so their failures under it are
 shim artefacts and were not counted. Line lengths were brought under 88 by hand in place of
 `black`. **The real gate is Kade's `pytest`.**
+
+## Verified live, 08:23–08:25Z, and what that cost to learn
+
+`verify_v3_settings.ipynb` (throwaway, deleted after) ran the five DoD questions against the
+deployed fast-run settings. 20 of 22 checks passed first time; **both failures were mine**, and
+neither would have been visible from oracle output alone:
+
+1. **`check_invariants` read `_stream` and `_stream_id` as schema drift.** VictoriaLogs stamps
+   them onto every record it returns. Against oracle rows the strict field check was correct;
+   against STORED rows it flagged all six as carrying unexpected fields. It would have fired on
+   every window of the real run, and it would have read as the report drifting from its own
+   schema — the exact failure the check exists to catch, produced by the check itself.
+2. **The skipped-window check compared across a restart and a settings change.** It flagged
+   `07:30:00Z -> 08:14:00Z`, which is the 1800→30 switch and the shipper restart that carried
+   it, not a late tick. A gap only means a skipped window **within one process at one window
+   length**; it now filters on `hostname` and `window_seconds` before believing one.
+
+The lesson is the same one this repo keeps relearning in different clothes: **an oracle that
+agrees with itself is not evidence.** Both bugs live exactly at the seam between what the filter
+emits and what the pipeline stores, which is the one place the offline oracle cannot look.
+
+Everything else held. The array splits, the numbers are indexed as numbers, zero-carry and decay
+work end to end, and 68 tests pass under real `pytest` — closing the `NOT VERIFIED` line on the
+two previous commits. Incidental but worth remembering: the OAuth token exchange is attributed
+to principal `-`, because `%u` writes a dash when nothing is authenticated yet.
