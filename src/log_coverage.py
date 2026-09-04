@@ -166,6 +166,7 @@ def load_policy(fb_values_path=None, key=LUA_KEY):
         script=scripts[key],
         sha256=hashlib.sha256(raw).hexdigest(),
         source=str(p),
+        values=(doc or {}),
     )
 
 
@@ -274,10 +275,15 @@ class Policy:
         source: where it was read from.
     """
 
-    def __init__(self, script, sha256, source):
+    def __init__(self, script, sha256, source, values=None):
         self.script = script
         self.sha256 = sha256
         self.source = source
+        #: the WHOLE parsed values file. The report's cadence is not in the Lua
+        #: at all -- the tick comes from a `dummy` INPUT in the Fluent Bit
+        #: config, and the relationship between that interval and
+        #: WINDOW_SECONDS is what decides whether a window can be skipped.
+        self.values = values or {}
 
     def predict(self, records):
         """Run both filters over `records`, in order, in ONE interpreter.
@@ -378,6 +384,31 @@ class Policy:
                 "WINDOW_SECONDS is not in the deployed script -- this is not policy v3"
             )
         return int(m.group(1))
+
+    @property
+    def tick_seconds(self):
+        """`Interval_Sec` of the `dummy` INPUT that drives the report, as
+        DEPLOYED, or None if it cannot be found.
+
+        THE TICK RATE IS NOT THE REPORT PERIOD -- but it bounds two things the
+        period cannot. It bounds the STARTUP BLIND SPOT (records processed
+        before the first tick are counted into no window), and if it ever
+        reaches WINDOW_SECONDS it makes a SKIPPED WINDOW possible: a tick that
+        arrives late moves the window index by two, the filter reports the
+        window it was holding, and the one in between never existed at all.
+        """
+        #: `config.inputs` in the chart's values, NOT "any string containing
+        #: [INPUT]" -- the Lua script itself talks about the dummy INPUT in a
+        #: comment, and a looser search matches that instead.
+        cfg = ((self.values.get("config") or {}).get("inputs")) or ""
+        if not isinstance(cfg, str) or "[INPUT]" not in cfg:
+            return None
+        for block in cfg.split("[INPUT]")[1:]:
+            head = block.split("[")[0]
+            if REPORT_TAG in head:
+                m = re.search(r"Interval_Sec\s+(\d+)", head)
+                return int(m.group(1)) if m else None
+        return None
 
     def run(self, events):
         """Run records and `Tick`s through the deployed filter, IN ORDER.

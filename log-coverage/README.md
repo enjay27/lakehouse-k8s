@@ -180,10 +180,17 @@ window flushed so far had `access_seen: 0` — no traffic, so no resource or pri
 split into. **Cell 0b gates on it and cell 11 settles it**, because the run itself makes the
 traffic.
 
-**Next:** run the notebook. At the deployed 1800 that is ~3 boundaries and roughly 90 minutes of
-mostly waiting; redeploy `local-k8s` with `WINDOW_SECONDS: 30` (and drop the dummy INPUT's
-`Interval_Sec` to 5 alongside it, so a late tick cannot skip a whole window) and the same
-notebook completes in minutes with every assertion unchanged.
+**Fast-run settings are live and are TEMPORARY** (`fb-values.yaml` sha256 `063c184df3f9…`):
+`WINDOW_SECONDS` 1800 → **30**, dummy INPUT `Interval_Sec` 30 → **5**. Six ticks per window, so
+scheduling jitter cannot make the filter skip one. **Revert both together** when the run of
+record is done — the values file carries the note. Nothing in the notebook or the tests
+hardcodes either number: `Policy.window_seconds` and `Policy.tick_seconds` read them from the
+deployed file, and `test_the_tick_rate_is_not_the_report_period` broke correctly on the change
+rather than passing vacuously.
+
+**Next:** `helm upgrade` the shipper — the new values are written, not yet running, and cell 0
+aborts until the ConfigMap carries them. Then run the notebook: three 30-second boundaries
+instead of three 30-minute ones.
 
 ## Files
 

@@ -346,15 +346,40 @@ def test_the_tick_rate_is_not_the_report_period(policy):
     #: inside the current window is dropped and only the boundary emits. Sixty
     #: ticks inside one window must produce exactly ONE report, not sixty.
     W = policy.window_seconds
-    events = [lc.Tick(1, "open"), _rec("GET", T, 200, when=10)]
-    #: every tick STRICTLY inside the window -- one more than this and the
-    #: last one lands on the boundary itself, which is a bug in the test and
-    #: was one on 2026-09-04 (it reported `mid58` and read as a filter fault).
-    events += [lc.Tick(30 * i, f"mid{i}") for i in range(1, max(1, W // 30))]
+    tick = policy.tick_seconds or 30
+    events = [lc.Tick(1, "open"), _rec("GET", T, 200, when=2)]
+    #: every tick STRICTLY inside the window -- one more than this and the last
+    #: one lands on the boundary itself, which is a bug in the test and was one
+    #: on 2026-09-04 (it reported `mid58` and read as a filter fault). The
+    #: spacing is the DEPLOYED tick interval, not a literal: this test broke
+    #: correctly when WINDOW_SECONDS went 1800 -> 30 and the interval 30 -> 5.
+    events += [lc.Tick(tick * i, f"mid{i}") for i in range(1, max(2, W // tick))]
     events.append(lc.Tick(W + 1, "boundary"))
     _, reports = policy.run(events)
     assert list(reports) == ["boundary"], list(reports)
-    assert len(events) > 3, "no mid-window ticks at this WINDOW_SECONDS"
+    assert len(events) > 3, (
+        f"no mid-window ticks at WINDOW_SECONDS={W}, Interval_Sec={tick} -- "
+        "this test proves nothing until the tick is smaller than the window"
+    )
+
+
+def test_the_tick_interval_stays_well_under_the_window(policy):
+    #: A CONFIGURATION invariant, not a schema one, and it earns its place: at
+    #: tick >= window a tick that arrives late moves the window index by TWO.
+    #: The filter reports the window it was holding and the one in between
+    #: never existed -- its records were attributed to the previous window and
+    #: no report for it is ever emitted. Nothing in the schema can detect that
+    #: from a single record; only a gap between consecutive `window_start`s
+    #: shows it. Cell 14 looks for exactly that gap.
+    W, tick = policy.window_seconds, policy.tick_seconds
+    assert tick is not None, "the dummy INPUT's Interval_Sec could not be read"
+    assert tick < W, (
+        f"Interval_Sec {tick} >= WINDOW_SECONDS {W}: a late tick skips a window"
+    )
+    assert W / tick >= 4, (
+        f"only {W / tick:.0f} ticks per window (Interval_Sec {tick}, "
+        f"WINDOW_SECONDS {W}) -- too little margin for scheduling jitter"
+    )
 
 
 def test_a_window_start_is_always_aligned_to_window_seconds(policy):

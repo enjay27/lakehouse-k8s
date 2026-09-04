@@ -32,8 +32,14 @@ real self-check is the resource/principal margin pair.
 oracle proves the filter *returns* three types; the pipeline must prove it *stores* three
 records. The one window flushed so far saw `access_seen: 0`. Cell 0b gates, cell 11 settles.
 
-**Next:** run the notebook (cells 0–15). At 1800s that is ~3 boundaries, ~90 min of waiting —
-redeploy `WINDOW_SECONDS: 30` **and** the dummy INPUT's `Interval_Sec: 5` for a fast pass.
+**Fast-run settings written 2026-09-04** (sha `063c184df3f9…`): `WINDOW_SECONDS` 1800→**30**,
+dummy `Interval_Sec` 30→**5** (6 ticks per window, so jitter cannot skip one). **TEMPORARY —
+revert both together.** Nothing hardcodes them; `Policy.window_seconds`/`tick_seconds` read the
+deployed file, and the tick-rate test broke correctly on the change instead of passing
+vacuously. **68 tests green at the new settings.**
+
+**Next:** `helm upgrade` the shipper — the values are WRITTEN, NOT RUNNING, which is this
+repo's signature failure and exactly what cell 0 aborts on. Then run cells 0–15.
 `pytest`/`black` still not runnable from Cowork; the gate is Kade's.
 
 ## Where the detail is
