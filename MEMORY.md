@@ -30,6 +30,13 @@ line), `Rotate_Wait`, filesystem buffering, `json_date_key false`, per-record `R
 outranks the inference in #11). #12 withdrawn; the repo *does* describe this cluster and there
 was never a hidden config source (#10).
 
+**#13, and it is now the top of the list: the retention policy is written and NOT RUNNING.**
+Measured 2026-09-04 by the Polaris-project notebook — 0 of 34 expected drops dropped, 20
+identical table GETs stored 20 records. The filter went into `fb-values.yaml` in `2120ed9` at
+08:26:18Z; the shipper pod has run since 08:04:06Z from `60b94d9`, which has the parser and no
+filter. **`helm upgrade` was never run** — and it is a change, not a fix, so read #13 first.
+Also settled there: **`Polaris-Request-Id` round-trips**, so the spec's §7 trace query works.
+
 **Open:** tail DB on an emptyDir, so `helm upgrade` replays the file once — PVC block is in
 the values file, commented (#5b). No latency field at all until `%D` is added Polaris-side,
 **and slow requests should then be exempt from dedup**. VictoriaLogs has no disk cap and an

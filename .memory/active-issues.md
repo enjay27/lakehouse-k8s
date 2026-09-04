@@ -5,6 +5,48 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#13 — `polaris_noise_filter` IS WRITTEN AND NOT RUNNING. OPEN — one command, but read it first.**
+Measured 2026-09-04 by `polaris-practice/polaris-learning/log-coverage/polaris_log_coverage.ipynb`,
+against the live pipeline: **0 of 34 expected drops dropped.** Twenty identical
+`GET .../tables/probe_tbl` stored twenty records. Three successful `POST /oauth/tokens` stored
+three. `create_principal`, `create_principal_role`, `create_catalog_role`, both renames,
+`update_namespace_properties` and `reset_principal_credentials` — all stored. Every "keep" rule
+behaved perfectly, which is what an ABSENT filter looks like: rules 1, 2, 3 and 7 are all "keep".
+
+**The history says why, and it is not a guess.** `logging/fb-values.yaml` gained
+`polaris_noise_filter` in commit **2120ed9, 2026-09-03T08:26:18Z**. The shipper pod has been
+running since **08:04:06Z**, 22 minutes earlier, from **60b94d9** — which carries
+`polaris_access_log` and the `record_modifier` and **no** noise filter. That predicts exactly
+what was measured: access-log fields present (`api_path`, `http_status`, `user_principal_name`
+are parsed and stored), and nothing dropped. `roadmap.md` step 1 already says *"Install, then
+watch `fluentbit_filter_drop_records_total`"* — the install is the step that never happened.
+
+**This is #F1 again in a different file.** Configuration written correctly, never applied,
+nothing warning. The values file has been honest throughout — its own header says the
+`luaScripts` block and the lua filter are new — and five documents describe the policy as
+built. None of that is the running object.
+
+```bash
+helm upgrade --install fb-polaris-shipper fluent/fluent-bit \
+  --version 0.58.1 -n datahub-hynix -f logging/fb-values.yaml
+```
+
+**Treat that as a change, not a fix (#F2's rule).** It switches on a filter that has never
+executed once, against a live log stream. Two things to settle before running it: the tail DB
+is on an `emptyDir`, so the upgrade replaces the pod and `Read_from_Head true` **replays the
+whole file** (#5b) — expect a burst of duplicate records, and note that dedup state starts
+empty so the first read of every table that day is logged again. And `fluentbit_filter_drop_records_total`
+should be sampled **before** the upgrade, or the first delta has nothing to compare against.
+
+Settled by the same run and unaffected by any of this: **`Polaris-Request-Id` round-trips** —
+a client-supplied id lands on `mdc.requestId` on the access-log record and on every application
+line the request produced (one `list_catalogs` → 15 records sharing the id), so the spec's §7
+end-to-end trace query works today. Client-side latency across 122 calls: median ~18 ms,
+slowest ~77 ms — the evidence for adding `%D`. And **8 ERROR records carried no `exception`
+object**, which is not yet a verdict: `kubectl -n datahub-hynix exec deploy/benchmarks-polaris --
+grep -c stackTrace /deployments/logs/polaris.log` separates "Polaris never logged the throwable"
+from "the pipeline dropped it".
+
 **#1 — The repo has not been reconciled against the live cluster. OPEN.**
 Kade reset and rebuilt the cluster on 2026-09-03 without following
 `RESET-AND-CLEAN-INSTALL.md`, and resolved the four config blockers during the
