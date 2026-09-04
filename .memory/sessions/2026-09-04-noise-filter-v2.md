@@ -95,3 +95,94 @@ parses and `luaScripts` still renders one key, which is all this session can ass
 - Then re-run `polaris-learning/log-coverage`. Its characterization test is **built to fail**
   on a policy change; read the diff, confirm the change was intended, and update the test and
   `doc-log-coverage-results.md` together.
+
+---
+
+# Second pass, same day — the flush report
+
+Kade's proposal, and it is the right one: when Fluent Bit flushes, ship a **state report** to
+VictoriaLogs — token request count, suppressed-read count, and a per-table request count so an
+engineer can see hot and cold tables. Explicitly *not* per principal per table: "just per
+Table". Windows on the wall clock at :00 and :30.
+
+## Why it is worth more than the records it saves
+
+Suppression that leaves no number behind is erasure. That is exactly why the three P1 items
+above are deferred: capping repeated 404s or deduplicating collection listings would make real
+volume invisible. **With a count in the report, capping stops hiding anything**, so this is the
+prerequisite for the deferred work rather than a parallel feature. It is also roadmap step 7
+(`log→metric downsampling`) arriving through the sink that already exists — there is no
+VictoriaMetrics in this cluster, so the purpose-built `log_to_metrics` route needs a component
+that does not exist.
+
+## The mechanism, and the two things that make it work
+
+A Lua filter cannot emit on a timer. Two facts, both checked before writing anything:
+
+1. **The Lua filter's `record` return can be an array.** The manual: *"This value can be an
+   array of tables ... and in that case the input record is effectively split into multiple
+   records."* So one trigger yields the summary plus one record per table and per principal.
+2. **Lua state is per filter instance.** So the trigger has to pass through *this* filter. A
+   `dummy` INPUT tagged `polaris.report` does it, with `Match` widened to `polaris.*` on the
+   noise filter and the OUTPUT only — `modify` and the access-log parser stay on
+   `polaris.vlogs`, which is what keeps the report out of Polaris's own logging entirely.
+
+**The tick rate is not the report period.** The filter emits only when
+`floor(now/1800)` changes and drops every other tick, so over-ticking is harmless, the window
+stays aligned to :00/:30 across a restart, and a 30s tick just bounds the edge skew at 30s.
+Records arriving between a boundary and the tick that notices it land in the window just
+closed — a summary, not a ledger, and said so in the source.
+
+## Two margins, not the cross product
+
+`table -> count` and `principal -> count`, never `(principal, table) -> count`. State is
+|tables| + |principals|. Kade's call and the right one, but the consequence is written into
+the source because it will otherwise be misread: **the report can never answer "who read which
+table."** It answers which tables are hot and who is generating load. "Who read what" is
+answered by the stored records — rule 6 keeps one per principal per object per KST day, which
+is precisely what its key is for. The two changes are complements, not alternatives.
+
+Table names are client-controlled — the coverage run hammered a table called `nope` twenty
+times — so the per-table map is capped at 500 with an `__other__` bucket. Totals stay exact;
+only the per-table detail is capped. That is the difference between this cap and the dedup cap:
+overflow here loses detail, not truth, which is why this one could be decided unilaterally.
+
+## What lands in VictoriaLogs
+
+Its own stream, `{app="polaris-shipper-report", level="REPORT"}`, so `app:polaris` queries are
+untouched. Three record types per window, tagged `report_type`:
+
+```
+app:polaris-shipper-report report_type:table     | stats by (table_path) sum(reads)
+app:polaris-shipper-report report_type:principal | stats by (principal) sum(requests)
+app:polaris-shipper-report report_type:summary   | fields window_start access_seen access_suppressed dedup_keys
+```
+
+`type_int_key` on the filter is not optional: without it every count ships as `482.0` and
+numeric LogsQL misses it — the same trap as `http_status` on filter 2.
+
+**And the summary carries `dedup_keys`**, the live size of the principal-keyed dedup table.
+The cap policy that was passed back is now answerable from a week of data instead of a guess,
+which is a better outcome than deciding it today would have been.
+
+## Verification
+
+56/56 (was 46/46). The report suite drives window boundaries through a `_now_override` test
+hook — inert in the deployed pipeline, since the dummy INPUT never sets it — so the tests are
+deterministic and nothing sleeps. Six requests in one window are asserted down to the field:
+`access_seen 6, access_kept 4, read_suppressed 1, token_seen 2, token_suppressed 1,
+distinct_tables 2, distinct_principals 2`, five records emitted, and the next window reports
+zeros rather than repeating the last one.
+
+Still NOT VERIFIED, and it is the one thing a test cannot reach: **that Fluent Bit 5.1.1 emits
+an array return as separate records in this build, and that the `dummy` input's tag reaches the
+filter.** Both are documented; neither has run here. First thing to check after the upgrade:
+
+```
+kubectl -n datahub-hynix logs deploy/fb-polaris-shipper | head
+# then, 30 minutes later:
+#   app:polaris-shipper-report | stats count()      -- expect >= 1 summary
+```
+
+If the array return does not split, the symptom is one record carrying a numeric-keyed blob
+rather than N records; fall back to a single summary record with top-K tables inline.

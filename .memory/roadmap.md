@@ -30,7 +30,7 @@ gaps is [`sessions/2026-09-03-polaris-vlogs-audit.md`](sessions/2026-09-03-polar
 | 5 | Decide on `autoscaling` vs the shared log file | `active-issues.md` #8. Three Polaris pods appending to one file; RWO does not stop it on one node. Needs a Polaris change, so it waits. |
 | 6 | `%D` in the access-log pattern — **then exempt slow requests from dedup** | spec §7's P99 panels need it, and a table GET that normally takes 8ms taking 4s is exactly the record daily dedup discards. Needs a Polaris change, so parked with #5. |
 | 6b | The "Deprecated Config" WARN exclusion, and PUT request bodies | hook is in the filter, marked TODO. Request bodies are not in the access log at all — Kade is locating the source. |
-| 7 | `vmalert` + log→metric downsampling | spec §8. Nothing exists yet. |
+| 7 | `vmalert` + log→metric downsampling | spec §8. **The shipper-side half now exists**: the flush report counts table reads, principal requests and suppressions per 30-minute window and ships them to VictoriaLogs as `app:polaris-shipper-report`, queryable with `\| stats`. What is still missing is alerting on it, and there is no VictoriaMetrics in this cluster — the alternative shape, a `log_to_metrics` filter scraped into a TSDB, needs a component that does not exist yet. |
 | 8 | Hand back to `polaris-learning` | The platform exists to serve that suite; see below. |
 
 **Measured 2026-09-04, and it reframes the exercise:** 122 API calls stored **2,026

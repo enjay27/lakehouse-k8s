@@ -47,11 +47,36 @@ shape again, so treat the upgrade as a change:
   `fluentbit_filter_drop_records_total` without it, which is why the run reported the drop
   delta as *unknown*.
 
+- **A flush report, every 30 minutes on the :00/:30 boundary.** A `dummy` INPUT tagged
+  `polaris.report` ticks every 30s and reaches the *same* Lua filter instance (state is
+  per-instance, so `Match` widened to `polaris.*`); on a window boundary the filter returns an
+  **array** of records instead of the tick — one summary, one per table, one per principal —
+  and resets the counters. Array return from a Lua filter is documented behaviour: "this value
+  can be an array of tables... the input record is effectively split into multiple records".
+  The tick rate is not the report period, so over-ticking is harmless and the window stays
+  aligned across a restart. Lands on `{app="polaris-shipper-report", level="REPORT"}`, its own
+  stream, so `app:polaris` queries are unaffected.
+
+  **Two margins, never the cross product** — `table -> count` and `principal -> count`, so
+  state is |tables| + |principals| rather than |tables| x |principals|. The consequence is
+  stated in the source because someone will otherwise read a count as an audit trail: the
+  report answers *which tables are hot* and *who is generating the load*, and **cannot** answer
+  *who read which table*. That question is what rule 6's principal-keyed record is for. Table
+  names are client-controlled (the run hammered a table called `nope`), so the map is capped at
+  500 with an `__other__` bucket — totals stay exact, only per-table detail is capped.
+
+  **Why it matters more than the records it saves:** suppression that leaves no number behind
+  is erasure, and that is exactly why the three deferred items below are deferred. With a count
+  in the report, capping repeated 404s or deduplicating collection listings stops hiding
+  volume. The report is the prerequisite, not a side quest.
+
 **The cap on the dedup table is undecided and is Kade's call.** Keying on the principal
 multiplies the table by distinct principals per day, in the shipper's 512Mi, and nothing
 bounded it before or now. A **placeholder** `DEDUP_MAX_KEYS = 50000` fail-open guard stands
 in: above it the filter stops deduplicating and keeps everything, which can only store more,
-never lose a record. Replace it with the decided policy.
+never lose a record. Replace it with the decided policy — and the summary record now carries
+`dedup_keys`, the live size of that table, so the choice can be made against a week of
+measurements instead of a guess.
 
 **Deferred, measured, not done** — each has a number behind it in that run:
 

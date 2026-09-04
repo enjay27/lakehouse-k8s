@@ -136,6 +136,49 @@ POLICY_CASES = [
 ]
 
 
+# ---------------------------------------------------------------- suite 3
+# The flush report. Continues suite 2's state: the counters only exist from the
+# first tick, so the traffic below is exactly what one window contains.
+# T0 is on a 1800s boundary, so the window arithmetic is exact and no test sleeps.
+# `_now_override` is the filter's test hook -- the dummy INPUT never sets it.
+T0 = 1787999400
+EMIT = 2      # the tick returns 2: record replaced (by the array of reports)
+
+
+def tick(t):
+    return {"_now_override": t}
+
+
+REPORT_CASES = [
+    # (name, kind, payload, expected code, checks on the summary record)
+    ("first tick only opens the window", "tick", tick(T0), DROP,
+     {"nrec": "0"}),
+
+    ("root reads table A",   "rec", acc("2026-09-05T16:00:00Z", "GET", TBL_A, 200), KEEP, {}),
+    ("root reads it again",  "rec", acc("2026-09-05T16:01:00Z", "GET", TBL_A, 200), DROP, {}),
+    ("a 404 on table B",     "rec", acc("2026-09-05T16:02:00Z", "GET", TBL_B, 404), KEEP, {}),
+    ("analyst gets a token", "rec", acc("2026-09-05T16:03:00Z", "POST", "/api/catalog/v1/oauth/tokens", 200, user="analyst"), KEEP, {}),
+    ("analyst gets another", "rec", acc("2026-09-05T16:04:00Z", "POST", "/api/catalog/v1/oauth/tokens", 200, user="analyst"), DROP, {}),
+    ("root deletes table A", "rec", acc("2026-09-05T16:05:00Z", "DELETE", TBL_A, 204), KEEP, {}),
+
+    ("a tick inside the window reports nothing", "tick", tick(T0 + 900), DROP,
+     {"nrec": "0"}),
+
+    # 1 summary + 2 tables (ta, tb) + 2 principals (root, analyst)
+    ("the boundary tick emits the window", "tick", tick(T0 + 1800), EMIT,
+     {"nrec": "5", "access_seen": "6", "access_kept": "4", "read_suppressed": "1",
+      "token_seen": "2", "token_suppressed": "1",
+      "distinct_tables": "2", "distinct_principals": "2"}),
+
+    # counters reset on emit, so a quiet window reports zero rather than repeating
+    ("a quiet window reports zeros", "tick", tick(T0 + 3600), EMIT,
+     {"nrec": "1", "access_seen": "0", "access_kept": "0", "distinct_tables": "0"}),
+]
+
+SUMMARY_FIELDS = ["access_seen", "access_kept", "read_suppressed", "token_seen",
+                  "token_suppressed", "distinct_tables", "distinct_principals"]
+
+
 def lua_binary():
     for exe, pre in (("lua", []), ("lua5.4", []), ("lua5.3", []),
                      ("luajit", []), ("luatex", ["--luaonly"])):
@@ -155,7 +198,12 @@ def tbl(record):
 def main():
     script = yaml.safe_load(VALUES.read_text(encoding="utf-8"))["luaScripts"][SCRIPT_KEY]
 
-    lines = [script, "local function q(v) if v==nil then return '<nil>' end return tostring(v) end"]
+    lines = [
+        script,
+        "local function q(v) if v==nil then return '<nil>' end return tostring(v) end",
+        "local function nrec(r) if type(r)~='table' or r[1]==nil then return 0 end return #r end",
+        "local function sf(r,k) if type(r)~='table' or r[1]==nil then return '<nil>' end return q(r[1][k]) end",
+    ]
     for i, (_n, rec, _c, expect) in enumerate(PARSE_CASES):
         lines.append("local c%d,_,r%d = polaris_access_log('t', 0, %s)" % (i, i, tbl(rec)))
         want = ["'%s='..q(r%d[%s])" % (k, i, lit(k)) for k in sorted(expect)] or ["''"]
@@ -163,6 +211,13 @@ def main():
     for i, (_n, rec, _c) in enumerate(POLICY_CASES):
         lines.append("local n%d = polaris_noise_filter('t', 0, %s)" % (i, tbl(rec)))
         lines.append("print('N', %d, n%d)" % (i, i))
+    for i, (_n, kind, payload, _c, _e) in enumerate(REPORT_CASES):
+        tag = "polaris.report" if kind == "tick" else "t"
+        lines.append("local s%d,_,q%d = polaris_noise_filter('%s', 0, %s)"
+                     % (i, i, tag, tbl(payload)))
+        want = ["'nrec='..nrec(q%d)" % i] + \
+               ["'%s='..sf(q%d, %s)" % (k, i, lit(k)) for k in SUMMARY_FIELDS]
+        lines.append("print('S', %d, s%d, %s)" % (i, i, ", ".join(want)))
 
     with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False) as fh:
         fh.write("\n".join(lines) + "\n")
@@ -175,7 +230,7 @@ def main():
     got = {}
     for line in out.stdout.splitlines():
         f = line.replace("\t", " ").split(" ")
-        if f and f[0] in ("P", "N"):
+        if f and f[0] in ("P", "N", "S"):
             got[(f[0], int(f[1]))] = (int(f[2]), " ".join(f[3:]))
 
     failures = 0
@@ -198,7 +253,18 @@ def main():
             print("         wanted %s" % ("drop" if want == -1 else "keep"))
             failures += 1
 
-    total = len(PARSE_CASES) + len(POLICY_CASES)
+    print("\npolaris_noise_filter -- the flush report (stateful, continues above)")
+    for i, (name, kind, _payload, want_code, checks) in enumerate(REPORT_CASES):
+        code, rest = got[("S", i)]
+        ok = code == want_code and all("%s=%s" % (k, v) in rest for k, v in checks.items())
+        verdict = "drop" if code == -1 else ("emit" if kind == "tick" else "keep")
+        print(("  ok   " if ok else "  FAIL ") + "%-42s %s" % (name, verdict))
+        if not ok:
+            print("         want code=%d %s\n         got  code=%d %s"
+                  % (want_code, checks, code, rest))
+            failures += 1
+
+    total = len(PARSE_CASES) + len(POLICY_CASES) + len(REPORT_CASES)
     print("\n%d/%d passed" % (total - failures, total))
     sys.exit(1 if failures else 0)
 

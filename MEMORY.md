@@ -16,13 +16,12 @@ the audit and its four corrections in
 — read the diff, then update it and `doc-log-coverage-results.md` together.
 
 **Built, all in `logging/fb-values.yaml`** — no `--set`, the values file is the definition:
-access-log field extraction, and a retention policy (ERROR/WARN keep, 4xx/5xx keep,
-PUT/DELETE keep, every POST keep except `/oauth/tokens`, GET/HEAD on a table or view once
-per principal per **KST** day). **Errors outrank dedup deliberately.** The day comes from the
-record's own `_time`, not wall-clock, so a shipper replay is safe. Plus the shipper's silent faults: tail
-`DB`, `Skip_Long_Lines On` (it was `Off`, which **stops the tail** rather than skipping the
-line), `Rotate_Wait`, filesystem buffering, `json_date_key false`, per-record `Remove_key`.
-`logging/scripts/test-polaris-filters.py` reads the Lua *out of* the values file — 46/46.
+access-log field extraction; a retention policy (ERROR/WARN keep, 4xx/5xx keep, PUT/DELETE
+keep, every POST keep except `/oauth/tokens`, GET/HEAD on a table or view once per principal
+per **KST** day, bucketed by the record's own `_time` so a replay is safe — **errors outrank
+dedup deliberately**); and the shipper's four silent faults (tail `DB`, `Skip_Long_Lines On`,
+`Rotate_Wait`, filesystem buffering). `logging/scripts/test-polaris-filters.py` runs the Lua
+*out of* the values file, so the tests cannot drift from what ships.
 
 **Polaris is not to be changed** — it works and ships continuously (Kade's observation, which
 outranks the inference in #11). #12 withdrawn; the repo *does* describe this cluster and there
@@ -39,8 +38,14 @@ volume control — the volume lever is routing the DEBUG SQL records (#5b). Also
 **Policy v2 is written and NOT YET RUNNING** — #13's gap again, knowingly this time, one
 `helm upgrade` away. Rule 5 inverted (a keep-list aimed at the token endpoint, never bounded
 to it: a credential reset left no record); the dedup key carries the principal and drops the
-query string; `Alias` on all four filters. **The cap on the principal-keyed dedup table is
-Kade's to decide** — a placeholder fail-open guard at 50k keys stands until then (#14).
+query string; `Alias` on all four filters. **And a flush report**: a dummy INPUT ticks every
+30s, and on each :00/:30 boundary the filter replaces the tick with a summary record plus one
+record per table and per principal, on its own stream `app:polaris-shipper-report`. **Two
+margins, never the cross product** — table→count and principal→count, so state is
+|tables|+|principals|. It answers *which tables are hot* and *who is generating load*, never
+*who read which table*; that stays the job of the stored records. The report carries
+`dedup_keys`, which turns **the still-undecided dedup cap** from a guess into a measurement
+(#14). 56/56 in the test suite.
 
 **Open:** tail DB on an emptyDir, so `helm upgrade` replays the file once — PVC block is in
 the values file, commented (#5b). No latency field at all until `%D` is added Polaris-side,
