@@ -60,3 +60,33 @@ was needed (#F1, #F2), but they are no longer a procedure anyone should follow.
 `MEMORY.md` reduced to a ~40-line index, this `.memory/` tree created, `CLAUDE.md`
 given a Repository Layout section, a memory-tree DoD, and the automatic
 one-task-one-commit Version Control rule.
+
+## 2026-09-03/04 — the Polaris → VictoriaLogs shipper, built
+
+All in `logging/fb-values.yaml`; no `--set` flags, the values file is the definition.
+
+- **Access-log field extraction.** The Quarkus `%h %l %u %t "%r" %s %b` line split out of
+  `_msg` into `client_ip`, `user_principal_name`, `http_method`, `api_path`, `http_status`,
+  `response_size`, gated on `loggerName == io.quarkus.http.access-log`. `_msg` is kept — it is
+  the raw line, and what you read when the parse is wrong. A line from that logger that does
+  not parse is tagged `access_log_parse_error:true` rather than dropped.
+- **A retention policy** (`polaris_noise_filter`): ERROR/WARN keep, non-access-log keep,
+  4xx/5xx keep, PUT/DELETE/PATCH keep, every POST keep except `/oauth/tokens`, GET/HEAD on a
+  table or view once per principal per **KST** day. **Errors outrank dedup deliberately.** The
+  day comes from the record's own `_time`, never wall-clock, so a shipper replay re-evaluates
+  historical records against their own day.
+- **The shipper's four silent faults**, all confirmed live against revision 10 before being
+  changed: no tail `DB` (every restart re-read the file from byte 0), `Skip_Long_Lines Off`
+  (which **stops** the tail rather than skipping the line — stack traces are the long lines),
+  no `Rotate_Wait`, and no filesystem buffering. Plus `json_date_key false` and a per-record
+  `Remove_key` pass.
+- **A test harness that cannot drift.** `logging/scripts/test-polaris-filters.py` reads the
+  Lua *out of* the values file and executes it, so the suite tests what ships rather than a
+  copy of it. Needs a Lua interpreter; macOS has none, but a TeX install provides
+  `luatex --luaonly`.
+
+**Cross-listed, and the distinction matters here more than anywhere:** policy v2 (rule 5
+inverted, the principal-keyed dedup key, the flush report) and the whole of the above's second
+revision are **written and not running** — `active-issues.md` #14. Being finished as a piece
+of work is not the same as being the running object; this repo has now made that mistake
+twice in the same file.

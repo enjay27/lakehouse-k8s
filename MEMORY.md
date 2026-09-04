@@ -1,79 +1,43 @@
 # Active Infrastructure State
 
-**Index, not the record.** Current state below; everything else is a link into
-[`.memory/`](.memory/README.md).
+**Index, not the record.** Only what would be *false* the moment it goes stale lives here;
+everything else is a link into [`.memory/`](.memory/README.md).
 
 ## Now — 2026-09-04
-
-**Live thread: the Polaris → VictoriaLogs pipeline**, built against
-`logging/polaris-logging-architecture-spec.md`. Steps in [`roadmap.md`](.memory/roadmap.md);
-the audit and its four corrections in
-[`sessions/2026-09-03-polaris-vlogs-audit.md`](.memory/sessions/2026-09-03-polaris-vlogs-audit.md).
 
 **Next:** `helm upgrade` the shipper to policy v2, sampling
 `fluentbit_filter_drop_records_total{name="polaris_noise_filter"}` **before** it, then re-run
 `polaris-learning/log-coverage`. Its characterization test is built to fail on a policy change
 — read the diff, then update it and `doc-log-coverage-results.md` together.
 
-**Built, all in `logging/fb-values.yaml`** — no `--set`, the values file is the definition:
-access-log field extraction; a retention policy (ERROR/WARN keep, 4xx/5xx keep, PUT/DELETE
-keep, every POST keep except `/oauth/tokens`, GET/HEAD on a table or view once per principal
-per **KST** day, bucketed by the record's own `_time` so a replay is safe — **errors outrank
-dedup deliberately**); and the shipper's four silent faults (tail `DB`, `Skip_Long_Lines On`,
-`Rotate_Wait`, filesystem buffering). `logging/scripts/test-polaris-filters.py` runs the Lua
-*out of* the values file, so the tests cannot drift from what ships.
+**Written and NOT running:** `logging/fb-values.yaml` carries policy v2 and the flush report,
+one `helm upgrade` away; the cap on the principal-keyed dedup table is still Kade's to decide.
+The repo's recurring failure mode, entered knowingly this time — the account, the measurements
+and what was deferred are [`active-issues.md`](.memory/active-issues.md) **#14**.
 
-**Polaris is not to be changed** — it works and ships continuously (Kade's observation, which
-outranks the inference in #11). #12 withdrawn; the repo *does* describe this cluster and there
-was never a hidden config source (#10).
-
-**#13 is closed: the policy runs.** The shipper was upgraded at 04:57:36Z on 2026-09-04 and
-the second coverage run dropped 34 of 34 — the running ConfigMap carries the script. That run
-then measured the thing worth knowing (**#14**): **the filter governs 4.5% of the volume.**
-1,928 of 2,018 stored records are *application* lines passing rule 2 untouched; only 90 are
-access-log lines, and dropping 34 cut 1.7%. Rules 3–7 are an audit-fidelity control, not a
-volume control — the volume lever is routing the DEBUG SQL records (#5b). Also settled:
-**`Polaris-Request-Id` round-trips**, so the spec's §7 trace query works.
-
-**Policy v2 is written and NOT YET RUNNING** — #13's gap again, knowingly this time, one
-`helm upgrade` away. Rule 5 inverted (a keep-list aimed at the token endpoint, never bounded
-to it: a credential reset left no record); the dedup key carries the principal and drops the
-query string; `Alias` on all four filters. **And a flush report**: a dummy INPUT ticks every
-30s, and on each :00/:30 boundary the filter replaces the tick with a summary record plus one
-record per table and per principal, on its own stream `app:polaris-shipper-report`. **Two
-margins, never the cross product** — table→count and principal→count, so state is
-|tables|+|principals|. It answers *which tables are hot* and *who is generating load*, never
-*who read which table*; that stays the job of the stored records. The report carries
-`dedup_keys`, which turns **the still-undecided dedup cap** from a guess into a measurement
-(#14). 56/56 in the test suite.
-
-**Open:** tail DB on an emptyDir, so `helm upgrade` replays the file once — PVC block is in
-the values file, commented (#5b). No latency field at all until `%D` is added Polaris-side,
-**and slow requests should then be exempt from dedup**. VictoriaLogs has no disk cap and an
-unauthenticated `LoadBalancer` on 9428 (#7). HPA can scale Polaris to 3 pods appending to one
-log file (#8). Plaintext credentials in three places (#3, #4, #9).
-
-**The rule, at its fourth setting this session:** verify against the running object, never an
-intent artifact — `helm get values` is one too, showing *inputs*. Nor is a rendered view the
-object: a `_stream` is not a field list, a histogram bucket is not a clock. And a claim about
-"the repo" needs evidence about the repo, not one file in it.
+**Standing, and both outrank inference.** Polaris is not to be changed — it works and ships
+continuously (Kade's observation, over the reasoning in #11). And **verify against the running
+object, never an intent artifact**: `helm get values` is one too, showing *inputs*; a `_stream`
+is not a field list; a histogram bucket is not a clock.
 
 ## Where the detail is
 
 | read | when |
 |---|---|
 | [`.memory/environments.md`](.memory/environments.md) | **before running anything** — context, namespaces, ports, and the no-cluster-reach constraint on Cowork sessions |
-| [`.memory/active-issues.md`](.memory/active-issues.md) | before trusting a value or a runbook (6 open, 2 resolved-but-instructive) |
+| [`.memory/active-issues.md`](.memory/active-issues.md) | before trusting a value or a runbook |
 | [`.memory/roadmap.md`](.memory/roadmap.md) | what is next, and the PostgreSQL verification assertions |
 | [`.memory/repository-map.md`](.memory/repository-map.md) | looking for where something lives, or which duplicate values file is current |
 | [`.memory/goal.md`](.memory/goal.md) | the standing objective and the structural model |
 | [`.memory/sessions/`](.memory/sessions/) | why a decision was made, including the wrong turns |
 | [`.memory/completed.md`](.memory/completed.md) | finished structural work |
+| `logging/polaris-logging-architecture-spec.md` | the design the log pipeline is being built against, and its §7 LogsQL recipes |
 
 ## Rules for keeping this file useful
 
-- **This file stays under ~40 lines.** Growth belongs in `.memory/`, not here. A
-  tracking document nobody finishes reading tracks nothing.
+- **Under ~40 lines.** It reached 80 by accumulating,each session, a digest of findings
+  already filed in `.memory/`. **A paragraph summarising a file that exists does not belong
+  here.** *Now* carries what is next and what is written but not running; nothing else.
 - **Update *Now* every session**, even when the answer is "unchanged".
 - **A fact with a number goes in `.memory/roadmap.md`; the story goes in
   `.memory/sessions/`.** Configuration that is written but not applied goes in
