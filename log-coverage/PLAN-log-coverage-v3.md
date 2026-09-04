@@ -327,13 +327,13 @@ Field coverage the ordering forces:
 
 | # | cell | what it does |
 |---|---|---|
-| 11 | **Window 1 — the report exists and its margins agree** | `wait_for_boundary()`; pull the window's `summary`/`resource`/`principal` rows; run `check_invariants`; assert alignment, `schema_version`, `hostname`, `window_seconds`. Prints the three-type table. |
-| 12 | **The oracle diff** | Replay the run's own calls as synthetic records through the deployed Lua (`Policy.run`), tick at the same boundary, and **`diff_reports` the array against what VictoriaLogs stored.** A mismatch names the row and the field. This is the cell that makes "all schema coverage" checkable rather than asserted. |
-| 13 | **Window 2 — increment, reset, zero-carry** | Stay deliberately silent for one whole window. Assert `report_seq` +1 with the same `hostname`; counters reset (window 2's `access_seen` is not window 1's plus more); **every resource active in window 1 emits an explicit `0` row in window 2.** |
-| 14 | **Window 3 — carry decay, and the tick/period separation** | Silent again. Assert a row that stayed 0 is **not** carried a third time; assert exactly **one** report per window per host across all three (not one per 30 s tick); assert `tick:polaris-report` is still zero. |
+| 10 | **Window 1 — the report exists and its margins agree** | `wait_for_boundary()`; pull the window's `summary`/`resource`/`principal` rows; run `check_invariants`; assert alignment, `schema_version`, `hostname`, `window_seconds`. Prints the three-type table. |
+| 11 | **The oracle diff** | Replay the run's own calls as synthetic records through the deployed Lua (`Policy.run`), tick at the same boundary, and **`diff_reports` the array against what VictoriaLogs stored.** A mismatch names the row and the field. This is the cell that makes "all schema coverage" checkable rather than asserted. |
+| 12 | **Window 2 — increment, reset, zero-carry** | Stay deliberately silent for one whole window. Assert `report_seq` +1 with the same `hostname`; counters reset (window 2's `access_seen` is not window 1's plus more); **every resource active in window 1 emits an explicit `0` row in window 2.** |
+| 13 | **Window 3 — carry decay, and the tick/period separation** | Silent again. Assert a row that stayed 0 is **not** carried a third time; assert exactly **one** report per window per host across all three (not one per 30 s tick); assert `tick:polaris-report` is still zero. |
 
 Cell 9 (cleanup) and cell 10 (findings) stay last — the DELETEs are part of the test and must land
-inside a counted window, so cleanup runs **before** cell 11's wait, and its rows are asserted in
+inside a counted window, so cleanup runs **before** cell 10's wait, and its rows are asserted in
 window 1.
 
 **`partial_window: true` is deliberately NOT in the main run.** It requires a shipper restart
@@ -380,7 +380,7 @@ Recorded before and after, as cell 0 already does for the first two:
   reads are absorbed as counts, but **every error and mutation replays as a full record**, and the
   counters attribute the entire replay to whichever window it lands in. **A window whose
   `min_record_time`/`max_record_time` span is far wider than `window_seconds` is a replay** —
-  cell 11 checks that before believing any spike.
+  cell 10 checks that before believing any spike.
 
 ---
 
@@ -452,6 +452,33 @@ server-side hang leaves no line at all** and no test can change that.
    updated in this task's commit rather than left red as a marker.
 
 ---
+
+## 11b. What the first full run changed (2026-09-04, cells 0-14)
+
+Three of these were harness faults and one is a property of VictoriaLogs. None was a fault in
+the filter, and all four were invisible from the oracle alone.
+
+- **A RUN DOES NOT FIT IN ONE WINDOW, and at `WINDOW_SECONDS: 30` it never will.** Cell 10 read
+  a single window and found 8 records, all errors, one `__other__` row -- the cleanup DELETEs
+  and nothing else, because that is what landed in the last 30 seconds. It looked exactly like
+  the pipeline losing the whole run. Cell 10 now collects **every window from `STARTED` to the
+  last call**, checks the invariants per window (that is where they must hold) and merges them
+  with `log_coverage.merge_windows` for the diff. `distinct_resources` is recomputed as a union,
+  never summed, and a carried zero row does not create a key.
+- **Zero-carry lives for exactly one window, so the sequence cannot be user-paced.** The decay
+  cell ran 53s after the window it wanted had closed and correctly declared itself void. Cell 10
+  now captures the two windows after the run in a tight loop; cells 12 and 13 only assert.
+- **VictoriaLogs does not store empty values.** The filter writes `min_record_time` /
+  `max_record_time` as `""` for a window that saw nothing, so they are simply ABSENT from every
+  stored quiet window -- which the strict field check read as schema drift. Absent and empty are
+  the same statement here.
+- **`merge_windows` counted its first row twice** (`setdefault(key, dict(r))` then an identity
+  test that can never be true), and `check_invariants` demanded a span of exactly one window.
+  Both caught by their own tests before the code left the session.
+
+Also settled by the run: `app_lines` is derived from the same VictoriaLogs pull, not a second
+source -- it is `len(found) - len(access)` for one request id -- which answers the first of the
+two questions section 10 left open.
 
 ## 12. Definition of Done
 

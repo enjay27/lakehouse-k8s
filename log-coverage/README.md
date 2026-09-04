@@ -216,7 +216,7 @@ instead of three 30-minute ones.
 |---|---|
 | `PLAN-log-coverage-v3.md` | **read this first** — policy v3, the scheduled report, and what the notebook must prove about both |
 | `PLAN-log-coverage.md` | the v2 plan. Still the right description of how the oracle works; its policy table is superseded |
-| `polaris_log_coverage.ipynb` | the run. Cells 0–15, linear, `Restart & Run All`. Cells 11–14 are the scheduled report and need real boundaries. |
+| `polaris_log_coverage.ipynb` | the run. Cells 0–14, linear, `Restart & Run All`. Cells 11–14 are the scheduled report and need real boundaries. |
 | `fetch_specs.sh` | vendors the 1.3.0 OpenAPI documents (this Polaris serves none of its own) |
 | `spec/` | the vendored documents — gitignored; `spec/inventory.json` is tracked |
 | `doc-log-coverage-results.md` | written by cell 10, for someone who was not there |

@@ -600,3 +600,61 @@ def test_victorialogs_metadata_is_not_read_as_schema_drift(policy):
     #: but a field that is NOT VictoriaLogs metadata still fails
     tampered = [dict(r, surprise=1) for r in stored]
     assert any("unexpected fields" in b for b in lc.check_invariants(tampered))
+
+
+def test_a_quiet_window_may_arrive_without_its_time_fields(policy):
+    #: The filter writes min/max_record_time as "" when a window saw nothing,
+    #: and VictoriaLogs does not store empty values -- so they are simply absent
+    #: from every stored quiet window. Absent and empty are the same statement
+    #: here. Measured 2026-09-04, when every silent window in the run reported
+    #: "summary row is missing fields: ['max_record_time', 'min_record_time']".
+    _, reports = _window(policy, [("GET", T, 200)], silent=1)
+    quiet = [dict(r) for r in reports["w2"]]
+    for r in quiet:
+        r.pop("min_record_time", None)
+        r.pop("max_record_time", None)
+    assert lc.check_invariants(quiet) == []
+    #: any OTHER missing field is still schema drift
+    broken = [dict(r) for r in quiet]
+    broken[0].pop("counted_get", None)
+    assert any("missing fields" in b for b in lc.check_invariants(broken))
+
+
+def test_a_run_spanning_several_windows_merges_into_one_comparable_set(policy):
+    #: At WINDOW_SECONDS 30 every run spans many windows, so reading ONE window
+    #: reports whatever landed in the last 30 seconds. On 2026-09-04 that was
+    #: the cleanup DELETEs alone: 8 records, all errors, a single __other__ row,
+    #: and a report that looked like the pipeline had lost the whole run.
+    W = policy.window_seconds
+    base = 0
+    events = [lc.Tick(base + 1, "open")]
+    events += [_rec("GET", T, 200, when=base + 5), _rec("PUT", T, 200, when=base + 6)]
+    events.append(lc.Tick(base + W + 1, "w1"))
+    events += [
+        _rec("GET", f"{CAT}/c1/namespaces/ns1/views/v1", 200, when=base + W + 5),
+        _rec("DELETE", T, 204, when=base + W + 6),
+    ]
+    events.append(lc.Tick(base + 2 * W + 1, "w2"))
+    _, reports = policy.run(events)
+
+    merged = lc.merge_windows([reports["w1"], reports["w2"]])
+    assert lc.check_invariants(merged, merged=True) == []
+    s = [r for r in merged if r["report_type"] == "summary"][0]
+    assert s["access_seen"] == 4
+    #: the table was touched in BOTH windows -- its counts add up, and it is one
+    #: row, not two
+    tbl = [r for r in merged if r.get("resource") == T]
+    assert len(tbl) == 1 and tbl[0]["requests"] == 3
+    #: distinct_resources is a cardinality and must NOT be the sum of the two
+    #: windows' values (which would double-count the table)
+    assert s["distinct_resources"] == 2
+
+
+def test_merging_does_not_invent_a_key_from_a_carried_zero(policy):
+    #: A resource active BEFORE the merged range is echoed at 0 inside it by
+    #: zero-carry. It is not a resource this range saw, and counting it would
+    #: inflate distinct_resources and put an all-zero row in the diff.
+    _, reports = _window(policy, [("GET", T, 200)], silent=2)
+    merged = lc.merge_windows([reports["w2"], reports["w3"]])
+    assert [r for r in merged if r["report_type"] == "resource"] == []
+    assert lc.check_invariants(merged, merged=True) == []

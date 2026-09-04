@@ -41,12 +41,22 @@ revert both together.** Nothing hardcodes them; `Policy.window_seconds`/`tick_se
 deployed file, and the tick-rate test broke correctly on the change instead of passing
 vacuously. **68 tests green at the new settings.**
 
+**The first full run exposed the real structural gap: A RUN DOES NOT FIT IN ONE WINDOW**, and at
+`WINDOW_SECONDS: 30` it never will. Cell 10 read one window and found the cleanup DELETEs alone —
+8 records, all errors, one `__other__` row — which looked exactly like the pipeline losing the
+run. It now merges **every window the run touched** (`log_coverage.merge_windows`; per-window
+invariants still checked individually, `distinct_resources` recomputed as a union, carried zeros
+never creating a key) and captures the two windows after the run in a tight loop, because
+zero-carry lives for exactly one window and a user-paced gap loses it. Also: **VictoriaLogs does
+not store empty values**, so `min`/`max_record_time` are simply absent from a quiet window —
+that is not schema drift. **72 tests green.**
+
 **Two harness bugs the verify run caught**, both of which would have fired on every window of
 the real run: `check_invariants` read VictoriaLogs' own `_stream`/`_stream_id` as schema drift,
 and the skipped-window check compared window starts across a shipper restart and the 1800→30
 change, reporting the switch itself as a skipped window. Both fixed, both now tested.
 
-**Next:** run the notebook, cells 0–15. `black`/`isort` still not runnable from Cowork; `pytest`
+**Next:** run the notebook, cells 0–14. `black`/`isort` still not runnable from Cowork; `pytest`
 runs on Kade's machine and is green.
 
 ## Where the detail is

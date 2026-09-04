@@ -1261,6 +1261,13 @@ FIELDS_BY_TYPE = {
     "principal": PRINCIPAL_FIELDS,
 }
 
+#: The filter writes these as "" when a window saw no records (`counts.min_time or ""`),
+#: and VictoriaLogs DOES NOT STORE EMPTY VALUES -- so they are simply absent from
+#: a stored quiet window. Measured 2026-09-04: every silent window reported them
+#: as "missing fields".
+#: Absent and empty are the same statement here, and neither is schema drift.
+EMPTY_DROPPED_FIELDS = frozenset({"min_record_time", "max_record_time"})
+
 #: VictoriaLogs adds these to every record it returns -- they are not fields the
 #: filter emitted, so a strict field check must not read them as schema drift.
 #: The verify run on 2026-09-04 reported all six stored rows as carrying
@@ -1417,7 +1424,7 @@ def _epoch_of(iso_z):
         return None
 
 
-def check_invariants(rows, strict_fields=True):
+def check_invariants(rows, strict_fields=True, merged=False):
     """Every violation in ONE window's report rows, as readable strings.
 
     Runs unchanged against the oracle's output and against what VictoriaLogs
@@ -1467,8 +1474,9 @@ def check_invariants(rows, strict_fields=True):
             want = FIELDS_BY_TYPE[kind]
             if body - want:
                 bad.append(f"{kind} row has unexpected fields: {sorted(body - want)}")
-            if want - body:
-                bad.append(f"{kind} row is missing fields: {sorted(want - body)}")
+            gone = (want - body) - EMPTY_DROPPED_FIELDS
+            if gone:
+                bad.append(f"{kind} row is missing fields: {sorted(gone)}")
         if _as_int(r.get("schema_version"), -1) != SCHEMA_VERSION:
             bad.append(f"{kind} row has schema_version {r.get('schema_version')!r}")
         if r.get("_time") != r.get("window_end"):
@@ -1487,8 +1495,17 @@ def check_invariants(rows, strict_fields=True):
                     f"{secs}s -- the filter derives it from floor(now/W), so "
                     "an unaligned start did not come from this filter"
                 )
-            if end - start != secs:
-                bad.append(f"window spans {end - start}s, window_seconds says {secs}")
+            span = end - start
+            if merged:
+                #: a merged range covers N consecutive windows, so its span is a
+                #: positive multiple. Everything else -- alignment, the margins,
+                #: the per-row bounds -- still has to hold exactly.
+                if span <= 0 or span % secs:
+                    bad.append(
+                        f"merged range spans {span}s, not a whole multiple of {secs}s"
+                    )
+            elif span != secs:
+                bad.append(f"window spans {span}s, window_seconds says {secs}")
 
     for r in resources + principals:
         req = _as_int(r.get("requests"))
@@ -1601,3 +1618,97 @@ def diff_reports(expected, actual, ignore=VOLATILE_FIELDS):
 def report_mismatches(diff):
     """Just the rows of `diff_reports` that are not a match."""
     return [d for d in diff if d["status"] != "match"]
+
+
+#: Summary counters that are sums across windows. `distinct_resources` and
+#: `distinct_principals` are NOT here: they are cardinalities, and adding them
+#: across windows double-counts every resource that stayed busy.
+SUMMABLE_SUMMARY_FIELDS = (
+    "access_seen",
+    "access_kept",
+    "access_counted",
+    "counted_get",
+    "counted_post",
+    "errors_kept",
+    "parse_errors",
+    "resources_other",
+    "principals_other",
+)
+ROW_COUNTERS = ("requests", "reads", "writes", "errors", "response_bytes")
+
+
+def merge_windows(windows):
+    """Aggregate several consecutive windows' rows into one comparable set.
+
+    A run that takes longer than `WINDOW_SECONDS` is spread across every window
+    it touches. At the deployed 1800 that was rarely more than one; at 30 it is
+    ALWAYS several, and reading a single window then reports whatever happened
+    to land in the last 30 seconds -- which on 2026-09-04 was the cleanup
+    DELETEs and nothing else: 8 records, all errors, one `__other__` row, and a
+    coverage matrix that looked like the pipeline had lost the entire run.
+
+    Args:
+        windows: an iterable of row-lists, one per window, in any order.
+
+    Returns:
+        a list shaped like one window's rows -- one summary, the merged
+        resource rows, the merged principal rows -- so `check_invariants` and
+        `diff_reports` take it unchanged.
+
+    Carried zero rows contribute nothing and must not create a key: a resource
+    that was active before this range and merely echoed at 0 inside it is not a
+    resource this range saw.
+    """
+    rows = [r for w in windows for r in (w or [])]
+    if not rows:
+        return []
+    summaries = [r for r in rows if r.get("report_type") == "summary"]
+    if not summaries:
+        return []
+
+    def merge(kind, key_field):
+        #: `setdefault(key, dict(r))` and then "is it the same object?" does NOT
+        #: work here: dict(r) is always a copy, so the first row of every key was
+        #: added to itself and every count came out doubled. Track the key.
+        out = {}
+        for r in (r for r in rows if r.get("report_type") == kind):
+            key = r.get(key_field)
+            if key not in out:
+                acc = dict(r)
+                for f in ROW_COUNTERS:
+                    acc[f] = _as_int(r.get(f))
+                out[key] = acc
+            else:
+                acc = out[key]
+                for f in ROW_COUNTERS:
+                    acc[f] = acc[f] + _as_int(r.get(f))
+        return [r for r in out.values() if any(_as_int(r.get(f)) for f in ROW_COUNTERS)]
+
+    res = merge("resource", "resource")
+    pri = merge("principal", "user_principal_name")
+
+    ordered = sorted(summaries, key=lambda r: str(r.get("window_start", "")))
+    s = dict(ordered[0])
+    for f in SUMMABLE_SUMMARY_FIELDS:
+        s[f] = sum(_as_int(r.get(f)) for r in summaries)
+    s["distinct_resources"] = len(res)
+    s["distinct_principals"] = len(pri)
+    s["window_start"] = ordered[0].get("window_start")
+    s["window_end"] = ordered[-1].get("window_end")
+    s["_time"] = s["window_end"]
+    any_partial = any(str(r.get("partial_window")) == "true" for r in summaries)
+    s["partial_window"] = "true" if any_partial else "false"
+    times = [
+        t
+        for r in summaries
+        for t in (r.get("min_record_time"), r.get("max_record_time"))
+        if t
+    ]
+    s["min_record_time"] = min(times) if times else ""
+    s["max_record_time"] = max(times) if times else ""
+    s["_msg"] = (
+        f"merged {len(summaries)} windows {s['window_start']}..{s['window_end']}: "
+        f"{s['access_seen']} access lines, {s['access_kept']} kept, "
+        f"{s['access_counted']} counted, {len(res)} resources, {len(pri)} principals"
+    )
+    return [s] + res + pri
