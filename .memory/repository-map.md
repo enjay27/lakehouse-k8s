@@ -48,6 +48,7 @@ either.
 |---|---|
 | `local-k8s-HANDOFF.md` | **HISTORICAL** (rebuild done 2026-09-03, outside it). Still the best account of *why*: Fault 1 (inert values nesting), Fault 2 (IPv4-only pg_hba), and the operational gotchas. |
 | `RESET-AND-CLEAN-INSTALL.md` | **HISTORICAL** — the procedure that was not followed. Its install order and verification block are still valid for any future reinstall. |
+| `POLARIS-LOG-COVERAGE-V3-HANDOFF.md` | **PENDING, for the `polaris-learning` project** — extending `log-coverage` to cover policy v3 and the report schema. Carries the coverage matrix, what is unreachable from a client and belongs in the Lua suite instead, and the oracle change: the deployed Lua must now predict the report array, not just keep/drop. |
 | `shipper-v3-upgrade-runbook.md` | **PENDING** — installing the Fluent Bit policy v3 and the flush report, which are written and have never executed (`active-issues.md` #14). Phased, with a render gate, the two assumptions no test could reach, the report's margin self-check, and a rollback that costs a second log replay. |
 | `shm-exhaustion-orbstack-leg-runbook.md` | the `/dev/shm` exhaustion repro + fix verification (S5 pending item). |
 | `preflight-triage.sh` | script form of the RESET §1 pre-flight checks. |

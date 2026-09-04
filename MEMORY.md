@@ -5,10 +5,13 @@ everything else is a link into [`.memory/`](.memory/README.md).
 
 ## Now — 2026-09-04
 
-**Next:** run the v3 runbook. The counters reset when the pod is replaced, so the pre-upgrade
-metrics sample is a **rate baseline, not a subtrahend**. Then re-run
-`polaris-learning/log-coverage` — its characterization test is built to fail on a policy
-change, so read the diff and update it and `doc-log-coverage-results.md` together.
+**Next:** v3 is deployed (2026-09-04, Kade — not yet independently verified here). First
+confirm the report's shape: three `report_type`s present means the Lua array return split, and
+**if it did not, the schema is different and the coverage work targets the wrong thing** — gate
+in [`POLARIS-LOG-COVERAGE-V3-HANDOFF.md`](POLARIS-LOG-COVERAGE-V3-HANDOFF.md), which is the
+handoff for extending `polaris-learning/log-coverage` to the full schema. Its characterization
+test is built to fail on a policy change: read the diff, then update it and
+`doc-log-coverage-results.md` together.
 
 **Written and NOT running:** `logging/fb-values.yaml` carries policy **v3** and the flush
 report, one `helm upgrade` away — [`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md)
