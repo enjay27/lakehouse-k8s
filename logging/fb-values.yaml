@@ -184,8 +184,15 @@ luaScripts:
     local REPORT_TAG     = "polaris.report"
     local REPORT_APP     = "polaris-shipper-report"
     local SCHEMA_VERSION = 1
-    local WINDOW_SECONDS = 1800    -- :00 and :30. KST is UTC+9:00 exactly, so the
-                                   -- boundary is the same in both clocks.
+    local WINDOW_SECONDS = 30      -- TEMPORARY FAST RUN (2026-09-04). Steady state is
+                                   -- 1800 (:00 and :30 wall-clock; KST is UTC+9:00
+                                   -- exactly, so that boundary is the same in both
+                                   -- clocks). Dropped to 30s so a coverage run crosses
+                                   -- three window boundaries in ~2 minutes instead of
+                                   -- ~90 -- see the handoff's section 4. REVERT to 1800
+                                   -- with Interval_Sec 30 when the run is done; nothing
+                                   -- else reads this constant. Note the boundary is now
+                                   -- every :00/:30 SECONDS, not minutes.
     local MGMT_PREFIX    = "^/api/management/"
 
     local READ_METHODS  = { GET = true, HEAD = true }
@@ -429,9 +436,19 @@ luaScripts:
     end
 
     -- The tick RATE is not the report period. A tick inside the current window is
-    -- dropped, so over-ticking is harmless and the window stays aligned to :00/:30
-    -- across a restart. Skew: records arriving between a boundary and the tick that
-    -- notices it are counted into the window just closed. A summary, not a ledger.
+    -- dropped, so over-ticking is harmless and the window stays aligned to the
+    -- WINDOW_SECONDS grid across a restart. Skew: records arriving between a boundary
+    -- and the tick that notices it are counted into the window just closed. A summary,
+    -- not a ledger.
+    --
+    -- Over-ticking is harmless; UNDER-ticking is not, and the margin is the whole
+    -- reason Interval_Sec tracks WINDOW_SECONDS. This function reports whatever
+    -- `counts` holds under the index it was opened with, and records are accumulated
+    -- into the open window regardless of their own timestamps. If the tick period
+    -- reaches the window period, ordinary jitter lets two boundaries pass between
+    -- ticks: the skipped window never opens, its records are folded into the previous
+    -- window's index, and the counts stop being attributable to a wall-clock window.
+    -- Keep the tick well under WINDOW_SECONDS -- it is 5s against a 30s window here.
     local function report_tick(timestamp, record)
         local idx = math.floor(now_seconds(record) / WINDOW_SECONDS)
         if counts == nil then
@@ -562,17 +579,21 @@ config:
         storage.type      filesystem
 
     # The report tick. Carries no log data: filter 3 replaces it with the flush
-    # report when the 30-minute window turns over, and drops it otherwise. The
-    # interval is therefore NOT the report period -- WINDOW_SECONDS in the Lua is,
-    # and it is aligned to :00/:30 wall-clock. This only has to tick often enough
-    # that the boundary is noticed promptly; 30s bounds the edge skew at 30s.
+    # report when the window turns over, and drops it otherwise. The interval is
+    # therefore NOT the report period -- WINDOW_SECONDS in the Lua is, and it is
+    # aligned to the wall-clock WINDOW_SECONDS grid. This only has to tick often
+    # enough that the boundary is noticed promptly, and it must stay WELL UNDER
+    # WINDOW_SECONDS: at tick == window, jitter lets a boundary pass unnoticed and
+    # the skipped window's records are attributed to the previous window (see
+    # report_tick). 5s against the temporary 30s window bounds edge skew at 5s.
+    # REVERT to Interval_Sec 30 when WINDOW_SECONDS goes back to 1800.
     [INPUT]
         Name              dummy
         Alias             polaris_report_tick
         Tag               polaris.report
         Dummy             {"tick":"polaris-report"}
         Rate              1
-        Interval_Sec      30
+        Interval_Sec      5
         Interval_NSec     0
 
   filters: |

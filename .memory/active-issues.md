@@ -64,10 +64,12 @@ KST day and needed a per-key table to do it, which is what `DEDUP_MAX_KEYS` was 
 for. v3 never stores a successful read individually, so there is no key to remember. The civil-
 day arithmetic, both day buckets, `seen_before` and the cap are all deleted — about 90 lines.
 
-**The flush report, schema v1.** A `dummy` INPUT tagged `polaris.report` ticks every 30s and
-reaches the *same* Lua filter instance (state is per-instance, so `Match` is `polaris.*`); on a
-:00/:30 boundary the filter returns an **array** of records instead of the tick and resets the
-counters. Array return is documented behaviour — "this value can be an array of tables... the
+**The flush report, schema v1.** A `dummy` INPUT tagged `polaris.report` ticks and reaches the
+*same* Lua filter instance (state is per-instance, so `Match` is `polaris.*`); on a
+`WINDOW_SECONDS` boundary the filter returns an **array** of records instead of the tick and
+resets the counters. Steady state is a 30-minute window on the :00/:30 wall-clock boundary with
+a 30s tick — **but the deployed values file is on the temporary fast-run setting right now, see
+d. below before reading a report.** Array return is documented behaviour — "this value can be an array of tables... the
 input record is effectively split into multiple records" — but has never run here (#14c).
 Lands on `{app="polaris-shipper-report", level="REPORT"}`, its own stream.
 
@@ -108,6 +110,35 @@ normalized identity, not a request path.
 **c. What is still unverified, and no test can reach it:** that this Fluent Bit build splits an
 array return into separate records, and that the dummy input's tag reaches the filter instance.
 Both documented, neither run. Runbook Phase 4 distinguishes them and names the fallback.
+
+**d. TEMPORARY: the report window is 30 seconds, not 30 minutes.** Set 2026-09-04 at Kade's
+request so a coverage run crosses three window boundaries in ~2 minutes instead of ~90 — the
+handoff's §4 needs three, for `report_seq`, zero-carry and carry decay. In
+`logging/fb-values.yaml`: `WINDOW_SECONDS = 30` (was 1800) and the dummy INPUT's
+`Interval_Sec 5` (was 30).
+
+**Revert both together.** The tick has to stay well under the window: `report_tick` reports
+whatever `counts` holds under the index it was *opened* with, and records accumulate into the
+open window regardless of their own timestamps, so if the tick period reaches the window period
+ordinary jitter lets a boundary pass unnoticed — the skipped window never opens and its records
+are folded into the previous window's index. At 1800/30 the margin is 60×; at 30/30 there is
+none. That is why the tick moved too, and it is not cosmetic.
+
+Two consequences while it is set:
+
+- **Report volume is ~60× steady state.** Zero-carry emits every non-zero key once more as an
+  explicit `0`, so even an idle pipeline ships a summary plus carried rows every 30s.
+- **The first window after the `helm upgrade` is a replay, not traffic.** The tail DB is on an
+  `emptyDir` with `Read_from_Head true` and VictoriaLogs does not deduplicate on ingest, so the
+  upgrade replays the whole log file — and at 30s the entire replay lands in *one* window as a
+  spike. A window whose `min_record_time`/`max_record_time` span far exceeds `window_seconds`
+  is a replay. Do not trust it.
+
+Nothing else reads the constant. `logging/scripts/test-polaris-filters.py` now parses
+`WINDOW_SECONDS` off the deployed Lua and expresses every tick offset as a multiple of it
+(it hardcoded 1800, so `T0 + 900` — "a tick inside the window" — would have become a tick 30
+windows later and failed for the wrong reason). 48/48 at 30s. The runbook, roadmap #7 and
+`POLARIS-LOG-COVERAGE-V3-HANDOFF.md` still describe the 30-minute steady state on purpose.
 
 **Decided by this policy, and therefore no longer open:** the 4xx cap (there is none — all
 errors kept), collection listings (counted, like every other successful read), `report_metrics`

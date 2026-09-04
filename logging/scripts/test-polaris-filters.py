@@ -12,6 +12,7 @@ one -- `luatex --luaonly` is a standalone Lua 5.3.
     python3 logging/scripts/test-polaris-filters.py
 """
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,18 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 VALUES = ROOT / "logging" / "fb-values.yaml"
 SCRIPT_KEY = "polaris_access_log.lua"
+
+SCRIPT = yaml.safe_load(VALUES.read_text(encoding="utf-8"))["luaScripts"][SCRIPT_KEY]
+
+# The report period is read OFF THE DEPLOYED LUA, never hardcoded. Suite 3 used to
+# assume 1800 and every boundary offset was written out as a literal; the day the
+# window changed, "a tick inside the window" became a tick three windows later and the
+# suite reported a policy finding that was really a stale constant. Offsets below are
+# multiples of WINDOW, so the suite follows the values file wherever it goes.
+_m = re.search(r"^\s*local WINDOW_SECONDS\s*=\s*(\d+)", SCRIPT, re.M)
+if not _m:
+    sys.exit("could not read WINDOW_SECONDS out of " + str(VALUES))
+WINDOW = int(_m.group(1))
 
 ACCESS = "io.quarkus.http.access-log"
 
@@ -132,9 +145,12 @@ POLICY_CASES = [
 # ---------------------------------------------------------------- suite 3
 # The flush report and its schema. Counters only exist from the first tick, so the
 # traffic below -- not suite 2's -- is what the asserted window contains.
-# T0 sits on a 1800s boundary, so no test sleeps and the arithmetic is exact.
+# T0 is snapped down to a WINDOW boundary, so no test sleeps and the arithmetic is
+# exact at any window length. Ticks are placed at T0, mid-window, and on the next
+# three boundaries -- what makes a tick a boundary is WINDOW, not a literal.
 # `_now_override` is the filter's test hook; the dummy INPUT never sets it.
-T0 = 1787999400
+T0 = (1787999400 // WINDOW) * WINDOW
+MID = WINDOW // 2         # a tick inside the open window: must report nothing
 EMIT = 2          # the tick returns 2: record replaced, by the array of reports
 W = "2026-09-05T16:0"
 
@@ -157,11 +173,11 @@ REPORT_CASES = [
     ("root deletes the table",      "rec", acc(W + "6:00Z", "DELETE", TBL, 204), KEEP, {}),
     ("an application log is not counted", "rec", {"loggerName": "x", "level": "DEBUG", "_msg": "."}, KEEP, {}),
 
-    ("a tick inside the window reports nothing", "tick", tick(T0 + 900), DROP, {"nrec": "0"}),
+    ("a tick inside the window reports nothing", "tick", tick(T0 + MID), DROP, {"nrec": "0"}),
 
     # 1 summary + 3 resources (the table, __other__, the principals collection)
     #           + 2 principals (root, alice)
-    ("the boundary tick emits the window", "tick", tick(T0 + 1800), EMIT, {
+    ("the boundary tick emits the window", "tick", tick(T0 + WINDOW), EMIT, {
         "nrec": "6",
         "access_seen": "7", "access_kept": "3", "access_counted": "4",
         "counted_get": "3", "counted_post": "1", "errors_kept": "1",
@@ -180,13 +196,13 @@ REPORT_CASES = [
 
     # zero-carry: every key that was non-zero is emitted once more as an explicit 0,
     # so a fall to nothing is a data point instead of a missing row
-    ("a quiet window carries the keys as zeros", "tick", tick(T0 + 3600), EMIT, {
+    ("a quiet window carries the keys as zeros", "tick", tick(T0 + 2 * WINDOW), EMIT, {
         "nrec": "6", "access_seen": "0", "distinct_resources": "3",
         "tbl_requests": "0", "tbl_reads": "0", "root_requests": "0",
     }),
 
     # ...and the carry decays: a key that stayed zero is not carried again
-    ("the carry decays after one window", "tick", tick(T0 + 5400), EMIT, {
+    ("the carry decays after one window", "tick", tick(T0 + 3 * WINDOW), EMIT, {
         "nrec": "1", "access_seen": "0", "distinct_resources": "0",
         "distinct_principals": "0", "tbl_requests": "<none>",
     }),
@@ -232,10 +248,8 @@ def tbl(record):
 
 
 def main():
-    script = yaml.safe_load(VALUES.read_text(encoding="utf-8"))["luaScripts"][SCRIPT_KEY]
-
     lines = [
-        script,
+        SCRIPT,
         "local function q(v) if v==nil then return '<nil>' end return tostring(v) end",
         "local function nrec(r) if type(r)~='table' or r[1]==nil then return 0 end return #r end",
         "local function sf(r,k) if type(r)~='table' or r[1]==nil then return '<nil>' end return q(r[1][k]) end",

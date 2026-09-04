@@ -14,7 +14,12 @@ test is built to fail on a policy change: read the diff, then update it and
 `doc-log-coverage-results.md` together.
 
 **Written and NOT running:** `logging/fb-values.yaml` carries policy **v3** and the flush
-report, one `helm upgrade` away — [`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md)
+report — and, since 2026-09-04, a **temporary 30s report window** (`WINDOW_SECONDS = 30`,
+tick `Interval_Sec 5`) for a fast coverage run: three boundaries in ~2 minutes instead of ~90.
+**Revert both together to 1800/30** — at tick == window a boundary can pass unnoticed and the
+counts stop being attributable; `active-issues.md` **#14d** has the mechanism and the two
+consequences (~60× report volume, and the post-upgrade replay landing in one window). It is one
+`helm upgrade` away — [`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md)
 is the whole procedure. Errors and mutations kept in full, successful reads and catalog POSTs
 counted only; **v2 was superseded before it was ever deployed**, and the dedup cap question went
 with it. The rule table, the report schema and what stays deferred are
