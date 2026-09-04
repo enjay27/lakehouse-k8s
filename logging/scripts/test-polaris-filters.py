@@ -71,9 +71,10 @@ TBL_A = "/api/catalog/v1/c/namespaces/ns1/tables/ta"
 TBL_B = "/api/catalog/v1/c/namespaces/ns1/tables/tb"
 
 
-def acc(t, method, path, status, level="INFO"):
+def acc(t, method, path, status, level="INFO", user="root"):
     return {"loggerName": ACCESS, "level": level, "_time": t,
-            "http_method": method, "api_path": path, "http_status": str(status)}
+            "http_method": method, "api_path": path, "http_status": str(status),
+            "user_principal_name": user}
 
 
 KEEP, DROP = 0, -1
@@ -87,11 +88,13 @@ POLICY_CASES = [
     ("GET table A again in the new day",       acc("2026-09-03T16:00:00Z", "GET", TBL_A, 200), DROP),
     ("straggler for yesterday, already seen",  acc("2026-09-03T14:00:00Z", "GET", TBL_B, 200), DROP),
     ("HEAD is a different key from GET",       acc("2026-09-03T16:01:00Z", "HEAD", TBL_A, 200), KEEP),
-    ("same table, different query string",     acc("2026-09-03T16:02:00Z", "GET", TBL_A + "?snapshots=all", 200), KEEP),
+    ("query string is not a new key",          acc("2026-09-03T16:02:00Z", "GET", TBL_A + "?snapshots=all", 200), DROP),
 
     ("POST table commit",                      acc("2026-09-03T16:03:00Z", "POST", TBL_A, 200), KEEP),
     ("POST view commit (added, not specified)", acc("2026-09-03T16:03:30Z", "POST", "/api/catalog/v1/c/namespaces/ns1/views/v2", 201), KEEP),
-    ("POST oauth token, 200 -- dropped",       acc("2026-09-03T16:04:00Z", "POST", "/api/catalog/v1/oauth/tokens", 200), DROP),
+    ("POST oauth token, first for root today", acc("2026-09-03T16:04:00Z", "POST", "/api/catalog/v1/oauth/tokens", 200), KEEP),
+    ("POST oauth token again, same principal", acc("2026-09-03T16:04:30Z", "POST", "/api/catalog/v1/oauth/tokens", 200), DROP),
+    ("POST oauth token, other principal",      acc("2026-09-03T16:04:40Z", "POST", "/api/catalog/v1/oauth/tokens", 200, user="analyst"), KEEP),
     ("POST oauth token, 401 -- errors outrank", acc("2026-09-03T16:05:00Z", "POST", "/api/catalog/v1/oauth/tokens", 401), KEEP),
 
     ("PUT on a catalog role",                  acc("2026-09-03T16:06:00Z", "PUT", "/api/management/v1/catalogs/c/catalog-roles/r", 200), KEEP),
@@ -110,6 +113,26 @@ POLICY_CASES = [
     ("access-log line that did not parse", {"loggerName": ACCESS, "level": "INFO",
                                             "_time": "2026-09-03T16:12:00Z",
                                             "access_log_parse_error": "true"}, KEEP),
+
+    # Rule 5 inverted. Every one of these left NO access-log record under the
+    # keep-list, measured by the 2026-09-04 coverage run.
+    ("POST create a principal",                acc("2026-09-03T16:13:00Z", "POST", "/api/management/v1/principals", 201), KEEP),
+    ("POST create a principal role",           acc("2026-09-03T16:13:10Z", "POST", "/api/management/v1/principal-roles", 201), KEEP),
+    ("POST create a catalog role",             acc("2026-09-03T16:13:20Z", "POST", "/api/management/v1/catalogs/c/catalog-roles", 201), KEEP),
+    ("POST reset credentials -- the big one",  acc("2026-09-03T16:13:30Z", "POST", "/api/management/v1/principals/p/reset", 200), KEEP),
+    ("POST rename a table",                    acc("2026-09-03T16:13:40Z", "POST", "/api/catalog/v1/c/tables/rename", 200), KEEP),
+    ("POST rename a view",                     acc("2026-09-03T16:13:50Z", "POST", "/api/catalog/v1/c/views/rename", 204), KEEP),
+    ("POST create a namespace",                acc("2026-09-03T16:14:00Z", "POST", "/api/catalog/v1/c/namespaces", 200), KEEP),
+    ("POST namespace properties",              acc("2026-09-03T16:14:10Z", "POST", "/api/catalog/v1/c/namespaces/ns1/properties", 200), KEEP),
+
+    # The dedup key now carries the principal. Fresh KST day (16:00Z on 09-04 is
+    # already 09-05 in KST), so these do not depend on the buckets above.
+    ("fresh day, root reads table A",          acc("2026-09-04T16:00:00Z", "GET", TBL_A, 200), KEEP),
+    ("root reads it again",                    acc("2026-09-04T16:01:00Z", "GET", TBL_A, 200), DROP),
+    ("a second principal reads the same table", acc("2026-09-04T16:02:00Z", "GET", TBL_A, 200, user="analyst"), KEEP),
+    ("that principal reads it again",          acc("2026-09-04T16:03:00Z", "GET", TBL_A, 200, user="analyst"), DROP),
+    ("and its query-string variant",           acc("2026-09-04T16:04:00Z", "GET", TBL_A + "?snapshots=refs", 200, user="analyst"), DROP),
+    ("an anonymous read is its own bucket",    acc("2026-09-04T16:05:00Z", "GET", TBL_A, 200, user="-"), KEEP),
 ]
 
 

@@ -3,39 +3,44 @@
 **Index, not the record.** Current state below; everything else is a link into
 [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-03
+## Now — 2026-09-04
 
 **Live thread: the Polaris → VictoriaLogs pipeline**, built against
 `logging/polaris-logging-architecture-spec.md`. Steps in [`roadmap.md`](.memory/roadmap.md);
 the audit and its four corrections in
 [`sessions/2026-09-03-polaris-vlogs-audit.md`](.memory/sessions/2026-09-03-polaris-vlogs-audit.md).
 
-**Next, and it moves to the Polaris project:** `POLARIS-API-LOG-COVERAGE-NOTEBOOK.md` — a
-notebook calling every Polaris API so the pipeline is driven across every policy branch,
-producing a matrix of what was stored vs discarded. Written to be read cold. It answers the
-parked questions, and should demonstrate the gap found while writing it: **successful
-management-API creates are POSTs and are being dropped** — a principal is visibly deleted and
-invisibly created (roadmap 4b).
+**Next:** `helm upgrade` the shipper to policy v2, sampling
+`fluentbit_filter_drop_records_total{name="polaris_noise_filter"}` **before** it, then re-run
+`polaris-learning/log-coverage`. Its characterization test is built to fail on a policy change
+— read the diff, then update it and `doc-log-coverage-results.md` together.
 
 **Built, all in `logging/fb-values.yaml`** — no `--set`, the values file is the definition:
 access-log field extraction, and a retention policy (ERROR/WARN keep, 4xx/5xx keep,
-PUT/DELETE keep, POST table/view keep and other POST drop, GET/HEAD on a table or view once
-per **KST** day). **Errors outrank dedup deliberately.** The day comes from the record's own
-`_time`, not wall-clock, so a shipper replay is safe. Plus the shipper's silent faults: tail
+PUT/DELETE keep, every POST keep except `/oauth/tokens`, GET/HEAD on a table or view once
+per principal per **KST** day). **Errors outrank dedup deliberately.** The day comes from the
+record's own `_time`, not wall-clock, so a shipper replay is safe. Plus the shipper's silent faults: tail
 `DB`, `Skip_Long_Lines On` (it was `Off`, which **stops the tail** rather than skipping the
 line), `Rotate_Wait`, filesystem buffering, `json_date_key false`, per-record `Remove_key`.
-`logging/scripts/test-polaris-filters.py` reads the Lua *out of* the values file — 30/30.
+`logging/scripts/test-polaris-filters.py` reads the Lua *out of* the values file — 46/46.
 
 **Polaris is not to be changed** — it works and ships continuously (Kade's observation, which
 outranks the inference in #11). #12 withdrawn; the repo *does* describe this cluster and there
 was never a hidden config source (#10).
 
-**#13, and it is now the top of the list: the retention policy is written and NOT RUNNING.**
-Measured 2026-09-04 by the Polaris-project notebook — 0 of 34 expected drops dropped, 20
-identical table GETs stored 20 records. The filter went into `fb-values.yaml` in `2120ed9` at
-08:26:18Z; the shipper pod has run since 08:04:06Z from `60b94d9`, which has the parser and no
-filter. **`helm upgrade` was never run** — and it is a change, not a fix, so read #13 first.
-Also settled there: **`Polaris-Request-Id` round-trips**, so the spec's §7 trace query works.
+**#13 is closed: the policy runs.** The shipper was upgraded at 04:57:36Z on 2026-09-04 and
+the second coverage run dropped 34 of 34 — the running ConfigMap carries the script. That run
+then measured the thing worth knowing (**#14**): **the filter governs 4.5% of the volume.**
+1,928 of 2,018 stored records are *application* lines passing rule 2 untouched; only 90 are
+access-log lines, and dropping 34 cut 1.7%. Rules 3–7 are an audit-fidelity control, not a
+volume control — the volume lever is routing the DEBUG SQL records (#5b). Also settled:
+**`Polaris-Request-Id` round-trips**, so the spec's §7 trace query works.
+
+**Policy v2 is written and NOT YET RUNNING** — #13's gap again, knowingly this time, one
+`helm upgrade` away. Rule 5 inverted (a keep-list aimed at the token endpoint, never bounded
+to it: a credential reset left no record); the dedup key carries the principal and drops the
+query string; `Alias` on all four filters. **The cap on the principal-keyed dedup table is
+Kade's to decide** — a placeholder fail-open guard at 50k keys stands until then (#14).
 
 **Open:** tail DB on an emptyDir, so `helm upgrade` replays the file once — PVC block is in
 the values file, commented (#5b). No latency field at all until `%D` is added Polaris-side,

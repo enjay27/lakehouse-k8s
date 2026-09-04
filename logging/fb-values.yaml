@@ -73,7 +73,7 @@ extraVolumeMounts:
 
 # Rendered by the chart into a ConfigMap and mounted at /fluent-bit/scripts/.
 # This is the ONE authoritative copy of the script. To re-run its test cases:
-#   python3 logging/scripts/test-access-log-parser.py
+#   python3 logging/scripts/test-polaris-filters.py
 # which extracts the Lua from this file and executes it, so the tests can never
 # drift from what is deployed.
 luaScripts:
@@ -149,9 +149,9 @@ luaScripts:
     --   2. not an access-log record ........................ keep (untouched)
     --   3. http_status >= 400 .............................. keep  <- outranks dedup
     --   4. PUT / DELETE / PATCH ............................ keep
-    --   5. POST on the table/view API ...................... keep
-    --      POST anywhere else (2xx) ........................ DROP
-    --   6. GET / HEAD on a table or view ................... first per KST day, rest DROP
+    --   5. POST ............................................ keep
+    --      POST /oauth/tokens, 2xx ......................... first per principal per KST day
+    --   6. GET / HEAD on a table or view ................... first per principal per KST day
     --   7. anything else ................................... keep
     --
     -- Rule 3 above rule 6 is deliberate: a 404 on a table GET is both "a table
@@ -165,23 +165,45 @@ luaScripts:
     local DEDUP_METHODS       = { GET = true, HEAD = true }
     local ALWAYS_KEEP_METHODS = { PUT = true, DELETE = true, PATCH = true }
 
-    -- Reads of these are kept once per KST day. Scoped to tables and views for
-    -- now; widen here once fluentbit_filter_drop_records_total shows what actually
-    -- dominates the volume.
+    -- Reads of these are kept once per principal per KST day. Matched against the
+    -- path with its query string REMOVED: an Iceberg client varies ?snapshots=
+    -- constantly and each variant used to be its own dedup key, so the 2026-09-04
+    -- coverage run stored the same table three times in one day on that alone.
+    --
+    -- Still scoped to table and view items. Collection listings (GET .../tables) are
+    -- not deduplicated at all, and twenty identical listings stored twenty records in
+    -- that same run. Widening this is a separate change -- make it once
+    -- fluentbit_filter_drop_records_total, now attributable per filter via Alias,
+    -- says what actually dominates.
     local DEDUP_PATH_PATTERNS = {
-        "/namespaces/[^/]+/tables/[^/?]+",
-        "/namespaces/[^/]+/views/[^/?]+",
+        "/namespaces/[^/]+/tables/[^/]+",
+        "/namespaces/[^/]+/views/[^/]+",
     }
 
-    -- POSTs that are always kept. Every other successful POST is dropped, which is
-    -- what removes the per-connect OAuth token traffic.
-    --   NOTE: the views line is an addition, not in the original requirement — a
-    --   view commit is a mutation, and dropping mutations silently is worse than
-    --   keeping a few extra records. Delete that line to follow the spec literally.
-    local KEEP_POST_PATTERNS = {
-        "/namespaces/[^/]+/tables",
-        "/namespaces/[^/]+/views",
+    -- POSTs kept once per principal per KST day rather than every time.
+    --
+    -- This was a KEEP-list: POST on the table/view API kept, every other successful
+    -- POST dropped. Its own comment said that drop was aimed at the OAuth token
+    -- endpoint, and it was never bounded to it. The 2026-09-04 coverage run measured
+    -- the cost -- create_principal, create_principal_role, create_catalog_role,
+    -- create_namespace, update_namespace_properties, rename_table, rename_view and
+    -- reset_principal_credentials each left no access-log record at all. A credential
+    -- reset is precisely the event this pipeline exists to record.
+    --
+    -- Inverted, so the list names what is bounded rather than what survives: every
+    -- POST is a mutation and is kept, except the endpoints below. Once per principal
+    -- per day rather than never, so "who authenticated today" is answerable while
+    -- per-connect token traffic stays bounded.
+    local ONCE_PER_DAY_POST_PATTERNS = {
+        "/oauth/tokens$",
     }
+
+    -- Keying the dedup table on the principal multiplies it by the number of distinct
+    -- principals seen in a day, held in the shipper's 512Mi, and nothing bounds it.
+    -- PLACEHOLDER GUARD pending a decided cap policy: above this limit the filter
+    -- stops deduplicating and keeps everything. Failing open can only store more
+    -- records, never lose one.
+    local DEDUP_MAX_KEYS = 50000
 
     -- ── KST day number ─────────────────────────────────────────────────────────
     -- Taken from the record's own _time, never from os.time(): a shipper replay
@@ -213,7 +235,7 @@ luaScripts:
     --
     -- In memory, per pod: a shipper restart re-logs the first hit per table for the
     -- rest of that day. Accepted — the duplicate is harmless and marks the restart.
-    local dedup = { day = nil, current = {}, previous = {} }
+    local dedup = { day = nil, current = {}, previous = {}, n = 0 }
 
     local function seen_before(day, key)
         if dedup.day == nil then dedup.day = day end
@@ -225,6 +247,7 @@ luaScripts:
                 dedup.previous, dedup.current = {}, {}
             end
             dedup.day = day
+            dedup.n = 0
         end
 
         local bucket
@@ -237,7 +260,9 @@ luaScripts:
         end
 
         if bucket[key] then return true end
+        if dedup.n >= DEDUP_MAX_KEYS then return false end   -- fail open; see above
         bucket[key] = true
+        dedup.n = dedup.n + 1
         return false
     end
 
@@ -246,6 +271,26 @@ luaScripts:
             if path:find(p) then return true end
         end
         return false
+    end
+
+    -- Query string off before matching or keying. api_path itself is left alone: it
+    -- is the raw path and it is what you read when something looks wrong.
+    local function path_only(p)
+        if type(p) ~= "string" then return "" end
+        return p:match("^[^?]*") or p
+    end
+
+    -- Keep the first of this (principal, method, path) within the record's own KST
+    -- day. The principal is IN the key: without it the second principal to read a
+    -- table today is invisible, and "who read what" is the one question an
+    -- authorization catalog's access log exists to answer.
+    local function once_per_day(timestamp, record, user, method, path)
+        local day = kst_day(record["_time"])
+        if day == nil then return 0, timestamp, record end
+        if seen_before(day, user .. " " .. method .. " " .. path) then
+            return -1, timestamp, record
+        end
+        return 0, timestamp, record
     end
 
     -- ── Entry point ────────────────────────────────────────────────────────────
@@ -273,29 +318,26 @@ luaScripts:
         end
 
         local method = record["http_method"]
-        local path   = record["api_path"] or ""
+        local path   = path_only(record["api_path"])
+        local user   = record["user_principal_name"] or "-"
 
         -- 4. Mutations other than POST always survive.
         if ALWAYS_KEEP_METHODS[method] then
             return 0, timestamp, record
         end
 
-        -- 5. POST: the table/view API only.
+        -- 5. A POST is a mutation and survives, except the endpoints listed in the
+        --    tunables, which are kept once per principal per KST day.
         if method == "POST" then
-            if matches_any(path, KEEP_POST_PATTERNS) then
-                return 0, timestamp, record
-            end
-            return -1, timestamp, record
-        end
-
-        -- 6. Reads of a table or view: one per KST day.
-        if DEDUP_METHODS[method] and matches_any(path, DEDUP_PATH_PATTERNS) then
-            local day = kst_day(record["_time"])
-            if day == nil then return 0, timestamp, record end
-            if seen_before(day, method .. " " .. path) then
-                return -1, timestamp, record
+            if matches_any(path, ONCE_PER_DAY_POST_PATTERNS) then
+                return once_per_day(timestamp, record, user, method, path)
             end
             return 0, timestamp, record
+        end
+
+        -- 6. Reads of a table or view: one per principal per KST day.
+        if DEDUP_METHODS[method] and matches_any(path, DEDUP_PATH_PATTERNS) then
+            return once_per_day(timestamp, record, user, method, path)
         end
 
         -- 7. Everything else survives.
@@ -351,6 +393,7 @@ config:
     #    Must run before the Lua filter below, which reads _msg.
     [FILTER]
         Name          modify
+        Alias         polaris_key_rename
         Match         polaris.vlogs
         Add           app polaris
         Rename        message _msg
@@ -373,6 +416,7 @@ config:
     #    VictoriaLogs stores "404.0" and numeric LogsQL filters miss.
     [FILTER]
         Name          lua
+        Alias         polaris_access_log
         Match         polaris.vlogs
         script        /fluent-bit/scripts/polaris_access_log.lua
         call          polaris_access_log
@@ -381,11 +425,17 @@ config:
     # 3. Decide what is worth storing. Drops before the field trimming below,
     #    so nothing is spent tidying a record that is about to go.
     #    Order (first match wins): ERROR/WARN keep -> non-access-log keep ->
-    #    4xx/5xx keep -> PUT/DELETE/PATCH keep -> POST table/view keep, other
-    #    POST drop -> GET|HEAD on table/view once per KST day -> keep.
+    #    4xx/5xx keep -> PUT/DELETE/PATCH keep -> POST keep, except /oauth/tokens
+    #    which is kept once per principal per KST day -> GET|HEAD on a table or view
+    #    once per principal per KST day -> keep.
     #    The full rule list and the tunables are at the top of the function.
+    #
+    #    Alias is what makes this filter's fluentbit_filter_drop_records_total
+    #    attributable: two `lua` filters are indistinguishable in the metrics without
+    #    it, which is why the 2026-09-04 coverage run could report no drop delta.
     [FILTER]
         Name          lua
+        Alias         polaris_noise_filter
         Match         polaris.vlogs
         script        /fluent-bit/scripts/polaris_access_log.lua
         call          polaris_noise_filter
@@ -397,6 +447,7 @@ config:
     #    a gap in ingestion visible.
     [FILTER]
         Name          record_modifier
+        Alias         polaris_field_trim
         Match         polaris.vlogs
         Remove_key    processName
         Remove_key    loggerClassName
