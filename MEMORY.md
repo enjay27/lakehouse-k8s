@@ -5,10 +5,12 @@ everything else is a link into [`.memory/`](.memory/README.md).
 
 ## Now — 2026-09-04
 
-**Next:** `helm upgrade` the shipper to policy v2, sampling
-`fluentbit_filter_drop_records_total{name="polaris_noise_filter"}` **before** it, then re-run
-`polaris-learning/log-coverage`. Its characterization test is built to fail on a policy change
-— read the diff, then update it and `doc-log-coverage-results.md` together.
+**Next:** `helm upgrade` the shipper to policy v2 —
+[`shipper-v2-upgrade-runbook.md`](shipper-v2-upgrade-runbook.md) is the whole procedure. Note
+the correction it carries: the Fluent Bit counters reset when the pod is replaced, so the
+pre-upgrade metrics sample is a **rate baseline, not a subtrahend**. Then re-run
+`polaris-learning/log-coverage` — its characterization test is built to fail on a policy
+change, so read the diff and update it and `doc-log-coverage-results.md` together.
 
 **Written and NOT running:** `logging/fb-values.yaml` carries policy v2 and the flush report,
 one `helm upgrade` away; the cap on the principal-keyed dedup table is still Kade's to decide.
