@@ -6,32 +6,35 @@
 ## Now — 2026-09-03
 
 **Live thread: the Polaris → VictoriaLogs pipeline**, built against
-`logging/polaris-logging-architecture-spec.md`. Next steps in
-[`roadmap.md`](.memory/roadmap.md); the audit and its four corrections in
+`logging/polaris-logging-architecture-spec.md`. Steps in [`roadmap.md`](.memory/roadmap.md);
+the audit and its four corrections in
 [`sessions/2026-09-03-polaris-vlogs-audit.md`](.memory/sessions/2026-09-03-polaris-vlogs-audit.md).
+
+**Next, and it moves to the Polaris project:** `POLARIS-API-LOG-COVERAGE-NOTEBOOK.md` — a
+notebook calling every Polaris API so the pipeline is driven across every policy branch,
+producing a matrix of what was stored vs discarded. Written to be read cold. It answers the
+parked questions, and should demonstrate the gap found while writing it: **successful
+management-API creates are POSTs and are being dropped** — a principal is visibly deleted and
+invisibly created (roadmap 4b).
 
 **Built, all in `logging/fb-values.yaml`** — no `--set`, the values file is the definition:
 access-log field extraction, and a retention policy (ERROR/WARN keep, 4xx/5xx keep,
 PUT/DELETE keep, POST table/view keep and other POST drop, GET/HEAD on a table or view once
-per **KST** day). **Errors outrank dedup deliberately** — a 404 on a table GET is both, and a
-client hammering a missing table has to stay visible. The day comes from the record's own
+per **KST** day). **Errors outrank dedup deliberately.** The day comes from the record's own
 `_time`, not wall-clock, so a shipper replay is safe. Plus the shipper's silent faults: tail
 `DB`, `Skip_Long_Lines On` (it was `Off`, which **stops the tail** rather than skipping the
 line), `Rotate_Wait`, filesystem buffering, `json_date_key false`, per-record `Remove_key`.
 `logging/scripts/test-polaris-filters.py` reads the Lua *out of* the values file — 30/30.
 
 **Polaris is not to be changed** — it works and ships continuously (Kade's observation, which
-outranks the inference in #11; this session's inferences about this pipeline were wrong four
-times). #12 withdrawn. The repo *does* describe this cluster; there was never a hidden config
-source (#10).
+outranks the inference in #11). #12 withdrawn; the repo *does* describe this cluster and there
+was never a hidden config source (#10).
 
-**Open:** tail DB is on an emptyDir, so `helm upgrade` still replays the file once — PVC block
-is in the values file, commented (#5b). VictoriaLogs has no disk cap and an unauthenticated
-`LoadBalancer` on 9428 (#7). HPA can scale Polaris to 3 pods appending to one log file (#8).
-Plaintext credentials in three places (#3, #4, #9). Parked on Polaris changes: `%D` for
-latency — **and slow requests should then be exempt from dedup**, since a table GET that
-normally takes 8ms taking 4s is exactly what daily dedup discards — the "Deprecated Config"
-exclusion (hook in place), and PUT request bodies, absent from the access log entirely.
+**Open:** tail DB on an emptyDir, so `helm upgrade` replays the file once — PVC block is in
+the values file, commented (#5b). No latency field at all until `%D` is added Polaris-side,
+**and slow requests should then be exempt from dedup**. VictoriaLogs has no disk cap and an
+unauthenticated `LoadBalancer` on 9428 (#7). HPA can scale Polaris to 3 pods appending to one
+log file (#8). Plaintext credentials in three places (#3, #4, #9).
 
 **The rule, at its fourth setting this session:** verify against the running object, never an
 intent artifact — `helm get values` is one too, showing *inputs*. Nor is a rendered view the

@@ -50,3 +50,4 @@ either.
 | `RESET-AND-CLEAN-INSTALL.md` | **HISTORICAL** — the procedure that was not followed. Its install order and verification block are still valid for any future reinstall. |
 | `shm-exhaustion-orbstack-leg-runbook.md` | the `/dev/shm` exhaustion repro + fix verification (S5 pending item). |
 | `preflight-triage.sh` | script form of the RESET §1 pre-flight checks. |
+| `POLARIS-API-LOG-COVERAGE-NOTEBOOK.md` | **the live handoff.** Plan for a notebook, built in the *Polaris* project, that calls every Polaris API to drive the log pipeline across every branch of its retention policy. Restates the whole pipeline cold, and documents the limitation of each policy rule. Written 2026-09-03. |
