@@ -4,35 +4,37 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-04 (run 1)
+## Now — 2026-09-04 (session 7)
 
-**Read [`log-coverage/PLAN-log-coverage.md`](log-coverage/PLAN-log-coverage.md) first — standalone.**
+**Read [`log-coverage/PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md) first — standalone.**
 
-**THE RETENTION POLICY HAS NEVER BEEN DEPLOYED, and the notebook's first run proved it.**
-Nothing is dropped: 20 identical table GETs → **20 stored**, three successful OAuth token
-requests → **3 stored**, every `create_principal` / rename / credential reset → **stored**.
-0 of 34 expected drops actually dropped. `logging/fb-values.yaml` gained `polaris_noise_filter`
-in `local-k8s` commit **2120ed9 at 08:26:18Z on 2026-09-03**; the shipper pod has been up since
-**08:04:06Z**, from **60b94d9**, which carries the access-log parser and no noise filter. Parsed
-fields present, zero drops — exactly what was measured. `helm upgrade` was never run.
-**This is the repo's signature failure — written is not live — caught empirically.**
+**v3 IS DEPLOYED and the harness now covers it; the run has not happened yet.** Run 1's finding
+(the v2 policy was written and never installed) is resolved: the ConfigMap carries
+`89aa2624f1f5…` and matches the file. v3 deletes per-day dedup, **keeps every `POST` under
+`/api/management/`** — closing the audit hole where a credential reset left no trace — counts
+every successful read, and adds a **scheduled flush report** on its own stream
+(`{app="polaris-shipper-report"}`), schema v1, three record types per window.
 
-Settled by the same run: **`Polaris-Request-Id` IS honoured** end to end, so correlation is
-EXACT (one `list_catalogs` → **15 records** sharing the id: its access-log line plus 14 DEBUG
-SQL lines). Client-side latency, the only source there is with no `%D`: median ~18 ms, and
-`mgmt.reset_principal_credentials` → **403** as root, the "admin is not a superset" finding
-again. **8 ERROR records, none carrying an `exception` object** — pending the raw-file check.
+**Verified offline against the deployed Lua, no cluster needed:** 14/14 record dispositions match
+v3; three report types with agreeing margins; **zero-carry and carry decay** across three
+simulated windows via the filter's own `_now_override`; all six `resource_kind` values;
+`/metrics` folds onto its table (v2 emitted two rows); an error lands in `__other__` and never
+creates a key. **67 tests green** (`test_log_coverage` 40, `test_vlogs` 27).
 
-**Fixed after the run, all mine:** the replay dedup keyed on `mdc.requestId`, which collapsed
-2,049 records to 122 and capped every `stored` at 1 — it now keys on `(hostName, sequence)`;
-the 403 case used a client that was never tagged, so its record was invisible; the
-`http_status` type check was meaningless (VictoriaLogs returns every field as a string) and now
-runs a real numeric LogsQL filter; the `events` lookup searched `public` instead of
-`POLARIS_SCHEMA`. Cell 0 now **aborts** when the ConfigMap does not carry the policy. 117 tests
-green under the stand-in runner; **`pytest`/`black`/`isort` still not runnable from Cowork.**
+**Two findings about the filter, not the harness.** (1) **A startup blind spot:** `report_tick`
+opens its first window on the FIRST tick and `count_record()` returns while `counts` is nil, so
+records between shipper start and that tick appear in NO report — bounded by the 30s tick
+interval, and it explains the first observed report exactly. (2) `access_kept + access_counted ==
+access_seen` is **tautological** (`build_report` computes `access_kept` by subtraction); the only
+real self-check is the resource/principal margin pair.
 
-**Next:** `helm upgrade` the shipper in `local-k8s`, then re-run. Until then no number in
-`doc-log-coverage-results.md` describes the intended pipeline.
+**STILL OPEN, and only the cluster answers it: does Fluent Bit split the array return?** The
+oracle proves the filter *returns* three types; the pipeline must prove it *stores* three
+records. The one window flushed so far saw `access_seen: 0`. Cell 0b gates, cell 11 settles.
+
+**Next:** run the notebook (cells 0–15). At 1800s that is ~3 boundaries, ~90 min of waiting —
+redeploy `WINDOW_SECONDS: 30` **and** the dummy INPUT's `Interval_Sec: 5` for a fast pass.
+`pytest`/`black` still not runnable from Cowork; the gate is Kade's.
 
 ## Where the detail is
 

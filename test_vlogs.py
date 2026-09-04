@@ -181,3 +181,102 @@ def test_settle_waits_out_a_late_arriving_second_record():
     v = _FakeVLogs([[{"a": 1}], [{"a": 1}, {"a": 2}], [{"a": 1}, {"a": 2}]])
     r = v.settle("q", quiet_for=0, timeout=5, interval=0)
     assert len(r) == 2
+
+
+# ---------------------------------------------------- the flush report stream
+class _RecordingVLogs(vlogs.VLogs):
+    """Captures the LogsQL it would have sent, and replays canned rows."""
+
+    def __init__(self, rows=()):
+        super().__init__("http://vlogs.invalid")
+        self.rows = list(rows)
+        self.queries = []
+
+    def query(self, logsql, **kw):
+        self.queries.append((logsql, kw))
+        return list(self.rows)
+
+
+def _report_row(kind, window="2026-09-04T07:30:00Z", **kw):
+    row = {
+        "app": vlogs.REPORT_APP,
+        "level": "REPORT",
+        "report_type": kind,
+        "window_start": window,
+        "window_end": "2026-09-04T08:00:00Z",
+        "window_seconds": "1800",
+    }
+    row.update(kw)
+    return row
+
+
+def test_the_report_lives_on_its_own_stream_so_app_polaris_is_unaffected():
+    #: `_stream_fields=app,level`. If these two selectors overlapped, every
+    #: existing `app:polaris` count in the notebook would silently gain the
+    #: report rows.
+    assert vlogs.app_report() != vlogs.app_polaris()
+    assert "polaris-shipper-report" in vlogs.app_report()
+
+
+def test_tick_leak_asks_for_the_raw_tick_and_must_return_nothing():
+    #: 2,880 ticks a day reach the filter. If they were reaching VictoriaLogs
+    #: instead of being swallowed, this query would be how you found out.
+    assert vlogs.tick_leak() == '"tick":"polaris.report"'
+
+
+def test_reports_narrows_by_type_and_window():
+    V = _RecordingVLogs()
+    V.reports(report_type="resource", window_start="2026-09-04T07:30:00Z")
+    logsql, _ = V.queries[-1]
+    assert "polaris-shipper-report" in logsql
+    assert '"report_type":"resource"' in logsql
+    assert '"window_start":"2026-09-04T07:30:00Z"' in logsql
+
+
+def test_report_types_counts_the_split_which_is_the_whole_gate():
+    #: Three types back means Fluent Bit split the filter's array return. One
+    #: type back means it did not, the record carries numeric-keyed fields, and
+    #: the schema the tests target does not exist.
+    V = _RecordingVLogs(
+        [_report_row("summary"), _report_row("resource"), _report_row("resource"),
+         _report_row("principal")]
+    )
+    assert V.report_types() == {"summary": 1, "resource": 2, "principal": 1}
+
+
+def test_latest_summary_can_insist_on_a_window_that_saw_traffic():
+    #: A window with `access_seen: 0` has no resource or principal rows to
+    #: split into, so it cannot answer the gate. Asking for one with traffic is
+    #: the difference between inconclusive and answered -- exactly what the
+    #: first live probe on 2026-09-04 ran into.
+    quiet = _report_row("summary", window="2026-09-04T07:00:00Z", access_seen="0")
+    busy = _report_row("summary", window="2026-09-04T06:30:00Z", access_seen="12")
+    V = _RecordingVLogs([quiet, busy])
+    assert V.latest_summary()["window_start"] == "2026-09-04T07:00:00Z"
+    assert V.latest_summary(with_traffic=True)["window_start"] == "2026-09-04T06:30:00Z"
+
+
+def test_latest_summary_with_traffic_returns_none_rather_than_a_quiet_window():
+    V = _RecordingVLogs([_report_row("summary", access_seen="0")])
+    assert V.latest_summary(with_traffic=True) is None
+
+
+def test_seconds_to_boundary_is_derived_never_hardcoded():
+    V = _RecordingVLogs()
+    #: 07:33:45 with 1800s windows -> 08:00:00 is 1575s away.
+    assert V.seconds_to_boundary(1800, now=1788507225) == 1575.0
+    #: the same instant at 30s windows -> 15s. The notebook must work at both.
+    assert V.seconds_to_boundary(30, now=1788507225) == 15.0
+    assert V.seconds_to_boundary(30, lag=2.5, now=1788507225) == 17.5
+
+
+def test_wait_for_boundary_names_the_window_it_closed_not_the_one_it_opened():
+    #: Off by one here would assert against an empty window and report the run
+    #: as missing.
+    V = _RecordingVLogs()
+    assert V.wait_for_boundary(1800, lag=0, now=1788507225, sleep=False) == (
+        "2026-09-04T07:30:00Z"
+    )
+    assert V.wait_for_boundary(30, lag=0, now=1788507225, sleep=False) == (
+        "2026-09-04T07:33:30Z"
+    )

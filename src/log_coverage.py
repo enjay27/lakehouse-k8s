@@ -68,6 +68,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from datetime import datetime, timezone
 
 ACCESS_LOGGER = "io.quarkus.http.access-log"
 LUA_KEY = "polaris_access_log.lua"
@@ -358,6 +359,189 @@ class Policy:
 
     def verdicts(self, records):
         return [r["verdict"] for r in self.predict(records)]
+
+    # ------------------------------------------------------------------
+    # policy v3: records and report ticks in one interpreter
+    # ------------------------------------------------------------------
+    @property
+    def window_seconds(self):
+        """`WINDOW_SECONDS` as DEPLOYED. Never hardcode it, and never pass a
+        different one to `report_windows` -- the filter derives its window
+        index from its own constant, so a caller that assumes 60 while the
+        shipper runs 1800 crosses no boundary, gets no report back, and sees an
+        empty result rather than an error. That failure cost a debugging round
+        on 2026-09-04, which is why `report_windows` now refuses a mismatch.
+        """
+        m = re.search(r"^\s*(?:local\s+)?WINDOW_SECONDS\s*=\s*(\d+)", self.script, re.M)
+        if not m:
+            raise PolicyUnavailable(
+                "WINDOW_SECONDS is not in the deployed script -- this is not policy v3"
+            )
+        return int(m.group(1))
+
+    def run(self, events):
+        """Run records and `Tick`s through the deployed filter, IN ORDER.
+
+        Args:
+            events: a sequence mixing record dicts (from `access_log_record` /
+                `app_log_record`) and `Tick` objects.
+
+        Returns:
+            `(verdicts, reports)`. `verdicts` is one dict per RECORD event, in
+            order, shaped exactly like `predict()`'s. `reports` maps each tick
+            label that actually emitted to its list of report rows, with Lua
+            numbers converted to ints and `partial_window` left as the string
+            the filter writes.
+
+        THE ORDER MATTERS AND IS NOT COSMETIC. `report_tick` opens its first
+        window ON THE FIRST TICK: until one arrives `counts` is nil and
+        `count_record()` returns immediately, so records fed before the first
+        tick are routed by the policy but counted into no window at all. That
+        is a real property of the deployed filter -- bounded by the tick period
+        in production -- and the reason this method exists instead of a
+        `predict()` that takes a `now`.
+        """
+        events = list(events)
+        if not events:
+            return [], {}
+        driver = [self.script, "", _LUA_RUN_HELPERS]
+        for n, ev in enumerate(events):
+            if isinstance(ev, Tick):
+                driver.append(f"nb_tick({ev.at}, {_lua_literal(ev.label)})")
+            else:
+                driver.append(f"nb_record({n}, {_lua_table(ev)})")
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "run.lua"
+            f.write_text("\n".join(driver), encoding="utf-8")
+            proc = subprocess.run(
+                lua_binary() + [str(f)], capture_output=True, text=True
+            )
+        if proc.returncode != 0:
+            raise PolicyUnavailable(
+                f"the deployed Lua failed to run:\n{proc.stderr.strip()[:2000]}"
+            )
+
+        verdicts, rows, shapes = {}, {}, {}
+        for line in proc.stdout.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            if parts[0] == "V" and len(parts) >= 9:
+                _, n, code, method, status, path, user, size, parse_err = parts[:9]
+                verdicts[int(n)] = {
+                    "verdict": DROP if code.strip() == "-1" else KEEP,
+                    "code": int(code),
+                    "http_method": method or None,
+                    "http_status": int(status) if status.strip() else None,
+                    "api_path": path or None,
+                    "user_principal_name": user or None,
+                    "response_size": int(size) if size.strip() else None,
+                    "parse_error": bool(parse_err.strip()),
+                }
+            elif parts[0] == "T" and len(parts) >= 5:
+                shapes[parts[1]] = {
+                    "code": int(parts[2]),
+                    "returns": parts[3],
+                    "n": int(parts[4]),
+                }
+            elif parts[0] == "R" and len(parts) >= 6:
+                _, label, idx, key, lua_type, value = parts[:6]
+                rows.setdefault(label, {}).setdefault(int(idx), {})[key] = _coerce(
+                    lua_type, value
+                )
+
+        n_records = sum(1 for e in events if not isinstance(e, Tick))
+        if len(verdicts) != n_records:
+            raise PolicyUnavailable(
+                f"the Lua returned {len(verdicts)} verdicts for {n_records} records"
+            )
+        ordered = [verdicts[n] for n in sorted(verdicts)]
+        reports = {
+            label: [by_idx[i] for i in sorted(by_idx)] for label, by_idx in rows.items()
+        }
+        for label, shape in shapes.items():
+            if shape["n"] == 0 and label in reports:
+                continue
+            if shape["n"] and shape["returns"] != "table":
+                raise PolicyUnavailable(
+                    f"tick {label} returned {shape['returns']}, not a table"
+                )
+        self.last_tick_shapes = shapes
+        return ordered, reports
+
+    def report_windows(self, records, seconds=None, base=None, silent_windows=2):
+        """The standard scheduled-report sequence, without sleeping.
+
+        Opens a window, feeds `records` into it, then crosses
+        `silent_windows + 1` boundaries. Returns `(verdicts, reports)` with the
+        reports labelled `w1`, `w2`, ... -- `w1` holds the traffic, `w2` proves
+        ZERO-CARRY (a resource active in w1 emits an explicit 0) and `w3`
+        proves CARRY DECAY (a row that stayed 0 is not carried a third time).
+
+        `base` defaults to the current window's start, so the synthetic records
+        and the ticks agree about which window they are in.
+        """
+        deployed = self.window_seconds
+        seconds = deployed if seconds is None else int(seconds)
+        if seconds != deployed:
+            raise PolicyUnavailable(
+                f"asked for {seconds}s windows but the deployed filter runs "
+                f"{deployed}s. It indexes windows with its OWN constant, so this "
+                "would silently cross no boundary and emit no report."
+            )
+        if base is None:
+            base = window_bounds(time.time(), seconds)[0]
+        events = [Tick(base + 1, "open")]
+        events += list(records)
+        for i in range(silent_windows + 1):
+            events.append(Tick(base + (i + 1) * seconds + 1, f"w{i + 1}"))
+        verdicts, reports = self.run(events)
+        missing = [
+            f"w{i + 1}"
+            for i in range(silent_windows + 1)
+            if not reports.get(f"w{i + 1}")
+        ]
+        if missing:
+            raise PolicyUnavailable(
+                f"no report came back for {', '.join(missing)} -- the ticks did not "
+                "cross a boundary the filter recognised"
+            )
+        return verdicts, reports
+
+    def classify_paths(self, paths, method="GET", status=200, user="oracle"):
+        """`{path: (resource_key, resource_kind)}`, from the deployed classify().
+
+        `classify()` is local to the Lua and cannot be called directly, and
+        re-implementing `RESOURCE_PATTERNS` in Python is exactly the thing this
+        module refuses to do. So each path is driven through its OWN window and
+        the resource row the filter emits IS the answer.
+        """
+        paths = list(paths)
+        seconds, base = self.window_seconds, 0
+        events, labels = [Tick(base + 1, "open")], []
+        for i, path in enumerate(paths):
+            events.append(access_log_record(method, path, status, size=1, user=user))
+            label = f"p{i}"
+            events.append(Tick(base + (i + 1) * seconds + 1, label))
+            labels.append(label)
+        _, reports = self.run(events)
+        out = {}
+        for path, label in zip(paths, labels):
+            #: Every window after the first also carries the PREVIOUS window's
+            #: keys, seeded at zero -- that is the zero-carry behaviour, and it
+            #: means "the only resource row" is the wrong selector. The row this
+            #: path incremented is the one with a non-zero request count.
+            rows = [
+                r
+                for r in reports.get(label, [])
+                if r.get("report_type") == "resource" and r.get("requests")
+            ]
+            out[path] = (
+                (rows[0].get("resource"), rows[0].get("resource_kind"))
+                if len(rows) == 1
+                else (None, None)
+            )
+        return out
 
 
 # ----------------------------------------------------------------------
@@ -970,3 +1154,408 @@ def expected_for(calls, policy, user="root"):
     for (i, _), v in zip(indexed, verdicts):
         out[i] = v
     return out
+
+
+# ======================================================================
+# policy v3: the scheduled flush report
+# ======================================================================
+#: The `dummy` INPUT ticks under this tag; the filter replaces the tick with an
+#: ARRAY of records on a window boundary and resets its counters. They land on
+#: their own stream, so `app:polaris` queries are unaffected.
+REPORT_TAG = "polaris.report"
+REPORT_APP = "polaris-shipper-report"
+REPORT_LEVEL = "REPORT"
+SCHEMA_VERSION = 1
+REPORT_OTHER = "__other__"
+
+#: Schema v1, read off the deployed `build_report` on 2026-09-04. Field names
+#: are contract: renaming one after a month of data is the expensive mistake.
+ENVELOPE_FIELDS = frozenset(
+    {
+        "app",
+        "level",
+        "schema_version",
+        "report_type",
+        "report_seq",
+        "hostname",
+        "window_start",
+        "window_end",
+        "window_seconds",
+        "_time",
+        "_msg",
+    }
+)
+SUMMARY_FIELDS = frozenset(
+    {
+        "access_seen",
+        "access_kept",
+        "access_counted",
+        "counted_get",
+        "counted_post",
+        "errors_kept",
+        "parse_errors",
+        "distinct_resources",
+        "distinct_principals",
+        "resources_other",
+        "principals_other",
+        "min_record_time",
+        "max_record_time",
+        "partial_window",
+    }
+)
+RESOURCE_FIELDS = frozenset(
+    {
+        "resource",
+        "resource_kind",
+        "requests",
+        "reads",
+        "writes",
+        "errors",
+        "response_bytes",
+    }
+)
+PRINCIPAL_FIELDS = frozenset(
+    {
+        "user_principal_name",
+        "requests",
+        "reads",
+        "writes",
+        "errors",
+        "response_bytes",
+    }
+)
+FIELDS_BY_TYPE = {
+    "summary": SUMMARY_FIELDS,
+    "resource": RESOURCE_FIELDS,
+    "principal": PRINCIPAL_FIELDS,
+}
+
+#: Properties of the PROCESS that emitted the report, not of the window. The
+#: oracle runs on a laptop and the pipeline runs in a pod, so comparing these
+#: would report a mismatch on every row. `hostname` is
+#: `os.getenv("HOSTNAME") or "unknown"`; `report_seq` is a per-process counter
+#: that restarts at 1 when the shipper does; `_msg` embeds `report_seq`.
+VOLATILE_FIELDS = frozenset({"hostname", "report_seq", "_msg"})
+
+#: The six values `classify()` can return. All six must appear in a run.
+RESOURCE_KINDS = ("table", "view", "collection", "namespace", "management", "other")
+
+KEPT = "kept"
+COUNTED = "counted"
+
+#: The Lua side of `Policy.run`. Kept as one string so the driver stays boring
+#: and every emitted line is `TAG \t ...` -- a format that survives a `_msg`
+#: containing anything, because tabs and newlines are stripped on the way out.
+_LUA_RUN_HELPERS = """
+local function nb_esc(v)
+  return (tostring(v):gsub("[\\t\\n\\r]", " "))
+end
+local function nb_emit(label, idx, rec)
+  for k, v in pairs(rec) do
+    print(string.format("R\\t%s\\t%d\\t%s\\t%s\\t%s",
+          label, idx, nb_esc(k), type(v), nb_esc(v)))
+  end
+end
+function nb_record(n, rec)
+  local _, _, r1 = polaris_access_log("t", 0, rec)
+  local r = r1 or rec
+  local code = polaris_noise_filter("t", 0, r)
+  local function s(v) if v == nil then return "" end return nb_esc(v) end
+  print(table.concat({"V", n, code, s(r["http_method"]), s(r["http_status"]),
+        s(r["api_path"]), s(r["user_principal_name"]), s(r["response_size"]),
+        s(r["access_log_parse_error"])}, "\\t"))
+end
+function nb_tick(at, label)
+  local code, ts, out = polaris_noise_filter("polaris.report", 0,
+                                             { _now_override = at })
+  local n = 0
+  if type(out) == "table" and type(out[1]) == "table" then n = #out end
+  print(table.concat({"T", label, tostring(code), type(out), tostring(n)}, "\\t"))
+  for i = 1, n do nb_emit(label, i, out[i]) end
+end
+"""
+
+
+class Tick:
+    """A report tick, to be interleaved with records in `Policy.run`.
+
+    `at` sets `_now_override`, the filter's own test hook -- it is read by
+    `now_seconds()` and is INERT in the deployed pipeline, because the dummy
+    INPUT never sets it. That is what lets the oracle cross window boundaries
+    deterministically instead of sleeping through them.
+    """
+
+    __slots__ = ("at", "label")
+
+    def __init__(self, at, label=None):
+        self.at = int(at)
+        self.label = label if label is not None else f"t{self.at}"
+
+    def __repr__(self):
+        return f"Tick({self.at}, {self.label!r})"
+
+
+def report_tick(now=None):
+    """The record the dummy INPUT emits. `_now_override` only when asked."""
+    return {} if now is None else {"_now_override": int(now)}
+
+
+def window_index(when, seconds):
+    return int(when) // int(seconds)
+
+
+def window_bounds(when, seconds):
+    """`(start, end)` of the window containing `when`, as epoch seconds.
+
+    The filter derives both from `floor(now / WINDOW_SECONDS)`, so a
+    `window_start` is ALWAYS a multiple of `window_seconds`. A stored record
+    whose `window_start` is not aligned did not come from this filter.
+    """
+    seconds = int(seconds)
+    start = window_index(when, seconds) * seconds
+    return start, start + seconds
+
+
+def _iso_z(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(epoch)))
+
+
+def _coerce(lua_type, text):
+    if lua_type == "number":
+        try:
+            f = float(text)
+        except ValueError:
+            return text
+        return int(f) if f.is_integer() else f
+    if lua_type == "boolean":
+        return text == "true"
+    return text
+
+
+def row_key(row):
+    """The join key for a report row: what makes it unique within a window."""
+    kind = row.get("report_type")
+    if kind == "resource":
+        return row.get("resource", "")
+    if kind == "principal":
+        return row.get("user_principal_name", "")
+    return ""
+
+
+def disposition(verdict):
+    """`kept` or `counted`.
+
+    Every access-log record is COUNTED before any keep/drop decision -- that is
+    what `access_seen` means -- so these are not exclusive categories in the
+    summary. `counted` here is the notebook's column: the record left no
+    individual trace and exists only inside an aggregate.
+    """
+    return KEPT if verdict == KEEP else COUNTED
+
+
+def _as_int(value, default=0):
+    """VictoriaLogs hands every field back as a string; the oracle returns Lua
+    numbers. One coercion so the same assertions run against both."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _epoch_of(iso_z):
+    try:
+        return int(
+            datetime.strptime(str(iso_z), "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def check_invariants(rows, strict_fields=True):
+    """Every violation in ONE window's report rows, as readable strings.
+
+    Runs unchanged against the oracle's output and against what VictoriaLogs
+    stored, which is the point: the same assertions on both sides make a
+    difference between them a pipeline finding rather than a test artefact.
+
+    A NOTE ON WHICH OF THESE IS EVIDENCE. `access_kept + access_counted ==
+    access_seen` is TAUTOLOGICAL in the filter -- `build_report` computes
+    `access_kept = access_seen - access_counted` and nothing counts kept
+    records independently -- so on oracle rows it can never fail and proves
+    nothing. On STORED rows it is worth checking anyway, because there it is a
+    transport check: three fields that must still agree after Fluent Bit's
+    array split and VictoriaLogs' ingest.
+
+    The real self-check is the MARGIN pair. `errors` deliberately overlaps
+    `reads` and `writes` -- reads/writes are counted by method, errors by
+    status -- so the only cross-check the schema has is that the resource
+    margin and the principal margin agree. If they disagree the report is
+    miscounting and no trend built on it can be trusted.
+    """
+    bad = []
+    rows = list(rows)
+    if not rows:
+        return ["no rows at all"]
+
+    summaries = [r for r in rows if r.get("report_type") == "summary"]
+    resources = [r for r in rows if r.get("report_type") == "resource"]
+    principals = [r for r in rows if r.get("report_type") == "principal"]
+    known = ("summary", "resource", "principal")
+    other = [r for r in rows if r.get("report_type") not in known]
+    if len(summaries) != 1:
+        bad.append(f"expected exactly 1 summary row, found {len(summaries)}")
+    for r in other:
+        bad.append(f"unknown report_type {r.get('report_type')!r}")
+
+    for r in rows:
+        kind = r.get("report_type")
+        missing = ENVELOPE_FIELDS - set(r)
+        if missing:
+            bad.append(f"{kind} row missing envelope fields: {sorted(missing)}")
+        if strict_fields and kind in FIELDS_BY_TYPE:
+            body = set(r) - ENVELOPE_FIELDS
+            want = FIELDS_BY_TYPE[kind]
+            if body - want:
+                bad.append(f"{kind} row has unexpected fields: {sorted(body - want)}")
+            if want - body:
+                bad.append(f"{kind} row is missing fields: {sorted(want - body)}")
+        if _as_int(r.get("schema_version"), -1) != SCHEMA_VERSION:
+            bad.append(f"{kind} row has schema_version {r.get('schema_version')!r}")
+        if r.get("_time") != r.get("window_end"):
+            bad.append(f"{kind} row _time {r.get('_time')!r} != window_end")
+
+        secs = _as_int(r.get("window_seconds"), 0)
+        start, end = _epoch_of(r.get("window_start")), _epoch_of(r.get("window_end"))
+        if not secs:
+            bad.append(f"{kind} row has no usable window_seconds")
+        elif start is None or end is None:
+            bad.append(f"{kind} row has unparseable window bounds")
+        else:
+            if start % secs:
+                bad.append(
+                    f"window_start {r.get('window_start')} is not aligned to "
+                    f"{secs}s -- the filter derives it from floor(now/W), so "
+                    "an unaligned start did not come from this filter"
+                )
+            if end - start != secs:
+                bad.append(f"window spans {end - start}s, window_seconds says {secs}")
+
+    for r in resources + principals:
+        req = _as_int(r.get("requests"))
+        rd, wr, er = (_as_int(r.get(k)) for k in ("reads", "writes", "errors"))
+        who = r.get("resource") or r.get("user_principal_name")
+        if rd + wr > req:
+            bad.append(f"{who}: reads+writes {rd + wr} > requests {req}")
+        if er > req:
+            bad.append(f"{who}: errors {er} > requests {req}")
+
+    if summaries:
+        s = summaries[0]
+        seen = _as_int(s.get("access_seen"))
+        kept = _as_int(s.get("access_kept"))
+        counted = _as_int(s.get("access_counted"))
+        parse_errors = _as_int(s.get("parse_errors"))
+        if kept + counted != seen:
+            bad.append(
+                f"access_kept + access_counted ({kept} + {counted}) != "
+                f"access_seen ({seen}) -- these three are computed together in "
+                "the filter, so a mismatch here is transport damage"
+            )
+        res_margin = sum(_as_int(r.get("requests")) for r in resources)
+        pri_margin = sum(_as_int(r.get("requests")) for r in principals)
+        want = seen - parse_errors
+        if not (res_margin == pri_margin == want):
+            bad.append(
+                f"MARGINS DISAGREE: sum(resource.requests)={res_margin}, "
+                f"sum(principal.requests)={pri_margin}, "
+                f"access_seen-parse_errors={want}. The report is miscounting; "
+                "no trend built on it can be trusted."
+            )
+        if _as_int(s.get("distinct_resources")) != len(resources):
+            bad.append(
+                f"distinct_resources={s.get('distinct_resources')} but "
+                f"{len(resources)} resource rows were emitted"
+            )
+        if _as_int(s.get("distinct_principals")) != len(principals):
+            bad.append(
+                f"distinct_principals={s.get('distinct_principals')} but "
+                f"{len(principals)} principal rows were emitted"
+            )
+    return bad
+
+
+def diff_reports(expected, actual, ignore=VOLATILE_FIELDS):
+    """Field-by-field diff of two windows' report rows.
+
+    This is what makes "all schema coverage" a DIFF rather than a set of
+    hand-written expectations: `expected` comes from the deployed Lua under
+    `_now_override`, `actual` from VictoriaLogs, and anything that does not
+    match names the row and the field rather than saying a call went missing.
+
+    Rows join on `(report_type, row_key)`. `ignore` defaults to the fields that
+    describe the emitting PROCESS rather than the window -- comparing those
+    would fail on every row, since the oracle does not run in the shipper pod.
+    """
+    ignore = set(ignore or ())
+
+    def index(rows):
+        return {(r.get("report_type"), row_key(r)): r for r in rows}
+
+    exp, act = index(expected), index(actual)
+    out = []
+    for key in sorted(set(exp) | set(act), key=lambda k: (str(k[0]), str(k[1]))):
+        kind, name = key
+        e, a = exp.get(key), act.get(key)
+        if e is None:
+            out.append(
+                {
+                    "report_type": kind,
+                    "key": name,
+                    "field": "",
+                    "expected": "",
+                    "actual": "(row present)",
+                    "status": "extra",
+                }
+            )
+            continue
+        if a is None:
+            out.append(
+                {
+                    "report_type": kind,
+                    "key": name,
+                    "field": "",
+                    "expected": "(row expected)",
+                    "actual": "",
+                    "status": "missing",
+                }
+            )
+            continue
+        for field in sorted((set(e) | set(a)) - ignore):
+            ev, av = e.get(field), a.get(field)
+            same = str(ev) == str(av) or (
+                _as_int(ev, None) is not None and _as_int(ev, None) == _as_int(av, None)
+            )
+            out.append(
+                {
+                    "report_type": kind,
+                    "key": name,
+                    "field": field,
+                    "expected": ev,
+                    "actual": av,
+                    "status": "match" if same else "differs",
+                }
+            )
+    return out
+
+
+def report_mismatches(diff):
+    """Just the rows of `diff_reports` that are not a match."""
+    return [d for d in diff if d["status"] != "match"]

@@ -231,49 +231,286 @@ def test_a_line_that_does_not_parse_is_kept_never_dropped(policy):
     assert out[0]["verdict"] == "keep" and out[0]["parse_error"]
 
 
-def test_a_repeated_read_of_one_table_collapses_to_one_a_day(policy):
-    assert _verdicts(policy, [("GET", T, 200)] * 20).count("keep") == 1
+def test_nothing_vanishes_silently(policy):
+    #: The one invariant that outlives any policy: a request either leaves an
+    #: individual record or is counted into the window's aggregate. v2 could
+    #: satisfy this by keeping; v3 satisfies it by counting. A policy that
+    #: satisfies NEITHER has a hole, and this is the test that finds it.
+    W = policy.window_seconds
+    calls = [("GET", T, 200), ("POST", f"{CAT}/oauth/tokens", 200), ("DELETE", T, 204)]
+    recs = [_rec(m, p, s) for m, p, s in calls]
+    verdicts, reports = policy.report_windows(recs, base=0, silent_windows=0)
+    kept = sum(1 for v in verdicts if v["verdict"] == "keep")
+    summary = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
+    assert summary["access_seen"] == len(calls)
+    assert summary["access_kept"] == kept
+    assert summary["access_kept"] + summary["access_counted"] == summary["access_seen"]
 
 
-def test_the_kst_day_comes_from_the_records_own_time_not_the_clock(policy):
-    #: A KST day starts at 15:00 UTC, and the day is taken from `_time` so a
-    #: shipper REPLAY re-evaluates historical records against their own day.
-    before = _rec("GET", T, 200, time_rfc3339="2026-09-04T14:59:00.000000000Z")
-    after = _rec("GET", T, 200, time_rfc3339="2026-09-04T15:00:00.000000000Z")
-    same_day = _rec("GET", T, 200, time_rfc3339="2026-09-04T15:30:00.000000000Z")
-    assert policy.verdicts([before, after]) == ["keep", "keep"]
-    assert policy.verdicts([after, same_day]) == ["keep", "drop"]
+# -- the scheduled flush report: invariants ---------------------------------
+def _window(policy, calls, base=0, silent=0, users=None):
+    users = users or ["reader"] * len(calls)
+    recs = [
+        _rec(m, p, s, user=u, when=base + 10 + i)
+        for i, ((m, p, s), u) in enumerate(zip(calls, users))
+    ]
+    return policy.report_windows(recs, base=base, silent_windows=silent)
+
+
+def test_a_report_window_satisfies_every_schema_invariant(policy):
+    _, reports = _window(
+        policy,
+        [
+            ("GET", T, 200),
+            ("PUT", T, 200),
+            ("GET", T, 403),
+            ("GET", f"{CAT}/c1/namespaces/ns1/tables/gone", 404),
+            ("HEAD", f"{CAT}/c1/namespaces/ns1/views/v1", 200),
+            ("POST", f"{MGMT}/principals", 201),
+        ],
+        users=["reader", "writer", "reader", "reader", "reader", "writer"],
+    )
+    assert lc.check_invariants(reports["w1"]) == []
+
+
+def test_the_margins_are_the_only_real_self_check_and_they_catch_a_miscount(policy):
+    #: `errors` overlaps `reads`/`writes` by design, so the resource margin and
+    #: the principal margin agreeing is the schema's only cross-check. Move one
+    #: count by one and it must fail -- otherwise the invariant is decorative.
+    _, reports = _window(policy, [("GET", T, 200), ("PUT", T, 200)])
+    rows = [dict(r) for r in reports["w1"]]
+    assert lc.check_invariants(rows) == []
+    for r in rows:
+        if r["report_type"] == "resource" and r.get("requests"):
+            r["requests"] += 1
+            break
+    bad = lc.check_invariants(rows)
+    assert any("MARGINS DISAGREE" in b for b in bad), bad
+
+
+def test_an_error_increments_an_existing_key_but_never_creates_one(policy):
+    #: A GET 404 on a table that was never read successfully lands in
+    #: `__other__`. Its count is NOT lost -- that is what keeps the margins
+    #: exact -- and the request itself is stored in full by rule 3. Without
+    #: this, a client walking invented table names could fill the key space.
+    _, reports = _window(
+        policy,
+        [("GET", f"{CAT}/c1/namespaces/ns1/tables/never", 404)] * 3,
+    )
+    keys = {r["resource"] for r in reports["w1"] if r["report_type"] == "resource"}
+    assert keys == {lc.REPORT_OTHER}
+    other = [r for r in reports["w1"] if r.get("resource") == lc.REPORT_OTHER][0]
+    assert other["requests"] == 3 and other["errors"] == 3
+
+
+def test_an_error_on_a_known_resource_increments_that_resource(policy):
+    _, reports = _window(policy, [("GET", T, 200), ("GET", T, 403)])
+    rows = [r for r in reports["w1"] if r["report_type"] == "resource"]
+    assert [r["resource"] for r in rows] == [T]
+    assert rows[0]["requests"] == 2 and rows[0]["errors"] == 1
+
+
+def test_a_sub_resource_counts_under_its_table_not_as_its_own_row(policy):
+    #: v2 emitted two rows for one table. The resource key is the RESOURCE, not
+    #: the URL.
+    _, reports = _window(policy, [("GET", T, 200), ("POST", f"{T}/metrics", 204)])
+    rows = [r for r in reports["w1"] if r["report_type"] == "resource"]
+    assert [r["resource"] for r in rows] == [T]
+    assert rows[0]["requests"] == 2
+    assert not any("/metrics" in r["resource"] for r in rows)
+
+
+def test_all_six_resource_kinds_are_reachable(policy):
+    got = policy.classify_paths(
+        [
+            T,
+            f"{CAT}/c1/namespaces/ns1/views/v1",
+            f"{CAT}/c1/namespaces/ns1/tables",
+            f"{CAT}/c1/namespaces/ns1",
+            f"{MGMT}/principals",
+            f"{CAT}/config",
+        ]
+    )
+    assert sorted({kind for _, kind in got.values()}) == sorted(lc.RESOURCE_KINDS)
+
+
+def test_response_bytes_is_zero_for_a_body_less_response(policy):
+    #: `%b` writes `-` for a zero-byte body and the parser normalises it to 0.
+    _, reports = _window(policy, [("HEAD", T, 200), ("DELETE", T, 204)])
+    row = [r for r in reports["w1"] if r["report_type"] == "resource"][0]
+    assert row["response_bytes"] == 0 and row["requests"] == 2
+
+
+def test_the_tick_rate_is_not_the_report_period(policy):
+    #: THE scheduled-job property. The dummy INPUT ticks every 30s; a tick
+    #: inside the current window is dropped and only the boundary emits. Sixty
+    #: ticks inside one window must produce exactly ONE report, not sixty.
+    W = policy.window_seconds
+    events = [lc.Tick(1, "open"), _rec("GET", T, 200, when=10)]
+    #: every tick STRICTLY inside the window -- one more than this and the
+    #: last one lands on the boundary itself, which is a bug in the test and
+    #: was one on 2026-09-04 (it reported `mid58` and read as a filter fault).
+    events += [lc.Tick(30 * i, f"mid{i}") for i in range(1, max(1, W // 30))]
+    events.append(lc.Tick(W + 1, "boundary"))
+    _, reports = policy.run(events)
+    assert list(reports) == ["boundary"], list(reports)
+    assert len(events) > 3, "no mid-window ticks at this WINDOW_SECONDS"
+
+
+def test_a_window_start_is_always_aligned_to_window_seconds(policy):
+    #: The filter derives both bounds from `floor(now / WINDOW_SECONDS)`, so an
+    #: unaligned `window_start` in VictoriaLogs did not come from this filter.
+    W = policy.window_seconds
+    _, reports = _window(policy, [("GET", T, 200)], base=0)
+    s = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
+    start = lc._epoch_of(s["window_start"])
+    assert start % W == 0
+    assert lc._epoch_of(s["window_end"]) - start == W
+    assert s["_time"] == s["window_end"]
+
+
+def test_a_resource_active_in_one_window_reports_an_explicit_zero_in_the_next(policy):
+    #: ZERO-CARRY. A dashboard that drops a series the moment it goes quiet
+    #: cannot tell "no traffic" from "no shipper".
+    _, reports = _window(policy, [("GET", T, 200)], silent=1)
+    w1 = {r["resource"] for r in reports["w1"] if r["report_type"] == "resource"}
+    w2 = {
+        r["resource"]: r for r in reports["w2"] if r["report_type"] == "resource"
+    }
+    assert w1 and w1 <= set(w2)
+    assert all(w2[k]["requests"] == 0 for k in w1)
+
+
+def test_a_carried_row_that_stayed_zero_is_not_carried_again(policy):
+    #: CARRY DECAY, the other half. Without it every key ever seen is reported
+    #: forever.
+    _, reports = _window(policy, [("GET", T, 200)], silent=2)
+    w2 = {r["resource"] for r in reports["w2"] if r["report_type"] == "resource"}
+    w3 = {r["resource"] for r in reports["w3"] if r["report_type"] == "resource"}
+    assert w2 and not (w2 & w3)
+
+
+def test_report_seq_increments_by_one_per_report(policy):
+    _, reports = _window(policy, [("GET", T, 200)], silent=2)
+    seqs = [
+        [r for r in reports[w] if r["report_type"] == "summary"][0]["report_seq"]
+        for w in ("w1", "w2", "w3")
+    ]
+    assert seqs == [seqs[0], seqs[0] + 1, seqs[0] + 2]
+
+
+def test_counters_reset_between_windows(policy):
+    _, reports = _window(policy, [("GET", T, 200), ("GET", T, 200)], silent=1)
+    w2 = [r for r in reports["w2"] if r["report_type"] == "summary"][0]
+    assert w2["access_seen"] == 0 and w2["access_counted"] == 0
+
+
+def test_the_first_window_after_a_start_is_flagged_partial(policy):
+    #: `partial_window` is the string "true", not a boolean -- it is written
+    #: with `and "true" or "false"`. The first tick after start OPENS a window
+    #: rather than reporting one, and flags it, because the shipper missed the
+    #: beginning of it.
+    _, reports = _window(policy, [("GET", T, 200)], silent=1)
+    w1 = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
+    w2 = [r for r in reports["w2"] if r["report_type"] == "summary"][0]
+    assert w1["partial_window"] == "true"
+    assert w2["partial_window"] == "false"
+
+
+def test_records_before_the_first_tick_are_counted_into_no_window(policy):
+    #: A REAL PROPERTY OF THE DEPLOYED FILTER, not a bug in the harness -- and
+    #: the reason `Policy.run` takes an ordered event list rather than records
+    #: plus a time. `count_record()` returns immediately while `counts` is nil,
+    #: so records processed between shipper start and the first tick are routed
+    #: correctly but appear in no report. Bounded by the tick period (30s
+    #: deployed). Found on 2026-09-04 by a driver that ticked only at the end.
+    W = policy.window_seconds
+    events = [
+        _rec("GET", T, 200, when=5),
+        _rec("PUT", T, 200, when=6),
+        lc.Tick(10, "open"),
+        _rec("GET", T, 200, when=20),
+        lc.Tick(W + 1, "w1"),
+    ]
+    verdicts, reports = policy.run(events)
+    assert len(verdicts) == 3
+    summary = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
+    assert summary["access_seen"] == 1, (
+        "the two records before the first tick should be invisible to the "
+        "report -- if this now counts 3, the filter gained a startup buffer "
+        "and the results doc's blind-spot note is stale"
+    )
+
+
+def test_the_oracle_diff_is_empty_against_itself_and_names_a_single_field(policy):
+    #: `diff_reports` is what makes schema coverage a DIFF instead of a set of
+    #: hand-written expectations, so its own failure mode has to be exact.
+    _, reports = _window(policy, [("GET", T, 200), ("PUT", T, 200)])
+    rows = reports["w1"]
+    assert lc.report_mismatches(lc.diff_reports(rows, rows)) == []
+    tampered = [dict(r) for r in rows]
+    for r in tampered:
+        if r["report_type"] == "resource":
+            r["reads"] = r["reads"] + 7
+            break
+    mm = lc.report_mismatches(lc.diff_reports(rows, tampered))
+    assert len(mm) == 1 and mm[0]["field"] == "reads"
+
+
+def test_the_diff_ignores_fields_that_describe_the_emitting_process(policy):
+    #: `hostname` is `os.getenv("HOSTNAME") or "unknown"` and `report_seq` is a
+    #: per-process counter. The oracle does not run in the shipper pod, so
+    #: comparing them would fail on every row and hide the real diffs.
+    _, reports = _window(policy, [("GET", T, 200)])
+    rows = reports["w1"]
+    shifted = [dict(r, hostname="some-pod-xyz", report_seq=99) for r in rows]
+    assert lc.report_mismatches(lc.diff_reports(rows, shifted)) == []
 
 
 # -- characterization: EXPECTED TO FAIL when the policy changes -------------
-#: Each entry is (method, path, status, expected). Update this list and
-#: log-coverage/doc-log-coverage-results.md together, or the report describes a
-#: pipeline that no longer exists.
+#: v3, measured against the deployed Lua on 2026-09-04 (fb-values.yaml sha256
+#: 89aa2624f1f5...). Update this list and log-coverage/doc-log-coverage-results.md
+#: together, or the report describes a pipeline that no longer exists.
+#:
+#: The v2 list this replaces said `drop` for every management POST. That was
+#: the audit hole the notebook's first run measured: principals created
+#: invisibly, deleted visibly, and a credential reset leaving no trace at all.
+#: v3 closes it and pays for it by counting successful reads instead.
 CHARACTERIZED = [
+    # rule 5a -- POST under /api/management/ is KEPT. The v2 audit hole, closed.
+    ("POST", f"{MGMT}/catalogs", 201, "keep"),
+    ("POST", f"{MGMT}/principals", 201, "keep"),
+    ("POST", f"{MGMT}/principal-roles", 201, "keep"),
+    ("POST", f"{MGMT}/catalogs/c1/catalog-roles", 201, "keep"),
+    ("POST", f"{MGMT}/principals/p1/reset", 200, "keep"),
+    # rule 5b -- every other successful POST is counted only
     ("POST", f"{CAT}/oauth/tokens", 200, "drop"),
-    ("POST", f"{MGMT}/catalogs", 201, "drop"),
-    ("POST", f"{MGMT}/principals", 201, "drop"),
-    ("POST", f"{MGMT}/principal-roles", 201, "drop"),
-    ("POST", f"{MGMT}/catalogs/c1/catalog-roles", 201, "drop"),
-    ("POST", f"{MGMT}/principals/p1/reset", 200, "drop"),
     ("POST", f"{CAT}/c1/tables/rename", 204, "drop"),
     ("POST", f"{CAT}/c1/views/rename", 204, "drop"),
     ("POST", f"{CAT}/c1/namespaces", 200, "drop"),
     ("POST", f"{CAT}/c1/namespaces/ns1/properties", 200, "drop"),
-    ("POST", f"{CAT}/c1/namespaces/ns1/tables", 200, "keep"),
-    ("POST", T, 200, "keep"),
-    ("POST", f"{T}/metrics", 204, "keep"),
-    ("POST", f"{CAT}/c1/namespaces/ns1/views", 200, "keep"),
+    ("POST", f"{CAT}/c1/namespaces/ns1/tables", 200, "drop"),
+    ("POST", T, 200, "drop"),
+    ("POST", f"{T}/metrics", 204, "drop"),
+    ("POST", f"{CAT}/c1/namespaces/ns1/views", 200, "drop"),
+    # rule 6 -- successful GET/HEAD counted only, INCLUDING lists and /config
+    ("GET", T, 200, "drop"),
+    ("HEAD", T, 200, "drop"),
+    ("GET", f"{CAT}/config", 200, "drop"),
+    ("GET", f"{CAT}/c1/namespaces/ns1/tables", 200, "drop"),
+    ("GET", f"{MGMT}/principals", 200, "drop"),
+    # rules 3 and 4 -- unchanged from v2, and the reason the pipeline is worth
+    # having at all
+    ("GET", T, 404, "keep"),
+    ("GET", T, 500, "keep"),
     ("PUT", f"{MGMT}/catalogs/c1/catalog-roles/cr1/grants", 201, "keep"),
-    ("GET", f"{CAT}/config", 200, "keep"),
-    ("GET", f"{CAT}/c1/namespaces/ns1/tables", 200, "keep"),
+    ("DELETE", T, 204, "keep"),
 ]
 
 
-def test_the_deployed_policy_still_drops_exactly_what_the_report_says(policy):
+def test_the_deployed_policy_still_does_exactly_what_the_report_says(policy):
     got = [
-        policy.predict([_rec(m, p, s)])[0]["verdict"]
-        for m, p, s, _ in CHARACTERIZED
+        policy.predict([_rec(m, p, s)])[0]["verdict"] for m, p, s, _ in CHARACTERIZED
     ]
     changed = [
         f"  {m:6} {p} ({s}) -- report says {want}, policy says {is_}"
@@ -289,19 +526,34 @@ def test_the_deployed_policy_still_drops_exactly_what_the_report_says(policy):
     )
 
 
-def test_the_dropped_mutations_are_still_ten_and_still_these(policy):
-    #: The notebook's headline number. Measured against the deployed Lua on
-    #: 2026-09-04: eight of the 43 driven operations, plus the fixture's
-    #: catalog create and the token exchange.
-    dropped = {
-        f"{m} {p}"
-        for (m, p, s, _), v in zip(
-            CHARACTERIZED,
-            [
-                policy.predict([_rec(m, p, s)])[0]["verdict"]
-                for m, p, s, _ in CHARACTERIZED
-            ],
-        )
-        if v == "drop"
-    }
-    assert len(dropped) == 10, sorted(dropped)
+def test_every_management_mutation_is_now_stored(policy):
+    #: The headline of the v2 run was that TEN mutations produced no record at
+    #: all, five of them management POSTs -- a principal created invisibly and
+    #: deleted visibly, a credential reset leaving nothing. This is the test
+    #: that says v3 closed it, and it is the one to read first if v4 ever
+    #: reopens it.
+    mutations = [
+        ("POST", f"{MGMT}/principals", 201),
+        ("POST", f"{MGMT}/principal-roles", 201),
+        ("POST", f"{MGMT}/catalogs", 201),
+        ("POST", f"{MGMT}/catalogs/c1/catalog-roles", 201),
+        ("POST", f"{MGMT}/principals/p1/reset", 200),
+        ("PUT", f"{MGMT}/principal-roles/pr1/catalog-roles/c1", 201),
+        ("DELETE", f"{MGMT}/principals/p1", 204),
+    ]
+    assert _verdicts(policy, mutations) == ["keep"] * len(mutations)
+
+
+def test_what_v3_gave_up_to_get_it(policy):
+    #: The honest other half: successful reads and non-management creates now
+    #: leave no individual record. They are COUNTED, not lost -- but access
+    #: frequency per call is gone, and so is the timestamp of any single read.
+    counted = [
+        ("GET", T, 200),
+        ("HEAD", T, 200),
+        ("GET", f"{CAT}/c1/namespaces/ns1/tables", 200),
+        ("GET", f"{CAT}/config", 200),
+        ("POST", f"{CAT}/c1/namespaces/ns1/tables", 200),
+        ("POST", f"{CAT}/oauth/tokens", 200),
+    ]
+    assert _verdicts(policy, counted) == ["drop"] * len(counted)

@@ -86,6 +86,29 @@ def app_polaris():
     return 'app:"polaris"'
 
 
+#: The scheduled flush report lands on its OWN stream. `_stream_fields=app,level`
+#: and the filter sets `app=polaris-shipper-report`, `level=REPORT`, so
+#: `app:polaris` queries are unaffected by it and vice versa.
+REPORT_APP = "polaris-shipper-report"
+REPORT_TAG = "polaris.report"
+
+
+def app_report():
+    """The report stream selector."""
+    return f'app:{quote(REPORT_APP)}'
+
+
+def tick_leak():
+    """Records still carrying the raw tick.
+
+    Must be ZERO. The `dummy` INPUT ticks every 30s and the filter is supposed
+    to swallow every tick inside the current window (`return -1`) and replace
+    the boundary one with the report array. A non-zero count here means raw
+    ticks are reaching VictoriaLogs, which would be 2,880 junk records a day.
+    """
+    return f'{quote("tick")}:{quote(REPORT_TAG)}'
+
+
 # ----------------------------------------------------------------------
 # parsing
 # ----------------------------------------------------------------------
@@ -434,6 +457,86 @@ class VLogs:
         """
         kw.setdefault("start", since)
         return self.query(and_(app_polaris(), "_msg:*exception* OR exception:*"), **kw)
+
+    # -- the scheduled flush report ------------------------------------
+    def reports(self, report_type=None, window_start=None, since="2h", **kw):
+        """Report rows, optionally narrowed to one type and/or one window.
+
+        Report records carry NO `mdc.requestId` -- they are per-window
+        aggregates, so the correlation machinery the rest of this module is
+        built on does not apply to them and must not be forced onto them. They
+        join on `window_start` (or on `report_seq`, which is unique per
+        `hostname`).
+        """
+        terms = [app_report()]
+        if report_type:
+            terms.append(field_eq("report_type", report_type))
+        if window_start:
+            terms.append(field_eq("window_start", window_start))
+        kw.setdefault("start", since)
+        return self.query(and_(*terms), **kw)
+
+    def report_window(self, window_start, **kw):
+        """Every row of ONE window, ready for `log_coverage.check_invariants`."""
+        return self.reports(window_start=window_start, **kw)
+
+    def report_types(self, window_start=None, **kw):
+        """`{report_type: count}` -- THE GATE.
+
+        The filter returns an ARRAY of records for one tick. If Fluent Bit
+        splits it, three types come back. If it does not, one record comes back
+        carrying numeric-keyed fields, the schema is not what the tests target,
+        and the fix is in `local-k8s/logging/fb-values.yaml` rather than here.
+        """
+        rows = self.reports(window_start=window_start, **kw)
+        out = {}
+        for r in rows:
+            key = r.get("report_type", "(none)")
+            out[key] = out.get(key, 0) + 1
+        return out
+
+    def latest_summary(self, with_traffic=False, since="2h", **kw):
+        """The newest summary row, or the newest that saw traffic.
+
+        `with_traffic` exists because a window with `access_seen: 0` proves
+        nothing about the array split -- there are no resource or principal
+        rows to split INTO. Asking for a window with traffic is the difference
+        between an inconclusive gate and an answered one.
+        """
+        rows = self.reports(report_type="summary", since=since, **kw)
+        rows.sort(key=lambda r: str(r.get("window_start", "")), reverse=True)
+        empty = ("0", "", "None")
+        for r in rows:
+            if not with_traffic or str(r.get("access_seen", "0")) not in empty:
+                return r
+        return None
+
+    def seconds_to_boundary(self, window_seconds, lag=0.0, now=None):
+        """How long until the next window boundary, plus ingest lag.
+
+        Never sleeps -- the caller decides whether to wait, print, or come back
+        later. `window_seconds` must come from a report record or the running
+        ConfigMap, NEVER a literal: the whole point is that the same notebook
+        works at 1800 and at 30.
+        """
+        window_seconds = int(window_seconds)
+        now = _time.time() if now is None else float(now)
+        return (window_seconds - (now % window_seconds)) + float(lag)
+
+    def wait_for_boundary(self, window_seconds, lag=5.0, now=None, sleep=True):
+        """Wait for the next boundary. Returns the window_start it just closed.
+
+        At small `window_seconds` this is seconds; at the deployed 1800 it is
+        up to half an hour, so callers that cannot block should use
+        `seconds_to_boundary` and come back instead.
+        """
+        window_seconds = int(window_seconds)
+        now = _time.time() if now is None else float(now)
+        wait = self.seconds_to_boundary(window_seconds, lag, now)
+        if sleep:
+            _time.sleep(max(0.0, wait))
+        closed = int((now + wait) // window_seconds) * window_seconds - window_seconds
+        return _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(closed))
 
 
 def fluentbit_metrics(base_url, timeout=10, session=None):

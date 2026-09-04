@@ -18,17 +18,44 @@ Polaris (Quarkus, JDK21)
             └─ [http] → VictoriaLogs /insert/jsonline
 ```
 
-The policy, first match wins:
+The policy — **v3, deployed 2026-09-04** (`fb-values.yaml` sha256 `89aa2624f1f5…`), first
+match wins:
 
 | # | rule | effect |
 |---|---|---|
+| 0 | tag `polaris.report` | becomes the **flush report** — see below |
 | 1 | `level` is ERROR or WARN | keep |
 | 2 | not an access-log record | keep, untouched |
-| 3 | `http_status >= 400` | keep — **outranks dedup, deliberately** |
+| — | *every access-log record is **counted** here, before any decision* | |
+| 3 | `http_status >= 400`, or unparseable | keep — **all of them, no cap** |
 | 4 | PUT / DELETE / PATCH | keep |
-| 5 | POST on the table/view API | keep; **every other successful POST is DROPPED** |
-| 6 | GET / HEAD on a table or view | first per **KST** day, rest dropped |
-| 7 | everything else | keep |
+| 5 | POST under `/api/management/` | keep — **all**; POST anywhere else, counted only |
+| 6 | GET / HEAD, 2xx | counted only |
+| 7 | anything else | keep |
+
+**Per-day deduplication is gone.** No dedup keys, no KST buckets, no cap, and no per-pod state
+for a shipper restart to lose. v3 closes the audit hole v2's first run measured — ten mutations
+that produced no record at all, including a credential reset — because **in Polaris POST is the
+create verb**, and rule 5 now keeps every management POST. It pays for that by turning
+successful reads into counts.
+
+### The scheduled flush report
+
+A `dummy` INPUT tagged `polaris.report` ticks every 30 s into the same Lua filter instance. On
+each `WINDOW_SECONDS` boundary the filter replaces the tick with an **array** of records and
+resets its counters; they land on their own stream, `{app="polaris-shipper-report",
+level="REPORT"}`, so `app:polaris` queries are unaffected.
+
+**The tick rate is not the report period.** A tick inside the current window is dropped; only
+the boundary emits. Schema v1: three record types (`summary`, `resource`, `principal`) on one
+envelope, and the field names are contract.
+
+The margin equality — `sum(resource.requests) == sum(principal.requests) == access_seen -
+parse_errors` — is the schema's only real self-check, because `errors` deliberately overlaps
+`reads` and `writes` (reads/writes counted by method, errors by status). `access_kept +
+access_counted == access_seen` looks like a second check but is **tautological**: the filter
+computes `access_kept` by subtraction. It is worth asserting only end to end, where it becomes
+a transport check on Fluent Bit's array split and VictoriaLogs' ingest.
 
 There is a **second, unrelated** Fluent Bit — a DaemonSet shipping container stdout to an
 OpenSearch in Docker. It is not part of this test. A line present in OpenSearch and absent
@@ -41,8 +68,10 @@ For every Polaris API: *if something went wrong on this endpoint tomorrow, would
 record of it?* The notebook drives the whole surface, then reports what was stored against
 what the deployed policy says should have been.
 
-**The answer is "no" for ten endpoints before it starts**, and demonstrating that concretely
-is the point:
+Under **v2** the answer was "no" for ten endpoints before the notebook started, and
+demonstrating that concretely was the point. **v3 closes that list** — every one of the
+management mutations below is now stored — so the table is kept as the record of what was
+wrong and what the fix had to reach:
 
 | dropped, and it is a mutation | consequence |
 |---|---|
@@ -53,8 +82,14 @@ is the point:
 | `POST /v1/{c}/namespaces`, `POST /v1/{c}/namespaces/{ns}/properties` | namespace creation and property changes |
 | `POST /api/catalog/v1/oauth/tokens` | by design — so "who authenticated" is unanswerable, only "who failed" |
 
-Rule 5's own comment says the drop was *aimed at the OAuth token endpoint*. The blast radius
-was never bounded to it.
+Rule 5's own comment said the drop was *aimed at the OAuth token endpoint*; the blast radius
+was never bounded to it. v3 bounds it by prefix instead — `POST` under `/api/management/` is
+kept, everything else is counted — so the OAuth token endpoint is still dropped by design and
+"who authenticated" is still unanswerable, while "who created a principal" now is.
+
+**What v3 gave up to get there:** a successful read leaves no individual record, so per-call
+access frequency and the timestamp of any single read are gone. They survive only as counts in
+the window aggregate. That is the trade, and the notebook reports both halves.
 
 And two things the pipeline cannot tell you whatever the policy says: **there is no `%D`**, so
 no request's duration is recorded anywhere; and the access log is written when the response
@@ -107,49 +142,56 @@ what today's policy does and is *expected to fail when the policy changes*. When
 the diff it prints, decide the change was intended, and update the test and
 `doc-log-coverage-results.md` together — a report nobody updated is worse than no report.
 
-## Result — run 1, 2026-09-04: the policy is not running
+## Status — 2026-09-04: v3 is deployed, the harness covers it, the run has not happened
 
-**Nothing is dropped.** 0 of 34 expected drops dropped: 20 identical table GETs → 20 stored,
-three successful token requests → 3 stored, every create / rename / credential reset → stored.
+**Run 1's finding is resolved.** The v2 policy was never installed — written 2026-09-03T08:26Z,
+shipper pod up since 08:04Z, `helm upgrade` never run, 0 of 34 expected drops dropped. That is
+history: the running ConfigMap now carries **v3** and matches the file (`89aa2624f1f5…`).
 
-The policy is not broken; it has never been installed. `logging/fb-values.yaml` gained
-`polaris_noise_filter` in `local-k8s` commit `2120ed9` at **08:26:18Z on 2026-09-03**. The
-shipper pod has been running since **08:04:06Z**, from `60b94d9` — which carries the access-log
-parser and `record_modifier` and no noise filter. That predicts exactly what was measured:
-parsed fields present, nothing dropped. `helm upgrade` was never run.
+**What has been verified here, offline, against the deployed Lua:**
 
-So the table above is still what the policy *says*; none of it is what the pipeline *does*.
-**Cell 0 now aborts** when the running ConfigMap does not carry the policy, rather than leaving
-it to be inferred from the shape of the results.
+- **Every one of 14 representative records gets its v3 disposition.** Management POSTs are
+  KEPT — the hole v2 left open is closed. Successful reads, `/config`, table LISTs, renames and
+  the token exchange are COUNTED only.
+- **The report's three record types, its margins, zero-carry and carry decay all hold**, driven
+  through `_now_override` across three simulated windows without waiting for a boundary.
+- **All six `resource_kind` values are reachable**, and `/namespaces/ns/tables/t/metrics`
+  normalises onto `/namespaces/ns/tables/t` — v2 emitted two rows for one table.
+- **An error never creates a resource key.** A 404 on a table nobody read lands in `__other__`,
+  which is what keeps the margins exact, and the request is still stored in full by rule 3.
+- **67 tests green** (`test_log_coverage` 40, `test_vlogs` 27).
 
-Settled by the same run, and these do not depend on the policy:
+**Two findings from building it, both about the filter rather than the harness:**
 
-- **`Polaris-Request-Id` is honoured end to end** — correlation is EXACT. One `list_catalogs`
-  produces **15 records** sharing the id: its access-log line plus 14 application lines. The
-  architecture spec's §7 end-to-end trace query works today.
-- **Client-side latency**, the only source there is with no `%D`: 122 calls, median ~18 ms,
-  slowest ~77 ms. Ingest lag to first record: **2.0 s**.
-- **8 ERROR records, none carrying an `exception` object.** Not yet a verdict — it does not
-  separate "Quarkus never logged the throwable" from "the pipeline dropped it". Settle it
-  against the raw file:
-  `kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- grep -c stackTrace /deployments/logs/polaris.log`
-- **`mgmt.reset_principal_credentials` → 403 even as root**, reproducing the "admin is not a
-  superset" finding — and it is also one of the calls the policy would discard.
+1. **A startup blind spot.** `report_tick` opens its first window on the FIRST tick, and
+   `count_record()` returns immediately while `counts` is nil. Records processed between shipper
+   start and that first tick are routed correctly but appear in **no report at all**. Bounded by
+   the tick interval (30 s), and the window they land in is flagged `partial_window: true`. That
+   is exactly the first report observed: seq=1, `access_seen: 0`, `partial_window: true`, for a
+   pod that started at 07:12:37 inside the 07:00–07:30 window.
+2. **`WINDOW_SECONDS` is not a parameter you can pass in.** The filter indexes windows with its
+   own constant, so a caller that assumes 60 while the shipper runs 1800 crosses no boundary and
+   gets an empty result rather than an error. `Policy.report_windows` now refuses a mismatch.
 
-Three of run 1's apparent findings were harness bugs and are fixed: the replay dedup keyed on
-`mdc.requestId` (one call is many records, so 2,049 collapsed to 122 and every `stored` capped
-at 1), the 403 case used a client that was never tagged, and the `http_status` type check was
-meaningless because VictoriaLogs returns every field as a string. 117 tests green.
+**Still open, and only the cluster can answer it: does Fluent Bit split the array?** The oracle
+proves the filter *returns* three record types; only the running pipeline proves Fluent Bit
+splits them into three records and that VictoriaLogs indexes their numbers as numbers. The one
+window flushed so far had `access_seen: 0` — no traffic, so no resource or principal rows to
+split into. **Cell 0b gates on it and cell 11 settles it**, because the run itself makes the
+traffic.
 
-**Next:** `helm upgrade` the shipper, then re-run. Treat that upgrade as a change, not a fix —
-it switches on a filter that has never executed once.
+**Next:** run the notebook. At the deployed 1800 that is ~3 boundaries and roughly 90 minutes of
+mostly waiting; redeploy `local-k8s` with `WINDOW_SECONDS: 30` (and drop the dummy INPUT's
+`Interval_Sec` to 5 alongside it, so a late tick cannot skip a whole window) and the same
+notebook completes in minutes with every assertion unchanged.
 
 ## Files
 
 | file | |
 |---|---|
-| `PLAN-log-coverage.md` | the task plan, and the corrections it makes to `local-k8s/POLARIS-API-LOG-COVERAGE-NOTEBOOK.md`. **Read this first.** |
-| `polaris_log_coverage.ipynb` | the run. Cells 0–10, linear, `Restart & Run All`. |
+| `PLAN-log-coverage-v3.md` | **read this first** — policy v3, the scheduled report, and what the notebook must prove about both |
+| `PLAN-log-coverage.md` | the v2 plan. Still the right description of how the oracle works; its policy table is superseded |
+| `polaris_log_coverage.ipynb` | the run. Cells 0–15, linear, `Restart & Run All`. Cells 11–14 are the scheduled report and need real boundaries. |
 | `fetch_specs.sh` | vendors the 1.3.0 OpenAPI documents (this Polaris serves none of its own) |
 | `spec/` | the vendored documents — gitignored; `spec/inventory.json` is tracked |
 | `doc-log-coverage-results.md` | written by cell 10, for someone who was not there |
