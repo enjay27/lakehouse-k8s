@@ -206,6 +206,40 @@ change, so it reported the 1800→30 switch as a skipped window.
 Also observed, and worth knowing before reading a principal row: the OAuth token exchange is
 attributed to principal **`-`** — `%u` writes a dash when no principal is authenticated yet.
 
+## Run 1 of the v3 notebook — 2026-09-04, run `1788511328`
+
+**The report works. 132 calls, correlation exact on all 132, no shipper restart, no scaling,
+zero replay duplicates.** 50 calls kept, **82 counted**; **5 of 5 management POSTs stored**, which
+is the v2 audit hole closed and measured. All six `resource_kind` values present, per-window and
+merged invariants clean, **zero-carry 44 rows, decay confirmed, no skipped windows**. Client-side
+latency (the only source, there is no `%D`): median 13 ms, p95 41 ms, max 90 ms.
+
+**Four defects the run exposed — three of them in the harness, none in the filter:**
+
+1. **The 403 probe went out untagged.** `probe()` tagged `[pc, ic, adm_pc, adm_ic]` and the call
+   used `denied_ic`, so it carried no `Polaris-Request-Id` and could not be found: reported as
+   `EXPECTED STORED, ABSENT` for a record that was certainly there. This is the *same* fault run 1
+   found in the negative cell, reintroduced in a new probe. `probe()` now tags every live client.
+2. **`GET /config` without a warehouse returns 400 on this build**, so three calls labelled
+   "counted; v2 stored every one" actually exercised rule 3 and were kept. The probe now passes
+   `warehouse`.
+3. **`neg.500_null_pointer` returned 200**, so the run produced **no WARN or ERROR record at all**
+   — and questions 1 and 3 (the distinct WARN messages, and whether stack traces survive) have no
+   data. `0 of 0` is not an answer, and the report now says NOT ANSWERED instead of printing a
+   zero that reads like a result.
+4. **The view probe 404s** because the happy path renames `probe_view` and drops it. It still
+   exercises rule 3 and still classifies as `view`, but it is not a successful view read; the
+   `view` kind is earned by the happy path's own `load_view`/`head_view`. Relabelled.
+
+**Volume, and the question the previous run left open:** 2,117 records for 132 calls — 16 per
+call — of which only ~50 are access-log records. **The retention policy governs a few percent of
+the volume; the rest are application lines riding through untouched by rule 2.** The report now
+prints the `loggerName` breakdown, which is the input to the only remaining volume decision.
+`fluentbit_filter_drop_records_total` is still unknown: the metrics port-forward was down.
+
+**One thing not exercised:** the run fit inside a single 30-second window, so the merge path that
+`merge_windows` exists for did not run live. It is covered by tests, not by this run.
+
 **Next:** `helm upgrade` the shipper — the new values are written, not yet running, and cell 0
 aborts until the ConfigMap carries them. Then run the notebook: three 30-second boundaries
 instead of three 30-minute ones.

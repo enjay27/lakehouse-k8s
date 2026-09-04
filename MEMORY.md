@@ -56,7 +56,23 @@ the real run: `check_invariants` read VictoriaLogs' own `_stream`/`_stream_id` a
 and the skipped-window check compared window starts across a shipper restart and the 1800→30
 change, reporting the switch itself as a skipped window. Both fixed, both now tested.
 
-**Next:** run the notebook, cells 0–14. `black`/`isort` still not runnable from Cowork; `pytest`
+**RUN 1 OF v3 IS DONE (run `1788511328`, 132 calls, correlation exact on all 132).** 50 kept, 82
+counted, **5 of 5 management POSTs stored** — the v2 audit hole closed and measured. All six
+`resource_kind`s, invariants clean per window and merged, **zero-carry 44 rows, decay confirmed,
+no skipped windows**. Latency median 13 ms. **Volume: 2,117 records for 132 calls, only ~50 of
+them access-log — the policy governs a few percent; the rest are application lines under rule 2.**
+
+**Four defects it exposed, three in the harness and none in the filter:** the 403 PROBE went out
+untagged (the run-1 fault, reintroduced — reported `EXPECTED STORED, ABSENT` for a record that was
+there); `GET /config` without a warehouse 400s, so that probe tested rule 3 not rule 6;
+**`neg.500_null_pointer` returned 200, so the run produced NO WARN/ERROR record and questions 1
+and 3 are unanswered** — the report now says so instead of printing `0 of 0`; and the view probe
+404s because the happy path renames the view first. All four fixed.
+
+**Next:** re-run for a clean report, then revert `WINDOW_SECONDS`/`Interval_Sec` together.
+Not exercised live yet: the multi-window merge — this run fit in one 30s window.
+
+**Superseded:** run the notebook, cells 0–14. `black`/`isort` still not runnable from Cowork; `pytest`
 runs on Kade's machine and is green.
 
 ## Where the detail is

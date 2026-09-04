@@ -84,3 +84,33 @@ Everything else held. The array splits, the numbers are indexed as numbers, zero
 work end to end, and 68 tests pass under real `pytest` — closing the `NOT VERIFIED` line on the
 two previous commits. Incidental but worth remembering: the OAuth token exchange is attributed
 to principal `-`, because `%u` writes a dash when nothing is authenticated yet.
+
+## Run 1 of the v3 notebook, and the same mistake twice
+
+The report is good: 132 calls, correlation exact on all of them, 5 of 5 management POSTs stored,
+zero-carry and decay confirmed live, no gaps, invariants clean. What is worth writing down is
+the shape of the four defects, because three of them are the same kind of mistake.
+
+**The 403 probe went out untagged.** `probe()` tagged `[pc, ic, adm_pc, adm_ic]`; the call used
+`denied_ic`. Run 1 found precisely this fault in the negative cell, and the fix there was to add
+the client to the tag list. I then wrote a NEW probe using the same untagged client and the
+matrix reported `EXPECTED STORED, ABSENT` — a harness gap wearing a finding's clothes, for the
+second time in two sessions. The fix is now structural: `TAGGABLE` is built once from every live
+client, and `probe()` uses it.
+
+**Two probes tested something other than their label.** `get_config()` with no warehouse returns
+400, so three calls labelled "counted" were kept by rule 3; and the view probe reads a view the
+happy path has already renamed and dropped. Neither is a pipeline fault and both would have been
+quoted as one.
+
+**The 500 probe stopped provoking a 500**, so the run produced no WARN or ERROR record at all and
+the report printed "0 seen" and "0 of 0 carried an exception object". Those read as answers. They
+are absences of evidence, and the difference matters most for the stack-trace question, which is
+the single most valuable thing this notebook could settle. The report now says NOT ANSWERED and
+names the probe.
+
+The pattern in all four: **a probe whose label asserts what it is testing, while the call it
+makes has drifted away from that.** The oracle cannot catch this class at all — it predicts what
+the deployed Lua does with the record the call PRODUCED, so a call that produced the wrong record
+gets a perfectly correct prediction. Only reading the status column against the label catches it,
+which is what this review was.
