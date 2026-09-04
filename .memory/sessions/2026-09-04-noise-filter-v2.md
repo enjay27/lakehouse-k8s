@@ -186,3 +186,95 @@ kubectl -n datahub-hynix logs deploy/fb-polaris-shipper | head
 
 If the array return does not split, the symptom is one record carrying a numeric-keyed blob
 rather than N records; fall back to a single summary record with top-K tables inline.
+
+---
+
+# Third pass — v3 replaces v2 before v2 ever shipped
+
+Kade's policy, stated whole rather than as edits to mine: **2xx GET and POST become a summary;
+PUT and DELETE stored in full; every 4xx/5xx stored; WARN/ERROR stored except deprecated.**
+
+Run against the coverage matrix it stores 42 access records where v2 stores 87 and v1 stores
+122. Two things about it were right immediately, one was wrong, and three were missing.
+
+## What it got right, and it is more than it looks
+
+**It deletes the state.** No patterns, no dedup keys, no day buckets, no principal in a key —
+so the `DEDUP_MAX_KEYS` decision that had been parked for a week **evaporates rather than being
+answered**. There is no per-key table left to bound. About 90 lines of the trickiest Lua in the
+file went with it: `kst_day`, `days_from_civil`, `seen_before`, both day buckets, `once_per_day`.
+An open question resolved by deletion is worth more than one resolved by choosing a number.
+
+**GET as counts-only is strictly better than v2's dedup.** Dedup kept one arbitrary record per
+day and discarded the shape; a count keeps the shape and discards the record. v2's rule 6 was
+always a half-measure.
+
+## What was wrong: in Polaris, POST is the create verb
+
+18 successful POSTs across 16 endpoints in the run. "Summarize POST" discards `create_table`,
+`stage_create_table`, `commit_table`, both renames, `update_namespace_properties`,
+`create_principal`, `create_principal_role`, `create_catalog_role` and
+**`reset_principal_credentials`**. Meanwhile PUT is used by exactly three endpoints and DELETE
+by six. So the rule as stated keeps *who was granted what* and *what was deleted*, and loses
+*what was created* and *that credentials were reset* — roadmap 4b's asymmetry, in a wider form
+than the one `1eb0c99` had just closed.
+
+Kade took the split: **management POST kept in full, catalog POST counted.** Identity and authz
+mutations stay whole; Iceberg data-plane writes are volume.
+
+## What was missing, and each of the three would have broken it quietly
+
+1. **Counter coverage has to be a superset of the drop set.** v2 counted only table and view
+   item paths. Drop all successful reads with that coverage and every collection listing,
+   `/config` call and management read is dropped *and counted nowhere* — silent loss, the one
+   failure this whole design exists to prevent. v3 counts every access-log path.
+2. **The counter key must be the resource, not the URL.** Verified before writing anything: v2
+   emitted `/tables/tbl` and `/tables/tbl/metrics` as two rows for one table. Iceberg sends a
+   metrics report per scan, so the hottest table in the catalog would always have appeared
+   split. A trend computed on a key that splits is not approximately right, it is wrong.
+3. **Zero is invisible.** A resource with no reads emits no row, so a fall from 100k to 0 shows
+   as a *missing row* — the direction you most want to catch is the one the data cannot
+   express. Zero-carry for exactly one window fixes it and decays on its own.
+
+## The deprecated exclusion: deleted, not implemented
+
+The TODO in rule 1 had been waiting for someone to learn the exact message. Kade supplied the
+answer from the other end: `polaris/values.yaml:315` sets `io.quarkus.config: "OFF"`, so those
+warnings are never written at all.
+
+Worth recording *why* that was safe to act on. `polaris/values.yaml` is #5 — it does not
+reliably describe the running Polaris — so on its own it is an intent artifact and not evidence.
+But the coverage run independently saw **zero** deprecated warnings in 122 calls. Two
+independent lines agreeing is what turned it into a fact. One would not have.
+
+## Schema v1, and the one property worth defending
+
+Three record types on a shared envelope. The field list is in `active-issues.md` #14b; the
+property that matters is the invariant:
+
+```
+sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors
+```
+
+Both margins must sum to the same total. It is asserted in the test suite and it is the last
+check in the runbook's Phase 4. The point is not tidiness — it is that anyone about to build a
+trend on this data can first ask the data whether it is lying.
+
+Two naming decisions, both Kade's, both hard to reverse once data exists: `user_principal_name`
+**reuses** the access-log field name, so one filter spans a principal's stored 403s and their
+per-window counts; `resource` is a **new** name, because it is a normalized identity and not a
+request path, and calling it `api_path` would have made the same field mean two things.
+`report_type` stays out of `_stream_fields` — one OUTPUT serves both streams, so adding it would
+have changed stream cardinality for the Polaris records too.
+
+## Verification
+
+48/48, green first run — including the `/metrics` normalisation (the table's `requests` counts
+it), the `__other__` routing for an error on a resource never seen successfully, both margin
+totals, zero-carry, and the carry decaying after one window.
+
+Still NOT VERIFIED and unreachable by any test: that this Fluent Bit build splits an array
+return, and that the dummy tag reaches the filter. Runbook Phase 4.
+
+**v2 is never deployed.** It was superseded before installation, so the cluster has run neither.
+Deploying it first would have cost a full log replay to install something already replaced.

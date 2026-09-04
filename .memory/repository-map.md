@@ -48,7 +48,7 @@ either.
 |---|---|
 | `local-k8s-HANDOFF.md` | **HISTORICAL** (rebuild done 2026-09-03, outside it). Still the best account of *why*: Fault 1 (inert values nesting), Fault 2 (IPv4-only pg_hba), and the operational gotchas. |
 | `RESET-AND-CLEAN-INSTALL.md` | **HISTORICAL** — the procedure that was not followed. Its install order and verification block are still valid for any future reinstall. |
-| `shipper-v2-upgrade-runbook.md` | **PENDING** — installing the Fluent Bit policy v2 and the flush report, which are written and have never executed (`active-issues.md` #14). Phased, with a render gate, the two assumptions no test could reach, and a rollback that costs a second log replay. |
+| `shipper-v3-upgrade-runbook.md` | **PENDING** — installing the Fluent Bit policy v3 and the flush report, which are written and have never executed (`active-issues.md` #14). Phased, with a render gate, the two assumptions no test could reach, the report's margin self-check, and a rollback that costs a second log replay. |
 | `shm-exhaustion-orbstack-leg-runbook.md` | the `/dev/shm` exhaustion repro + fix verification (S5 pending item). |
 | `preflight-triage.sh` | script form of the RESET §1 pre-flight checks. |
 | `POLARIS-API-LOG-COVERAGE-NOTEBOOK.md` | **the live handoff.** Plan for a notebook, built in the *Polaris* project, that calls every Polaris API to drive the log pipeline across every branch of its retention policy. Restates the whole pipeline cold, and documents the limitation of each policy rule. Written 2026-09-03. |

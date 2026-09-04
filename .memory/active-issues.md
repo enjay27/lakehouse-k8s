@@ -25,67 +25,101 @@ a dropped `create_principal` still leaves 13 correlated records and only the acc
 — method, path, status, principal — is lost. Real, but not "invisible". Settle which source
 that column reads before repeating the stronger claim.
 
-**b. Policy v2, written 2026-09-04, NOT RUNNING.** Deliberately this time, and it is #13's
-shape again, so treat the upgrade as a change:
+**b. Policy v3, written 2026-09-04, NOT RUNNING.** Deliberately, and it is #13's shape again,
+so treat the upgrade as a change: `shipper-v3-upgrade-runbook.md`. **v2 was never deployed** —
+it was superseded before installation, so there is no v2 baseline in the cluster and no reason
+to look for one.
 
-- **Rule 5 inverted.** It was a keep-list (POST on the table/view API kept, every other
-  successful POST dropped) whose own comment said the drop was aimed at the OAuth token
-  endpoint. It was never bounded to it. The run measured the cost: `create_principal`,
-  `create_principal_role`, `create_catalog_role`, `create_namespace`,
-  `update_namespace_properties`, `rename_table`, `rename_view` and
-  `reset_principal_credentials` each left no access-log record. Now every POST is kept
-  except `ONCE_PER_DAY_POST_PATTERNS` — currently `/oauth/tokens$` alone, kept once per
-  principal per KST day, so "who authenticated today" is answerable. Cost in that profile:
-  **+10 records per 122 calls, 0.5%.**
-- **The dedup key carries the principal.** It was `method .. path`, so the second principal
-  to read a table today was invisible — unanswerable "who read what", on an authorization
-  catalog.
-- **The dedup key drops the query string.** `probe_tbl`, `?snapshots=refs` and
-  `?snapshots=all` were three keys for one table on one day. `test-polaris-filters.py:90`
-  asserted that as KEEP; the assertion is now DROP.
-- **`Alias` on all four filters.** Two `lua` filters are indistinguishable in
-  `fluentbit_filter_drop_records_total` without it, which is why the run reported the drop
-  delta as *unknown*.
+```
+1. ERROR / WARN ........................ keep      (no deprecated exclusion — see below)
+2. not an access-log record ............ keep
+--- every access-log record is COUNTED here ---
+3. status >= 400, or unparseable ....... keep, ALL of them, no cap
+4. PUT / DELETE / PATCH ................ keep, all
+5. POST under /api/management/ ......... keep, all
+   POST anywhere else ..................  counted only
+6. GET / HEAD, 2xx .....................  counted only
+7. anything else ....................... keep
+```
 
-- **A flush report, every 30 minutes on the :00/:30 boundary.** A `dummy` INPUT tagged
-  `polaris.report` ticks every 30s and reaches the *same* Lua filter instance (state is
-  per-instance, so `Match` widened to `polaris.*`); on a window boundary the filter returns an
-  **array** of records instead of the tick — one summary, one per table, one per principal —
-  and resets the counters. Array return from a Lua filter is documented behaviour: "this value
-  can be an array of tables... the input record is effectively split into multiple records".
-  The tick rate is not the report period, so over-ticking is harmless and the window stays
-  aligned across a restart. Lands on `{app="polaris-shipper-report", level="REPORT"}`, its own
-  stream, so `app:polaris` queries are unaffected.
+**What it preserves, and this is the point of the shape:** 100% of authorization failures —
+every 401 and 403 is a full record via rule 3 — and 100% of identity and grant mutations.
+What becomes a count is traffic that succeeded routinely.
 
-  **Two margins, never the cross product** — `table -> count` and `principal -> count`, so
-  state is |tables| + |principals| rather than |tables| x |principals|. The consequence is
-  stated in the source because someone will otherwise read a count as an audit trail: the
-  report answers *which tables are hot* and *who is generating the load*, and **cannot** answer
-  *who read which table*. That question is what rule 6's principal-keyed record is for. Table
-  names are client-controlled (the run hammered a table called `nope`), so the map is capped at
-  500 with an `__other__` bucket — totals stay exact, only per-table detail is capped.
+**Rule 5 is split, not simplified, because in Polaris POST is the CREATE verb.**
+`create_principal`, `create_principal_role`, `create_catalog_role` and
+`reset_principal_credentials` are all POSTs; PUT covers only assignment and grants, DELETE only
+removal. Summarising POST wholesale — the obvious simplification — would make a principal
+invisibly created and visibly deleted, which is the asymmetry this pipeline exists to expose.
+Catalog POSTs (`create_table`, `commit_table`, both renames, `report_metrics`, `oauth/tokens`)
+are data-plane volume and are counted.
 
-  **Why it matters more than the records it saves:** suppression that leaves no number behind
-  is erasure, and that is exactly why the three deferred items below are deferred. With a count
-  in the report, capping repeated 404s or deduplicating collection listings stops hiding
-  volume. The report is the prerequisite, not a side quest.
+**Rule 1 has no "deprecated config" exclusion and needs none.** `polaris/values.yaml:315` sets
+`io.quarkus.config: "OFF"`, so those warnings are never written; the coverage run independently
+saw zero across 122 calls. The values file alone would not be evidence here (#5) — the run
+agreeing with it is. The TODO is deleted, not deferred.
 
-**The cap on the dedup table is undecided and is Kade's call.** Keying on the principal
-multiplies the table by distinct principals per day, in the shipper's 512Mi, and nothing
-bounded it before or now. A **placeholder** `DEDUP_MAX_KEYS = 50000` fail-open guard stands
-in: above it the filter stops deduplicating and keeps everything, which can only store more,
-never lose a record. Replace it with the decided policy — and the summary record now carries
-`dedup_keys`, the live size of that table, so the choice can be made against a week of
-measurements instead of a guess.
+**The dedup cap question is gone, not answered.** v2 kept one read per principal per object per
+KST day and needed a per-key table to do it, which is what `DEDUP_MAX_KEYS` was placeholding
+for. v3 never stores a successful read individually, so there is no key to remember. The civil-
+day arithmetic, both day buckets, `seen_before` and the cap are all deleted — about 90 lines.
 
-**Deferred, measured, not done** — each has a number behind it in that run:
+**The flush report, schema v1.** A `dummy` INPUT tagged `polaris.report` ticks every 30s and
+reaches the *same* Lua filter instance (state is per-instance, so `Match` is `polaris.*`); on a
+:00/:30 boundary the filter returns an **array** of records instead of the tick and resets the
+counters. Array return is documented behaviour — "this value can be an array of tables... the
+input record is effectively split into multiple records" — but has never run here (#14c).
+Lands on `{app="polaris-shipper-report", level="REPORT"}`, its own stream.
+
+Three record types on one envelope (`schema_version`, `report_type`, `report_seq`, `hostname`,
+`window_start`/`window_end`/`window_seconds`, `_time` = window end):
+
+| type | carries |
+|---|---|
+| `summary` | `access_seen` / `access_kept` / `access_counted` (**kept + counted == seen**), `counted_get`, `counted_post`, `errors_kept`, `parse_errors`, `distinct_resources`, `distinct_principals`, `resources_other`, `principals_other`, `min_record_time`, `max_record_time`, `partial_window` |
+| `resource` | `resource`, `resource_kind`, `requests`, `reads`, `writes`, `errors`, `response_bytes` |
+| `principal` | `user_principal_name`, `requests`, `reads`, `writes`, `errors`, `response_bytes` |
+
+**Two margins, never the cross product** — `resource -> count` and `principal -> count`, so
+state is |resources| + |principals| rather than their product. The consequence is in the source
+because it will otherwise be misread as an audit trail: the report says *which resources are
+hot* and *who is generating load*, and **cannot** say *who read which resource*. Under v3 that
+question has no record behind it at all — a deliberate trade, taken knowingly.
+
+Four things worth knowing about the schema:
+
+- **`sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors.** The two
+  margins must agree. It is asserted in the test suite and it is Phase 4's last check — a
+  dashboard that verifies it knows whether to trust a trend before drawing one.
+- **The resource key is the resource, not the URL.** `/tables/t/metrics` counts under
+  `/tables/t`. v2 emitted two rows for one table — measured, not supposed — and a trend
+  computed on a key that splits is simply wrong.
+- **Errors increment an existing resource key but never create one**, so a client walking
+  invented table names cannot fill the key space. Their counts are not lost: they land in
+  `__other__`, which keeps the margin totals exact, and every one is stored in full by rule 3.
+- **Zero-carry, exactly one window.** A resource falling from 100k reads to none emits an
+  explicit `0` rather than vanishing from the output, then decays. The fall is the direction
+  you most want to see and a missing row cannot express it.
+
+`user_principal_name` deliberately reuses the access-log field name, so one filter spans a
+principal's stored 403s and their per-window counts. `resource` is a new name because it is a
+normalized identity, not a request path.
+
+**c. What is still unverified, and no test can reach it:** that this Fluent Bit build splits an
+array return into separate records, and that the dummy input's tag reaches the filter instance.
+Both documented, neither run. Runbook Phase 4 distinguishes them and names the fallback.
+
+**Decided by this policy, and therefore no longer open:** the 4xx cap (there is none — all
+errors kept), collection listings (counted, like every other successful read), `report_metrics`
+(counted, as a catalog POST), and the dedup cap (deleted with the dedup).
+
+**Still deferred, each with a number behind it:**
 
 | | evidence | why deferred |
 |---|---|---|
-| collection listings are not deduped at all | 20 identical `GET .../tables` → 20 records | changes the rule table's shape; `test-polaris-filters.py:100-101` asserts it as KEEP today |
-| repeated 4xx have no cap | 20 identical 404s → 20 records | "errors outrank dedup" is deliberate; capping 401/403/404 but never 5xx/429 is a judgement call |
-| `report_metrics` is kept unbounded | `POST .../tables/{t}/metrics` matches the table pattern | Iceberg sends one per scan; the pipeline keeps scan telemetry and used to drop credential resets |
-| no `%D`, no stack traces | question 3: 0 of 5 ERROR records carried an `exception` | both are Polaris-side, and **Polaris is not to be changed** (#11) |
+| the 95.5% — routing the DEBUG SQL records | 1,928 of 2,018 stored records are application lines | needs the `loggerName` distribution first; #5b already fixes the direction — route, never turn down |
+| no `%D`, no stack traces | question 3: 0 of 5 ERROR records carried an `exception` | Polaris-side, and **Polaris is not to be changed** (#11) |
+| retention for the report stream | reads now live only as counts | VictoriaLogs single has one global retention and no disk cap (#7); the counts eventually want a TSDB, roadmap 7 |
 | `neg.client_timeout` "EXPECTED DROPPED, PRESENT" | the run's only matrix discrepancy | oracle artefact — a call with no client-side status is not predictable and should not be scored `drop`. Harness fix, in `polaris-learning` |
 
 **#1 — The repo has not been reconciled against the live cluster. OPEN.**

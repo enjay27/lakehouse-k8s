@@ -38,7 +38,7 @@ Full detail in [`.memory/repository-map.md`](.memory/repository-map.md). The sha
   authority; `schema.sql` and `bootstrap.sql` are the local variants).
 - **`postgresql/secret/`** — Secret manifests. One of them is stale; see active issues #4.
 - **Root runbooks** — `local-k8s-HANDOFF.md` (why), `RESET-AND-CLEAN-INSTALL.md` (how),
-  `shipper-v2-upgrade-runbook.md`, `shm-exhaustion-orbstack-leg-runbook.md`,
+  `shipper-v3-upgrade-runbook.md`, `shm-exhaustion-orbstack-leg-runbook.md`,
   `preflight-triage.sh`. Written to be read cold.
 - **Not part of the platform:** `server/` (a Node app with `node_modules/` committed),
   `dozzle/` (empty), `attic`-style duplicates — several `datahub-values*.yaml` and

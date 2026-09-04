@@ -141,259 +141,99 @@ luaScripts:
     end
 
     -- ===========================================================================
-    -- polaris_noise_filter — decide what is worth storing
+    -- polaris_noise_filter — decide what is stored, and count everything else
     -- ===========================================================================
     -- Evaluated in strict order; the first rule that matches wins.
     --
-    --   0. the report tick (tag polaris.report) ............ becomes the flush report
-    --   1. level ERROR or WARN ............................. keep
-    --   2. not an access-log record ........................ keep (untouched)
-    --   3. http_status >= 400 .............................. keep  <- outranks dedup
-    --   4. PUT / DELETE / PATCH ............................ keep
-    --   5. POST ............................................ keep
-    --      POST /oauth/tokens, 2xx ......................... first per principal per KST day
-    --   6. GET / HEAD on a table or view ................... first per principal per KST day
-    --   7. anything else ................................... keep
+    --   0. the report tick (tag polaris.report) ....... becomes the flush report
+    --   1. level ERROR or WARN ........................ keep
+    --   2. not an access-log record ................... keep (untouched)
+    --   --- every access-log record is COUNTED here, before any decision ---
+    --   3. http_status >= 400, or unparseable ......... keep — ALL of them, no cap
+    --   4. PUT / DELETE / PATCH ....................... keep — all
+    --   5. POST under /api/management/ ................ keep — all
+    --      POST anywhere else .........................  counted only
+    --   6. GET / HEAD, 2xx ............................  counted only
+    --   7. anything else .............................. keep
     --
-    -- Rule 3 above rule 6 is deliberate: a 404 on a table GET is both "a table
-    -- read" and "an error", and errors win. A client hammering a missing table
-    -- stays visible instead of being deduplicated into silence.
-
-    -- ── Tunables ───────────────────────────────────────────────────────────────
-    local UTC_OFFSET_HOURS = 9          -- KST. A KST day starts at 15:00 UTC.
-    local DAY_ROLLOVER_UTC_HOUR = 24 - UTC_OFFSET_HOURS
-
-    local DEDUP_METHODS       = { GET = true, HEAD = true }
-    local ALWAYS_KEEP_METHODS = { PUT = true, DELETE = true, PATCH = true }
-
-    -- Reads of these are kept once per principal per KST day. Matched against the
-    -- path with its query string REMOVED: an Iceberg client varies ?snapshots=
-    -- constantly and each variant used to be its own dedup key, so the 2026-09-04
-    -- coverage run stored the same table three times in one day on that alone.
+    -- What this preserves, deliberately: **100% of authorization failures** — every
+    -- 401 and 403 is a full record via rule 3 — and **100% of identity and grant
+    -- mutations**: management POST, every PUT, every DELETE. What it reduces to a
+    -- count is traffic that succeeded routinely.
     --
-    -- Still scoped to table and view items. Collection listings (GET .../tables) are
-    -- not deduplicated at all, and twenty identical listings stored twenty records in
-    -- that same run. Widening this is a separate change -- make it once
-    -- fluentbit_filter_drop_records_total, now attributable per filter via Alias,
-    -- says what actually dominates.
-    local DEDUP_PATH_PATTERNS = {
-        "/namespaces/[^/]+/tables/[^/]+",
-        "/namespaces/[^/]+/views/[^/]+",
+    -- Rule 5 is not an arbitrary split. In Polaris, POST is the CREATE verb:
+    -- create_principal, create_principal_role, create_catalog_role and
+    -- reset_principal_credentials are all POSTs, while PUT covers only assignment and
+    -- grants and DELETE only removal. Summarising POST wholesale would make a
+    -- principal invisibly created and visibly deleted, which is the audit asymmetry
+    -- this pipeline was built to expose. Catalog POSTs (create_table, commit_table,
+    -- the renames, report_metrics, oauth/tokens) are data-plane volume and are counted.
+    --
+    -- v2 deduplicated reads once per principal per KST day and kept a per-key table to
+    -- do it. v3 deletes that: a successful read is never stored individually, so there
+    -- is no key to remember and no cap to choose. The civil-day arithmetic, the two day
+    -- buckets and DEDUP_MAX_KEYS are gone with it.
+    --
+    -- Rule 1 has NO "deprecated config" exclusion and needs none.
+    -- polaris/values.yaml:315 sets `io.quarkus.config: "OFF"`, so those warnings are
+    -- never written at all — and the 2026-09-04 coverage run independently saw zero of
+    -- them across 122 calls. The values file alone would not be evidence here (#5); the
+    -- run agreeing with it is.
+
+    -- ── Tunables ───────────────────────────────────────────────────────────────────
+    local REPORT_TAG     = "polaris.report"
+    local REPORT_APP     = "polaris-shipper-report"
+    local SCHEMA_VERSION = 1
+    local WINDOW_SECONDS = 1800    -- :00 and :30. KST is UTC+9:00 exactly, so the
+                                   -- boundary is the same in both clocks.
+    local MGMT_PREFIX    = "^/api/management/"
+
+    local READ_METHODS  = { GET = true, HEAD = true }
+    local WRITE_METHODS = { POST = true, PUT = true, DELETE = true, PATCH = true }
+    local KEEP_METHODS  = { PUT = true, DELETE = true, PATCH = true }
+
+    -- A counter key must be the RESOURCE, not the URL. /namespaces/ns/tables/t/metrics
+    -- is the same table as /namespaces/ns/tables/t, and counting them apart makes every
+    -- trend for that table wrong — measured, not supposed: v2 emitted two rows for one
+    -- table. Each pattern is matched against the query-stripped path and the match is
+    -- truncated to its own span. `.-` is lazy, so the catalog prefix is included and
+    -- tables of the same name in different catalogs do not collide.
+    local RESOURCE_PATTERNS = {
+        { kind = "table",      pattern = "^.-/namespaces/[^/]+/tables/[^/]+" },
+        { kind = "view",       pattern = "^.-/namespaces/[^/]+/views/[^/]+" },
+        { kind = "collection", pattern = "^.-/namespaces/[^/]+/tables$" },
+        { kind = "collection", pattern = "^.-/namespaces/[^/]+/views$" },
+        { kind = "namespace",  pattern = "^.-/namespaces/[^/]+$" },
+        { kind = "collection", pattern = "^.-/namespaces$" },
     }
 
-    -- POSTs kept once per principal per KST day rather than every time.
-    --
-    -- This was a KEEP-list: POST on the table/view API kept, every other successful
-    -- POST dropped. Its own comment said that drop was aimed at the OAuth token
-    -- endpoint, and it was never bounded to it. The 2026-09-04 coverage run measured
-    -- the cost -- create_principal, create_principal_role, create_catalog_role,
-    -- create_namespace, update_namespace_properties, rename_table, rename_view and
-    -- reset_principal_credentials each left no access-log record at all. A credential
-    -- reset is precisely the event this pipeline exists to record.
-    --
-    -- Inverted, so the list names what is bounded rather than what survives: every
-    -- POST is a mutation and is kept, except the endpoints below. Once per principal
-    -- per day rather than never, so "who authenticated today" is answerable while
-    -- per-connect token traffic stays bounded.
-    local ONCE_PER_DAY_POST_PATTERNS = {
-        "/oauth/tokens$",
-    }
-
-    -- Keying the dedup table on the principal multiplies it by the number of distinct
-    -- principals seen in a day, held in the shipper's 512Mi, and nothing bounds it.
-    -- PLACEHOLDER GUARD pending a decided cap policy: above this limit the filter
-    -- stops deduplicating and keeps everything. Failing open can only store more
-    -- records, never lose one.
-    local DEDUP_MAX_KEYS = 50000
-
-    -- ── The flush report ───────────────────────────────────────────────────────
-    -- Every WINDOW_SECONDS this filter emits a count of what it saw and what it
-    -- suppressed, into its OWN category (app=polaris-shipper-report, level=REPORT)
-    -- so it never mixes with Polaris's own logging and an engineer can read it on
-    -- its own stream.
-    --
-    -- Why counts at all: suppression that leaves no number behind is erasure, and
-    -- that is precisely why the 4xx cap and the collection-listing dedup are still
-    -- deferred. With a count, "4,812 reads of this table were suppressed" is a
-    -- fact rather than a silence, and capping becomes safe.
-    --
-    -- TWO MARGINS, NOT THE CROSS PRODUCT. table -> count and principal -> count,
-    -- never (principal, table) -> count: state is |tables| + |principals| instead
-    -- of |tables| x |principals|. The price is stated plainly because someone will
-    -- otherwise read a count as an audit trail -- the report answers *which tables
-    -- are hot* and *who is generating the load*, and can never answer *who read
-    -- which table*. That question is answered by the stored records instead: rule 6
-    -- keeps one per principal per object per KST day, which is what its key is for.
-    --
-    -- The report is a summary, not a ledger. It carries counts, never the
-    -- timestamps, addresses or statuses of the requests it counted.
-    local REPORT_TAG            = "polaris.report"
-    local REPORT_APP            = "polaris-shipper-report"
-    local WINDOW_SECONDS        = 1800   -- :00 and :30. KST is UTC+9:00 exactly, so
-                                         -- the boundary is the same in both clocks.
-    -- Table names are client-controlled -- the coverage run hammered a table called
-    -- `nope` twenty times -- so the per-table map is capped and the remainder goes
-    -- to one __other__ bucket. The totals stay exact; only the per-table detail is
-    -- capped. Principals are not client-invented in the same way, but are capped
-    -- on the same principle.
-    local REPORT_MAX_TABLES     = 500
+    -- Bounds on the two margins. Beyond them, requests land in one __other__ row: the
+    -- totals stay exact and only per-key detail is capped, which is the difference
+    -- between this cap and one that would have lost counts.
+    local REPORT_MAX_RESOURCES  = 500
     local REPORT_MAX_PRINCIPALS = 200
     local REPORT_OTHER          = "__other__"
 
-    -- ── KST day number ─────────────────────────────────────────────────────────
-    -- Taken from the record's own _time, never from os.time(): a shipper replay
-    -- must re-evaluate historical records against their own day, not against now.
-    -- No tzdata, no os.date, no dependence on the container's TZ.
-    local function days_from_civil(y, m, d)
-        if m <= 2 then y = y - 1 end
-        local era = math.floor(y / 400)
-        local yoe = y - era * 400
-        local mp  = (m > 2) and (m - 3) or (m + 9)
-        local doy = math.floor((153 * mp + 2) / 5) + d - 1
-        local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
-        return era * 146097 + doe - 719468
-    end
-
-    local function kst_day(rfc3339)
-        if type(rfc3339) ~= "string" then return nil end
-        local y, m, d, h = rfc3339:match("^(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d)")
-        if not y then return nil end
-        local day = days_from_civil(tonumber(y), tonumber(m), tonumber(d))
-        if tonumber(h) >= DAY_ROLLOVER_UTC_HOUR then day = day + 1 end
-        return day
-    end
-
-    -- ── State: two day buckets ─────────────────────────────────────────────────
-    -- Keyed by day, so rollover drops a whole bucket instead of sweeping expired
-    -- entries. Memory is bounded by one day of distinct paths. `previous` exists so
-    -- a straggler arriving just after midnight does not re-log everything.
-    --
-    -- In memory, per pod: a shipper restart re-logs the first hit per table for the
-    -- rest of that day. Accepted — the duplicate is harmless and marks the restart.
-    local dedup = { day = nil, current = {}, previous = {}, n = 0 }
-
-    local function seen_before(day, key)
-        if dedup.day == nil then dedup.day = day end
-
-        if day > dedup.day then
-            if day == dedup.day + 1 then
-                dedup.previous, dedup.current = dedup.current, {}
-            else
-                dedup.previous, dedup.current = {}, {}
-            end
-            dedup.day = day
-            dedup.n = 0
-        end
-
-        local bucket
-        if day == dedup.day then
-            bucket = dedup.current
-        elseif day == dedup.day - 1 then
-            bucket = dedup.previous
-        else
-            return false     -- older than we track: keep it, do not grow state
-        end
-
-        if bucket[key] then return true end
-        if dedup.n >= DEDUP_MAX_KEYS then return false end   -- fail open; see above
-        bucket[key] = true
-        dedup.n = dedup.n + 1
-        return false
-    end
-
-    -- ── Window counters ────────────────────────────────────────────────────────
-    -- Reset on every emit, so each report is a delta and needs no arithmetic to
-    -- read. Separate from the dedup buckets above: those are keyed by KST day and
-    -- decide keep/drop, these are keyed by wall-clock window and only count.
-    local counts = nil
-    local report_seq = 0
-
-    local function new_window(idx, partial)
-        return {
-            window = idx, partial = partial and true or false,
-            access_seen = 0, parse_errors = 0,
-            token_seen = 0, token_suppressed = 0, read_suppressed = 0,
-            tables = {}, n_tables = 0, tables_over = 0,
-            principals = {}, n_principals = 0, principals_over = 0,
-        }
-    end
-
-    local function bump_table(path, field)
-        local t = counts.tables[path]
-        if t == nil then
-            if counts.n_tables >= REPORT_MAX_TABLES then
-                counts.tables_over = counts.tables_over + 1
-                path = REPORT_OTHER
-                t = counts.tables[path]
-                if t == nil then
-                    t = { reads = 0, writes = 0, errors = 0 }
-                    counts.tables[path] = t
-                end
-            else
-                t = { reads = 0, writes = 0, errors = 0 }
-                counts.tables[path] = t
-                counts.n_tables = counts.n_tables + 1
-            end
-        end
-        t[field] = t[field] + 1
-        return t
-    end
-
-    local function bump_principal(user)
-        if counts.principals[user] == nil then
-            if counts.n_principals >= REPORT_MAX_PRINCIPALS then
-                counts.principals_over = counts.principals_over + 1
-                user = REPORT_OTHER
-                if counts.principals[user] == nil then counts.principals[user] = 0 end
-            else
-                counts.principals[user] = 0
-                counts.n_principals = counts.n_principals + 1
-            end
-        end
-        counts.principals[user] = counts.principals[user] + 1
-    end
-
-    local function matches_any(path, patterns)
-        for _, p in ipairs(patterns) do
-            if path:find(p) then return true end
-        end
-        return false
-    end
-
-    -- Query string off before matching or keying. api_path itself is left alone: it
-    -- is the raw path and it is what you read when something looks wrong.
+    -- ── Helpers ────────────────────────────────────────────────────────────────────
+    -- Query string off before matching or keying. api_path itself is left alone: it is
+    -- the raw path, and it is what you read when something looks wrong.
     local function path_only(p)
         if type(p) ~= "string" then return "" end
         return p:match("^[^?]*") or p
     end
 
-    -- Keep the first of this (principal, method, path) within the record's own KST
-    -- day. The principal is IN the key: without it the second principal to read a
-    -- table today is invisible, and "who read what" is the one question an
-    -- authorization catalog's access log exists to answer.
-    local function once_per_day(timestamp, record, user, method, path, kind)
-        local day = kst_day(record["_time"])
-        if day == nil then return 0, timestamp, record end
-        if seen_before(day, user .. " " .. method .. " " .. path) then
-            if counts ~= nil then
-                if kind == "token" then
-                    counts.token_suppressed = counts.token_suppressed + 1
-                else
-                    counts.read_suppressed = counts.read_suppressed + 1
-                end
-            end
-            return -1, timestamp, record
+    local function classify(path)
+        for _, r in ipairs(RESOURCE_PATTERNS) do
+            local span = path:match(r.pattern)
+            if span then return span, r.kind end
         end
-        return 0, timestamp, record
+        if path:find(MGMT_PREFIX) then return path, "management" end
+        return path, "other"
     end
 
-    -- ── Building the report ────────────────────────────────────────────────────
-    -- os.time() is used here and deliberately NOT in kst_day: a replayed log record
-    -- must be bucketed by its own timestamp, but a report is a wall-clock event.
-    --
-    -- _now_override is a test hook. The dummy input never sets it, so it is inert
-    -- in the deployed pipeline; the test suite uses it to drive window boundaries
-    -- deterministically instead of sleeping.
+    -- os.time() is used for the report window and deliberately NOT for anything about a
+    -- record: a replayed record must not be re-dated. _now_override is a test hook; the
+    -- dummy input never sets it, so it is inert in the deployed pipeline.
     local function now_seconds(record)
         return tonumber(record["_now_override"]) or os.time()
     end
@@ -402,95 +242,216 @@ luaScripts:
         return os.date("!%Y-%m-%dT%H:%M:%SZ", t)
     end
 
+    -- ── Window counters ────────────────────────────────────────────────────────────
+    -- Reset on every emit, so each report is a delta and needs no arithmetic to read.
+    local counts, report_seq = nil, 0
+
+    local function new_row()
+        return { requests = 0, reads = 0, writes = 0, errors = 0, response_bytes = 0 }
+    end
+
+    -- carry_res / carry_pri implement ZERO-CARRY, for exactly one window: a resource
+    -- that falls from 100k reads to none emits an explicit 0 instead of vanishing from
+    -- the output, so the fall is a data point rather than a missing row. A carried row
+    -- that stays at zero is not carried again, so the set decays.
+    local function new_window(idx, partial, carry_res, carry_pri)
+        local w = {
+            window = idx, partial = partial and true or false,
+            access_seen = 0, access_counted = 0,
+            counted_get = 0, counted_post = 0,
+            errors_kept = 0, parse_errors = 0,
+            resources = {}, kinds = {}, n_resources = 0, resources_over = 0,
+            principals = {}, n_principals = 0, principals_over = 0,
+            min_time = nil, max_time = nil,
+        }
+        for key, kind in pairs(carry_res or {}) do
+            w.resources[key] = new_row(); w.kinds[key] = kind
+            w.n_resources = w.n_resources + 1
+        end
+        for user in pairs(carry_pri or {}) do
+            w.principals[user] = new_row(); w.n_principals = w.n_principals + 1
+        end
+        return w
+    end
+
+    -- create=false means "increment this resource if it is already known, otherwise put
+    -- it in __other__". Errors pass create=false, so a client walking invented table
+    -- names cannot fill the key space with resources that never existed — the coverage
+    -- run hammered a table called `nope` twenty times. Their counts are NOT lost: they
+    -- land in __other__, which is what keeps the margin totals exact. And every one of
+    -- those requests is stored as a full record anyway, by rule 3.
+    local function touch_resource(key, kind, create)
+        local r = counts.resources[key]
+        if r ~= nil then return r end
+        if (not create) or counts.n_resources >= REPORT_MAX_RESOURCES then
+            counts.resources_over = counts.resources_over + 1
+            r = counts.resources[REPORT_OTHER]
+            if r == nil then
+                r = new_row()
+                counts.resources[REPORT_OTHER] = r
+                counts.kinds[REPORT_OTHER] = "other"
+                counts.n_resources = counts.n_resources + 1
+            end
+            return r
+        end
+        r = new_row()
+        counts.resources[key] = r
+        counts.kinds[key] = kind
+        counts.n_resources = counts.n_resources + 1
+        return r
+    end
+
+    local function touch_principal(user)
+        local p = counts.principals[user]
+        if p ~= nil then return p end
+        if counts.n_principals >= REPORT_MAX_PRINCIPALS then
+            counts.principals_over = counts.principals_over + 1
+            p = counts.principals[REPORT_OTHER]
+            if p == nil then
+                p = new_row()
+                counts.principals[REPORT_OTHER] = p
+                counts.n_principals = counts.n_principals + 1
+            end
+            return p
+        end
+        p = new_row()
+        counts.principals[user] = p
+        counts.n_principals = counts.n_principals + 1
+        return p
+    end
+
+    -- reads = GET|HEAD, writes = POST|PUT|DELETE|PATCH, errors = status >= 400, each by
+    -- method or status regardless of the other -- so `errors` deliberately OVERLAPS
+    -- reads and writes. Invariants: reads + writes <= requests, errors <= requests, and
+    --   sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors
+    -- The two margins must agree. A dashboard that checks it knows whether to trust a
+    -- trend before it draws one.
+    local function count_record(record, method, path, user, status, bytes, parse_failed)
+        if counts == nil then return end
+        counts.access_seen = counts.access_seen + 1
+
+        -- RFC3339 with a fixed format and zone sorts lexicographically, so min/max need
+        -- no parsing. They make a replay obvious: its window spans days.
+        local t = record["_time"]
+        if type(t) == "string" then
+            if counts.min_time == nil or t < counts.min_time then counts.min_time = t end
+            if counts.max_time == nil or t > counts.max_time then counts.max_time = t end
+        end
+
+        if parse_failed then
+            counts.parse_errors = counts.parse_errors + 1
+            return
+        end
+
+        local is_error = (status == nil or status >= 400)
+        local key, kind = classify(path)
+        local rows = { touch_resource(key, kind, not is_error), touch_principal(user) }
+        for _, row in ipairs(rows) do
+            row.requests = row.requests + 1
+            if READ_METHODS[method] then
+                row.reads = row.reads + 1
+            elseif WRITE_METHODS[method] then
+                row.writes = row.writes + 1
+            end
+            if is_error then row.errors = row.errors + 1 end
+            row.response_bytes = row.response_bytes + bytes
+        end
+    end
+
+    -- ── Building the report ────────────────────────────────────────────────────────
+    -- Schema v1. Three record types on one envelope, all sharing the window's _time so
+    -- `stats by (_time)` groups a window. Field names are contract: renaming one after
+    -- a month of data is the expensive kind of mistake.
     local function build_report(idx)
-        local w_start, w_end = idx * WINDOW_SECONDS, (idx + 1) * WINDOW_SECONDS
-        local starts, ends   = iso(w_start), iso(w_end)
-        local suppressed     = counts.read_suppressed + counts.token_suppressed
-        local kept           = counts.access_seen - suppressed
+        local starts, ends = iso(idx * WINDOW_SECONDS), iso((idx + 1) * WINDOW_SECONDS)
         report_seq = report_seq + 1
+        local host = os.getenv("HOSTNAME") or "unknown"
 
         local function base(kind)
-            return { app = REPORT_APP, level = "REPORT", report_type = kind,
-                     _time = ends, report_seq = report_seq,
+            return { app = REPORT_APP, level = "REPORT",
+                     schema_version = SCHEMA_VERSION, report_type = kind,
+                     report_seq = report_seq, hostname = host,
                      window_start = starts, window_end = ends,
-                     window_seconds = WINDOW_SECONDS }
+                     window_seconds = WINDOW_SECONDS, _time = ends }
         end
 
         local out = {}
 
-        local r = base("summary")
-        r._msg = string.format(
-            "polaris shipper report seq=%d %s..%s: %d access lines, %d kept, %d suppressed "
-            .. "(%d reads, %d tokens), %d tables, %d principals, %d dedup keys held",
-            report_seq, starts, ends, counts.access_seen, kept, suppressed,
-            counts.read_suppressed, counts.token_suppressed,
-            counts.n_tables, counts.n_principals, dedup.n)
-        r.partial_window      = counts.partial and "true" or "false"
-        r.access_seen         = counts.access_seen
-        r.access_kept         = kept
-        r.access_suppressed   = suppressed
-        r.read_suppressed     = counts.read_suppressed
-        r.token_seen          = counts.token_seen
-        r.token_suppressed    = counts.token_suppressed
-        r.parse_errors        = counts.parse_errors
-        r.distinct_tables     = counts.n_tables
-        r.distinct_principals = counts.n_principals
-        r.tables_over_cap     = counts.tables_over
-        r.principals_over_cap = counts.principals_over
-        -- dedup_keys is the number that turns DEDUP_MAX_KEYS from a guess into a
-        -- measurement: watch it for a week before choosing the cap policy.
-        r.dedup_keys          = dedup.n
-        r.dedup_day           = dedup.day or -1
-        r.hostname            = os.getenv("HOSTNAME") or "unknown"
-        out[#out + 1] = r
+        local s = base("summary")
+        s.access_seen         = counts.access_seen
+        s.access_kept         = counts.access_seen - counts.access_counted
+        s.access_counted      = counts.access_counted
+        s.counted_get         = counts.counted_get
+        s.counted_post        = counts.counted_post
+        s.errors_kept         = counts.errors_kept
+        s.parse_errors        = counts.parse_errors
+        s.distinct_resources  = counts.n_resources
+        s.distinct_principals = counts.n_principals
+        s.resources_other     = counts.resources_over
+        s.principals_other    = counts.principals_over
+        s.min_record_time     = counts.min_time or ""
+        s.max_record_time     = counts.max_time or ""
+        s.partial_window      = counts.partial and "true" or "false"
+        s._msg = string.format(
+            "polaris shipper report seq=%d %s..%s: %d access lines, %d kept, %d counted "
+            .. "(%d GET, %d POST), %d errors kept, %d resources, %d principals",
+            report_seq, starts, ends, counts.access_seen, s.access_kept,
+            counts.access_counted, counts.counted_get, counts.counted_post,
+            counts.errors_kept, counts.n_resources, counts.n_principals)
+        out[#out + 1] = s
 
-        for path, t in pairs(counts.tables) do
-            local e = base("table")
-            e.table_path = path
-            e.reads, e.writes, e.errors = t.reads, t.writes, t.errors
-            e._msg = string.format("table %s: %d reads, %d writes, %d errors",
-                                   path, t.reads, t.writes, t.errors)
+        local carry_res, carry_pri = {}, {}
+
+        for key, r in pairs(counts.resources) do
+            local e = base("resource")
+            e.resource       = key
+            e.resource_kind  = counts.kinds[key] or "other"
+            e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
+            e.response_bytes = r.response_bytes
+            e._msg = string.format("resource %s (%s): %d requests, %d reads, %d writes, %d errors",
+                                   key, e.resource_kind, r.requests, r.reads, r.writes, r.errors)
             out[#out + 1] = e
+            if r.requests > 0 then carry_res[key] = e.resource_kind end
         end
 
-        for user, n in pairs(counts.principals) do
+        for user, r in pairs(counts.principals) do
             local e = base("principal")
-            e.principal, e.requests = user, n
-            e._msg = string.format("principal %s: %d requests", user, n)
+            e.user_principal_name = user
+            e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
+            e.response_bytes = r.response_bytes
+            e._msg = string.format("principal %s: %d requests, %d reads, %d writes, %d errors",
+                                   user, r.requests, r.reads, r.writes, r.errors)
             out[#out + 1] = e
+            if r.requests > 0 then carry_pri[user] = true end
         end
 
-        return out
+        return out, carry_res, carry_pri
     end
 
-    -- The tick rate does not matter, only the window boundary does: a tick inside
-    -- the current window is dropped. Over-ticking is therefore harmless, and the
-    -- report stays aligned to :00/:30 across a shipper restart.
-    --
-    -- Skew: records arriving between the boundary and the tick that notices it are
-    -- counted into the window just closed, so a report can be up to one tick
-    -- interval "late" at its edges. It is a summary, not a ledger.
+    -- The tick RATE is not the report period. A tick inside the current window is
+    -- dropped, so over-ticking is harmless and the window stays aligned to :00/:30
+    -- across a restart. Skew: records arriving between a boundary and the tick that
+    -- notices it are counted into the window just closed. A summary, not a ledger.
     local function report_tick(timestamp, record)
         local idx = math.floor(now_seconds(record) / WINDOW_SECONDS)
         if counts == nil then
             -- First tick after start: open a window rather than report an empty one.
-            -- It is flagged partial because the shipper missed the start of it.
+            -- Flagged partial, because the shipper missed the start of it.
             counts = new_window(idx, true)
             return -1, timestamp, record
         end
         if idx == counts.window then
             return -1, timestamp, record
         end
-        local out = build_report(counts.window)
-        counts = new_window(idx, false)
+        local out, carry_res, carry_pri = build_report(counts.window)
+        counts = new_window(idx, false, carry_res, carry_pri)
         return 2, timestamp, out
     end
 
-    -- ── Entry point ────────────────────────────────────────────────────────────
+    -- ── Entry point ────────────────────────────────────────────────────────────────
     function polaris_noise_filter(tag, timestamp, record)
-        -- 0. The report tick, from the dummy INPUT. It carries no log data: it is
-        --    replaced by the report records, or dropped if the window has not
-        --    turned over yet.
+        -- 0. The report tick, from the dummy INPUT. It carries no log data: it becomes
+        --    the report records, or is dropped if the window has not turned over.
         if tag == REPORT_TAG then
             return report_tick(timestamp, record)
         end
@@ -498,9 +459,6 @@ luaScripts:
         local level = record["level"]
 
         -- 1. Errors and warnings always survive.
-        --    TODO: the "Deprecated Config" exclusion goes here, once the exact
-        --    message is known. Match it narrowly — a broad pattern here silently
-        --    discards real errors.
         if level == "ERROR" or level == "WARN" then
             return 0, timestamp, record
         end
@@ -510,61 +468,49 @@ luaScripts:
             return 0, timestamp, record
         end
 
-        -- 2a. Count before deciding, so the report counts what ARRIVED and not what
-        --     survived: a table read 482 times and kept once is a hot table, and a
-        --     suppressed-only counter would report it as cold. Errors are counted
-        --     here too, before rule 3 returns.
-        --
-        --     One gap, stated rather than hidden: an access-log line emitted at
-        --     ERROR or WARN level returns at rule 1 and is not counted. Quarkus
-        --     logs the access log at INFO, so this should be zero.
-        local method = record["http_method"]
-        local path   = path_only(record["api_path"])
-        local user   = record["user_principal_name"] or "-"
-        local status = tonumber(record["http_status"])
+        -- COUNT FIRST, DECIDE SECOND. The counters must cover everything that can be
+        -- suppressed, or a suppressed record is lost rather than summarised -- which is
+        -- the single failure this design exists to prevent.
+        local method       = record["http_method"]
+        local path         = path_only(record["api_path"])
+        local user         = record["user_principal_name"] or "-"
+        local status       = tonumber(record["http_status"])
+        local bytes        = tonumber(record["response_size"]) or 0
+        local parse_failed = record["access_log_parse_error"] ~= nil
 
-        if counts ~= nil then
-            counts.access_seen = counts.access_seen + 1
-            if record["access_log_parse_error"] ~= nil then
-                counts.parse_errors = counts.parse_errors + 1
-            else
-                bump_principal(user)
-                if matches_any(path, ONCE_PER_DAY_POST_PATTERNS) then
-                    counts.token_seen = counts.token_seen + 1
-                end
-                if matches_any(path, DEDUP_PATH_PATTERNS) then
-                    local t = bump_table(path,
-                        DEDUP_METHODS[method] and "reads" or "writes")
-                    if status ~= nil and status >= 400 then
-                        t.errors = t.errors + 1
-                    end
-                end
-            end
-        end
+        count_record(record, method, path, user, status, bytes, parse_failed)
 
-        -- 3. Anything that failed is kept. Also covers a line that did not parse,
-        --    where http_status is absent — never drop what you could not read.
-        if status == nil or status >= 400 then
+        -- 3. Anything that failed is kept, all of it, no cap. Also covers a line that
+        --    did not parse -- never drop what you could not read.
+        if parse_failed or status == nil or status >= 400 then
+            if counts ~= nil then counts.errors_kept = counts.errors_kept + 1 end
             return 0, timestamp, record
         end
 
         -- 4. Mutations other than POST always survive.
-        if ALWAYS_KEEP_METHODS[method] then
+        if KEEP_METHODS[method] then
             return 0, timestamp, record
         end
 
-        -- 5. A POST is a mutation and survives, except the endpoints listed in the
-        --    tunables, which are kept once per principal per KST day.
+        -- 5. POST: management in full, catalog counted. See the header for why.
         if method == "POST" then
-            if matches_any(path, ONCE_PER_DAY_POST_PATTERNS) then
-                return once_per_day(timestamp, record, user, method, path, "token")
+            if path:find(MGMT_PREFIX) then
+                return 0, timestamp, record
             end
-            return 0, timestamp, record
+            if counts ~= nil then
+                counts.counted_post   = counts.counted_post + 1
+                counts.access_counted = counts.access_counted + 1
+            end
+            return -1, timestamp, record
         end
 
-        -- 6. Reads of a table or view: one per principal per KST day.
-        if DEDUP_METHODS[method] and matches_any(path, DEDUP_PATH_PATTERNS) then
-            return once_per_day(timestamp, record, user, method, path, "read")
+        -- 6. Successful reads are counts, never records.
+        if READ_METHODS[method] then
+            if counts ~= nil then
+                counts.counted_get    = counts.counted_get + 1
+                counts.access_counted = counts.access_counted + 1
+            end
+            return -1, timestamp, record
         end
 
         -- 7. Everything else survives.
@@ -665,10 +611,11 @@ config:
 
     # 3. Decide what is worth storing. Drops before the field trimming below,
     #    so nothing is spent tidying a record that is about to go.
-    #    Order (first match wins): ERROR/WARN keep -> non-access-log keep ->
-    #    4xx/5xx keep -> PUT/DELETE/PATCH keep -> POST keep, except /oauth/tokens
-    #    which is kept once per principal per KST day -> GET|HEAD on a table or view
-    #    once per principal per KST day -> keep.
+    #    Order (first match wins): ERROR/WARN keep -> non-access-log keep -> COUNT ->
+    #    4xx/5xx keep (all, no cap) -> PUT/DELETE/PATCH keep -> POST under
+    #    /api/management/ keep and every other POST counted only -> GET|HEAD counted
+    #    only -> keep. Successful reads are never stored individually, so there is
+    #    no dedup state and no cap to choose.
     #    The full rule list and the tunables are at the top of the function.
     #
     #    Alias is what makes this filter's fluentbit_filter_drop_records_total
@@ -689,7 +636,7 @@ config:
         Match         polaris.*
         script        /fluent-bit/scripts/polaris_access_log.lua
         call          polaris_noise_filter
-        type_int_key  reads writes errors requests access_seen access_kept access_suppressed read_suppressed token_seen token_suppressed parse_errors distinct_tables distinct_principals tables_over_cap principals_over_cap dedup_keys dedup_day report_seq window_seconds
+        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted counted_get counted_post errors_kept parse_errors distinct_resources distinct_principals resources_other principals_other requests reads writes errors response_bytes
 
     # 4. Drop fields that cost storage on every single record and answer nothing.
     #    processName is a ~60-byte absolute JVM path; loggerClassName is the

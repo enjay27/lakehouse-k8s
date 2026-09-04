@@ -64,85 +64,79 @@ PARSE_CASES = [
 ]
 
 # ---------------------------------------------------------------- suite 2
-# polaris_noise_filter: what survives? Stateful -- these run in order, in one
-# Lua process, and later cases depend on earlier ones.
-#   KST day boundary is 15:00 UTC, so 2026-09-03T15:00Z is already 09-04 in KST.
-TBL_A = "/api/catalog/v1/c/namespaces/ns1/tables/ta"
-TBL_B = "/api/catalog/v1/c/namespaces/ns1/tables/tb"
+# polaris_noise_filter: what survives? v3 has no per-key state, so keep/drop no
+# longer depends on order -- but the counters do, and suite 3 reads them, so these
+# still run in one process in order.
+CAT  = "/api/catalog/v1/c"
+TBL  = CAT + "/namespaces/ns1/tables/ta"
+MG   = "/api/management/v1"
 
 
-def acc(t, method, path, status, level="INFO", user="root"):
+def acc(t, method, path, status, level="INFO", user="root", size=0):
     return {"loggerName": ACCESS, "level": level, "_time": t,
             "http_method": method, "api_path": path, "http_status": str(status),
-            "user_principal_name": user}
+            "user_principal_name": user, "response_size": str(size)}
 
 
 KEEP, DROP = 0, -1
+T = "2026-09-03T08:00:00Z"
+
 POLICY_CASES = [
-    ("GET table A, first of the KST day",      acc("2026-09-03T08:00:00Z", "GET", TBL_A, 200), KEEP),
-    ("GET table A again, same KST day",        acc("2026-09-03T09:00:00Z", "GET", TBL_A, 200), DROP),
-    ("GET table B, different table",           acc("2026-09-03T09:01:00Z", "GET", TBL_B, 200), KEEP),
-    ("GET table A but 404 -- errors outrank",  acc("2026-09-03T09:02:00Z", "GET", TBL_A, 404), KEEP),
-    ("GET table A at 14:59Z, still same day",  acc("2026-09-03T14:59:59Z", "GET", TBL_A, 200), DROP),
-    ("GET table A at 15:00Z, new KST day",     acc("2026-09-03T15:00:00Z", "GET", TBL_A, 200), KEEP),
-    ("GET table A again in the new day",       acc("2026-09-03T16:00:00Z", "GET", TBL_A, 200), DROP),
-    ("straggler for yesterday, already seen",  acc("2026-09-03T14:00:00Z", "GET", TBL_B, 200), DROP),
-    ("HEAD is a different key from GET",       acc("2026-09-03T16:01:00Z", "HEAD", TBL_A, 200), KEEP),
-    ("query string is not a new key",          acc("2026-09-03T16:02:00Z", "GET", TBL_A + "?snapshots=all", 200), DROP),
+    # rule 3 -- every failure is kept. All of them, no cap: this is the decision,
+    # and the repetition below is the point rather than padding.
+    ("404 on a table read",                    acc(T, "GET", TBL, 404), KEEP),
+    ("the same 404 again",                     acc(T, "GET", TBL, 404), KEEP),
+    ("and again",                              acc(T, "GET", TBL, 404), KEEP),
+    ("403 denied read",                        acc(T, "GET", TBL, 403), KEEP),
+    ("401 on the token endpoint",              acc(T, "POST", CAT + "/oauth/tokens", 401), KEEP),
+    ("500 on a table read",                    acc(T, "GET", TBL, 500), KEEP),
+    ("a line that did not parse",              {"loggerName": ACCESS, "level": "INFO",
+                                                "_time": T, "access_log_parse_error": "true"}, KEEP),
 
-    ("POST table commit",                      acc("2026-09-03T16:03:00Z", "POST", TBL_A, 200), KEEP),
-    ("POST view commit (added, not specified)", acc("2026-09-03T16:03:30Z", "POST", "/api/catalog/v1/c/namespaces/ns1/views/v2", 201), KEEP),
-    ("POST oauth token, first for root today", acc("2026-09-03T16:04:00Z", "POST", "/api/catalog/v1/oauth/tokens", 200), KEEP),
-    ("POST oauth token again, same principal", acc("2026-09-03T16:04:30Z", "POST", "/api/catalog/v1/oauth/tokens", 200), DROP),
-    ("POST oauth token, other principal",      acc("2026-09-03T16:04:40Z", "POST", "/api/catalog/v1/oauth/tokens", 200, user="analyst"), KEEP),
-    ("POST oauth token, 401 -- errors outrank", acc("2026-09-03T16:05:00Z", "POST", "/api/catalog/v1/oauth/tokens", 401), KEEP),
+    # rule 4 -- every non-POST mutation
+    ("PUT a grant",                            acc(T, "PUT", MG + "/catalogs/c/catalog-roles/r/grants", 201), KEEP),
+    ("DELETE a table",                         acc(T, "DELETE", TBL, 204), KEEP),
+    ("DELETE a principal",                     acc(T, "DELETE", MG + "/principals/p", 204), KEEP),
 
-    ("PUT on a catalog role",                  acc("2026-09-03T16:06:00Z", "PUT", "/api/management/v1/catalogs/c/catalog-roles/r", 200), KEEP),
-    ("DELETE a view",                          acc("2026-09-03T16:07:00Z", "DELETE", "/api/catalog/v1/c/namespaces/ns1/views/v1", 204), KEEP),
-    ("GET /v1/config -- not a table, kept",    acc("2026-09-03T16:08:00Z", "GET", "/api/catalog/v1/config", 200), KEEP),
-    ("GET table LIST -- no table name, kept",  acc("2026-09-03T16:09:00Z", "GET", "/api/catalog/v1/c/namespaces/ns1/tables", 200), KEEP),
-    ("GET table list again -- still kept",     acc("2026-09-03T16:10:00Z", "GET", "/api/catalog/v1/c/namespaces/ns1/tables", 200), KEEP),
-    ("500 on a table read",                    acc("2026-09-03T16:11:00Z", "GET", TBL_A, 500), KEEP),
+    # rule 5 -- management POST is the create verb and is kept in full
+    ("POST create a principal",                acc(T, "POST", MG + "/principals", 201), KEEP),
+    ("POST create a principal role",           acc(T, "POST", MG + "/principal-roles", 201), KEEP),
+    ("POST create a catalog role",             acc(T, "POST", MG + "/catalogs/c/catalog-roles", 201), KEEP),
+    ("POST reset credentials -- the one that matters", acc(T, "POST", MG + "/principals/p/reset", 200), KEEP),
 
+    # rule 5 -- catalog POST is data-plane volume and is counted
+    ("POST create a table",                    acc(T, "POST", CAT + "/namespaces/ns1/tables", 200), DROP),
+    ("POST commit a table",                    acc(T, "POST", TBL, 200), DROP),
+    ("POST rename a table",                    acc(T, "POST", CAT + "/tables/rename", 200), DROP),
+    ("POST report metrics",                    acc(T, "POST", TBL + "/metrics", 204), DROP),
+    ("POST an oauth token, 200",               acc(T, "POST", CAT + "/oauth/tokens", 200), DROP),
+    ("POST create a namespace",                acc(T, "POST", CAT + "/namespaces", 200), DROP),
+
+    # rule 6 -- successful reads are counts, never records
+    ("GET a table",                            acc(T, "GET", TBL, 200), DROP),
+    ("GET the same table again",               acc(T, "GET", TBL, 200), DROP),
+    ("HEAD a table",                           acc(T, "HEAD", TBL, 204), DROP),
+    ("GET a table listing",                    acc(T, "GET", CAT + "/namespaces/ns1/tables", 200), DROP),
+    ("GET /v1/config",                         acc(T, "GET", CAT + "/config", 200), DROP),
+    ("GET management list_principals",         acc(T, "GET", MG + "/principals", 200), DROP),
+
+    # rules 1 and 2 -- untouched
     ("application DEBUG log", {"loggerName": "org.apache.polaris.service.catalog",
                                "level": "DEBUG", "_msg": "..."}, KEEP),
     ("application ERROR log", {"loggerName": "org.apache.polaris.service.catalog",
                                "level": "ERROR", "_msg": "boom"}, KEEP),
     ("application WARN log", {"loggerName": "org.apache.polaris.service.catalog",
                               "level": "WARN", "_msg": "hmm"}, KEEP),
-    ("access-log line that did not parse", {"loggerName": ACCESS, "level": "INFO",
-                                            "_time": "2026-09-03T16:12:00Z",
-                                            "access_log_parse_error": "true"}, KEEP),
-
-    # Rule 5 inverted. Every one of these left NO access-log record under the
-    # keep-list, measured by the 2026-09-04 coverage run.
-    ("POST create a principal",                acc("2026-09-03T16:13:00Z", "POST", "/api/management/v1/principals", 201), KEEP),
-    ("POST create a principal role",           acc("2026-09-03T16:13:10Z", "POST", "/api/management/v1/principal-roles", 201), KEEP),
-    ("POST create a catalog role",             acc("2026-09-03T16:13:20Z", "POST", "/api/management/v1/catalogs/c/catalog-roles", 201), KEEP),
-    ("POST reset credentials -- the big one",  acc("2026-09-03T16:13:30Z", "POST", "/api/management/v1/principals/p/reset", 200), KEEP),
-    ("POST rename a table",                    acc("2026-09-03T16:13:40Z", "POST", "/api/catalog/v1/c/tables/rename", 200), KEEP),
-    ("POST rename a view",                     acc("2026-09-03T16:13:50Z", "POST", "/api/catalog/v1/c/views/rename", 204), KEEP),
-    ("POST create a namespace",                acc("2026-09-03T16:14:00Z", "POST", "/api/catalog/v1/c/namespaces", 200), KEEP),
-    ("POST namespace properties",              acc("2026-09-03T16:14:10Z", "POST", "/api/catalog/v1/c/namespaces/ns1/properties", 200), KEEP),
-
-    # The dedup key now carries the principal. Fresh KST day (16:00Z on 09-04 is
-    # already 09-05 in KST), so these do not depend on the buckets above.
-    ("fresh day, root reads table A",          acc("2026-09-04T16:00:00Z", "GET", TBL_A, 200), KEEP),
-    ("root reads it again",                    acc("2026-09-04T16:01:00Z", "GET", TBL_A, 200), DROP),
-    ("a second principal reads the same table", acc("2026-09-04T16:02:00Z", "GET", TBL_A, 200, user="analyst"), KEEP),
-    ("that principal reads it again",          acc("2026-09-04T16:03:00Z", "GET", TBL_A, 200, user="analyst"), DROP),
-    ("and its query-string variant",           acc("2026-09-04T16:04:00Z", "GET", TBL_A + "?snapshots=refs", 200, user="analyst"), DROP),
-    ("an anonymous read is its own bucket",    acc("2026-09-04T16:05:00Z", "GET", TBL_A, 200, user="-"), KEEP),
 ]
 
-
 # ---------------------------------------------------------------- suite 3
-# The flush report. Continues suite 2's state: the counters only exist from the
-# first tick, so the traffic below is exactly what one window contains.
-# T0 is on a 1800s boundary, so the window arithmetic is exact and no test sleeps.
-# `_now_override` is the filter's test hook -- the dummy INPUT never sets it.
+# The flush report and its schema. Counters only exist from the first tick, so the
+# traffic below -- not suite 2's -- is what the asserted window contains.
+# T0 sits on a 1800s boundary, so no test sleeps and the arithmetic is exact.
+# `_now_override` is the filter's test hook; the dummy INPUT never sets it.
 T0 = 1787999400
-EMIT = 2      # the tick returns 2: record replaced (by the array of reports)
+EMIT = 2          # the tick returns 2: record replaced, by the array of reports
+W = "2026-09-05T16:0"
 
 
 def tick(t):
@@ -150,33 +144,75 @@ def tick(t):
 
 
 REPORT_CASES = [
-    # (name, kind, payload, expected code, checks on the summary record)
-    ("first tick only opens the window", "tick", tick(T0), DROP,
-     {"nrec": "0"}),
+    ("first tick only opens the window", "tick", tick(T0), DROP, {"nrec": "0"}),
 
-    ("root reads table A",   "rec", acc("2026-09-05T16:00:00Z", "GET", TBL_A, 200), KEEP, {}),
-    ("root reads it again",  "rec", acc("2026-09-05T16:01:00Z", "GET", TBL_A, 200), DROP, {}),
-    ("a 404 on table B",     "rec", acc("2026-09-05T16:02:00Z", "GET", TBL_B, 404), KEEP, {}),
-    ("analyst gets a token", "rec", acc("2026-09-05T16:03:00Z", "POST", "/api/catalog/v1/oauth/tokens", 200, user="analyst"), KEEP, {}),
-    ("analyst gets another", "rec", acc("2026-09-05T16:04:00Z", "POST", "/api/catalog/v1/oauth/tokens", 200, user="analyst"), DROP, {}),
-    ("root deletes table A", "rec", acc("2026-09-05T16:05:00Z", "DELETE", TBL_A, 204), KEEP, {}),
+    ("root reads the table",        "rec", acc(W + "0:00Z", "GET", TBL, 200, size=100), DROP, {}),
+    ("alice reads the same table",  "rec", acc(W + "1:00Z", "GET", TBL, 200, user="alice", size=50), DROP, {}),
+    # /metrics must count against the TABLE, not beside it -- v2 emitted two rows
+    ("root posts scan metrics",     "rec", acc(W + "2:00Z", "POST", TBL + "/metrics", 204), DROP, {}),
+    ("a query string is not a new resource", "rec", acc(W + "3:00Z", "GET", TBL + "?snapshots=all", 200, size=25), DROP, {}),
+    # an error on a resource never seen successfully must not create a key
+    ("root 404s an invented table", "rec", acc(W + "4:00Z", "GET", CAT + "/namespaces/ns1/tables/nope", 404), KEEP, {}),
+    ("root creates a principal",    "rec", acc(W + "5:00Z", "POST", MG + "/principals", 201), KEEP, {}),
+    ("root deletes the table",      "rec", acc(W + "6:00Z", "DELETE", TBL, 204), KEEP, {}),
+    ("an application log is not counted", "rec", {"loggerName": "x", "level": "DEBUG", "_msg": "."}, KEEP, {}),
 
-    ("a tick inside the window reports nothing", "tick", tick(T0 + 900), DROP,
-     {"nrec": "0"}),
+    ("a tick inside the window reports nothing", "tick", tick(T0 + 900), DROP, {"nrec": "0"}),
 
-    # 1 summary + 2 tables (ta, tb) + 2 principals (root, analyst)
-    ("the boundary tick emits the window", "tick", tick(T0 + 1800), EMIT,
-     {"nrec": "5", "access_seen": "6", "access_kept": "4", "read_suppressed": "1",
-      "token_seen": "2", "token_suppressed": "1",
-      "distinct_tables": "2", "distinct_principals": "2"}),
+    # 1 summary + 3 resources (the table, __other__, the principals collection)
+    #           + 2 principals (root, alice)
+    ("the boundary tick emits the window", "tick", tick(T0 + 1800), EMIT, {
+        "nrec": "6",
+        "access_seen": "7", "access_kept": "3", "access_counted": "4",
+        "counted_get": "3", "counted_post": "1", "errors_kept": "1",
+        "distinct_resources": "3", "distinct_principals": "2",
+        "resources_other": "1", "principals_other": "0",
+        "tbl_requests": "5", "tbl_reads": "3", "tbl_writes": "2", "tbl_bytes": "175",
+        "other_errors": "1",
+        "root_requests": "6", "root_reads": "3", "root_writes": "3",
+        "alice_reads": "1",
+        "min_time": "2026-09-05T16:00:00Z", "max_time": "2026-09-05T16:06:00Z",
+        "schema": "1",
+        # the schema's own self-check: both margins must sum to the same total,
+        # and that total must be access_seen - parse_errors
+        "res_total": "7", "pri_total": "7",
+    }),
 
-    # counters reset on emit, so a quiet window reports zero rather than repeating
-    ("a quiet window reports zeros", "tick", tick(T0 + 3600), EMIT,
-     {"nrec": "1", "access_seen": "0", "access_kept": "0", "distinct_tables": "0"}),
+    # zero-carry: every key that was non-zero is emitted once more as an explicit 0,
+    # so a fall to nothing is a data point instead of a missing row
+    ("a quiet window carries the keys as zeros", "tick", tick(T0 + 3600), EMIT, {
+        "nrec": "6", "access_seen": "0", "distinct_resources": "3",
+        "tbl_requests": "0", "tbl_reads": "0", "root_requests": "0",
+    }),
+
+    # ...and the carry decays: a key that stayed zero is not carried again
+    ("the carry decays after one window", "tick", tick(T0 + 5400), EMIT, {
+        "nrec": "1", "access_seen": "0", "distinct_resources": "0",
+        "distinct_principals": "0", "tbl_requests": "<none>",
+    }),
 ]
 
-SUMMARY_FIELDS = ["access_seen", "access_kept", "read_suppressed", "token_seen",
-                  "token_suppressed", "distinct_tables", "distinct_principals"]
+SUMMARY_FIELDS = ["access_seen", "access_kept", "access_counted", "counted_get",
+                  "counted_post", "errors_kept", "parse_errors",
+                  "distinct_resources", "distinct_principals",
+                  "resources_other", "principals_other"]
+
+# (probe name, report_type, key field, key value, field to read)
+ROW_PROBES = [
+    ("tbl_requests",  "resource",  "resource", TBL, "requests"),
+    ("tbl_reads",     "resource",  "resource", TBL, "reads"),
+    ("tbl_writes",    "resource",  "resource", TBL, "writes"),
+    ("tbl_bytes",     "resource",  "resource", TBL, "response_bytes"),
+    ("tbl_kind",      "resource",  "resource", TBL, "resource_kind"),
+    ("other_errors",  "resource",  "resource", "__other__", "errors"),
+    ("root_requests", "principal", "user_principal_name", "root", "requests"),
+    ("root_reads",    "principal", "user_principal_name", "root", "reads"),
+    ("root_writes",   "principal", "user_principal_name", "root", "writes"),
+    ("alice_reads",   "principal", "user_principal_name", "alice", "reads"),
+]
+
+SUMMARY_STR = [("min_time", "min_record_time"), ("max_time", "max_record_time"),
+               ("schema", "schema_version")]
 
 
 def lua_binary():
@@ -203,6 +239,10 @@ def main():
         "local function q(v) if v==nil then return '<nil>' end return tostring(v) end",
         "local function nrec(r) if type(r)~='table' or r[1]==nil then return 0 end return #r end",
         "local function sf(r,k) if type(r)~='table' or r[1]==nil then return '<nil>' end return q(r[1][k]) end",
+        "local function rq(r,t,kf,kv,f) if type(r)~='table' or r[1]==nil then return '<nil>' end "
+        "for _,e in ipairs(r) do if e.report_type==t and e[kf]==kv then return q(e[f]) end end return '<none>' end",
+        "local function rsum(r,t,f) if type(r)~='table' or r[1]==nil then return '<nil>' end local n=0 "
+        "for _,e in ipairs(r) do if e.report_type==t then n=n+e[f] end end return q(n) end",
     ]
     for i, (_n, rec, _c, expect) in enumerate(PARSE_CASES):
         lines.append("local c%d,_,r%d = polaris_access_log('t', 0, %s)" % (i, i, tbl(rec)))
@@ -216,7 +256,13 @@ def main():
         lines.append("local s%d,_,q%d = polaris_noise_filter('%s', 0, %s)"
                      % (i, i, tag, tbl(payload)))
         want = ["'nrec='..nrec(q%d)" % i] + \
-               ["'%s='..sf(q%d, %s)" % (k, i, lit(k)) for k in SUMMARY_FIELDS]
+               ["'%s='..sf(q%d, %s)" % (k, i, lit(k)) for k in SUMMARY_FIELDS] + \
+               ["'%s='..sf(q%d, %s)" % (n, i, lit(f)) for n, f in SUMMARY_STR] + \
+               ["'res_total='..rsum(q%d,'resource','requests')" % i,
+                "'pri_total='..rsum(q%d,'principal','requests')" % i] + \
+               ["'%s='..rq(q%d, %s, %s, %s, %s)"
+                % (n, i, lit(t), lit(kf), lit(kv), lit(f))
+                for n, t, kf, kv, f in ROW_PROBES]
         lines.append("print('S', %d, s%d, %s)" % (i, i, ", ".join(want)))
 
     with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False) as fh:

@@ -5,17 +5,17 @@ everything else is a link into [`.memory/`](.memory/README.md).
 
 ## Now — 2026-09-04
 
-**Next:** `helm upgrade` the shipper to policy v2 —
-[`shipper-v2-upgrade-runbook.md`](shipper-v2-upgrade-runbook.md) is the whole procedure. Note
-the correction it carries: the Fluent Bit counters reset when the pod is replaced, so the
-pre-upgrade metrics sample is a **rate baseline, not a subtrahend**. Then re-run
+**Next:** run the v3 runbook. The counters reset when the pod is replaced, so the pre-upgrade
+metrics sample is a **rate baseline, not a subtrahend**. Then re-run
 `polaris-learning/log-coverage` — its characterization test is built to fail on a policy
 change, so read the diff and update it and `doc-log-coverage-results.md` together.
 
-**Written and NOT running:** `logging/fb-values.yaml` carries policy v2 and the flush report,
-one `helm upgrade` away; the cap on the principal-keyed dedup table is still Kade's to decide.
-The repo's recurring failure mode, entered knowingly this time — the account, the measurements
-and what was deferred are [`active-issues.md`](.memory/active-issues.md) **#14**.
+**Written and NOT running:** `logging/fb-values.yaml` carries policy **v3** and the flush
+report, one `helm upgrade` away — [`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md)
+is the whole procedure. Errors and mutations kept in full, successful reads and catalog POSTs
+counted only; **v2 was superseded before it was ever deployed**, and the dedup cap question went
+with it. The rule table, the report schema and what stays deferred are
+[`active-issues.md`](.memory/active-issues.md) **#14**.
 
 **Standing, and both outrank inference.** Polaris is not to be changed — it works and ships
 continuously (Kade's observation, over the reasoning in #11). And **verify against the running
