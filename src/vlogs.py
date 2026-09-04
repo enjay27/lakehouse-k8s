@@ -111,8 +111,8 @@ def parse_ndjson(text):
     return out
 
 
-def dedup_by_request_id(records):
-    """Collapse records that share an `mdc.requestId`, keeping the first.
+def dedup_replayed(records):
+    """Collapse records the shipper posted twice, keeping the first of each.
 
     NOT a tidy-up. The shipper's tail offset DB lives on an `emptyDir`
     (`local-k8s` roadmap step 2), so `helm upgrade` replaces the pod, the DB is
@@ -121,20 +121,40 @@ def dedup_by_request_id(records):
     counting them twice would turn a shipper upgrade into a false finding about
     the retention policy.
 
-    Records with no request id are all kept -- there is nothing to join on and
-    dropping them would be guessing.
+    THE KEY IS THE RECORD, NOT THE REQUEST. An earlier version of this keyed on
+    `mdc.requestId` and was badly wrong: one API call produces MANY records that
+    share a request id -- its access-log line plus every application log line
+    the request emitted (measured 2026-09-04: 15 records for a single
+    `list_catalogs`). Keying on the request id collapsed 2,049 records to 122,
+    capped every "stored" count at 1, reported 1,927 phantom duplicates, and
+    made `app_lines` zero for every row. `sequence` is the JBoss log sequence
+    number and is unique per record -- it is kept in the pipeline precisely so a
+    gap in ingestion is visible -- and `hostName` disambiguates it if Polaris
+    ever runs more than one replica.
+
+    Records with neither `sequence` nor a usable `_time`/`_msg` pair are all
+    kept: there is nothing to key on, and dropping them would be guessing.
     """
     seen, out = set(), []
     for r in records:
-        rid = r.get("mdc.requestId")
-        if not rid:
+        seq, host = r.get("sequence"), r.get("hostName")
+        if seq not in (None, ""):
+            key = ("seq", host, seq)
+        elif r.get("_time") and r.get("_msg"):
+            key = ("msg", r.get("_time"), r.get("_msg"))
+        else:
             out.append(r)
             continue
-        if rid in seen:
+        if key in seen:
             continue
-        seen.add(rid)
+        seen.add(key)
         out.append(r)
     return out
+
+
+#: Kept so an older notebook or script does not fail on import; the name is a
+#: trap and nothing new should use it.
+dedup_by_request_id = dedup_replayed
 
 
 def is_access_log(record):
@@ -159,17 +179,32 @@ def status_of(record):
         return None
 
 
-def status_field_is_numeric(record):
-    """Is `http_status` stored as a number or a string in THIS deployment?
+def numeric_status_filters_work(client, since="24h"):
+    """Does `http_status:>=400` actually match anything? Returns (bool, detail).
 
-    Returns "number", "string" or None. Cell 0 reports it, and every LogsQL
-    filter that compares a status is written against the answer.
+    THE JSON TYPE CANNOT ANSWER THIS, and an earlier version of this module
+    tried. VictoriaLogs returns every field value as a JSON string on
+    `/select/logsql/query` regardless of how it indexed it, so a type check on a
+    returned record always says "string" and says nothing at all about whether
+    `type_int_key` took effect. The 2026-09-04 run reported `http_status stored
+    as string` on that basis and it was meaningless.
+
+    The question that matters is the operational one -- do numeric LogsQL
+    filters find the errors -- so ask it directly: compare a numeric range
+    filter against an exact-match filter over the same window. If the range
+    finds nothing where the exact match finds plenty, `type_int_key` is not in
+    effect and every status-range query in the spec's recipes is silently empty.
     """
-    v = record.get("http_status")
-    if v is None:
-        return None
-    numeric = isinstance(v, (int, float)) and not isinstance(v, bool)
-    return "number" if numeric else "string"
+    exact = client.count(
+        and_(app_polaris(), field_eq("http_status", "404")), start=since, limit=1000
+    )
+    ranged = client.count(
+        and_(app_polaris(), "http_status:>=400"), start=since, limit=1000
+    )
+    if exact == 0 and ranged == 0:
+        return None, f"no 4xx in the last {since} to test with"
+    ok = ranged > 0
+    return ok, f'http_status:>=400 -> {ranged};  http_status:"404" -> {exact}'
 
 
 def parse_fluentbit_metrics(text):

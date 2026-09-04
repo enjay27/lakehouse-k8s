@@ -112,6 +112,47 @@ def test_a_zero_byte_body_is_written_as_a_dash():
     assert lc.access_log_line("DELETE", "/api/x", 204, size=0).endswith('" 204 -')
 
 
+def test_deployed_policy_status_catches_a_policy_that_was_never_installed():
+    #: THE 2026-09-04 FINDING, as a regression. fb-values.yaml gained
+    #: polaris_noise_filter at 08:26:18Z; the shipper pod had been up since
+    #: 08:04:06Z. Parser live, policy absent, nothing dropped -- and the run
+    #: could only work that out from the shape of its own results.
+    class P:
+        script = "function polaris_noise_filter(t, ts, r) return 0 end"
+
+    cm = "data:\n  polaris_access_log.lua: |\n    function polaris_access_log() end\n"
+    verdict, detail = lc.deployed_policy_status(cm, P())
+    assert verdict is False and "never been applied" in detail
+
+
+def test_deployed_policy_status_accepts_a_reindented_configmap():
+    #: Helm re-emits the block with its own indentation; a byte comparison would
+    #: cry wolf on every run.
+    class P:
+        script = "function polaris_noise_filter(t, ts, r)\n  return 0\nend"
+
+    cm = ("data:\n  x.lua: |\n      function polaris_noise_filter(t, ts, r)\n"
+          "        return 0\n      end\n")
+    assert lc.deployed_policy_status(cm, P())[0] is True
+
+
+def test_deployed_policy_status_says_unknown_when_kubectl_is_absent():
+    class P:
+        script = "x"
+
+    assert lc.deployed_policy_status(None, P())[0] is None
+
+
+def test_a_configmap_carrying_a_stale_filter_is_not_a_match():
+    class P:
+        script = "function polaris_noise_filter() return -1 end"
+
+    verdict, detail = lc.deployed_policy_status(
+        "polaris_noise_filter -- but an older one, returning 0", P()
+    )
+    assert verdict is False and "edited since the last helm upgrade" in detail
+
+
 # ------------------------------------------------------------- the oracle
 def _policy():
     if lc.resolve_fb_values() is None:

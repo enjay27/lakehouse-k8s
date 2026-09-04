@@ -168,6 +168,82 @@ def load_policy(fb_values_path=None, key=LUA_KEY):
     )
 
 
+def deployed_policy_status(configmap_yaml, policy, key=LUA_KEY):
+    """Is the policy in the values file the policy that is RUNNING?
+
+    Returns (verdict, detail) where verdict is True (the ConfigMap carries the
+    same script), False (it does not), or None (could not tell -- no kubectl,
+    or nothing recognisable in the YAML).
+
+    WHY THIS GUARD EXISTS, AND IT IS NOT HYPOTHETICAL. On its first run
+    (2026-09-04) this notebook reported that NOTHING was dropped: 20 identical
+    table GETs all stored, every successful POST stored, the OAuth token
+    exchange stored. The retention policy was not broken -- it had never been
+    installed. `logging/fb-values.yaml` gained `polaris_noise_filter` in commit
+    2120ed9 at 08:26:18Z on 2026-09-03; the shipper pod had been running since
+    08:04:06Z, from commit 60b94d9, which has the access-log parser and no noise
+    filter. Parsed fields present, zero drops -- exactly what was measured.
+
+    That is this repo's signature failure (`local-k8s` `.memory/README.md`:
+    *written is not live*), and a coverage matrix taken against an undeployed
+    policy is a statement about a pipeline nobody is running. So the notebook
+    checks the ConfigMap before it drives anything, rather than discovering it
+    from the shape of the results afterwards.
+
+    Compared on whitespace-normalised text, because Helm re-emits the block
+    with its own indentation and a byte comparison would cry wolf every time.
+    """
+    if not configmap_yaml:
+        return None, "kubectl unavailable -- cannot tell what is deployed"
+    if "polaris_noise_filter" not in configmap_yaml:
+        return False, (
+            "the running ConfigMap has NO polaris_noise_filter. The retention "
+            "policy in fb-values.yaml has never been applied -- reinstall with\n"
+            "    helm upgrade --install fb-polaris-shipper fluent/fluent-bit \\\n"
+            "      --version 0.58.1 -n datahub-hynix -f logging/fb-values.yaml"
+        )
+
+    def norm(t):
+        return " ".join(t.split())
+
+    want = norm(policy.script)
+    have = norm(configmap_yaml)
+    if want in have:
+        return True, "the running ConfigMap carries this exact script"
+    return False, (
+        "the running ConfigMap has A polaris_noise_filter, but not the one in "
+        "fb-values.yaml -- the file has been edited since the last helm upgrade"
+    )
+
+
+def events_table(conn):
+    """Find and count the eventListener's audit table, whatever schema it is in.
+
+    NOT `public.events`. Polaris creates its objects in `POLARIS_SCHEMA`
+    (`api_trace` already knows this), and looking in `public` reports "no events
+    table in this metastore" for a table that is right there -- which the
+    2026-09-04 run did.
+
+    Returns a dict with `schema`, `rows` and `sample`, or `note` when there is
+    nothing to find.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT table_schema FROM information_schema.tables "
+            "WHERE lower(table_name) = 'events' ORDER BY table_schema LIMIT 1"
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"note": "no table named `events` in any schema of this metastore"}
+        schema = row[0]
+        cur.execute(f'SELECT count(*) FROM "{schema}".events')
+        rows = cur.fetchone()[0]
+        cur.execute(f'SELECT * FROM "{schema}".events LIMIT 3')
+        cols = [d[0] for d in cur.description]
+        sample = [dict(zip(cols, r)) for r in cur.fetchall()]
+    return {"schema": schema, "rows": rows, "sample": sample}
+
+
 def _lua_literal(value):
     if isinstance(value, bool):
         return "true" if value else "false"

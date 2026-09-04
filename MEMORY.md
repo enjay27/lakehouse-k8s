@@ -4,34 +4,35 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-04
+## Now — 2026-09-04 (run 1)
 
 **Read [`log-coverage/PLAN-log-coverage.md`](log-coverage/PLAN-log-coverage.md) first — standalone.**
 
-Handed over from `local-k8s` roadmap step 2: drive every Polaris API, then report what the
-Fluent Bit → VictoriaLogs pipeline stored and what it discarded. **Built, not yet run** —
-`log-coverage/polaris_log_coverage.ipynb` cells 0–10, new `src/vlogs.py` + `src/log_coverage.py`,
-and `extra_headers` on `PolarisREST`/`IcebergREST` for per-call `Polaris-Request-Id`.
+**THE RETENTION POLICY HAS NEVER BEEN DEPLOYED, and the notebook's first run proved it.**
+Nothing is dropped: 20 identical table GETs → **20 stored**, three successful OAuth token
+requests → **3 stored**, every `create_principal` / rename / credential reset → **stored**.
+0 of 34 expected drops actually dropped. `logging/fb-values.yaml` gained `polaris_noise_filter`
+in `local-k8s` commit **2120ed9 at 08:26:18Z on 2026-09-03**; the shipper pod has been up since
+**08:04:06Z**, from **60b94d9**, which carries the access-log parser and no noise filter. Parsed
+fields present, zero drops — exactly what was measured. `helm upgrade` was never run.
+**This is the repo's signature failure — written is not live — caught empirically.**
 
-**MEASURED offline against the deployed Lua** (`fb-values.yaml` sha256 `b56c135b87d6281b…`,
-under `luatex --luaonly`): **10 mutations produce no record at all** — 8 of the 43 driven
-operations plus the fixture's `POST /v1/catalogs` and the token exchange. The source plan names
-one (principals created invisibly, deleted visibly); the two it misses matter more —
-**`POST /v1/principals/{p}/reset`, so a credential reset leaves no trace**, and both rename
-endpoints, whose paths carry no `/namespaces/{ns}/tables` segment. Rule 5's drop was aimed at
-the OAuth endpoint and its blast radius was never bounded to it.
+Settled by the same run: **`Polaris-Request-Id` IS honoured** end to end, so correlation is
+EXACT (one `list_catalogs` → **15 records** sharing the id: its access-log line plus 14 DEBUG
+SQL lines). Client-side latency, the only source there is with no `%D`: median ~18 ms, and
+`mgmt.reset_principal_credentials` → **403** as root, the "admin is not a superset" finding
+again. **8 ERROR records, none carrying an `exception` object** — pending the raw-file check.
 
-The expected column is not a table anyone typed — `log_coverage.Policy` runs the filter out of
-the values file, with **no Python re-implementation to fall back on**. 111 tests green under a
-stand-in runner; **`pytest`/`black`/`isort` could not be run — no package index from Cowork.**
+**Fixed after the run, all mine:** the replay dedup keyed on `mdc.requestId`, which collapsed
+2,049 records to 122 and capped every `stored` at 1 — it now keys on `(hostName, sequence)`;
+the 403 case used a client that was never tagged, so its record was invisible; the
+`http_status` type check was meaningless (VictoriaLogs returns every field as a string) and now
+runs a real numeric LogsQL filter; the `events` lookup searched `public` instead of
+`POLARIS_SCHEMA`. Cell 0 now **aborts** when the ConfigMap does not carry the policy. 117 tests
+green under the stand-in runner; **`pytest`/`black`/`isort` still not runnable from Cowork.**
 
-Still true from the API→SQL matrix, and it is the same endpoint twice over: **1 refused =
-`reset_principal_credentials`, so admin is NOT a superset** — and that call is also one of the
-ten this pipeline does not record. Detail in
-[`HANDOFF-api-index-matrix.md`](diagnostics/api-sql-profile/HANDOFF-api-index-matrix.md).
-
-**Open:** the notebook has never touched the cluster; whether `mdc.requestId` round-trips is
-still `[assumed]`, and is cell 1's first question.
+**Next:** `helm upgrade` the shipper in `local-k8s`, then re-run. Until then no number in
+`doc-log-coverage-results.md` describes the intended pipeline.
 
 ## Where the detail is
 

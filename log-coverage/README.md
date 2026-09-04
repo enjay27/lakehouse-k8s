@@ -107,14 +107,42 @@ what today's policy does and is *expected to fail when the policy changes*. When
 the diff it prints, decide the change was intended, and update the test and
 `doc-log-coverage-results.md` together — a report nobody updated is worse than no report.
 
-## Result
+## Result — run 1, 2026-09-04: the policy is not running
 
-Not yet run. `doc-log-coverage-results.md` appears here after the first full pass; until then
-every claim in this directory about the live cluster is `NOT VERIFIED`.
+**Nothing is dropped.** 0 of 34 expected drops dropped: 20 identical table GETs → 20 stored,
+three successful token requests → 3 stored, every create / rename / credential reset → stored.
 
-What is already verified, offline, against the deployed `fb-values.yaml`: the ten dropped
-mutations above, and every policy-probe expectation in the notebook — 36 tests in
-`test_vlogs.py` and `test_log_coverage.py`.
+The policy is not broken; it has never been installed. `logging/fb-values.yaml` gained
+`polaris_noise_filter` in `local-k8s` commit `2120ed9` at **08:26:18Z on 2026-09-03**. The
+shipper pod has been running since **08:04:06Z**, from `60b94d9` — which carries the access-log
+parser and `record_modifier` and no noise filter. That predicts exactly what was measured:
+parsed fields present, nothing dropped. `helm upgrade` was never run.
+
+So the table above is still what the policy *says*; none of it is what the pipeline *does*.
+**Cell 0 now aborts** when the running ConfigMap does not carry the policy, rather than leaving
+it to be inferred from the shape of the results.
+
+Settled by the same run, and these do not depend on the policy:
+
+- **`Polaris-Request-Id` is honoured end to end** — correlation is EXACT. One `list_catalogs`
+  produces **15 records** sharing the id: its access-log line plus 14 application lines. The
+  architecture spec's §7 end-to-end trace query works today.
+- **Client-side latency**, the only source there is with no `%D`: 122 calls, median ~18 ms,
+  slowest ~77 ms. Ingest lag to first record: **2.0 s**.
+- **8 ERROR records, none carrying an `exception` object.** Not yet a verdict — it does not
+  separate "Quarkus never logged the throwable" from "the pipeline dropped it". Settle it
+  against the raw file:
+  `kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- grep -c stackTrace /deployments/logs/polaris.log`
+- **`mgmt.reset_principal_credentials` → 403 even as root**, reproducing the "admin is not a
+  superset" finding — and it is also one of the calls the policy would discard.
+
+Three of run 1's apparent findings were harness bugs and are fixed: the replay dedup keyed on
+`mdc.requestId` (one call is many records, so 2,049 collapsed to 122 and every `stored` capped
+at 1), the 403 case used a client that was never tagged, and the `http_status` type check was
+meaningless because VictoriaLogs returns every field as a string. 117 tests green.
+
+**Next:** `helm upgrade` the shipper, then re-run. Treat that upgrade as a change, not a fix —
+it switches on a filter that has never executed once.
 
 ## Files
 

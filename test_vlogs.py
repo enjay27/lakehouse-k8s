@@ -54,18 +54,35 @@ def test_parse_ndjson_raises_on_garbage_rather_than_reporting_zero_records():
 
 
 # ------------------------------------------------------------ dedup/read
-def test_dedup_by_request_id_keeps_the_first_of_each():
+def test_dedup_replayed_keys_on_the_record_not_the_request():
+    #: THE REGRESSION. One API call emits many records sharing a request id --
+    #: its access-log line plus every application line it produced. Keying on
+    #: the request id collapsed 2,049 records to 122 on 2026-09-04, capped every
+    #: "stored" count at 1 and reported 1,927 phantom duplicates.
     recs = [
-        {"mdc.requestId": "a", "n": 1},
-        {"mdc.requestId": "a", "n": 2},
-        {"mdc.requestId": "b", "n": 3},
+        {"mdc.requestId": "a", "sequence": "1", "hostName": "p", "loggerName": "sql"},
+        {"mdc.requestId": "a", "sequence": "2", "hostName": "p", "loggerName": "sql"},
+        {"mdc.requestId": "a", "sequence": "3", "hostName": "p",
+         "loggerName": vlogs.ACCESS_LOGGER},
     ]
-    assert [r["n"] for r in vlogs.dedup_by_request_id(recs)] == [1, 3]
+    assert len(vlogs.dedup_replayed(recs)) == 3
 
 
-def test_dedup_keeps_every_record_that_has_no_request_id():
-    recs = [{"n": 1}, {"n": 2}]
-    assert len(vlogs.dedup_by_request_id(recs)) == 2
+def test_dedup_replayed_collapses_a_shipper_replay():
+    #: A replayed record is the SAME record posted twice -- same sequence, same
+    #: host. That is what `Read_from_Head true` on a fresh tail DB produces.
+    one = {"sequence": "4168", "hostName": "polaris-0", "_msg": "x"}
+    assert len(vlogs.dedup_replayed([one, dict(one), dict(one)])) == 1
+
+
+def test_dedup_replayed_falls_back_to_time_and_message():
+    a = {"_time": "2026-09-04T01:00:00Z", "_msg": "same"}
+    b = {"_time": "2026-09-04T01:00:00Z", "_msg": "different"}
+    assert len(vlogs.dedup_replayed([a, dict(a), b])) == 2
+
+
+def test_dedup_replayed_keeps_what_it_cannot_key():
+    assert len(vlogs.dedup_replayed([{"n": 1}, {"n": 2}])) == 2
 
 
 def test_status_of_reads_both_the_number_and_the_string_form():
@@ -78,10 +95,21 @@ def test_status_of_reads_both_the_number_and_the_string_form():
     assert vlogs.status_of({}) is None
 
 
-def test_status_field_is_numeric_reports_which_form_this_deployment_stores():
-    assert vlogs.status_field_is_numeric({"http_status": 200}) == "number"
-    assert vlogs.status_field_is_numeric({"http_status": "200"}) == "string"
-    assert vlogs.status_field_is_numeric({}) is None
+def test_numeric_status_filters_are_tested_by_QUERY_not_by_json_type():
+    #: VictoriaLogs hands every field back as a JSON string whatever it indexed,
+    #: so a type check on a returned record always says "string" and answers
+    #: nothing -- the 2026-09-04 run reported exactly that and it meant nothing.
+    #: Ask the operational question instead: does the range filter match?
+    class C:
+        def __init__(self, ranged, exact):
+            self.ranged, self.exact = ranged, exact
+
+        def count(self, q, **kw):
+            return self.ranged if ">=400" in q else self.exact
+
+    assert vlogs.numeric_status_filters_work(C(7, 3))[0] is True
+    assert vlogs.numeric_status_filters_work(C(0, 3))[0] is False
+    assert vlogs.numeric_status_filters_work(C(0, 0))[0] is None
 
 
 def test_is_access_log_discriminates_on_the_logger():

@@ -121,3 +121,76 @@ Run the notebook. In order: the two port-forwards, `./fetch_specs.sh`, then Rest
 Cell 1 decides whether the whole correlation design holds. Then `pytest && black . && isort .`,
 which this session could not run, and finally re-scope `local-k8s` roadmap 4b from "the
 create/delete asymmetry" to the number.
+
+---
+
+# Run 1, the same day: the harness found the repo's signature failure on its first pass
+
+Kade ran all cells. The result was not a coverage matrix — it was a config finding.
+
+**Nothing was dropped.** 20 identical table GETs stored 20 records. Three successful OAuth
+token requests stored 3. Every `create_principal`, both renames, `update_namespace_properties`
+and the credential reset stored. 0 of 34 expected drops dropped, while every "keep" rule
+behaved perfectly.
+
+That combination has exactly one explanation, and the git history confirms it rather than
+merely allowing it: `logging/fb-values.yaml` gained `polaris_noise_filter` in `local-k8s`
+commit **2120ed9 at 2026-09-03T08:26:18Z**; the shipper pod has been running since
+**08:04:06Z** — 22 minutes earlier — from **60b94d9**, which carries `polaris_access_log` and
+`record_modifier` and no noise filter. Parsed fields present, zero drops. No `helm upgrade`
+since the policy was written.
+
+**This is `local-k8s`'s signature failure, and the notebook caught it the only way it can be
+caught: by asking the running system.** `local-k8s/CLAUDE.md` says it in as many words —
+*never confirm a setting by reading the values file* — and the file's own header says the Lua
+block is "new". The harness was built entirely against that file and the file was honest; what
+was missing was anyone asking whether it had been applied.
+
+The lesson has been made structural rather than remembered: **cell 0 now reads the running
+ConfigMap and aborts** when it does not carry the policy, with the `helm upgrade` line in the
+message. `lc.deployed_policy_status` compares whitespace-normalised text, so Helm's
+re-indentation does not cry wolf, and it distinguishes "no filter at all" from "a different
+filter than the file has".
+
+## Three of run 1's findings were mine
+
+Worth writing down because each looked exactly like a pipeline fault.
+
+1. **The replay dedup keyed on `mdc.requestId`.** One API call produces MANY records that share
+   a request id — measured in cell 1: a single `list_catalogs` yields **15**, its access-log
+   line plus 14 DEBUG SQL lines. Keying on the request id collapsed 2,049 records to 122,
+   capped every `stored` count at 1, reported **1,927 phantom duplicates** and made `app_lines`
+   zero on every row. The key is the RECORD: `(hostName, sequence)`, with `sequence` being the
+   JBoss log sequence number the pipeline keeps precisely so a gap is visible.
+2. **The 403 case used a client that was never tagged.** `denied_ic` was not in the client list
+   passed to `call_once`, so that request carried no `Polaris-Request-Id`, could not be found
+   afterwards, and the matrix reported `EXPECTED STORED, ABSENT` — a harness gap wearing a
+   finding's clothes, the same shape as the 2026-09-01 "authorized" drive that was really a
+   second unauthorized one.
+3. **The `http_status` type check was meaningless.** It reported "stored as string" and that
+   said nothing: VictoriaLogs hands every field back as a JSON string on
+   `/select/logsql/query` whatever it indexed. The question that matters is operational — does
+   `http_status:>=400` match where `http_status:"404"` does — and it is now asked that way.
+
+A fourth, smaller: the `events` lookup searched `public` and reported "no events table in this
+metastore". Polaris creates its objects in `POLARIS_SCHEMA`.
+
+## What run 1 settled anyway
+
+- **`Polaris-Request-Id` round-trips.** The plan's one genuinely open `[assumed]`, closed in
+  minute one exactly as intended. Correlation mode EXACT.
+- **Latency, client-side**: 122 calls, median ~18 ms, slowest ~77 ms. The evidence for `%D`.
+- **8 ERROR records, none with an `exception` object.** Not a verdict yet — the raw file has to
+  be checked to separate "Polaris never logged the throwable" from "the pipeline dropped it".
+- **`create_catalog_no_endpoint` no longer provokes a 500** on this cluster (201, then 200), so
+  `error-cases/09` is stale and the stack-trace probe fell back to the drive's own two 500s —
+  the known PG-HA read-after-write signature.
+- **`mgmt.reset_principal_credentials` → 403 as root**, reproducing "admin is not a superset"
+  from a completely different direction.
+
+## Next
+
+`helm upgrade` the shipper, then re-run. **Treat that upgrade as a change, not a fix**: it
+switches on a filter that has never executed once, and `local-k8s` #F2 is the record of what
+happens when configuration that never ran is enabled without reading it line by line against
+the defaults it replaces.
