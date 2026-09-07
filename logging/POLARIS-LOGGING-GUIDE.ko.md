@@ -548,6 +548,30 @@ exception.refId
 
 **[검증됨]** 실행 `1788760757`에서 WARN/ERROR 레코드 **8건 중 8건**이 예외 페이로드를 갖고 있었다.
 
+#### `IcebergExceptionMapper`는 두 층위를 내보낸다 ★
+
+이 로거 하나가 **서로 다른 두 종류의 줄**을 만든다. 레벨이 그 구분이다.
+
+| `level` | `_msg` | 대상 | 무엇이 들어 있나 |
+|---|---|---|---|
+| `INFO` | `Handling runtimeException <실제 사유>` | **매핑된 4xx 전부** (404·403·409·405·400·422) | **사유가 문장으로.** 접근 로그에는 없는 정보 |
+| `ERROR` | `Unhandled exception returning INTERNAL_SERVER_ERROR` | **500만** | `_msg`는 일반 문구뿐. 실제 내용은 구조화된 `exception.*` |
+
+**둘 다 `exception.*` 페이로드를 갖는다.** 500만 예외 객체를 남기는 것이 아니다 — 실행 `1788760757`에서 처리된 4xx 48건도 예외 필드를 갖고 있었다.
+
+INFO 줄이 왜 중요한가. 접근 로그는 `403`과 경로까지만 알려준다. **무엇이 거부됐는지는 이 줄에만 있다.**
+
+```
+Principal 'nb_1788760757_denied' with activated PrincipalRoles '[nb_1788760757_denied_role]'
+and activated grants via '[nb_1788760757_denied_role]' is not authorized for op LOAD_TABLE
+```
+
+`op LOAD_TABLE`, principal, 활성 role — 403 조사에 필요한 전부다. `Only Root principal(service-admin) can perform RESET_CREDENTIALS`, `The specified bucket does not exist (Status Code: 404, Request ID: …)`, `Failed to get subscoped credentials: UnknownHostException …`도 같다.
+
+> ⚠ **이 로거의 레벨을 ERROR로 올리지 말 것.** 500은 ERROR 줄만으로 충분하지만(예외 객체를 갖고 있으므로), **4xx의 사유는 통째로 사라진다.** `polaris/values.yaml`이 `org.apache.polaris.service.catalog: DEBUG`를 "403 조사용"으로 켜 둔 목적과 정면으로 충돌한다. 용량 근거도 없다 — 4xx 하나당 한 줄, 실행 `1788760757` 기준 2,824 레코드 중 약 67줄(**2.4%**)이다.
+>
+> OpenSearch 화면에서는 `_msg`만 보이고 ERROR 줄의 `_msg`가 `Unhandled exception returning INTERNAL_SERVER_ERROR`뿐이라 INFO 줄이 유일한 정보처럼 보인다. 실제로는 500의 내용도 `exception.*`에 온전히 있다. **`_msg`만 보고 판단하지 말 것.**
+
 ### 6.3 플러시 리포트 — 개요
 
 `dummy` INPUT이 5초마다 틱을 보내고, `WINDOW_SECONDS` 경계에서 필터가 그 틱을 **레코드 배열**로 치환하고 카운터를 리셋한다. Fluent Bit이 배열을 개별 레코드로 쪼갠다.
@@ -745,33 +769,56 @@ q 'app:polaris http_status:>=500' | jq -c .
 
 ### 7.2 조사 시나리오
 
+**모든 예제에 `level`을 포함시켰다.** 같은 로거가 INFO와 ERROR를 모두 내보내므로(§6.2), 레벨이 보이지 않으면 결과를 잘못 읽는다.
+
 ```bash
 # 특정 요청이 남긴 모든 줄 (접근 로그 + 애플리케이션 로그)
-q 'app:polaris mdc.requestId:"nb-1788760757-006-iceberg-create_namespace"'
+q 'app:polaris mdc.requestId:"nb-1788760757-006-iceberg-create_namespace"
+   | fields _time, level, loggerName, http_status, _msg'
 
 # 어떤 principal이 무엇을 했는가 — 저장된 것만
-q 'app:polaris user_principal_name:"nb_1788760757_denied" | fields _time, http_method, api_path, http_status'
+q 'app:polaris user_principal_name:"nb_1788760757_denied"
+   | fields _time, level, http_method, api_path, http_status'
 
 # 인가 실패 전부
 q 'app:polaris http_status:403 OR http_status:401
-   | stats by (user_principal_name, api_path) count() as n'
+   | stats by (level, user_principal_name, api_path) count() as n'
 
-# 500 과 그 스택 트레이스
-q 'app:polaris http_status:500 | fields _time, http_method, api_path, user_principal_name'
+# 403이 "왜" 거부됐는가 — 접근 로그에는 없는 정보. INFO 줄에만 있다
+q 'app:polaris level:INFO
+   loggerName:"org.apache.polaris.service.exception.IcebergExceptionMapper"
+   _msg:"not authorized for op"
+   | fields _time, level, _msg, mdc.requestId'
+
+# 500만 보기 — 이 로거의 ERROR 줄이 곧 500이다
 q 'app:polaris level:ERROR
-   | fields _time, loggerName, exception.exceptionType, exception.message, mdc.requestId'
+   loggerName:"org.apache.polaris.service.exception.IcebergExceptionMapper"
+   | fields _time, level, exception.exceptionType, exception.message, mdc.requestId'
+
+# 500의 접근 로그 쪽 절반 — 어떤 엔드포인트였는가
+q 'app:polaris http_status:500
+   | fields _time, level, http_method, api_path, user_principal_name'
+
+# 한 로거의 두 층위를 나란히 — INFO 사유와 ERROR 500이 어떻게 짝을 이루는지
+q 'app:polaris loggerName:"org.apache.polaris.service.exception.IcebergExceptionMapper"
+   | fields _time, level, _msg, exception.exceptionType, mdc.requestId'
 
 # 자격증명 리셋 — v2에서는 흔적이 남지 않던 바로 그 호출
-q 'app:polaris api_path:"/reset" http_method:POST'
+q 'app:polaris api_path:"/reset" http_method:POST
+   | fields _time, level, user_principal_name, http_status'
 
 # 파서가 깨졌는지 — 정기 점검 항목
-q 'app:polaris access_log_parse_error:true | stats count()'
+q 'app:polaris access_log_parse_error:true | stats by (level) count() as n'
 
-# 저장 용량을 무엇이 차지하는가
-q 'app:polaris | stats by (loggerName) count() as n'
+# 저장 용량을 무엇이 차지하는가 — 레벨별로 나누면 어디가 시끄러운지 바로 보인다
+q 'app:polaris | stats by (loggerName, level) count() as n | sort by (n) desc'
 ```
 
+> 접근 로그 레코드는 `io.quarkus.http.access-log`가 INFO로 남기므로 **`level`이 항상 `INFO`다.** 애플리케이션 레코드에서만 레벨이 실제로 갈린다.
+
 ### 7.3 리포트 스트림 집계
+
+리포트 스트림의 레코드는 **`level`이 항상 `REPORT`다** — 그것이 스트림 선택자이기 때문이다. 심각도로 읽을 값이 아니며, 구분자는 `report_type`이다.
 
 ```bash
 R='app:polaris-shipper-report schema_version:2'
