@@ -925,3 +925,28 @@ def test_correlation_counts_only_the_calls_it_claims_to():
     assert c["missing"] == ["nb-9-002-b"]
     #: the probe's id is counted apart rather than inflating the numerator
     assert c["other_ids"] == 1
+
+
+def test_a_structured_exception_is_found_whatever_the_store_called_it():
+    #: THE MISTAKE THIS EXISTS FOR. On 2026-09-07 the run reported "0 of 5
+    #: WARN/ERROR records carried an exception object" and `grep -c stackTrace`
+    #: on the source log returned 0, and the two were read as corroborating
+    #: each other. They were the same error twice: this build emits Quarkus's
+    #: STRUCTURED exception output -- an object with a `frames` array of
+    #: {class, method, line} -- so there is no `stackTrace` string to grep for,
+    #: and `"exception" in record` fails once a store flattens the object.
+    nested = {"level": "ERROR", "exception": {"exceptionType": "java.lang.NullPointerException",
+                                              "frames": [{"class": "C", "method": "m", "line": 1}]}}
+    flattened = {
+        "level": "ERROR",
+        "exception.exceptionType": "java.lang.NullPointerException",
+        "exception.frames": '[{"class": "C"}]',
+    }
+    assert lc.exception_fields(nested) == ["exception"]
+    assert lc.exception_fields(flattened) == ["exception.exceptionType", "exception.frames"]
+    #: the `formatted` output type puts the trace in a value, not a named field
+    formatted = {"level": "ERROR", "_msg": "boom\n\tat org.apache.polaris.C.m(C.java:1)"}
+    assert lc.exception_fields(formatted) == ["_msg (formatted trace in the value)"]
+    #: and a message that merely mentions one is not a trace
+    assert lc.exception_fields({"_msg": "Unhandled exception returning 500"}) == []
+    assert lc.exception_fields(None) == []

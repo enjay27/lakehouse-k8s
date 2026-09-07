@@ -2103,3 +2103,40 @@ def correlation_stats(stored, calls, id_field="mdc.requestId"):
         "missing": sorted(ids - seen),
         "other_ids": len(seen - ids),
     }
+
+
+#: Substrings of a FIELD NAME that mean the field carries a throwable. Matched
+#: against keys only -- a message mentioning an exception is not one.
+EXCEPTION_KEY_HINTS = ("exception", "stacktrace", "stack_trace", "throwable", "frames")
+
+
+def exception_fields(record):
+    """The field names in `record` that carry a throwable -- NAMES, not a bool.
+
+    A NAME IS NOT A SHAPE, AND THIS IS THE MISTAKE THIS FUNCTION EXISTS FOR.
+    On 2026-09-07 this notebook reported "0 of 5 WARN/ERROR records carried an
+    exception object" and a `grep -c stackTrace` on the source log returned 0,
+    and the two were read as corroboration. They were the same error twice:
+    this build emits Quarkus's **structured** exception output -- an object
+    carrying a `frames` array of `{class, method, line}` -- so there is no
+    `stackTrace` string to grep for, and `"exception" in record` fails against
+    a nested object that a store has flattened into `exception.frames` /
+    `exception.exceptionType`. The traces were there the whole time.
+
+    So this returns the names it found and the caller reports them. A check
+    that can only say yes or no cannot tell "absent" from "looked for the wrong
+    name", and the two have opposite remedies: one is a logging change, the
+    other is a one-line fix here.
+
+    Covers the shapes this pipeline can produce: a nested or flattened object
+    under any of `EXCEPTION_KEY_HINTS`, and a `formatted` trace sitting as text
+    inside some other field's value.
+    """
+    found = []
+    for key, value in (record or {}).items():
+        lowered = str(key).lower()
+        if any(hint in lowered for hint in EXCEPTION_KEY_HINTS):
+            found.append(str(key))
+        elif isinstance(value, str) and ("\n\tat " in value or ".java:" in value):
+            found.append(f"{key} (formatted trace in the value)")
+    return sorted(found)

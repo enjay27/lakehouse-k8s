@@ -16,10 +16,14 @@ distinct mixes; 6 of 6 management POSTs; volume reconciles exactly. What remains
 is entirely the notebook's own fixture setup and teardown, which are not in `ALL_CALLS` — the
 last structural gap between oracle and pipeline.
 
-**STACK TRACES: there are none to lose.** `grep -c stackTrace` on the source log returns **0**,
-so the pipeline is not dropping them — **Polaris never writes them**, and the remedy is a
-Quarkus encoder setting, not a retention one. Every 500 here reaches VictoriaLogs as one line
-with no exception class, message or cause: **undiagnosable from logs alone.**
+**STACK TRACES: the "none exist" finding was WRONG and is retracted.** Polaris emits Quarkus's
+**structured** exception output — an object with a `frames` array of `{class, method, line}` —
+so `grep -c stackTrace` found nothing for the same reason the notebook reported `0 of 5`:
+**both searched for a name this build does not use, and agreeing with each other was not
+corroboration.** `lc.exception_fields` now reports the field NAMES, since absence and a
+mis-named search have opposite remedies. **Open again, and unmeasured:** whether the payload is
+in the log FILE (as opposed to container stdout, which reaches OpenSearch by another path), and
+whether it survives into VictoriaLogs. Only the second is about the pipeline under test.
 
 **THE DROP COUNTER now works.** Fluent Bit's Prometheus encoder appends a millisecond timestamp
 after the sample value and the parser was reading it as the value (hence 7,154,980,971,680).
