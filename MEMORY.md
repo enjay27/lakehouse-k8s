@@ -4,39 +4,41 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-07 (session 8, run 2 of v3)
+## Now — 2026-09-07 (session 8, run 3 of v3)
 
 **Read [`log-coverage/PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md) first — standalone.**
 
-**Run 2 (`1788744260`, 146 calls) settled the question run 1 left open: the 66 fixture
-mismatches were NOT the pipeline disagreeing with the deployed Lua.** 34 were `_stream` /
-`_stream_id`, which VictoriaLogs adds on the way out and the oracle cannot have; 5 were rows
-the oracle never could predict; 21 were count deltas, **every one `stored > oracle`**, all of
-them the notebook's own untagged fixture setup and cleanup. **Zero mismatches in the direction
-that would mean a lost record.**
+**Run 3 (`1788745242`) is the first run whose report can be checked against itself throughout.**
+The fixture diff is down to **30** with **0** metadata lines and, for the second run running,
+**0 mismatches in the direction that would mean a lost record**; all four named assertions
+PASS; the margin holds across four principals with distinct mixes; 6 of 6 management POSTs;
+volume reconciles exactly. What remains in that diff is entirely the notebook's own fixture
+setup and teardown, which are not in `ALL_CALLS` — the last structural gap, and the only thing
+between it and a strict assertion.
 
-**Also measured, for the first time:** the margin equality with content — four principals, none
-carrying the total, `249 == access_seen - parse_errors`; **6 of 6** management POSTs (5 by
-rule 5, the 403 `reset` by rule 3); volume reconciling exactly (2,416 = 2,408 + 8 + 0) with
-**only 2.2% of stored records access-log** and `DatasourceOperations` at 61%; the multi-window
-merge running live across 3 windows; and `type_int_key` settled (`>=400 -> 41`, `"404" -> 25`).
+**Questions 1 and 3 have data for the first time: 5 ERROR records, 0 carrying an exception
+object.** Not yet a conclusion — Polaris may never have written a throwable, or the pipeline
+may drop them; `grep -c stackTrace /deployments/logs/polaris.log` decides. Either way `_msg` is
+only `Unhandled exception returning INTERNAL_SERVER_ERROR`, so **a 500 currently reaches
+VictoriaLogs as proof that something failed and nothing about what.** The path was exercised by
+accident (the PG-HA 500s on `create_namespace`/`create_view`); `neg.500_null_pointer` has
+returned 200 for three runs.
 
-**Two things carried out of it.** A real **skipped window** — `00:36:00Z`–`00:37:00Z`, three
-windows with no report, cause not yet distinguished between a shipper stall and transit loss;
-the Fluent Bit output metrics settle it and are still readable. And **questions 1 and 3 remain
-unanswered for the second run running**, because `neg.500_null_pointer` returns 200
-(`error-cases/09` is stale) — so whether an exception stack trace survives this pipeline has
-never been measured.
+**`fluentbit_filter_drop_records_total` has never been read correctly** — its first-ever value
+was 7,154,980,971,680, four times the epoch in milliseconds. Guarded now; the parser still
+needs the endpoint's real shape, which no Cowork shell can reach.
 
-**Fast-run settings are still live and TEMPORARY** (sha `063c184df3f9…`): `WINDOW_SECONDS` 30,
-`Interval_Sec` 5, both read from the deployed file. **Revert together** once the next run is in.
+**Also open:** three consecutive report windows missing at `00:36:00Z`–`00:37:00Z`, cause not
+distinguished between a shipper stall and transit loss.
 
-**Next:** re-run with the two fixes from this session (VictoriaLogs metadata out of the diff,
-record times bracketed by the window range) for a fixture diff that should be near-clean; then
-revert the fast-run values.
+**Fast-run settings still live and TEMPORARY** (sha `063c184df3f9…`): `WINDOW_SECONDS` 30,
+`Interval_Sec` 5. **Revert together** when the run of record is done.
 
-**Gate:** `pytest` on Kade's machine — **719 passed, 1 failed**, the failure being the
-pre-existing `test_privilege_scan` renderer drift. That retires the `NOT VERIFIED` on `bb08dce`.
+**Next:** settle the stack-trace question and the metrics shape (one command each), then decide
+whether to tag setup/teardown into `ALL_CALLS` before the final run and the revert.
+
+**Gate:** 86 green under the minimal pytest stand-in; `pytest` on Kade's machine last ran
+719 passed / 1 pre-existing `test_privilege_scan` renderer drift.
 
 ## Where the detail is
 

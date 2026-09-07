@@ -293,6 +293,49 @@ def drop_records_total(metrics):
     return sum(m.get("drop_records", 0) for m in metrics.values())
 
 
+def drop_records_by_plugin(metrics):
+    """`{plugin: drop_records}` -- which filter, not just how many.
+
+    The total is the number the source plan asks for; the breakdown is what
+    tells you whether it can be believed. A sum that is wrong is silent; a
+    breakdown naming `lua.0: 7154980971680` is not.
+    """
+    return {name: m.get("drop_records", 0) for name, m in (metrics or {}).items()}
+
+
+#: No filter on a laptop has dropped a billion records. The first time this
+#: counter was ever read (run `1788745242`, the metrics port-forward having been
+#: down for both earlier runs) it returned **7,154,980,971,680** -- almost
+#: exactly four times the epoch in MILLISECONDS, so the field being summed was a
+#: timestamp and not a counter, in four plugins. The "delta" computed from two
+#: such readings was 52,000 and was reported as suppression.
+IMPLAUSIBLE_DROP_TOTAL = 10**9
+
+
+def drop_records_delta(before, after, cap=IMPLAUSIBLE_DROP_TOTAL):
+    """`(delta, note)` for `fluentbit_filter_drop_records_total` across a run.
+
+    Returns `delta=None` and a note naming the readings when either side cannot
+    be a record count. **A number that reconciles with nothing on the page is
+    worse than a missing one**: this notebook's whole subject is a report whose
+    figures can be checked against each other, and an unchecked counter printed
+    beside them borrows their credibility.
+
+    The cap is deliberately crude. It is not trying to validate the metric; it
+    is trying to make an unparseable one impossible to quote.
+    """
+    lo, hi = drop_records_total(before or {}), drop_records_total(after or {})
+    for label, value in (("before", lo), ("after", hi)):
+        if abs(value) >= cap:
+            return None, (
+                f"UNREADABLE: the {label} reading is {value:,.0f} across "
+                f"{len(after or before or {})} filter(s), which cannot be a record "
+                "count -- the metrics document's shape is not the one "
+                "parse_fluentbit_metrics expects. Do not quote a delta from it."
+            )
+    return hi - lo, None
+
+
 # ----------------------------------------------------------------------
 # client
 # ----------------------------------------------------------------------

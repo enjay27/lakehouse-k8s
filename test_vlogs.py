@@ -280,3 +280,32 @@ def test_wait_for_boundary_names_the_window_it_closed_not_the_one_it_opened():
     assert V.wait_for_boundary(30, lag=0, now=1788507225, sleep=False) == (
         "2026-09-04T07:33:30Z"
     )
+
+
+def test_a_drop_counter_that_cannot_be_a_record_count_is_refused():
+    #: The first time this counter was ever read (run 1788745242 -- the metrics
+    #: port-forward was down for both earlier runs) it returned
+    #: 7,154,980,971,680, almost exactly four times the epoch in MILLISECONDS,
+    #: so the field being summed was a timestamp in four plugins. The delta
+    #: computed from two such readings was 52,000 and was printed as
+    #: suppression. A number that reconciles with nothing on the page borrows
+    #: the credibility of the ones that do.
+    stamp = 1788745242920
+    before = {"lua.0": {"drop_records": stamp}, "lua.1": {"drop_records": stamp}}
+    later = stamp + 6000
+    after = {"lua.0": {"drop_records": later}, "lua.1": {"drop_records": later}}
+    delta, note = vlogs.drop_records_delta(before, after)
+    assert delta is None
+    assert "UNREADABLE" in note and "record count" in note
+
+    #: and a plausible pair still measures
+    delta, note = vlogs.drop_records_delta({"lua.0": {"drop_records": 10}},
+                                           {"lua.0": {"drop_records": 99}})
+    assert (delta, note) == (89, None)
+
+
+def test_the_drop_breakdown_names_the_plugin():
+    #: A wrong sum is silent; a breakdown naming the plugin is not.
+    m = {"lua.0": {"drop_records": 7}, "record_modifier.0": {"drop_records": 0}}
+    assert vlogs.drop_records_by_plugin(m) == {"lua.0": 7, "record_modifier.0": 0}
+    assert vlogs.drop_records_by_plugin(None) == {}

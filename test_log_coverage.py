@@ -900,3 +900,28 @@ def test_the_record_time_bracket_is_the_window_range_not_the_wall_clock():
     quiet = dict(summary, min_record_time="", max_record_time="")
     named = dict((n, ok) for n, ok, _ in lc.named_assertions([quiet], quiet))
     assert named[label] is None
+
+
+def test_correlation_counts_only_the_calls_it_claims_to():
+    #: Run 1788745242 reported "147 distinct ids recovered from 146 calls" --
+    #: more ids than calls. The numerator counted every run-minted id in the
+    #: pull, including cell 1's correlation probe, which is deliberately not in
+    #: ALL_CALLS; the denominator counted the calls. A ratio whose halves come
+    #: from different populations cannot be read literally, and correlation is
+    #: what the whole per-call matrix rests on.
+    calls = [
+        _call("a", "GET", T, 200, rid="nb-9-001-a"),
+        _call("b", "GET", T, 200, rid="nb-9-002-b"),
+        _call("timed out", "GET", T, None),
+    ]
+    stored = [
+        {"mdc.requestId": "nb-9-001-a"},
+        {"mdc.requestId": "nb-9-000-probe"},
+        {"loggerName": "x"},
+    ]
+    c = lc.correlation_stats(stored, calls)
+    assert c["calls"] == 3 and c["with_id"] == 2
+    assert c["recovered"] == 1
+    assert c["missing"] == ["nb-9-002-b"]
+    #: the probe's id is counted apart rather than inflating the numerator
+    assert c["other_ids"] == 1

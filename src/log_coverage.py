@@ -2076,3 +2076,30 @@ def principal_mix(rows):
         for r in rows
         if r.get("report_type") == "principal"
     }
+
+
+
+def correlation_stats(stored, calls, id_field="mdc.requestId"):
+    """How many of THESE calls had their request id recovered.
+
+    Run `1788745242` reported "147 distinct ids recovered from 146 calls" --
+    more ids than calls, because the numerator counted every run-minted id in
+    the pull (cell 1's correlation probe among them, which is deliberately not
+    in `ALL_CALLS`) while the denominator counted the calls. **A ratio whose
+    halves come from different populations cannot be read literally**, and
+    correlation is the statistic the entire per-call matrix rests on.
+
+    Returns:
+        {"calls", "with_id", "recovered", "missing", "other_ids"} -- `missing`
+        names the calls whose id never came back, which is the half worth
+        reading.
+    """
+    ids = {c.get("request_id") for c in calls if c.get("request_id")}
+    seen = {r.get(id_field) for r in stored if r.get(id_field)}
+    return {
+        "calls": len(calls),
+        "with_id": len(ids),
+        "recovered": len(ids & seen),
+        "missing": sorted(ids - seen),
+        "other_ids": len(seen - ids),
+    }
