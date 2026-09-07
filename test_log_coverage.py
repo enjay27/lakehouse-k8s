@@ -658,3 +658,192 @@ def test_merging_does_not_invent_a_key_from_a_carried_zero(policy):
     merged = lc.merge_windows([reports["w2"], reports["w3"]])
     assert [r for r in merged if r["report_type"] == "resource"] == []
     assert lc.check_invariants(merged, merged=True) == []
+
+
+# ---------------------------------------------------------------- reading a run back
+#: These cover the harness rather than the filter, and they exist because run 1
+#: of v3 shipped a results document whose numbers could not be checked against
+#: each other: a management-POST count taken from a truncated display column, a
+#: principal column that was a constant, an oracle diff reported as a scalar,
+#: and a merged row count nothing reconciled.
+def _call(label, method, path, status, principal=None, rid=None):
+    return {
+        "label": label,
+        "method": method,
+        "path": path,
+        "actual_path": path,
+        "api": lc.api_of(path),
+        "status": status,
+        "principal": principal,
+        "request_id": rid,
+        "issued_at": 1788511328.0,
+    }
+
+
+LONG_MGMT = f"{MGMT}/catalogs/apiprofile1788511328_cat/catalog-roles"
+
+
+def test_the_management_post_count_is_not_taken_from_a_truncated_path():
+    #: Run 1 reported "Management POSTs kept: 5 of 5". Six were driven and six
+    #: were kept: the matrix truncates `path` to its last 58 characters for
+    #: printing and the count filtered THAT column, so the cut removed
+    #: `/api/management` from this path and dropped the call out of the
+    #: numerator and the denominator together -- a fraction that agreed with
+    #: itself and was wrong.
+    calls = [
+        _call("mgmt.create_principal", "POST", f"{MGMT}/principals", 201),
+        _call("mgmt.create_catalog_role", "POST", LONG_MGMT, 201),
+    ]
+    expected = [{"verdict": lc.KEEP}, {"verdict": lc.KEEP}]
+    assert len(LONG_MGMT) > 58 and not LONG_MGMT[-58:].startswith(lc.MGMT_PREFIX)
+    stats = lc.mgmt_post_stats(calls, expected)
+    assert (stats["driven"], stats["kept"]) == (2, 2)
+    assert [r[0] for r in stats["rows"]] == [c["label"] for c in calls]
+
+
+def test_a_management_post_that_errored_is_not_evidence_for_the_management_rule():
+    #: First match wins and the error rule is matched first, so a 403 on
+    #: `reset` is kept whatever rule 5 does. Counting it as proof that
+    #: management POSTs are kept overstates what the run drove.
+    calls = [
+        _call("mgmt.create_principal", "POST", f"{MGMT}/principals", 201),
+        _call("mgmt.reset", "POST", f"{MGMT}/principals/p/reset", 403),
+    ]
+    stats = lc.mgmt_post_stats(calls, [{"verdict": lc.KEEP}] * 2)
+    assert stats["kept"] == 2
+    assert (stats["kept_2xx"], stats["kept_error"]) == (1, 1)
+
+
+def test_the_principal_is_read_off_the_request_and_not_assumed():
+    #: The matrix's `principal_row` was a single constant for all 132 calls of
+    #: run 1, while the management block went out as root and the 403 as
+    #: nb_<run>_denied. A column that cannot disagree with the run cannot catch
+    #: a mis-attribution, and the per-principal margin is the only self-check
+    #: the report schema has.
+    class _Client:
+        def __init__(self, token):
+            self.token = token
+
+    class _Resp:
+        def __init__(self, token):
+            hdr = {"Authorization": f"Bearer {token}"}
+            self.request = type("R", (), {"headers": hdr})()
+
+    reg = lc.principal_registry(
+        [(_Client("tok-root"), "root"), ("tok-nb", "nb_principal")]
+    )
+    assert lc.principal_of(_Resp("tok-root"), reg) == "root"
+    assert lc.principal_of(_Resp("tok-nb"), reg) == "nb_principal"
+    #: an unknown token is not silently attributed to anyone
+    assert lc.principal_of(_Resp("tok-other"), reg, default="-") == "-"
+    #: and the registry never carries the credential itself
+    assert not any("tok-" in k for k in reg)
+
+
+def test_counted_where_names_the_row_that_actually_moved():
+    #: `resource_row` is where a call lands IF IT SUCCEEDS. An error on a
+    #: resource nobody read successfully passes create=false and increments
+    #: __other__ instead, so for a 4xx the classified key is a counterfactual.
+    keys = {T: (T, "table"), f"{CAT}/c1/namespaces/ns1/tables/gone": (None, None)}
+    rows = [
+        {"report_type": "summary"},
+        {"report_type": "resource", "resource": T, "requests": 3},
+        {"report_type": "resource", "resource": lc.REPORT_OTHER, "requests": 1},
+    ]
+    calls = [
+        _call("ok", "GET", T, 200),
+        _call("missing", "GET", f"{CAT}/c1/namespaces/ns1/tables/gone", 404),
+        _call("never issued", "GET", T, None),
+    ]
+    assert lc.counted_where(calls, keys, rows) == [T, lc.REPORT_OTHER, ""]
+    #: with no __other__ row in the report there is nowhere for the error to
+    #: have gone, and that is worth saying rather than guessing
+    assert lc.counted_where(calls[1:2], keys, rows[:2]) == ["ABSENT"]
+
+
+def test_the_merged_row_count_is_reconciled_against_the_calls_that_explain_it():
+    #: Run 1 reported `merged rows: 49` for a run with 30 distinct resource
+    #: keys and 4 error-only ones -- about fifteen rows unaccounted for -- and
+    #: nothing in the document compared the two numbers.
+    keys = {T: (T, "table")}
+    rows = [
+        {"report_type": "summary"},
+        {"report_type": "resource", "resource": T, "requests": 2},
+        {"report_type": "resource", "resource": "/api/catalog/v1/someone_else",
+         "requests": 9},
+        {"report_type": "resource", "resource": lc.REPORT_OTHER, "requests": 1},
+        {"report_type": "principal", "user_principal_name": "nb_p", "requests": 3},
+    ]
+    r = lc.reconcile_merged_rows(rows, [_call("ok", "GET", T, 200),
+                                        _call("bad", "GET", T, 404)], keys)
+    assert r["unexplained"] == ["/api/catalog/v1/someone_else"]
+    assert r["missing"] == []
+    assert r["counts"] == {"summary": 1, "resource": 3, "principal": 1,
+                           "total": 5, "resource_expected": 2}
+
+
+def test_volume_reconciles_to_the_records_actually_pulled():
+    #: 2,117 records reported, 2,109 attributable in the matrix, and eight
+    #: records that belonged to neither column. `app_lines` is
+    #: len(found) - len(access) from the same pull, so the two figures agree by
+    #: construction unless something is unattributed -- name it instead.
+    calls = [_call("a", "GET", T, 200, rid="nb-7-001-a")]
+    stored = [
+        {"mdc.requestId": "nb-7-001-a"},
+        {"mdc.requestId": "nb-7-999-setup"},
+        {"loggerName": "org.apache.iceberg"},
+    ]
+    v = lc.reconcile_volume(stored, calls, run="7")
+    assert (v["attributed"], v["run_other"], v["untagged"]) == (1, 1, 1)
+    assert v["reconciles"] and v["total"] == 3
+
+
+def test_two_principals_make_the_margin_something_other_than_a_tautology(policy):
+    #: `sum(principal.requests) == access_seen - parse_errors` is the schema's
+    #: only real self-check, and with ONE principal it is satisfied identically
+    #: by a global counter: the single row IS the run total, so a filter that
+    #: attributed nothing would still pass. PLAN 6.2 asks for two principals
+    #: with different mixes for exactly this reason; run 1 drove one.
+    recs = [_rec("GET", T, 200, user="reader") for _ in range(4)]
+    recs += [_rec("POST", T, 200, user="writer") for _ in range(2)]
+    _, reports = policy.report_windows(recs, silent_windows=0)
+    rows = reports["w1"]
+    mix = lc.principal_mix(rows)
+    assert set(mix) == {"reader", "writer"}
+    summary = [r for r in rows if r["report_type"] == "summary"][0]
+    total = sum(v["requests"] for v in mix.values())
+    net = lc._as_int(summary["access_seen"]) - lc._as_int(summary["parse_errors"])
+    assert total == net
+    #: the point: neither row equals the total, so the equality has content
+    assert all(0 < v["requests"] < total for v in mix.values())
+    assert mix["reader"]["reads"] == 4 and mix["writer"]["writes"] == 2
+
+
+def test_the_named_assertions_state_what_run_one_left_implied(policy):
+    #: `/metrics` folding onto its table is the v2 two-rows-per-table bug
+    #: staying fixed, and no results document has ever said so. Same for
+    #: resources_other and for response_bytes taking both values.
+    recs = [
+        _rec("GET", T, 200, size=1200),
+        _rec("POST", f"{T}/metrics", 204),
+        _rec("GET", f"{CAT}/c1/namespaces/ns1/tables/never_read", 404),
+    ]
+    _, reports = policy.report_windows(recs, silent_windows=0)
+    rows = reports["w1"]
+    named = dict((n, ok) for n, ok, _ in lc.named_assertions(rows))
+    assert named["no /metrics row (it folds onto its table; v2 emitted two)"] is True
+    assert named["resources_other > 0 (an error never creates a resource key)"] is True
+    assert named["response_bytes takes both a zero and a non-zero value"] is True
+
+
+def test_a_named_assertion_fails_loudly_rather_than_reading_as_absent():
+    #: A row for the /metrics PATH is the v2 bug returning, and it has to come
+    #: back as FAIL rather than as a missing line nobody notices.
+    rows = [
+        {"report_type": "summary", "resources_other": 0},
+        {"report_type": "resource", "resource": f"{T}/metrics", "requests": 1,
+         "response_bytes": 0},
+    ]
+    named = dict((n, ok) for n, ok, _ in lc.named_assertions(rows))
+    assert named["no /metrics row (it folds onto its table; v2 emitted two)"] is False
+    assert named["resources_other > 0 (an error never creates a resource key)"] is False

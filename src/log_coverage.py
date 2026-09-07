@@ -923,7 +923,15 @@ def tag_clients(ctx_or_clients, value, header="Polaris-Request-Id"):
 
 
 def call_once(
-    clients, run, seq, label, fn, method="", path="", header="Polaris-Request-Id"
+    clients,
+    run,
+    seq,
+    label,
+    fn,
+    method="",
+    path="",
+    header="Polaris-Request-Id",
+    principals=None,
 ):
     """One tagged call outside the 43-op surface, in `drive_tagged`'s row shape.
 
@@ -941,6 +949,12 @@ def call_once(
         "method": method.upper(),
         "path": path,
         "actual_path": None,
+        #: WHEN the call went out, so the matrix can say which report window
+        #: it was counted into. A counted call leaves no individual record, so
+        #: there is nowhere else to read its window from.
+        "issued_at": time.time(),
+        #: Filled from the request's own Authorization header, never assumed.
+        "principal": None,
         "api": api_of(label if label.startswith(("mgmt.", "iceberg.")) else path),
         "request_id": rid,
         "status": None,
@@ -954,6 +968,8 @@ def call_once(
         row["actual_path"] = _issued_path(resp)
         row["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
         row["echoed_request_id"] = getattr(resp, "headers", {}).get(header)
+        if principals:
+            row["principal"] = principal_of(resp, principals)
         if not row["method"]:
             row["method"] = getattr(getattr(resp, "request", None), "method", "") or ""
     except Exception as exc:  # noqa: BLE001
@@ -1092,7 +1108,9 @@ def deprovision_run_principal(adm_pc, name, prole):
     return problems
 
 
-def drive_tagged(ops, ctx, run, on_call=None, header="Polaris-Request-Id"):
+def drive_tagged(
+    ops, ctx, run, on_call=None, header="Polaris-Request-Id", principals=None
+):
     """Issue every operation in order, each under its own request id.
 
     Deliberately NOT `api_surface.drive()`. That function is built around a
@@ -1133,6 +1151,13 @@ def drive_tagged(ops, ctx, run, on_call=None, header="Polaris-Request-Id"):
             #: namespace segment turns a deduplicated read into a rule-7 keep
             #: and the expected column would be quietly wrong.
             "actual_path": None,
+            #: See `call_once`: the window a counted call landed in is not
+            #: recoverable from anywhere else.
+            "issued_at": time.time(),
+            #: The 43 operations do not all go out on the same client -- the
+            #: management block uses `ctx.adm` -- so this is read off the
+            #: request rather than set to the run's principal.
+            "principal": None,
             "api": api_of(op.label),
             "request_id": rid,
             "status": None,
@@ -1150,6 +1175,8 @@ def drive_tagged(ops, ctx, run, on_call=None, header="Polaris-Request-Id"):
             #: correlation design is off -- cell 1 checks this once, and every
             #: row records it so a mid-run change cannot hide.
             row["echoed_request_id"] = getattr(resp, "headers", {}).get(header)
+            if principals:
+                row["principal"] = principal_of(resp, principals)
         except Exception as exc:  # noqa: BLE001
             row["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
             row["error"] = f"{type(exc).__name__}: {exc}"
@@ -1712,3 +1739,321 @@ def merge_windows(windows):
         f"{s['access_counted']} counted, {len(res)} resources, {len(pri)} principals"
     )
     return [s] + res + pri
+
+
+# ======================================================================
+# reading a run back: who issued it, where it was counted, and whether
+# the report's own totals reconcile
+# ======================================================================
+#: Every statistic about a call reads THIS, never a display column. The
+#: coverage matrix truncates its `path` to the last 58 characters so the table
+#: fits a terminal, and run 1 of v3 computed "Management POSTs kept: 5 of 5"
+#: by filtering the truncated column: the cut removed `/api/management` from
+#: `POST /api/management/v1/catalogs/{c}/catalog-roles`, dropping that call out
+#: of the numerator AND the denominator, so the fraction agreed with itself and
+#: was wrong. Six management POSTs were driven and six were kept.
+def call_path(call):
+    """The full path a call issued, query string included."""
+    p = call.get("actual_path") or ""
+    if not p and call.get("path"):
+        p = full_path(call.get("api") or "catalog", call["path"])
+    return str(p or "")
+
+
+def _token_fp(token):
+    """A stable, non-reversible handle for a bearer token.
+
+    The registry is keyed on this rather than on the token so a principal map
+    can be printed, put in a dataframe or pickled with a notebook's output
+    without carrying a live credential with it.
+    """
+    return hashlib.sha256(str(token).encode("utf-8")).hexdigest()[:16]
+
+
+def principal_registry(pairs):
+    """`{token fingerprint: principal name}` for the clients a run drives with.
+
+    Args:
+        pairs: iterable of `(client_or_token, principal_name)`.
+    """
+    reg = {}
+    for client, name in pairs:
+        tok = client if isinstance(client, str) else getattr(client, "token", None)
+        if tok:
+            reg[_token_fp(tok)] = name
+    return reg
+
+
+def principal_of(resp, registry, default=None):
+    """Which principal ISSUED this request, read off its own `Authorization`.
+
+    MEASURED, NOT ASSUMED. Run 1 of v3 wrote a single constant into the
+    matrix's `principal_row` for all 132 calls, which made the column an
+    assertion about the harness rather than an observation: the management
+    operations go out on the root client, the 403 case on `nb_<run>_denied`,
+    and the token exchanges carry no principal at all (`%u` writes `-`). A
+    column that cannot disagree with itself cannot catch a mis-attribution,
+    and the per-principal margin is the schema's only real self-check.
+    """
+    try:
+        auth = resp.request.headers.get("Authorization") or ""
+    except Exception:  # noqa: BLE001
+        return default
+    parts = str(auth).split(None, 1)
+    tok = parts[1].strip() if len(parts) == 2 else ""
+    return registry.get(_token_fp(tok), default) if tok else default
+
+
+def mgmt_post_stats(calls, expected, prefix=MGMT_PREFIX):
+    """Management POSTs driven, and how many the deployed policy keeps.
+
+    This is the number the v2 audit hole is reported by, so it is computed
+    from `call_path` and split by status. A management POST that returned
+    4xx/5xx is kept by the ERROR rule whatever rule 5 does -- first match wins
+    in the filter and the error rule is matched first -- so counting it as
+    evidence for "rule 5 keeps management POSTs" overstates what the run
+    proved. Run 1 drove six, of which one (a 403 on `reset`) is in that
+    position.
+
+    Args:
+        calls: the driven call rows.
+        expected: `expected_for(...)` output, aligned with `calls`.
+
+    Returns:
+        {"driven", "kept", "kept_2xx", "kept_error", "rows"}, where `rows` is
+        `[(label, path, status, verdict)]` for every management POST driven.
+    """
+    rows = []
+    for call, exp in zip(calls, expected or [None] * len(calls)):
+        if (call.get("method") or "").upper() != "POST":
+            continue
+        path = call_path(call)
+        if not path.startswith(prefix):
+            continue
+        rows.append(
+            (
+                call.get("label"),
+                path,
+                call.get("status"),
+                (exp or {}).get("verdict"),
+            )
+        )
+    kept = [r for r in rows if r[3] == KEEP]
+    err = [r for r in kept if _as_int(r[2]) >= 400]
+    return {
+        "driven": len(rows),
+        "kept": len(kept),
+        "kept_2xx": len(kept) - len(err),
+        "kept_error": len(err),
+        "rows": rows,
+    }
+
+
+def resource_rows(rows):
+    """`{resource: row}` for the resource rows of a (merged) report."""
+    return {r.get("resource"): r for r in rows if r.get("report_type") == "resource"}
+
+
+def counted_where(calls, keys, rows, other=REPORT_OTHER):
+    """For each call, the report row that ACTUALLY moved -- PLAN section 7.
+
+    `resource_row` says which key a path CLASSIFIES to, which is where the
+    call lands *if it succeeds*. That is not the same question. An error on a
+    resource nobody has read successfully passes `create=false` and increments
+    `__other__` instead, so for a 4xx/5xx row the classified key is a
+    counterfactual. Without this column the matrix cannot do the thing it was
+    added for -- name the row that is wrong -- and an oracle diff arrives as a
+    number instead of a list.
+
+    Args:
+        calls: the driven call rows.
+        keys: `Policy.classify_paths` output, `{path: (resource, kind)}`.
+        rows: the merged report rows this run's windows produced.
+
+    Returns:
+        a list aligned with `calls`: the resource key that carries this call,
+        `__other__`, `"ABSENT"` when neither exists, or `""` for a call that
+        never completed.
+    """
+    present = resource_rows(rows)
+    out = []
+    for call in calls:
+        if not call.get("status"):
+            out.append("")
+            continue
+        key = (keys or {}).get(call_path(call).split("?")[0]) or (None, None)
+        if key[0] and key[0] in present:
+            out.append(key[0])
+        elif other in present:
+            out.append(other)
+        else:
+            out.append("ABSENT")
+    return out
+
+
+def reconcile_merged_rows(rows, calls, keys, other=REPORT_OTHER):
+    """Does the merged report hold the rows THIS RUN can account for?
+
+    A row count on its own is not readable. Run 1 reported `merged rows: 49`
+    beside 30 distinct resource keys with a success and 4 error-only keys --
+    about fifteen rows the run could not explain -- and the report said
+    nothing, because nothing compared the two. The likely innocent
+    explanation (rows carried at zero from a window before the run, or another
+    client on the cluster) is still an explanation someone has to be given the
+    means to check.
+
+    Returns:
+        {"expected", "actual", "unexplained", "missing", "counts"} -- the first
+        four as sorted key lists, `counts` as the row arithmetic.
+    """
+    present = resource_rows(rows)
+    expected = set()
+    saw_error = False
+    for call in calls:
+        status = _as_int(call.get("status"), None)
+        if status is None:
+            continue
+        key = (keys or {}).get(call_path(call).split("?")[0]) or (None, None)
+        if status >= 400:
+            saw_error = True
+            continue
+        if key[0]:
+            expected.add(key[0])
+    if saw_error:
+        expected.add(other)
+    actual = set(present)
+    principals = [r for r in rows if r.get("report_type") == "principal"]
+    summaries = [r for r in rows if r.get("report_type") == "summary"]
+    return {
+        "expected": sorted(expected),
+        "actual": sorted(actual),
+        "unexplained": sorted(actual - expected),
+        "missing": sorted(expected - actual),
+        "counts": {
+            "summary": len(summaries),
+            "resource": len(present),
+            "principal": len(principals),
+            "total": len(rows),
+            "resource_expected": len(expected),
+        },
+    }
+
+
+def reconcile_volume(stored, calls, run=None, id_field="mdc.requestId"):
+    """Where every stored record went, so the volume figure adds up.
+
+    Run 1 reported 2,117 records for 132 calls and a matrix whose columns summed
+    to 2,109. Eight records were attributed to nothing, and since `app_lines` is
+    `len(found) - len(access)` from the same pull, the two figures should agree
+    by construction. They differ because a record can carry a request id this
+    run minted for a call that is not in `ALL_CALLS`, or no request id at all.
+    Name both rather than leaving a residue.
+
+    Returns:
+        {"total", "attributed", "run_other", "untagged", "reconciles"}.
+    """
+    ids = {c.get("request_id") for c in calls if c.get("request_id")}
+    prefix = f"nb-{run}-" if run else None
+    attributed = run_other = untagged = 0
+    for rec in stored:
+        rid = rec.get(id_field)
+        if not rid:
+            untagged += 1
+        elif rid in ids:
+            attributed += 1
+        elif prefix and str(rid).startswith(prefix):
+            run_other += 1
+        else:
+            untagged += 1
+    total = len(stored)
+    return {
+        "total": total,
+        "attributed": attributed,
+        "run_other": run_other,
+        "untagged": untagged,
+        "reconciles": attributed + run_other + untagged == total,
+    }
+
+
+def named_assertions(rows, summary=None, started=None, ended=None):
+    """The checks PLAN section 7 names, each as `(name, ok, detail)`.
+
+    These were computed or implied by run 1 and stated by none of it. A
+    report that says "invariants OK" and leaves the named assertions to the
+    reader's memory is a report that cannot be audited later: `/metrics`
+    folding onto its table is the v2 two-rows-per-table bug staying fixed, and
+    nothing in the results document said so.
+
+    `ok` is None where the run gave the check nothing to decide on.
+    """
+    res = resource_rows(rows)
+    summary = summary or next(
+        (r for r in rows if r.get("report_type") == "summary"), {}
+    )
+    out = []
+
+    metrics = sorted(k for k in res if k and k.endswith("/metrics"))
+    out.append(
+        (
+            "no /metrics row (it folds onto its table; v2 emitted two)",
+            not metrics,
+            metrics or "none",
+        )
+    )
+
+    other = _as_int(summary.get("resources_other"), None)
+    out.append(
+        (
+            "resources_other > 0 (an error never creates a resource key)",
+            None if other is None else other > 0,
+            other,
+        )
+    )
+
+    seen = [_as_int(r.get("response_bytes")) for r in res.values()]
+    out.append(
+        (
+            "response_bytes takes both a zero and a non-zero value",
+            bool(seen) and any(v == 0 for v in seen) and any(v > 0 for v in seen),
+            f"{sum(1 for v in seen if v == 0)} zero, "
+            f"{sum(1 for v in seen if v > 0)} non-zero",
+        )
+    )
+
+    lo, hi = summary.get("min_record_time"), summary.get("max_record_time")
+    if not (lo and hi):
+        #: VictoriaLogs does not store empty values, so a quiet window simply
+        #: has no time fields. Absent is not drift and not a failure.
+        out.append(
+            ("min/max_record_time bracket the run", None, "absent (quiet window)")
+        )
+    elif started is None or ended is None:
+        out.append(("min/max_record_time bracket the run", None, f"{lo} .. {hi}"))
+    else:
+        a, b = _epoch_of(str(lo)[:19] + "Z"), _epoch_of(str(hi)[:19] + "Z")
+        ok = (
+            a is not None
+            and b is not None
+            and a >= int(started) - 1
+            and b <= int(ended) + 1
+        )
+        out.append(("min/max_record_time bracket the run", ok, f"{lo} .. {hi}"))
+    return out
+
+
+def principal_mix(rows):
+    """`{principal: {requests, reads, writes, errors}}` from a report's rows.
+
+    The margin equality is the schema's only real self-check, and with ONE
+    principal it is satisfied identically by a global counter: every principal
+    total is the run total, so a filter that never attributed anything would
+    pass. PLAN section 6.2 asks for two principals with different mixes for
+    exactly that reason, and this is what makes the difference readable.
+    """
+    return {
+        r.get("user_principal_name"): {
+            f: _as_int(r.get(f)) for f in ("requests", "reads", "writes", "errors")
+        }
+        for r in rows
+        if r.get("report_type") == "principal"
+    }

@@ -209,12 +209,21 @@ attributed to principal **`-`** — `%u` writes a dash when no principal is auth
 ## Run 1 of the v3 notebook — 2026-09-04, run `1788511328`
 
 **The report works. 132 calls, correlation exact on all 132, no shipper restart, no scaling,
-zero replay duplicates.** 50 calls kept, **82 counted**; **5 of 5 management POSTs stored**, which
-is the v2 audit hole closed and measured. All six `resource_kind` values present, per-window and
-merged invariants clean, **zero-carry 44 rows, decay confirmed, no skipped windows**. Client-side
-latency (the only source, there is no `%D`): median 13 ms, p95 41 ms, max 90 ms.
+zero replay duplicates.** 49 calls kept and 82 counted (the 132nd is the client timeout, which
+completed no request and has no verdict); **6 of 6 management POSTs stored** — five by rule 5 and
+the 403 `reset` by rule 3, which matches first — and that is the v2 audit hole closed and
+measured. All six `resource_kind` values present, per-window and merged invariants clean,
+**zero-carry 44 rows, decay confirmed, no skipped windows**. Client-side latency (the only
+source, there is no `%D`): median 13 ms, p95 41 ms, max 90 ms.
 
-**Four defects the run exposed — three of them in the harness, none in the filter:**
+**And one thing that reads as a pass and is not: the oracle diff failed.** `oracle diff, THIS
+run's fixture resources | 66 mismatches` sits two lines under "merged invariants OK" in the
+results document, and cell 11 is the cell that makes "all schema coverage" checkable rather than
+asserted. 66 mismatches on paths that belong to this run alone is that cell going red, reported
+as a scalar with none of the rows named. Whatever else run 1 established, it did not establish
+that the pipeline agrees with the deployed Lua.
+
+**Four defects the run exposed at the time — three in the harness, none in the filter:**
 
 1. **The 403 probe went out untagged.** `probe()` tagged `[pc, ic, adm_pc, adm_ic]` and the call
    used `denied_ic`, so it carried no `Polaris-Request-Id` and could not be found: reported as
@@ -237,12 +246,35 @@ the volume; the rest are application lines riding through untouched by rule 2.**
 prints the `loggerName` breakdown, which is the input to the only remaining volume decision.
 `fluentbit_filter_drop_records_total` is still unknown: the metrics port-forward was down.
 
-**One thing not exercised:** the run fit inside a single 30-second window, so the merge path that
-`merge_windows` exists for did not run live. It is covered by tests, not by this run.
+**One thing not exercised:** the run reported a single 30-second window, so the merge path that
+`merge_windows` exists for did not run live. It is covered by tests, not by this run — and the
+single window is itself unexplained: 49 merged rows for a run with 30 distinct resource keys and
+four error-only ones. Nothing in the run reconciled the two, which is why the notebook now does.
 
-**Next:** `helm upgrade` the shipper — the new values are written, not yet running, and cell 0
-aborts until the ConfigMap carries them. Then run the notebook: three 30-second boundaries
-instead of three 30-minute ones.
+## Harness review — 2026-09-07: what the results document could not be checked against
+
+Reading run 1's document against the code that wrote it turned up nine places where a number was
+computed from the wrong thing, or a result was implied and never stated. None is a finding about
+the filter; all of them are reasons the next run's document can be trusted where this one's
+cannot.
+
+| what was wrong | why it happened | now |
+|---|---|---|
+| "Management POSTs kept: 5 of 5" — six were driven | the count filtered `M.path`, truncated to 58 chars for display | `lc.mgmt_post_stats` reads `path_full`, and splits the kept ones by status: a 403 `reset` is kept by rule 3 whatever rule 5 does |
+| `principal_row` identical on all 132 rows | it was assigned `DRIVE_PRINCIPAL`, a constant | `lc.principal_of` reads each request's own `Authorization` header; the oracle replays each call as its measured principal |
+| the margin equality proved nothing | one identity drove everything, so `sum(principal.requests)` IS the run total | a read-heavy 403 batch as `nb_<run>_denied` and a write-heavy batch as the run principal — PLAN 6.2's two mixes |
+| 66 fixture mismatches as a bare number | the doc printed `len(ours)` | every one is named in the document, and the table line says FAILING |
+| `merged rows: 49`, unreconciled | nothing compared rows to the calls that explain them | `lc.reconcile_merged_rows` names the unexplained and the missing keys |
+| 2,117 records vs 2,109 in the matrix | records with a run request id for a call outside `ALL_CALLS`, or none at all | `lc.reconcile_volume` — attributed / other run ids / untagged, and they must sum |
+| `http_status:"404" -> 138` for a run with 23 | the check scans 24h cluster-wide | it carries its scope, and cell 7 takes the run-scoped reading beside it |
+| `window_start` and `counted_where` missing (PLAN 7) | both need the report, which cell 8 does not have | cell 11b adds them once cell 10 has run |
+| `/metrics` folding, `resources_other`, `response_bytes`, the record-time bracket | computed or implied, never stated | one PASS/FAIL assertions block, `lc.named_assertions` |
+
+Nine new cases in `test_log_coverage.py` cover the module functions these use.
+
+**Next:** re-run the notebook with the reviewed harness (below) and read the oracle diff row by
+row — that is the question run 1 left open. Then revert `WINDOW_SECONDS` and `Interval_Sec`
+together.
 
 ## Files
 

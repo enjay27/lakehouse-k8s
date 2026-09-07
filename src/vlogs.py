@@ -202,7 +202,7 @@ def status_of(record):
         return None
 
 
-def numeric_status_filters_work(client, since="24h"):
+def numeric_status_filters_work(client, since="24h", end=None, scope=None):
     """Does `http_status:>=400` actually match anything? Returns (bool, detail).
 
     THE JSON TYPE CANNOT ANSWER THIS, and an earlier version of this module
@@ -217,17 +217,28 @@ def numeric_status_filters_work(client, since="24h"):
     filter against an exact-match filter over the same window. If the range
     finds nothing where the exact match finds plenty, `type_int_key` is not in
     effect and every status-range query in the spec's recipes is silently empty.
+
+    SAY WHAT WAS COUNTED. The default window is the retention slice this
+    instrument check needs in order to find any 4xx at all, and it is NOT the
+    run: run 1 of v3 printed `http_status:"404" -> 138` in a *Validity* block
+    beside a run that made 23 of them, and the number reconciled with nothing
+    on the page. `scope` names the window inside the returned detail so the
+    instrument check and the run's own count cannot be read as each other.
+    Pass the run's `start`/`end` and `scope="this run"` for the second.
     """
-    exact = client.count(
-        and_(app_polaris(), field_eq("http_status", "404")), start=since, limit=1000
+    scope = scope or (
+        f"cluster-wide, last {since}" if isinstance(since, str) else "as given"
     )
-    ranged = client.count(
-        and_(app_polaris(), "http_status:>=400"), start=since, limit=1000
-    )
+    kw = {"start": since, "limit": 1000}
+    if end is not None:
+        kw["end"] = end
+    exact = client.count(and_(app_polaris(), field_eq("http_status", "404")), **kw)
+    ranged = client.count(and_(app_polaris(), "http_status:>=400"), **kw)
     if exact == 0 and ranged == 0:
-        return None, f"no 4xx in the last {since} to test with"
+        return None, f"no 4xx to test with [{scope}]"
     ok = ranged > 0
-    return ok, f'http_status:>=400 -> {ranged};  http_status:"404" -> {exact}'
+    detail = f'http_status:>=400 -> {ranged};  http_status:"404" -> {exact}'
+    return ok, f"{detail}  [{scope}]"
 
 
 def parse_fluentbit_metrics(text):

@@ -4,76 +4,42 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-04 (session 7)
+## Now — 2026-09-07 (session 8)
 
 **Read [`log-coverage/PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md) first — standalone.**
 
-**v3 IS DEPLOYED and the harness now covers it; the run has not happened yet.** Run 1's finding
-(the v2 policy was written and never installed) is resolved: the ConfigMap carries
-`89aa2624f1f5…` and matches the file. v3 deletes per-day dedup, **keeps every `POST` under
-`/api/management/`** — closing the audit hole where a credential reset left no trace — counts
-every successful read, and adds a **scheduled flush report** on its own stream
-(`{app="polaris-shipper-report"}`), schema v1, three record types per window.
+**v3 is deployed and run 1 happened (`1788511328`, 132 calls, correlation exact on all 132).
+The report works; its results document cannot be trusted as it stands.** Settled: the policy
+keeps every `POST` under `/api/management/` (the v2 audit hole, where a credential reset left
+no trace), counts every successful read, and emits a flush report per window on its own stream;
+Fluent Bit splits the array, VictoriaLogs indexes the numbers as numbers, zero-carry and carry
+decay hold in the pipeline and not only in the oracle.
 
-**Verified offline against the deployed Lua, no cluster needed:** 14/14 record dispositions match
-v3; three report types with agreeing margins; **zero-carry and carry decay** across three
-simulated windows via the filter's own `_now_override`; all six `resource_kind` values;
-`/metrics` folds onto its table (v2 emitted two rows); an error lands in `__other__` and never
-creates a key. **67 tests green** (`test_log_coverage` 40, `test_vlogs` 27).
+**NOT settled, and the next run's first question: run 1's oracle diff FAILED.** `oracle diff,
+THIS run's fixture resources | 66 mismatches` sits two lines under `merged invariants | OK`,
+and none of the 66 was named. One query decides which kind of failure it is —
+`app:polaris-shipper-report | stats by (window_start, report_type) count()` over
+08:41:00–08:43:30: traffic in `08:41:30` means the run was split and cell 10 read part of it;
+none means the pipeline and the deployed Lua disagree. `.memory/active-issues.md`.
 
-**Two findings about the filter, not the harness.** (1) **A startup blind spot:** `report_tick`
-opens its first window on the FIRST tick and `count_record()` returns while `counts` is nil, so
-records between shipper start and that tick appear in NO report — bounded by the 30s tick
-interval, and it explains the first observed report exactly. (2) `access_kept + access_counted ==
-access_seen` is **tautological** (`build_report` computes `access_kept` by subtraction); the only
-real self-check is the resource/principal margin pair.
+**Session 8 reviewed that document against the code that wrote it: nine harness defects, none
+in the filter.** Kept management POSTs were counted from a display column truncated to 58
+characters (six, not five); `principal_row` was a constant, hiding that ONE identity drove the
+run — which makes the margin equality satisfiable by a global counter; the merged row count and
+the record total reconciled against nothing; `window_start`/`counted_where` (PLAN 7) were
+missing; four named assertions were computed and never stated. The notebook now drives **two
+principals with different mixes**, names every fixture mismatch, and states each assertion
+PASS/FAIL. `.memory/roadmap.md`; wrong turns in
+`.memory/sessions/2026-09-07-log-coverage-harness-review.md`.
 
-**THE ARRAY SPLITS — settled live 2026-09-04 08:23Z.** `{summary: 1, resource: 3,
-principal: 2}` for one window; VictoriaLogs indexes the numbers as numbers (`requests:>0`
-matched); no tick leak; **zero-carry and carry decay hold in the pipeline**, 3 of 3 rows carried
-at an explicit 0 and none carried a third time; `report_seq` 20→21, counters reset, one summary
-per window per host. **68 tests green under real `pytest`.** Nothing about the report is
-unverified now except a full driven run.
+**Fast-run settings are live and TEMPORARY** (sha `063c184df3f9…`): `WINDOW_SECONDS` 1800→**30**,
+`Interval_Sec` 30→**5**, both read from the deployed file, never hardcoded. **Revert together.**
 
-**Fast-run settings written 2026-09-04** (sha `063c184df3f9…`): `WINDOW_SECONDS` 1800→**30**,
-dummy `Interval_Sec` 30→**5** (6 ticks per window, so jitter cannot skip one). **TEMPORARY —
-revert both together.** Nothing hardcodes them; `Policy.window_seconds`/`tick_seconds` read the
-deployed file, and the tick-rate test broke correctly on the change instead of passing
-vacuously. **68 tests green at the new settings.**
+**Next:** re-run the notebook, read the oracle diff row by row, then revert those two values.
 
-**The first full run exposed the real structural gap: A RUN DOES NOT FIT IN ONE WINDOW**, and at
-`WINDOW_SECONDS: 30` it never will. Cell 10 read one window and found the cleanup DELETEs alone —
-8 records, all errors, one `__other__` row — which looked exactly like the pipeline losing the
-run. It now merges **every window the run touched** (`log_coverage.merge_windows`; per-window
-invariants still checked individually, `distinct_resources` recomputed as a union, carried zeros
-never creating a key) and captures the two windows after the run in a tight loop, because
-zero-carry lives for exactly one window and a user-paced gap loses it. Also: **VictoriaLogs does
-not store empty values**, so `min`/`max_record_time` are simply absent from a quiet window —
-that is not schema drift. **72 tests green.**
-
-**Two harness bugs the verify run caught**, both of which would have fired on every window of
-the real run: `check_invariants` read VictoriaLogs' own `_stream`/`_stream_id` as schema drift,
-and the skipped-window check compared window starts across a shipper restart and the 1800→30
-change, reporting the switch itself as a skipped window. Both fixed, both now tested.
-
-**RUN 1 OF v3 IS DONE (run `1788511328`, 132 calls, correlation exact on all 132).** 50 kept, 82
-counted, **5 of 5 management POSTs stored** — the v2 audit hole closed and measured. All six
-`resource_kind`s, invariants clean per window and merged, **zero-carry 44 rows, decay confirmed,
-no skipped windows**. Latency median 13 ms. **Volume: 2,117 records for 132 calls, only ~50 of
-them access-log — the policy governs a few percent; the rest are application lines under rule 2.**
-
-**Four defects it exposed, three in the harness and none in the filter:** the 403 PROBE went out
-untagged (the run-1 fault, reintroduced — reported `EXPECTED STORED, ABSENT` for a record that was
-there); `GET /config` without a warehouse 400s, so that probe tested rule 3 not rule 6;
-**`neg.500_null_pointer` returned 200, so the run produced NO WARN/ERROR record and questions 1
-and 3 are unanswered** — the report now says so instead of printing `0 of 0`; and the view probe
-404s because the happy path renames the view first. All four fixed.
-
-**Next:** re-run for a clean report, then revert `WINDOW_SECONDS`/`Interval_Sec` together.
-Not exercised live yet: the multi-window merge — this run fit in one 30s window.
-
-**Superseded:** run the notebook, cells 0–14. `black`/`isort` still not runnable from Cowork; `pytest`
-runs on Kade's machine and is green.
+**Gate:** 81 green under the minimal pytest stand-in (`test_log_coverage` 54, `test_vlogs` 27),
+and the oracle now runs from Cowork (`luatex --luaonly` + access to `~/hynix/local-k8s/logging`).
+`pytest`/`black`/`isort` still not installable there — **the real gate is Kade's `pytest`.**
 
 ## Where the detail is
 
