@@ -1697,3 +1697,52 @@ def test_the_window_negatives_compare_against_what_was_actually_driven():
         n: ok for n, ok, _ in lc.check_500_window(rows, driven_500=0, driven_4xx=12)
     }
     assert named["a 500 does not increment errors_4xx"] is False
+
+
+def test_correlation_does_not_punish_the_policy_for_working():
+    #: RUN 1788759324 reported "154 of 157 request ids recovered" and named
+    #: three probes -- the 2nd and 3rd of three identical `load_table` calls and
+    #: a `commit_table`. All three were `expected=drop, stored=0, app_lines=0`:
+    #: correctly dropped by rule 6, and silent in the application log because
+    #: the FIRST read warmed the caches. A KEPT call that cannot be found is a
+    #: fault; a COUNTED one that cannot be found is the policy doing its job.
+    calls = [
+        _call("kept.error", "GET", T, 404, rid="nb-9-001-a"),
+        _call("kept.mutation", "DELETE", T, 204, rid="nb-9-002-b"),
+        _call("counted.read1", "GET", T, 200, rid="nb-9-003-c"),
+        _call("counted.read2", "GET", T, 200, rid="nb-9-004-d"),
+        _call("counted.write", "POST", T, 200, rid="nb-9-005-e"),
+    ]
+    expected = [
+        {"verdict": lc.KEEP},
+        {"verdict": lc.KEEP},
+        {"verdict": lc.DROP},
+        {"verdict": lc.DROP},
+        {"verdict": lc.DROP},
+    ]
+    #: read1 left one application line; read2 and the write left nothing at all
+    stored = [
+        {"mdc.requestId": "nb-9-001-a"},
+        {"mdc.requestId": "nb-9-002-b"},
+        {"mdc.requestId": "nb-9-003-c"},
+    ]
+    split = lc.correlation_by_disposition(stored, calls, expected)
+    assert (split[lc.KEPT]["recovered"], split[lc.KEPT]["with_id"]) == (2, 2)
+    assert split[lc.KEPT]["missing"] == []
+    assert (split[lc.COUNTED]["recovered"], split[lc.COUNTED]["with_id"]) == (1, 3)
+
+    by_rid = {}
+    for r in stored:
+        by_rid.setdefault(r["mdc.requestId"], []).append(r)
+    invisible = lc.invisible_calls(calls, expected, by_rid)
+    assert [c["label"] for c in invisible] == ["counted.read2", "counted.write"]
+    #: a KEPT call is never called invisible, whatever the pull holds -- a missing
+    #: one is a correlation FAULT and belongs in the other bucket
+    assert not [c for c in invisible if c["label"].startswith("kept.")]
+
+
+def test_a_kept_call_that_cannot_be_found_is_still_reported():
+    calls = [_call("kept.error", "GET", T, 404, rid="nb-9-001-a")]
+    split = lc.correlation_by_disposition([], calls, [{"verdict": lc.KEEP}])
+    assert split[lc.KEPT]["missing"] == ["nb-9-001-a"]
+    assert split[lc.KEPT]["recovered"] == 0

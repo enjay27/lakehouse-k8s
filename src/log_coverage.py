@@ -2338,6 +2338,75 @@ def correlation_stats(stored, calls, id_field="mdc.requestId"):
     }
 
 
+def correlation_by_disposition(stored, calls, expected, id_field="mdc.requestId"):
+    """Correlation split by what the POLICY DID with each call.
+
+    THE UNSPLIT RATIO PUNISHES THE POLICY FOR WORKING. A **kept** call must be
+    recoverable -- that is the pipeline's promise, and a miss there is a real
+    fault. A **counted** call is recoverable only INCIDENTALLY, through whatever
+    application lines it happened to emit, because rule 6 dropped its access-log
+    line on purpose.
+
+    Run `1788759324` reported "154 of 157 recovered" and named three probes: the
+    2nd and 3rd of three identical `load_table` calls, and a `commit_table`. All
+    three were `expected=drop, disposition=counted, stored=0, app_lines=0`. The
+    FIRST read emitted one application line and the warm repeats emitted none --
+    so they left **no trace at all**, exactly as designed, and the ratio reported
+    that as a correlation failure.
+
+    Returns `{"kept": {...}, "counted": {...}}`, each with `with_id`,
+    `recovered`, `missing`. **Only the `kept` half is an assertion**; the
+    `counted` half measures how VISIBLE a counted call happens to be, which is
+    the sharpened form of what v3 gave up.
+    """
+    seen = {str(r.get(id_field)) for r in (stored or ()) if r.get(id_field)}
+    out = {
+        KEPT: {"with_id": 0, "recovered": 0, "missing": []},
+        COUNTED: {"with_id": 0, "recovered": 0, "missing": []},
+    }
+    expected = list(expected or [])
+    for i, call in enumerate(calls or ()):
+        rid = call.get("request_id")
+        exp = expected[i] if i < len(expected) else None
+        verdict = (exp or {}).get("verdict") if isinstance(exp, dict) else None
+        if not rid or verdict is None:
+            continue
+        bucket = out[disposition(verdict)]
+        bucket["with_id"] += 1
+        if str(rid) in seen:
+            bucket["recovered"] += 1
+        else:
+            bucket["missing"].append(str(rid))
+    return out
+
+
+def invisible_calls(calls, expected, stored_by_id, id_field="mdc.requestId"):
+    """Calls that left NO record of any kind -- not even an application line.
+
+    v3's stated cost was "successful reads leave no INDIVIDUAL record; they are
+    counted, not lost". Run `1788759324` sharpens it: a counted call whose
+    application logging is also silent leaves **nothing at all**, and what
+    decides that is CACHE WARMTH. Three identical `load_table` calls: the first
+    emitted one application line, the second and third emitted none.
+
+    So the honest statement of the trade-off is not "the access line is dropped"
+    but "a warm repeat of a successful read is invisible end to end". That is
+    worth stating in the results rather than leaving a reader to infer that a
+    counted call is always findable through its application lines.
+    """
+    out = []
+    expected = list(expected or [])
+    for i, call in enumerate(calls or ()):
+        rid = call.get("request_id")
+        exp = expected[i] if i < len(expected) else None
+        verdict = (exp or {}).get("verdict") if isinstance(exp, dict) else None
+        if not rid or verdict is None or disposition(verdict) != COUNTED:
+            continue
+        if not (stored_by_id or {}).get(str(rid)):
+            out.append(call)
+    return out
+
+
 #: Substrings of a FIELD NAME that mean the field carries a throwable. Matched
 #: against keys only -- a message mentioning an exception is not one.
 EXCEPTION_KEY_HINTS = ("exception", "stacktrace", "stack_trace", "throwable", "frames")

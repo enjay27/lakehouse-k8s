@@ -6,8 +6,10 @@ handoff named in *Now* — it is standalone.
 
 ## Now — 2026-09-07 (session 8)
 
-**Read [`log-coverage/PLAN-log-coverage-schema-v2.md`](log-coverage/PLAN-log-coverage-schema-v2.md)
-first, then [`PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md) — both standalone.**
+**Read [`log-coverage/HANDOFF-500-coverage-2026-09-07.md`](log-coverage/HANDOFF-500-coverage-2026-09-07.md)
+first — standalone, written for a session starting cold.** Then
+[`PLAN-log-coverage-schema-v2.md`](log-coverage/PLAN-log-coverage-schema-v2.md) and
+[`PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md).
 
 **THE ORACLE READS SCHEMA v2, and the drift that caused the gate abort cannot recur silently.**
 The filter shipped v2 while `SCHEMA_VERSION` stayed 1, and cell 0b printed eight "unexpected
@@ -29,15 +31,14 @@ cannot be provoked on demand. **Stack traces survive and are richer than recorde
 FOUR names** — `exception.exceptionType`, `.frames`, `.message`, `.refId` — and 48 records in the
 run carried one, so traces accompany handled 4xx too.
 
-**Run 3 (`1788745242`)** remains the run whose report checks against itself throughout: fixture
-diff 30, **0** in the loss direction, four named assertions PASS, volume reconciles. The drop
-counter works (1,943). Missing windows are the MacBook sleeping.
-
 **Fast-run settings still live and TEMPORARY** (sha `d58b9203a8304030`): `WINDOW_SECONDS` 30,
 `Interval_Sec` 5. **Revert together** when the run of record is done.
 
-**Next:** re-run the notebook — the gate should pass now — and find out whether any rung fires.
-Then the run of record, then revert.
+**Next:** the blocker is that **nothing provokes an UNHANDLED exception**. Best candidate is
+inducing PG replica lag on purpose (`pg_wal_replay_pause()` on a standby, then
+`create_namespace`) — a `local-k8s` action, since it needs psql. If that is not feasible, close
+the question honestly as *opportunistic and not repeatable* rather than leaving it open. Then the
+run of record, then revert the fast-run settings.
 
 **Gate: the oracle tests RUN FROM COWORK now — 115 passed, 0 skipped**, against the deployed
 filter (`lua5.4` in the cloud container + `FB_VALUES_PATH` at a staged `fb-values.yaml`). 37 tests

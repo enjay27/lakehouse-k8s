@@ -319,6 +319,7 @@ reads a missing field as `0` reports PASS for a measurement nobody took — the 
 
 | file | |
 |---|---|
+| `HANDOFF-500-coverage-2026-09-07.md` | **read this first if you are starting cold** — state, what is settled, what is open, and the next actions in order |
 | `PLAN-log-coverage-schema-v2.md` | the report **schema** v2 plan, from `local-k8s` — the harness fixes this repo still owes it, and §4 is the 500 gap |
 | `PLAN-log-coverage-v3.md` | **read this first** — policy v3, the scheduled report, and what the notebook must prove about both |
 | `PLAN-log-coverage.md` | the v2 plan. Still the right description of how the oracle works; its policy table is superseded |
