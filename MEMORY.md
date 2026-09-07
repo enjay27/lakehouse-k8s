@@ -6,27 +6,25 @@ everything else is a link into [`.memory/`](.memory/README.md).
 ## Now — 2026-09-07
 
 **Report schema v2 is DEPLOYED and measured correct** (sha `d58b9203a8304030`; the notebook
-gate confirms the running ConfigMap carries it). Run `1788755035`, window `04:24:00Z`: both
-request margins 158, `errors_4xx` 41/41/41, `auth_denied` 12/12/12, `bytes_total` 1,186,348 on
-both sides — **the new fields carry their own margins**, where v1 had only the request one.
-38 active + 4 principals + 6 carried = 48 rows; the next window carries 42 and decays.
+gate confirms the running ConfigMap carries it). Run `1788755035`: both request margins 158,
+`errors_4xx` 41/41/41, `auth_denied` 12/12/12, `bytes_total` 1,186,348 on both sides — **the
+new fields carry their own margins**, where v1 had only the request one. 38 active + 4
+principals + 6 carried = 48 rows; the next window carries 42 and decays.
 
-**Next, and it is the harness, not the filter:** that run reports 34 fixture mismatches and a
-violated invariant, **none of them a filter fault** — all three, with evidence, in
-[`HANDOFF-harness-schema-v2`](logging/HANDOFF-harness-schema-v2-2026-09-07.md). The one that
-matters: `polaris-learning`'s window merge does not sum fields it does not know, so a v2 field
-reads as one window rather than the merge — **a wrong number, not an error**, the same failure
-mode as `type_int_key`. **Fix those, then rerun to
-[`PLAN-log-coverage-schema-v2`](logging/PLAN-log-coverage-schema-v2-2026-09-07.md)** — it
-asserts per window rather than per merge, carries a negative case for every new field, and
-names the one gap: `errors_5xx` has no repeatable provocation, the 500 probe having returned
-200 three runs running.
+**Next is the harness, not the filter.** That run's 34 mismatches are all
+[`HANDOFF-harness-schema-v2`](logging/HANDOFF-harness-schema-v2-2026-09-07.md) — chiefly a
+window merge that does not sum fields it does not know, so a v2 field reads as one window:
+**a wrong number, not an error**, the same failure mode as `type_int_key`. Fix those, then
+rerun to [`PLAN-log-coverage-schema-v2`](logging/PLAN-log-coverage-schema-v2-2026-09-07.md)
+(per window, not per merge; a negative case per field; `errors_5xx` has **no repeatable
+provocation** — the 500 probe has returned 200 three runs running).
 
-**Still written and NOT running:** the temporary **30s window** (`Interval_Sec 5`). Revert to
-1800/30 (#14d) and ride one change with that single upgrade: `resources_other` /
-`resources_other_distinct` into the summary `_msg` — queryable today, invisible as text. Until
-then the repo file stays byte-identical to the deployed ConfigMap, which is what makes the
-notebook's gate mean anything. [`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md).
+**Still written and NOT running:** the temporary **30s window** (`Interval_Sec 5`) — keep it
+until that rerun, which costs ~2 minutes at 30s and ~90 at 1800. Then revert to 1800/30 (#14d)
+and ride one change with that upgrade: `resources_other`/`_distinct` into the summary `_msg`.
+Until then the repo file stays byte-identical to the deployed ConfigMap, which is what makes
+the notebook's gate mean anything.
+[`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md) is the procedure.
 
 **Standing, and both outrank inference.** Polaris is not to be changed — it works and ships
 continuously (Kade's observation, over the reasoning in #11). And **verify against the running
