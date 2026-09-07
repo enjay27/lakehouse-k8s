@@ -16,7 +16,11 @@ violated invariant, **none of them a filter fault** — all three, with evidence
 [`HANDOFF-harness-schema-v2`](logging/HANDOFF-harness-schema-v2-2026-09-07.md). The one that
 matters: `polaris-learning`'s window merge does not sum fields it does not know, so a v2 field
 reads as one window rather than the merge — **a wrong number, not an error**, the same failure
-mode as `type_int_key`.
+mode as `type_int_key`. **Fix those, then rerun to
+[`PLAN-log-coverage-schema-v2`](logging/PLAN-log-coverage-schema-v2-2026-09-07.md)** — it
+asserts per window rather than per merge, carries a negative case for every new field, and
+names the one gap: `errors_5xx` has no repeatable provocation, the 500 probe having returned
+200 three runs running.
 
 **Still written and NOT running:** the temporary **30s window** (`Interval_Sec 5`). Revert to
 1800/30 (#14d) and ride one change with that single upgrade: `resources_other` /
