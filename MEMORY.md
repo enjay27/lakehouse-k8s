@@ -18,18 +18,16 @@ because the old list added `errors` and silently not `errors_4xx` **in the same 
 instance of that shape here. `check_invariants` carries v2's cardinality rule, the error-split
 inequalities and all six reconciled margins.
 
-**COVERAGE: 500 ERROR exists and can fail.** The ERROR path had never been driven on purpose:
-`neg.500_null_pointer` returned 200 for three runs (this build falls back to `endpoint` when
-`endpointInternal` is absent), and every stored 500 arrived by accident from the PG-HA
-read-after-write signature — writes that **committed**. §5c drives a **ladder** of three API-only
-rungs as a pure-500 burst in one window, stopping at the first that really 500s; §11c checks
-**both halves** (the access line, kept *and* counted; the application line, kept and counted into
-nothing, carrying the trace as flattened `exception.frames`) and the window's `errors_5xx` /
-`errors_4xx` / `auth_denied`. The application half has **three** verdicts and only `absent`
-accuses the pipeline — a `handled` 500 carries no throwable because Polaris caught it, and
-nothing was lost. **No rung has ever fired**; all four are `[assumed]`, and wrong MinIO *auth*
-is deliberately not one (static server-side creds, not client-reachable). Scenario in full:
-[`log-coverage/doc-500-coverage-scenario.md`](log-coverage/doc-500-coverage-scenario.md).
+**COVERAGE: 500 ERROR RAN, AND EVERY ROUTE TO A 500 IS NOW A CLOSED ONE.** Run `1788759324`,
+157 calls, clean linear run. All four rungs answered by a **4xx**: a broken storage endpoint is
+**422** whether it is refused (`127.0.0.1:1`) or unresolvable (`.svc.invalid`), a missing bucket
+is **400**, a stale `entityVersion` is **409**. `IcebergExceptionMapper` (50 records) catches and
+maps them, so **storage misconfiguration is a CLIENT error on this build and never reaches
+`errors_5xx`** — measured, not assumed. §5c printed NOT PROVOKED, which is the contract working.
+**The only 500 anyone has seen here is still the PG-HA read-after-write signature**, which
+cannot be provoked on demand. **Stack traces survive and are richer than recorded: 7 of 7, under
+FOUR names** — `exception.exceptionType`, `.frames`, `.message`, `.refId` — and 48 records in the
+run carried one, so traces accompany handled 4xx too.
 
 **Run 3 (`1788745242`)** remains the run whose report checks against itself throughout: fixture
 diff 30, **0** in the loss direction, four named assertions PASS, volume reconciles. The drop

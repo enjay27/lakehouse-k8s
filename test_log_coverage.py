@@ -1636,3 +1636,64 @@ def test_the_dns_rung_fails_at_a_different_layer_than_the_black_hole():
     assert ".invalid" in endpoint and "real" not in endpoint
     #: and it is not rung 1's constant wearing a second name
     assert endpoint != "http://127.0.0.1:1"
+
+
+def test_the_window_negatives_compare_against_what_was_actually_driven():
+    #: RUN 1788759324. No rung fired, so the ladder's twelve calls came back
+    #: 422/422/400/409 and landed in the very window the checks call a
+    #: "pure-500 burst". Against a hardcoded `driven_4xx=0` that printed
+    #: `a 500 does not increment errors_4xx: errors_4xx=13, driven 4xx=0` --
+    #: the harness's own traffic reported as a fault in the filter.
+    ladder = (
+        [_call(f"{lc.DELIBERATE_500_PREFIX}bh.t{i}", "POST", T, 422) for i in range(3)]
+        + [
+            _call(f"{lc.DELIBERATE_500_PREFIX}dns.t{i}", "POST", T, 422)
+            for i in range(3)
+        ]
+        + [
+            _call(f"{lc.DELIBERATE_500_PREFIX}bkt.t{i}", "POST", T, 400)
+            for i in range(3)
+        ]
+        + [_call(f"{lc.DELIBERATE_500_PREFIX}sv.p{i}", "PUT", T, 409) for i in range(3)]
+        + [_call(f"{lc.DELIBERATE_500_PREFIX}x.denied", "GET", T, 403)]
+    )
+    mix = lc.driven_status_mix(ladder)
+    assert (mix["n_5xx"], mix["n_4xx"], mix["n_auth_denied"]) == (0, 13, 1)
+
+    rows = [
+        _sum_row(errors_4xx=13, errors_5xx=1, auth_denied=1),
+        {
+            "report_type": "resource",
+            "resource": lc.REPORT_OTHER,
+            "errors": 14,
+            "errors_4xx": 13,
+            "errors_5xx": 1,
+        },
+        {
+            "report_type": "principal",
+            "user_principal_name": "nb_p",
+            "errors": 14,
+            "errors_4xx": 13,
+            "errors_5xx": 1,
+        },
+    ]
+    named = {
+        n: ok
+        for n, ok, _ in lc.check_500_window(
+            rows,
+            driven_500=0,
+            driven_4xx=mix["n_4xx"],
+            driven_auth_denied=mix["n_auth_denied"],
+        )
+    }
+    assert named["a 500 does not increment errors_4xx"] is True
+    assert named["a 500 does not increment auth_denied"] is True
+    #: and the split check reads the RESOURCE margin, because the summary has no
+    #: `errors` field at all -- it has `errors_kept`. Reading the missing name
+    #: gave 0 and printed `13 + 1 <= 0  FAIL` for a consistent window.
+    assert named["errors_4xx + errors_5xx <= errors"] is True
+    #: an extra 4xx that nothing drove is still caught
+    named = {
+        n: ok for n, ok, _ in lc.check_500_window(rows, driven_500=0, driven_4xx=12)
+    }
+    assert named["a 500 does not increment errors_4xx"] is False

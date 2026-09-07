@@ -1,7 +1,9 @@
 # Coverage: 500 error — the full test scenario
 
-**Status: written 2026-09-07, NOT YET RUN.** Every expected status below marked **[assumed]**
-has never been observed on this build. The point of the run is to replace those markers.
+**Status: RUN 2026-09-07 (`1788759324`). Every rung is now MEASURED, and every one of them
+failed to produce a 500.** The `[assumed]` markers are gone; the statuses in §4 are what this
+build actually returned. **A deliberate 500 is still unprovoked**, and §4 now records four
+routes that are closed rather than four that are untried.
 
 Read `PLAN-log-coverage-v3.md` for the policy and `PLAN-log-coverage-schema-v2.md` for the
 report schema. This file is only the 500 scenario: what is driven, what is asserted, and what
@@ -62,12 +64,30 @@ of it is meant to run anywhere else.
 Tried cheapest first, **stopping at the first rung that actually returns ≥ 500**. Every rung is
 API-only, creates its own catalog, and deletes it in `cleanup` with `purge=False`.
 
-| # | rung | what is wrong | fails at | expected |
+| # | rung | what is wrong | fails at | **measured `1788759324`** |
 |---|---|---|---|---|
-| 1 | `black_hole_endpoint` | **both** `endpoint` and `endpointInternal` point at `127.0.0.1:1` | TCP connect — `ConnectException`, refused instantly | 500 **[assumed]** |
-| 2 | `unresolvable_host` | both endpoints point at `…svc.invalid:9000` | DNS — `UnknownHostException` | 500 **[assumed]** |
-| 3 | `nonexistent_bucket` | catalog's bucket does not exist in MinIO | bucket lookup on first write | 500 **[assumed]** |
-| 4 | `stale_entity_version` | PUT `/catalogs` with `currentEntityVersion − 5` | optimistic lock | **409, not 500** [assumed] — `update_catalog`'s own docstring says so, so this rung may be unable to fire at all |
+| 1 | `black_hole_endpoint` | **both** `endpoint` and `endpointInternal` point at `127.0.0.1:1` | TCP connect — `ConnectException`, refused instantly | **422** ×3 |
+| 2 | `unresolvable_host` | both endpoints point at `…svc.invalid:9000` | DNS — `UnknownHostException` | **422** ×3 |
+| 3 | `nonexistent_bucket` | catalog's bucket does not exist in MinIO | bucket lookup on first write | **400** ×3 |
+| 4 | `stale_entity_version` | PUT `/catalogs` with `currentEntityVersion − 5` | optimistic lock | **409** ×3 — exactly as `update_catalog`'s docstring said; `error-cases/18`'s premise is stale |
+
+### What that measurement means
+
+**A broken storage configuration is a CLIENT error on this build, not a server error.** Polaris
+catches it and maps it — `org.apache.polaris.service.exception.IcebergExceptionMapper` logged 50
+records in that run — so a wrong endpoint (refused *or* unresolvable) is **422** and a missing
+bucket is **400**. Both are kept by rule 3 and counted into `errors_4xx`; neither ever reaches
+`errors_5xx`.
+
+So **wrong host and wrong bucket are closed routes to a 500**, and this is measured rather than
+assumed. The rungs are kept in the ladder anyway: they are cheap, they document the four routes
+that do not work, and a build change that started returning 500 for them would show up as a
+rung firing rather than as a silent gap.
+
+**The only 500 anyone has ever seen here remains the PG-HA read-after-write signature** on
+`create_namespace` / `create_view` — 7 ERROR records in that run, all
+`Unhandled exception returning INTERNAL_SERVER_ERROR`. It cannot be provoked on demand, and it
+is a write that committed.
 
 **Rungs 1 and 2 are separate on purpose.** DNS resolution and TCP connect are different layers
 and the S3 client may handle them in different code paths, so one can 500 where the other does
@@ -199,15 +219,31 @@ opposite: change the probe, or fix the shipper.
 | a rung fires, verdict `unhandled` | **full coverage.** `errors_5xx` exercised, trace demonstrated end to end, question 3 answered from a driven 500 |
 | a rung fires, verdict `handled` | `errors_5xx` and both halves are covered; **the trace question stays open** and needs a rung that provokes an *unhandled* exception. Not a pipeline fault |
 | a rung fires, verdict `absent` | **a pipeline finding.** Rule 2 says the line should be there |
-| every rung returns 2xx | **NOT PROVOKED.** 500 coverage unavailable on this build; question 3 stays NOT ANSWERED. The accidental PG-HA 500s are **not** substituted. Remaining options are `PLAN-log-coverage-schema-v2` §4: add a rung, or state in the results that ERROR-path coverage is *opportunistic and not repeatable* |
+| no rung produces a 500 — **what happened on `1788759324`** | **NOT PROVOKED.** Every rung was answered by a 4xx. `errors_5xx` was not exercised by anything driven on purpose. The accidental PG-HA 500s are **not** substituted. Remaining options are `PLAN-log-coverage-schema-v2` §4: find a rung that provokes an *unhandled* exception, or state in the results that ERROR-path coverage is *opportunistic and not repeatable* |
 
 ---
 
-## 9. What the run settles
+## 9. What the run settled, and what is still open
 
-1. Does **any** rung provoke a 500 on this build, and which — all four are `[assumed]`.
-2. Is the 500 **handled or unhandled** — i.e. is there a throwable to carry at all.
-3. Does `errors_5xx` move, and does the split charge it to the right counter.
-4. Is `errors_5xx` stored as a **number**.
-5. Whether `error-cases/09_500_null_pointer` can be repaired the same way, or should be retired
-   like `neg.500_null_pointer` was.
+**Settled by `1788759324`:**
+
+1. **No rung provokes a 500.** Storage misconfiguration is 422/400 on this build — a client
+   error, mapped by `IcebergExceptionMapper`. Wrong host and wrong bucket are closed routes.
+2. **`errors_5xx` is stored as a number** — `errors_5xx:>0` matched 11 of 395 records carrying
+   the field, so `type_int_key` covers it.
+3. **The margins hold with the split**: `sum(resource.errors_5xx) == sum(principal.errors_5xx)`,
+   and per-window invariants passed on all three windows plus the merge.
+4. **Stack traces survive, richer than recorded**: 7 of 7 ERROR records carried a payload, under
+   **four** names — `exception.exceptionType`, `exception.frames`, `exception.message`,
+   `exception.refId`. 48 records in the run carried an exception field, so traces accompany
+   *handled* 4xx too, not only unhandled 500s.
+5. **`error-cases/18`'s premise is stale** — a stale `currentEntityVersion` is a 409.
+
+**Still open:**
+
+1. **A deliberate 500 has never been provoked.** No candidate remains among storage
+   misconfigurations; whatever provokes an *unhandled* exception on this build is unknown.
+2. **The `handled` / `unhandled` verdict has never been exercised on a driven 500**, because
+   there has never been one.
+3. Whether `error-cases/09_500_null_pointer` can be repaired at all, or should be retired the
+   way `neg.500_null_pointer` was — §4 now suggests retired.

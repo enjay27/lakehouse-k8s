@@ -2888,6 +2888,32 @@ def trace_verdicts(pairs):
     return out
 
 
+def driven_status_mix(calls):
+    """`{"n_5xx": .., "n_4xx": .., "n_auth_denied": ..}` over driven call rows.
+
+    THE BURST IS ONLY PURE IF THE LADDER FIRES. When no rung provokes a 500 its
+    twelve calls come back 4xx and land in the very window the checks call
+    "pure-500", so a hardcoded `driven_4xx=0` turns the harness's own traffic
+    into a FAIL against the filter. Run 1788759324 did exactly that: the ladder
+    returned 422/422/400/409 and the window check reported
+    `a 500 does not increment errors_4xx: errors_4xx=13, driven 4xx=0`.
+    Count what was actually driven and compare against that.
+    """
+    out = {"n_5xx": 0, "n_4xx": 0, "n_auth_denied": 0}
+    for call in calls or ():
+        status = call.get("status")
+        if status is None:
+            continue
+        status = int(status)
+        if status >= 500:
+            out["n_5xx"] += 1
+        elif status >= 400:
+            out["n_4xx"] += 1
+            if status in (401, 403):
+                out["n_auth_denied"] += 1
+    return out
+
+
 def check_500_window(rows, driven_500, driven_4xx=0, driven_auth_denied=0):
     """The `errors_5xx` assertions, as `(name, ok, detail)` -- `ok=None` = VOID.
 
@@ -2923,7 +2949,16 @@ def check_500_window(rows, driven_500, driven_4xx=0, driven_auth_denied=0):
         return out
     out.append(("the window carries the v2 error split", True, ", ".join(present)))
 
-    errors = _as_int(summary.get("errors"))
+    #: THE SUMMARY HAS NO `errors` FIELD -- it has `errors_kept`, which counts
+    #: access records the ERROR RULE kept, not error requests. Reading
+    #: `summary["errors"]` returned 0 and run 1788759324 printed
+    #: `errors_4xx + errors_5xx <= errors: 13 + 1 <= 0  FAIL` against a window
+    #: whose numbers were perfectly consistent. The true count for the window is
+    #: the resource margin, which the filter builds the split from in the first
+    #: place.
+    errors = sum(
+        _as_int(r.get("errors")) for r in rows if r.get("report_type") == "resource"
+    )
     e5 = _as_int(summary.get("errors_5xx"))
     e4 = _as_int(summary.get("errors_4xx"))
     denied = _as_int(summary.get("auth_denied"))
