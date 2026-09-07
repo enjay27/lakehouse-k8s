@@ -70,3 +70,52 @@ loudly on the new names — which is the point. `diff_reports` must **exclude
 `windows_skipped`** like `partial_window`: it is a property of the emitting process's clock
 and no oracle can predict it. The characterization test goes red on `SCHEMA_VERSION 2`;
 read the diff, then update it and `doc-log-coverage-results.md` together.
+
+---
+
+## Deployed the same day, and what run `1788755035` measured
+
+Kade upgraded the shipper (new pod `fb-polaris-shipper-fluent-bit-55b7bf586d-5kt5l`, sha256
+`d58b9203a8304030`) and drove 146 calls. **v2 works in Fluent Bit's LuaJIT** — which the 5.4
+suite could argue but not prove.
+
+Window `2026-09-07T04:24:00Z` (`seq=6`), 44 resource rows and 4 principal rows summed
+independently of both the filter and the oracle:
+
+| | resources | principals | summary |
+|---|---|---|---|
+| `requests` | 158 | 158 | `access_seen` 158 |
+| `errors` / `errors_4xx` | 41 / 41 | 41 / 41 | 41 / 41 |
+| `auth_denied` | 12 | 12 | 12 |
+| `response_bytes` | 1,186,348 | 1,186,348 | `bytes_total` 1,186,348 |
+
+**The point worth keeping:** v1's only real self-check was the request margin. Each v2 counter
+is now reconciled twice over, from two independently built row sets, so an error attributed to
+the wrong principal or a byte count charged to the wrong resource has somewhere to show up.
+That was not a design goal of the change — it fell out of putting the splits on the rows as
+well as the summary — and it is the strongest reason not to add a summary-only field later.
+
+Cardinality end to end: 38 active + 4 principals + 6 carried = 48 rows emitted; `seq=7` carries
+exactly 42 (the active ones) and reports `0 resources, 0 principals, 42 carried`; `seq=8`
+decays to 0. Under v1 that idle window would have claimed 42 resources touched.
+
+## The 34 "FAILING" mismatches are the harness, and one of them is instructive
+
+Full diagnosis with evidence: `logging/HANDOFF-harness-schema-v2-2026-09-07.md`.
+
+The one worth carrying forward: the harness's window merge sums fields from a hardcoded list,
+so v2 fields are not summed — they are taken from one window. `principal nb_…_principal` shows
+`errors` merged to 26 (25 + 1, summed) and `errors_4xx` to 1 (the first window alone) in the
+same row. **A hardcoded field list has now produced this failure mode twice in this pipeline** —
+here, and as `type_int_key` — and both times the symptom was a plausible number rather than an
+exception. Suite 4 was added to close the second one mechanically; the first needs the same
+treatment on the harness side, which is why the handoff asks for the summable set to be derived
+from the row rather than listed.
+
+## Deliberately not changed
+
+`resources_other` / `resources_other_distinct` appear in no `_msg`, so the folded-key count is
+invisible to anyone reading the stream as text — 24 of `seq=6`'s 158 requests folded into
+`__other__`, every one an error. The fix is a format string, and it waits for the fast-run
+revert so the repo file stays byte-identical to the deployed ConfigMap. That equality is the
+whole basis of the notebook's preflight gate, and it is worth more than an earlier message.

@@ -5,20 +5,24 @@ everything else is a link into [`.memory/`](.memory/README.md).
 
 ## Now — 2026-09-07
 
-**Report schema v2 is written and NOT running.** `fb-values.yaml` carries `SCHEMA_VERSION = 2`:
-`distinct_resources`/`_principals` count only rows with `requests > 0` (v1 counted zero-carry
-rows, so an idle window reported resources it never saw — remainder now in `carried_rows`);
-`counted_get` -> `counted_read`, it had always counted HEAD. Added `errors_4xx`/`errors_5xx`/
-`auth_denied`, `bytes_total`, `resources_other_distinct`, `windows_skipped`. **60/60** in
-`logging/scripts/test-polaris-filters.py`; its suite 4 fails if a numeric field is missing from
-`type_int_key`. `helm lint`/`--dry-run` NOT run — no cluster reach from Cowork. Decisions:
-[`sessions/2026-09-07-report-schema-v2.md`](.memory/sessions/2026-09-07-report-schema-v2.md);
-proposal: [`HANDOFF-report-schema-v2`](logging/HANDOFF-report-schema-v2-2026-09-07.md).
+**Report schema v2 is DEPLOYED and measured correct** (sha `d58b9203a8304030`; the notebook
+gate confirms the running ConfigMap carries it). Run `1788755035`, window `04:24:00Z`: both
+request margins 158, `errors_4xx` 41/41/41, `auth_denied` 12/12/12, `bytes_total` 1,186,348 on
+both sides — **the new fields carry their own margins**, where v1 had only the request one.
+38 active + 4 principals + 6 carried = 48 rows; the next window carries 42 and decays.
 
-**Also written and NOT running:** the temporary **30s window** (`Interval_Sec 5`), kept on
-purpose for one fast coverage run against v2 — **revert both to 1800/30 in a second upgrade
-after it** (#14d: a late tick makes counts unattributable; ~60x report volume).
-[`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md) is the procedure.
+**Next, and it is the harness, not the filter:** that run reports 34 fixture mismatches and a
+violated invariant, **none of them a filter fault** — all three, with evidence, in
+[`HANDOFF-harness-schema-v2`](logging/HANDOFF-harness-schema-v2-2026-09-07.md). The one that
+matters: `polaris-learning`'s window merge does not sum fields it does not know, so a v2 field
+reads as one window rather than the merge — **a wrong number, not an error**, the same failure
+mode as `type_int_key`.
+
+**Still written and NOT running:** the temporary **30s window** (`Interval_Sec 5`). Revert to
+1800/30 (#14d) and ride one change with that single upgrade: `resources_other` /
+`resources_other_distinct` into the summary `_msg` — queryable today, invisible as text. Until
+then the repo file stays byte-identical to the deployed ConfigMap, which is what makes the
+notebook's gate mean anything. [`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md).
 
 **Standing, and both outrank inference.** Polaris is not to be changed — it works and ships
 continuously (Kade's observation, over the reasoning in #11). And **verify against the running

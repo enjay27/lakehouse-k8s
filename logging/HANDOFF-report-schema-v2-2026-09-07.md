@@ -1,8 +1,9 @@
 # HANDOFF — nine changes to the flush report's schema, and why two of them are corrections
 
-**Status: IMPLEMENTED 2026-09-07 (commit `Report schema v2: the cardinality fields counted
-carried zeros...`), minus `top_error_path`. WRITTEN AND NOT RUNNING** — the file carries
-`SCHEMA_VERSION 2`; the shipper still runs v1 until Kade upgrades it. Results at the foot of
+**Status: IMPLEMENTED AND DEPLOYED 2026-09-07**, minus `top_error_path`. The running
+ConfigMap carries this script (sha256 `d58b9203a8304030`, confirmed by the notebook's own
+gate) and run `1788755035` measured it end to end — every margin exact, including the new
+fields' own. The harness has not caught up: `logging/HANDOFF-harness-schema-v2-2026-09-07.md`. Results at the foot of
 this document; the decisions and their reasoning are in
 [`.memory/sessions/2026-09-07-report-schema-v2.md`](../.memory/sessions/2026-09-07-report-schema-v2.md).
 Step 1 of the repo's plan-first protocol; step 2 is Kade's confirmation. Written 2026-09-07 to
@@ -368,11 +369,31 @@ they are not discovered late. Every one of them is a consequence of a change abo
   report cases covering every §9 requirement, plus a **new suite 4** that reads `type_int_key`
   and the emitted field names out of the same values file and fails on a missing *or* stale
   entry. Verified to fail by removing `auth_denied` from the directive.
-- **ConfigMap sha after upgrade:** *(pending — Kade's upgrade)*
-- **A real record showing the new fields as numbers:** *(pending — this is the §4 check and the
-  reason suite 4 exists; the suite proves the directive, only a record proves the encoding)*
+- **ConfigMap sha after upgrade:** `d58b9203a8304030`; the notebook's preflight confirms the
+  running ConfigMap carries this exact script.
+- **A real record showing the new fields as numbers:** yes — run `1788755035`,
+  `http_status:>=400 -> 41` and `http_status:"404" -> 25` scoped to the run, and the report
+  stream's own numbers reconcile as numbers. Window `04:24:00Z` (`seq=6`), summed independently
+  from 44 resource rows and 4 principal rows: `requests` **158 = 158 = access_seen**;
+  `errors_4xx` 41 = 41 = 41; `auth_denied` 12 = 12 = 12; `response_bytes` 1,186,348 = 1,186,348
+  = `bytes_total`. **The v2 fields carry their own margins** — v1's only self-check was the
+  request margin. Cardinality: 38 active + 4 principals + 6 carried = 48 rows emitted; the next
+  window carries exactly 42 (the active ones) and decays to 0 in the one after. `seq=7` reports
+  `0 resources, 0 principals, 42 carried` — the v1 defect, visibly fixed.
 - **Fast-run settings reverted in the same upgrade:** **no, by decision.** `WINDOW_SECONDS 30`
   / `Interval_Sec 5` stay live for one fast run against v2; revert both to 1800/30 after it.
-- **Harness updated (§7), characterization test read and updated:** *(pending — not mounted in
-  a Cowork session. Frozen field sets, `diff_reports` excluding `windows_skipped`, and the
-  characterization test going red on `SCHEMA_VERSION 2`.)*
+- **Harness updated (§7), characterization test read and updated:** **not yet** — run
+  `1788755035` reports 34 fixture mismatches and a violated invariant, and **none of them is a
+  filter fault**. The three, with evidence, are in
+  [`HANDOFF-harness-schema-v2-2026-09-07.md`](HANDOFF-harness-schema-v2-2026-09-07.md): the
+  window merge does not sum fields it does not know (so a v2 field reads as one window, not the
+  merge — a wrong number, not an error); `distinct_resources=38 but 44 rows emitted` is now
+  correct and needs the stronger invariant `distinct + distinct + carried == rows - 1`; and the
+  oracle must compute the new fields while excluding `windows_skipped`, which no oracle can
+  predict.
+- **Still to ride with the fast-run revert (one upgrade, not two):** `resources_other` and
+  `resources_other_distinct` are queryable fields but appear in **no** `_msg`, so the folded-key
+  count is invisible to anyone reading the stream as text — 24 of `seq=6`'s requests folded into
+  `__other__`, all of them errors. Add both to the summary message then, not before: keeping the
+  repo file byte-identical to the deployed ConfigMap is what makes the notebook's gate mean
+  anything.
