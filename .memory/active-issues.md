@@ -213,6 +213,28 @@ review that re-proved it is
 [`sessions/2026-09-07-500-coverage-review.md`](sessions/2026-09-07-500-coverage-review.md).
 Only the `%D` half of that row is still open, and it is Polaris-side.
 
+**READING THE REPORT STREAM — three false findings came from not doing this.** Every query
+against `app:polaris-shipper-report` must carry **`schema_version:2`**, and anything about
+sequence continuity must also carry **`hostname:"…"`**.
+
+- **The stream holds v1 AND v2 records side by side.** The shipper pod was replaced at
+  `2026-09-07T04:21:30Z` (`…68b4959db4-4f7tf` v1 -> `…55b7bf586d-5kt5l` v2). A `sum(errors_4xx)`
+  over any range spanning that instant silently under-counts: the v1 records have no such field,
+  and an absent field behaves like a zero inside a sum. Cell 0b gates the POLICY's schema
+  version; nothing gates the QUERY's.
+- **`report_seq` is per pod and resets to 1 on restart.** `min`/`max`/`count` across two
+  generations manufactures a phantom gap — it read as "50 reports lost", then as "a backlog
+  draining", and it was neither. The schema's own claim is *one summary per **(host, window)***;
+  the host is not decoration.
+- **`sum()` over an empty group returns `NaN` in LogsQL; `count()` returns 0.** A v1 summary has
+  no `carried_rows`, so summing it yields NaN, which a naive comparison reads as a mismatch.
+- **`_time` on a report record is the window END**, not its start. Seq 196 (`window_start
+  05:59:00`) appears at `05:59:30`.
+- **Every count must carry its denominator.** Ask `stats count()` for the scope first. Three
+  times in one session a number arrived with no scope and read like an answer — 25 vs 6 on an
+  unfiltered `_time`, a 5-row UI truncation read as a full result, and the cross-pod seq range.
+  Each was caught only because an independent number disagreed.
+
 **#1 — The repo has not been reconciled against the live cluster. OPEN.**
 Kade reset and rebuilt the cluster on 2026-09-03 without following
 `RESET-AND-CLEAN-INSTALL.md`, and resolved the four config blockers during the

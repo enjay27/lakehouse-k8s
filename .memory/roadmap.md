@@ -90,6 +90,15 @@ cluster it describes no longer exists.
 - `fluentbit_filter_drop_records_total` on `polaris_noise_filter` = **1,943**, reconciling
   exactly against 21,817 records seen (20,322 tailed + 1,495 ticks). The 7.1-trillion reading
   was the test repo's parser taking Fluent Bit's millisecond timestamp as the sample value.
+- **Schema v2 measured across the shipper pod's whole life, 2026-09-07.** `hi - lo + 1 == n`
+  on `report_seq` for one host: **417 consecutive reports, exactly one summary per window, no
+  gaps and no duplicates.** The margin equality holds on **8 of 8** windows that carried traffic
+  (398 idle ones satisfy it trivially and are not evidence); `carried_rows` matches the rows
+  actually carried in **406 of 406** windows; and the startup blind spot is measured for the
+  first time — seq 1, `window_start 04:21:30Z`, `partial_window: true`, `access_seen 0`, so the
+  hole is real, bounded by the tick interval, and cost nothing on this pod.
+- **Polaris 500s only on the create path.** 15 five-hundreds in 5 windows out of ~400, in two
+  clusters matching the two notebook runs; every idle hour is clean. `active-issues.md` #15.
 - **A gap in the report stream is usually the OrbStack VM suspending with the laptop**, not a
   stalled filter: 1,495 ticks against ~65.5h of uptime where `Interval_Sec 5` implies ~47,000.
   **No measurement over the report stream that spans a sleep can be read as elapsed time.**

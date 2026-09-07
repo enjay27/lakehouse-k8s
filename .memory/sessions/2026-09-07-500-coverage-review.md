@@ -165,3 +165,35 @@ almost certainly the `_time:[...]` filter not surviving into the query, and it w
 because it contradicted a query run three minutes earlier over the same window. Same family as
 `http_status:"404" -> 138` for a run with 23. **A count without its scope attached is not a
 result**, and the check that catches it is an independent number that must agree.
+
+## Verifying the schema against every window the pod has produced
+
+Five checks, run through `curl` against the VictoriaLogs LoadBalancer with explicit
+`start`/`end`/`limit` (the VMUI silently overrode the range and truncated to 5 rows, which cost
+two wrong conclusions before it was noticed).
+
+| check | result |
+|---|---|
+| `report_seq` continuity, one host, `schema_version:2` | `lo 1, hi 417, n 417` — **417 consecutive, one summary per window, no gaps, no duplicates** |
+| margin equality, all windows | **8 of 8** windows with traffic exact; 398 idle ones satisfy it trivially |
+| `carried_rows` vs rows actually carried | **0 violations in 406 windows** |
+| startup blind spot | seq 1, `04:21:30Z`, `partial_window: true`, `access_seen 0` — real, bounded, empty here |
+| `errors_5xx` across the pod's life | 15 in 5 windows, two clusters matching the two runs; idle hours clean |
+
+**Three false findings on the way there, all the same fault.** Each was a number without its
+scope, and each was caught by an independent number disagreeing rather than by care:
+
+1. `stats by (http_status)` over `POST …/namespaces` returned **25 x 500**. Scoped, it is 6.
+   The `_time` filter had not been applied; the giveaway was `404: 196` matching the results
+   document's known cluster-wide-24h reading of 195.
+2. The VMUI returned **5 rows** for queries spanning hundreds of windows, and the truncation was
+   invisible. It was caught only because a query asking for `04:21..04:26` came back with
+   windows `05:58..06:00` — the range had been ignored too.
+3. `min`/`max`/`count` on `report_seq` across the `04:21:30Z` pod replacement read as
+   **"50 reports lost"**, then as **"a backlog draining"**. Both were wrong: `report_seq` resets
+   per pod, and the stream holds schema v1 and v2 records side by side. Written up in
+   [`../active-issues.md`](../active-issues.md) #14, *Reading the report stream*.
+
+The rule that would have prevented all three: **ask `stats count()` for the denominator first,
+and carry `schema_version` and `hostname` on every report-stream query.** The schema's own claim
+has always been *one summary per (host, window)* — the host is not decoration.
