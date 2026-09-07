@@ -16,14 +16,16 @@ distinct mixes; 6 of 6 management POSTs; volume reconciles exactly. What remains
 is entirely the notebook's own fixture setup and teardown, which are not in `ALL_CALLS` — the
 last structural gap between oracle and pipeline.
 
-**STACK TRACES: the "none exist" finding was WRONG and is retracted.** Polaris emits Quarkus's
-**structured** exception output — an object with a `frames` array of `{class, method, line}` —
-so `grep -c stackTrace` found nothing for the same reason the notebook reported `0 of 5`:
-**both searched for a name this build does not use, and agreeing with each other was not
-corroboration.** `lc.exception_fields` now reports the field NAMES, since absence and a
-mis-named search have opposite remedies. **Open again, and unmeasured:** whether the payload is
-in the log FILE (as opposed to container stdout, which reaches OpenSearch by another path), and
-whether it survives into VictoriaLogs. Only the second is about the pipeline under test.
+**STACK TRACES SURVIVE, END TO END — and the two findings that said otherwise were both mine.**
+An ERROR record carries a top-level `exception` key at the source, the payload is Quarkus's
+**structured** output (a `frames` array of `{class, method, line}`), and it reaches VictoriaLogs
+intact — read back from VMUI. **No Quarkus change is needed; the spec's §1 SLA holds.** It was
+reported missing twice because `grep -c stackTrace` used a name this build does not emit and
+`"exception" in record` missed the flattened key: **VictoriaLogs flattens nested objects**, so
+it is stored as `exception.frames` — exactly as `mdc.requestId` is the flattened form of `mdc`,
+which this notebook has relied on all along. `lc.exception_fields` now reports field NAMES.
+**What is left is coverage, not capability:** the 500s arrived by accident, and
+`neg.500_null_pointer` has returned 200 for three runs.
 
 **THE DROP COUNTER now works.** Fluent Bit's Prometheus encoder appends a millisecond timestamp
 after the sample value and the parser was reading it as the value (hence 7,154,980,971,680).
