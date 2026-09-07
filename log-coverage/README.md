@@ -307,9 +307,10 @@ otherwise; the ladder is ordered, not proven.
 neighbour traffic lands in the same window; `==` on the negatives, because nothing driven there
 can add a 4xx — an inequality would pass a filter that charged the 500 to the wrong counter.
 
-`errors_5xx` is a **schema v2** field and this repo's oracle is still `SCHEMA_VERSION = 1`, so
-where a stored window carries no error split the window-level checks read **VOID**, never PASS.
-Migrating the oracle to v2 is that plan's §1 and is deliberately a separate task.
+`errors_5xx` is a **schema v2** field, and the oracle reads v2 as of 2026-09-07. The VOID path
+stays anyway: a window from an older filter carries no error split at all, and a check that
+reads a missing field as `0` reports PASS for a measurement nobody took — the same shape as
+`0 of 0`. **Absent is not zero.**
 
 ## Files
 

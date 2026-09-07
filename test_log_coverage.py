@@ -619,7 +619,7 @@ def test_a_quiet_window_may_arrive_without_its_time_fields(policy):
     assert lc.check_invariants(quiet) == []
     #: any OTHER missing field is still schema drift
     broken = [dict(r) for r in quiet]
-    broken[0].pop("counted_get", None)
+    broken[0].pop("counted_read", None)
     assert any("missing fields" in b for b in lc.check_invariants(broken))
 
 
@@ -994,7 +994,7 @@ def test_a_500_is_kept_and_also_counted(policy):
     #: the notebook's other sense of the word -- records that left no
     #: individual trace -- and a kept 500 is not one of those.
     verdicts, reports = _window(policy, [("POST", T, 500)] * 3)
-    assert verdicts.count("keep") == 3
+    assert [v["verdict"] for v in verdicts].count("keep") == 3
     summary = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
     assert summary["access_seen"] == 3
     assert summary["access_kept"] == 3
@@ -1013,7 +1013,9 @@ def test_an_application_error_line_is_kept_and_counted_into_no_window(policy):
         logger="org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandler",
     )
     verdicts, reports = policy.report_windows([err])
-    assert verdicts == ["keep"]
+    #: `report_windows` returns predict()-shaped dicts, not bare verdicts --
+    #: `Policy.verdicts` is the one that flattens them.
+    assert [v["verdict"] for v in verdicts] == ["keep"]
     summary = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
     assert summary["access_seen"] == 0
     assert not [r for r in reports["w1"] if r["report_type"] == "resource"]
@@ -1295,3 +1297,266 @@ def test_the_ladder_points_both_storage_endpoints_at_the_black_hole():
     #: purge=False deliberately: purging talks to the endpoint this rung just
     #: pointed at a dead port, so it hangs or provokes a second untagged 500.
     assert seen["purge"] is False
+
+
+# ---------------------------------------------------------------- report schema v2
+#: PLAN-log-coverage-schema-v2 sections 1.1-1.4. These are the NEGATIVES: v1 could
+#: produce the right total while attributing it to the wrong bucket, and only a
+#: test that asks where a count landed catches that.
+def test_no_row_carries_a_field_called_counted_get(policy):
+    #: THE RENAME, not the value. `counted_get` counted GET *and* HEAD, so it
+    #: undercounted by its own definition; v2 renames it to `counted_read`. A
+    #: harness that still reads `counted_get` gets 0 or a KeyError, and 0 is the
+    #: dangerous one.
+    _, reports = _window(policy, [("GET", T, 200), ("HEAD", T, 200)])
+    assert not [r for r in reports["w1"] if "counted_get" in r]
+    s = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
+    assert s["counted_read"] == 2
+
+
+def test_counted_read_counts_head_as_well_as_get(policy):
+    _, reports = _window(
+        policy,
+        [("GET", T, 200), ("GET", T, 200), ("HEAD", T, 200), ("POST", T, 200)],
+    )
+    s = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
+    assert (s["counted_read"], s["counted_post"]) == (3, 1)
+
+
+def test_the_error_split_charges_each_status_to_exactly_one_half(policy):
+    #: 401 and 403 increment auth_denied AND errors_4xx -- denial is a KIND of
+    #: client error, not an alternative to it. A 5xx increments neither.
+    _, reports = _window(
+        policy,
+        [
+            ("GET", T, 200),  # read it first, so the key exists
+            ("GET", T, 401),
+            ("GET", T, 403),
+            ("GET", T, 404),
+            ("GET", T, 500),
+        ],
+    )
+    s = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
+    assert s["errors_4xx"] == 3
+    assert s["errors_5xx"] == 1
+    assert s["auth_denied"] == 2
+    row = [r for r in reports["w1"] if r.get("resource") == T][0]
+    assert (row["errors"], row["errors_4xx"], row["errors_5xx"]) == (4, 3, 1)
+    assert row["auth_denied"] == 2
+    assert lc.check_invariants(reports["w1"]) == []
+
+
+def test_an_unparsed_status_is_an_error_charged_to_neither_half(policy):
+    #: `count_record` increments `errors` and returns. Charging it to
+    #: `errors_4xx` would make "client errors" absorb the pipeline's own
+    #: failures, which is why the invariant is an INEQUALITY.
+    W = policy.window_seconds
+    broken = lc.app_log_record("x")
+    broken["loggerName"] = lc.ACCESS_LOGGER
+    broken["_msg"] = "this line does not match the access-log pattern at all"
+    events = [lc.Tick(1, "open"), broken, lc.Tick(W + 1, "w1")]
+    _, reports = policy.run(events)
+    s = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
+    assert s["parse_errors"] >= 1
+    assert s["errors_4xx"] == 0 and s["errors_5xx"] == 0
+    assert lc.check_invariants(reports["w1"]) == []
+
+
+def test_an_idle_window_reports_zero_distinct_resources_and_says_what_it_carried(
+    policy,
+):
+    #: THE v1 DEFECT, and the single most important assertion in schema v2.
+    #: v1's `distinct_resources` was the number of rows EMITTED, which includes
+    #: zero-carry rows -- so a window with no traffic at all reported two
+    #: distinct resources and a dashboard built on it showed steady activity
+    #: through a total outage.
+    _, reports = _window(policy, [("GET", T, 200)], silent=1)
+    idle = reports["w2"]
+    s = [r for r in idle if r["report_type"] == "summary"][0]
+    assert s["access_seen"] == 0
+    assert s["distinct_resources"] == 0
+    assert s["distinct_principals"] == 0
+    #: the rows are still emitted -- that is zero-carry -- and now they are
+    #: counted under a name that says so
+    assert s["carried_rows"] == len([r for r in idle if r["report_type"] != "summary"])
+    assert lc.check_invariants(idle) == []
+
+
+def test_the_cardinality_rule_closes_against_the_row_count(policy):
+    _, reports = _window(policy, [("GET", T, 200), ("GET", T, 403)])
+    rows = reports["w1"]
+    s = [r for r in rows if r["report_type"] == "summary"][0]
+    assert (
+        s["distinct_resources"] + s["distinct_principals"] + s["carried_rows"]
+        == len(rows) - 1
+    )
+
+
+def test_every_v2_margin_counter_is_reconciled_across_both_row_sets(policy):
+    #: NEW CAPABILITY, not more fields. Under v1 only `requests` was reconciled
+    #: across two independently built row sets, so an error attributed to the
+    #: wrong principal, or bytes charged to the wrong resource, had nowhere to
+    #: show up. Two principals with different mixes, because with one identity
+    #: every margin is satisfied by a global counter.
+    _, reports = _window(
+        policy,
+        [("GET", T, 200), ("PUT", T, 200), ("GET", T, 403), ("GET", T, 500)],
+        users=["writer", "writer", "reader", "reader"],
+    )
+    rows = reports["w1"]
+    res = [r for r in rows if r["report_type"] == "resource"]
+    pri = [r for r in rows if r["report_type"] == "principal"]
+    assert len(pri) == 2
+    for field in lc.MARGIN_FIELDS:
+        assert sum(r[field] for r in res) == sum(r[field] for r in pri), field
+    #: and no single principal carries the whole total, or the equality is empty
+    assert all(r["requests"] < 4 for r in pri)
+    assert lc.check_invariants(rows) == []
+
+
+def test_the_merge_sums_a_field_this_module_was_never_told_about():
+    #: PLAN section 1.1's acceptance test, and the bug it is written against:
+    #: `merge_windows` summed a HARDCODED list, so when the filter shipped v2 it
+    #: added `errors` and silently did not add `errors_4xx` -- in the same row,
+    #: with no exception and a plausible number out. The list is gone; the merge
+    #: reads the row. `invented_total` stands for the v3 field nobody has written
+    #: yet, and it must merge correctly the day it appears.
+    def win(start, end, e4, invented):
+        return [
+            {
+                "report_type": "summary",
+                "app": "polaris-shipper-report",
+                "level": "REPORT",
+                "schema_version": 2,
+                "report_seq": 1,
+                "hostname": "h",
+                "window_start": start,
+                "window_end": end,
+                "window_seconds": 30,
+                "_time": end,
+                "_msg": "m",
+                "access_seen": 1,
+                "access_kept": 1,
+                "access_counted": 0,
+                "errors": 1,
+                "errors_4xx": e4,
+                "invented_total": invented,
+                "distinct_resources": 1,
+                "distinct_principals": 1,
+                "carried_rows": 0,
+            },
+            {
+                "report_type": "resource",
+                "app": "polaris-shipper-report",
+                "level": "REPORT",
+                "schema_version": 2,
+                "report_seq": 1,
+                "hostname": "h",
+                "window_start": start,
+                "window_end": end,
+                "window_seconds": 30,
+                "_time": end,
+                "_msg": "m",
+                "resource": T,
+                "resource_kind": "table",
+                "requests": 1,
+                "reads": 1,
+                "writes": 0,
+                "errors": e4,
+                "errors_4xx": e4,
+                "response_bytes": 10,
+            },
+        ]
+
+    merged = lc.merge_windows(
+        [
+            win("2026-09-07T00:00:00Z", "2026-09-07T00:00:30Z", 1, 7),
+            win("2026-09-07T00:00:30Z", "2026-09-07T00:01:00Z", 25, 11),
+        ]
+    )
+    s = [r for r in merged if r["report_type"] == "summary"][0]
+    row = [r for r in merged if r["report_type"] == "resource"][0]
+    assert s["errors_4xx"] == 26, "the v2 field that used to be dropped"
+    assert row["errors"] == 26 and row["errors_4xx"] == 26, (
+        "`errors` merged under the old hardcoded list and `errors_4xx` did not -- "
+        "IN THE SAME ROW. Both, or the bug is still here."
+    )
+    assert s["invented_total"] == 18, "a field this module has never heard of"
+    #: and the things that must NOT be added
+    assert s["window_seconds"] == 30
+    assert s["schema_version"] == 2
+    assert s["distinct_resources"] == 1
+    assert s["carried_rows"] == 0
+
+
+def test_the_merge_does_not_add_up_a_principal_whose_name_looks_like_a_number():
+    #: `summable_fields` decides on the VALUE, because VictoriaLogs hands every
+    #: field back as a string -- so the row's own identity has to be excluded by
+    #: NAME or a principal called "42" becomes an addend.
+    def win(start, end):
+        return [
+            {
+                "report_type": "principal",
+                "app": "polaris-shipper-report",
+                "level": "REPORT",
+                "schema_version": 2,
+                "report_seq": 1,
+                "hostname": "h",
+                "window_start": start,
+                "window_end": end,
+                "window_seconds": 30,
+                "_time": end,
+                "_msg": "m",
+                "user_principal_name": "42",
+                "requests": "1",
+                "reads": "1",
+                "writes": "0",
+                "errors": "0",
+                "response_bytes": "5",
+            }
+        ]
+
+    rows = win("2026-09-07T00:00:00Z", "2026-09-07T00:00:30Z") + [
+        {
+            "report_type": "summary",
+            "app": "polaris-shipper-report",
+            "level": "REPORT",
+            "schema_version": 2,
+            "report_seq": 1,
+            "hostname": "h",
+            "window_start": "2026-09-07T00:00:00Z",
+            "window_end": "2026-09-07T00:00:30Z",
+            "window_seconds": 30,
+            "_time": "2026-09-07T00:00:30Z",
+            "_msg": "m",
+            "access_seen": 1,
+        }
+    ]
+    merged = lc.merge_windows([rows, rows])
+    pri = [r for r in merged if r["report_type"] == "principal"][0]
+    assert pri["user_principal_name"] == "42"
+    assert pri["requests"] == 2
+    assert "user_principal_name" not in lc.summable_fields(pri)
+
+
+def test_windows_skipped_is_never_diffed_against_the_oracle():
+    #: It counts boundaries the tick never noticed, which on this cluster means
+    #: the OrbStack VM was suspended with the MacBook. No oracle running under
+    #: `_now_override` can predict a laptop lid.
+    assert "windows_skipped" in lc.VOLATILE_FIELDS
+    base = {
+        "report_type": "summary",
+        "window_start": "2026-09-07T00:00:00Z",
+        "access_seen": 1,
+    }
+    diff = lc.diff_reports(
+        [dict(base, windows_skipped=0)], [dict(base, windows_skipped=118)]
+    )
+    assert not lc.report_mismatches(diff)
+
+
+def test_the_deployed_schema_version_is_read_and_not_assumed(policy):
+    #: The constant drifted once already: the filter shipped v2 while this
+    #: module said 1, and the gate's report was eight "unexpected fields" per
+    #: row with nothing naming the cause. Cell 0b compares these two.
+    assert policy.schema_version == lc.SCHEMA_VERSION

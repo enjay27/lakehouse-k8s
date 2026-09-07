@@ -9,42 +9,39 @@ handoff named in *Now* — it is standalone.
 **Read [`log-coverage/PLAN-log-coverage-schema-v2.md`](log-coverage/PLAN-log-coverage-schema-v2.md)
 first, then [`PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md) — both standalone.**
 
-**THE DEPLOYED REPORT IS SCHEMA v2 AND THIS REPO'S ORACLE IS STILL v1.** `src/log_coverage.py`
-says `SCHEMA_VERSION = 1` and its frozen field sets still carry `counted_get`, which v2 removed.
-Migrating it is that plan's §1 (start at 1.1: the window merge must sum every numeric field, read
-from the row's own keys — a hardcoded list has now produced the same silent failure twice here).
-**Not done, and nothing that asserts on a v2 field can be trusted until it is.**
+**THE ORACLE READS SCHEMA v2, and the drift that caused the gate abort cannot recur silently.**
+The filter shipped v2 while `SCHEMA_VERSION` stayed 1, and cell 0b printed eight "unexpected
+fields" per stored row — correct rows rendered as pipeline drift, with nothing naming the cause.
+`Policy.schema_version` now reads the deployed script and the gate compares the two.
+**`merge_windows` no longer sums a hardcoded list**: it derives the summable fields from the row,
+because the old list added `errors` and silently not `errors_4xx` **in the same row** — the third
+instance of that shape here. `check_invariants` carries v2's cardinality rule, the error-split
+inequalities and all six reconciled margins.
 
-**COVERAGE: 500 ERROR now exists, and it can fail.** The ERROR path had never been driven on
-purpose: `neg.500_null_pointer` returned **200 for three runs** (this build falls back to
-`endpoint` when `endpointInternal` is absent), and every stored 500 arrived by accident from the
-PG-HA read-after-write signature — writes that **committed**, so not evidence about unhandled
-exceptions. Notebook §5c drives a **ladder** of three API-only rungs as a pure-500 burst inside
-one window and stops at the first that really 500s; §11c checks **both halves** of a 500 (the
-access line, kept *and* counted by rule 3; the application ERROR line, kept and counted into
-nothing, carrying the trace as flattened `exception.frames`) and the pure-500 window's
-`errors_5xx` / `errors_4xx` / `auth_denied`. **If no rung fires it says NOT PROVOKED and question
-3 stays unanswered** — the accidental 500s are not a substitute. All three rungs are `[assumed]`;
-no run has confirmed one yet.
-
-**STACK TRACES SURVIVE, END TO END** — Quarkus's **structured** exception output reaches
-VictoriaLogs intact, stored **flattened** as `exception.frames`. Reported missing twice because
-both searches used a name this build does not emit. No Quarkus change is needed; what was left
-was coverage, not capability, and that is §5c.
+**COVERAGE: 500 ERROR exists and can fail.** The ERROR path had never been driven on purpose:
+`neg.500_null_pointer` returned 200 for three runs (this build falls back to `endpoint` when
+`endpointInternal` is absent), and every stored 500 arrived by accident from the PG-HA
+read-after-write signature — writes that **committed**. §5c drives a **ladder** of three API-only
+rungs as a pure-500 burst in one window, stopping at the first that really 500s; §11c checks
+**both halves** (the access line, kept *and* counted; the application ERROR line, kept and counted
+into nothing, carrying the trace as flattened `exception.frames`) and the window's `errors_5xx` /
+`errors_4xx` / `auth_denied`. **No rung has ever fired** — all three are `[assumed]`. If none
+does, it says NOT PROVOKED; the accidental 500s are not a substitute.
 
 **Run 3 (`1788745242`)** remains the run whose report checks against itself throughout: fixture
-diff 30, **0** metadata lines, **0 mismatches in the loss direction**, four named assertions PASS,
-6 of 6 management POSTs, volume reconciles. The drop counter works (1,943). Missing windows are
-the MacBook sleeping — no report-stream measurement spanning a sleep is elapsed time.
+diff 30, **0** in the loss direction, four named assertions PASS, volume reconciles. The drop
+counter works (1,943). Missing windows are the MacBook sleeping.
 
 **Fast-run settings still live and TEMPORARY** (sha `d58b9203a8304030`): `WINDOW_SECONDS` 30,
 `Interval_Sec` 5. **Revert together** when the run of record is done.
 
-**Next:** run §5c and find out whether any rung fires. Then schema-v2 §1 (1.1 first), then the run
-of record, then revert.
+**Next:** re-run the notebook — the gate should pass now — and find out whether any rung fires.
+Then the run of record, then revert.
 
-**Gate:** 705 passed / 1 pre-existing `test_privilege_scan` renderer drift, under a `uv run
---no-project` stand-in (`.venv` is a macOS build the Cowork bridge cannot execute).
+**Gate: the oracle tests RUN FROM COWORK now — 115 passed, 0 skipped**, against the deployed
+filter (`lua5.4` in the cloud container + `FB_VALUES_PATH` at a staged `fb-values.yaml`). 37 tests
+that had never executed from this side found three real bugs on their first run. Device suite:
+708 passed / 1 pre-existing `test_privilege_scan` drift.
 
 ## Where the detail is
 

@@ -386,6 +386,25 @@ class Policy:
         return int(m.group(1))
 
     @property
+    def schema_version(self):
+        """`SCHEMA_VERSION` as DEPLOYED, so the module constant cannot drift alone.
+
+        IT DID DRIFT, and this property is what that cost. The filter shipped
+        schema v2 on 2026-09-07 while `log_coverage.SCHEMA_VERSION` stayed at 1,
+        and cell 0b's report was eight "unexpected fields", one "missing field"
+        and a `schema_version '2'` line, repeated per row -- a correct stored
+        window rendered as schema drift, with nothing naming the actual cause.
+        Compare this against the constant and the next bump says so in one line.
+        """
+        m = re.search(r"^\s*(?:local\s+)?SCHEMA_VERSION\s*=\s*(\d+)", self.script, re.M)
+        if not m:
+            raise PolicyUnavailable(
+                "SCHEMA_VERSION is not in the deployed script -- this filter emits "
+                "no report, or it is older than the scheduled-report design"
+            )
+        return int(m.group(1))
+
+    @property
     def tick_seconds(self):
         """`Interval_Sec` of the `dummy` INPUT that drives the report, as
         DEPLOYED, or None if it cannot be found.
@@ -1221,11 +1240,24 @@ def expected_for(calls, policy, user="root"):
 REPORT_TAG = "polaris.report"
 REPORT_APP = "polaris-shipper-report"
 REPORT_LEVEL = "REPORT"
-SCHEMA_VERSION = 1
+#: Bumped to 2 on 2026-09-07. **This constant is the one that goes stale**, and it
+#: did: the filter shipped v2 and this module stayed at 1, so cell 0b aborted with
+#: eight "unexpected fields" and one "missing field" -- a correct stored window read
+#: as schema drift. `Policy.schema_version` reads the deployed script instead, and
+#: the gate compares the two, so the next bump names itself in one line.
+SCHEMA_VERSION = 2
 REPORT_OTHER = "__other__"
 
-#: Schema v1, read off the deployed `build_report` on 2026-09-04. Field names
-#: are contract: renaming one after a month of data is the expensive mistake.
+#: Schema v2, read off the deployed `build_report` on 2026-09-07 -- the source,
+#: not the gate's error message. Field names are contract: renaming one after a
+#: month of data is the expensive mistake, which is why v2 renames while the only
+#: consumer is this harness. v1 -> v2: `counted_get` becomes `counted_read`
+#: (READ_METHODS is GET *and* HEAD, so the old name undercounted by its own
+#: definition), the error split `errors_4xx` / `errors_5xx` / `auth_denied` and
+#: `bytes_total` appear on the summary and on every row, and `distinct_resources`
+#: / `distinct_principals` now count ACTIVE rows with `carried_rows` beside them --
+#: v1 reported rows EMITTED under a name promising resources touched, so an idle
+#: window claimed two distinct resources.
 ENVELOPE_FIELDS = frozenset(
     {
         "app",
@@ -1246,14 +1278,21 @@ SUMMARY_FIELDS = frozenset(
         "access_seen",
         "access_kept",
         "access_counted",
-        "counted_get",
+        "counted_read",
         "counted_post",
         "errors_kept",
         "parse_errors",
+        "errors_4xx",
+        "errors_5xx",
+        "auth_denied",
+        "bytes_total",
         "distinct_resources",
         "distinct_principals",
+        "carried_rows",
         "resources_other",
+        "resources_other_distinct",
         "principals_other",
+        "windows_skipped",
         "min_record_time",
         "max_record_time",
         "partial_window",
@@ -1267,6 +1306,9 @@ RESOURCE_FIELDS = frozenset(
         "reads",
         "writes",
         "errors",
+        "errors_4xx",
+        "errors_5xx",
+        "auth_denied",
         "response_bytes",
     }
 )
@@ -1277,6 +1319,9 @@ PRINCIPAL_FIELDS = frozenset(
         "reads",
         "writes",
         "errors",
+        "errors_4xx",
+        "errors_5xx",
+        "auth_denied",
         "response_bytes",
     }
 )
@@ -1305,7 +1350,11 @@ VLOGS_META = frozenset({"_stream", "_stream_id"})
 #: would report a mismatch on every row. `hostname` is
 #: `os.getenv("HOSTNAME") or "unknown"`; `report_seq` is a per-process counter
 #: that restarts at 1 when the shipper does; `_msg` embeds `report_seq`.
-VOLATILE_FIELDS = frozenset({"hostname", "report_seq", "_msg"})
+#: `windows_skipped` joins them for the same reason at one remove: it counts
+#: boundaries the tick never noticed, which on this cluster means the OrbStack VM
+#: was suspended with the MacBook. That is a fact about a laptop lid, and no
+#: oracle running under `_now_override` can predict it.
+VOLATILE_FIELDS = frozenset({"hostname", "report_seq", "_msg", "windows_skipped"})
 
 #: The six values `classify()` can return. All six must appear in a run.
 RESOURCE_KINDS = ("table", "view", "collection", "namespace", "management", "other")
@@ -1540,6 +1589,18 @@ def check_invariants(rows, strict_fields=True, merged=False):
             bad.append(f"{who}: reads+writes {rd + wr} > requests {req}")
         if er > req:
             bad.append(f"{who}: errors {er} > requests {req}")
+        #: v2's error split. INEQUALITY ON PURPOSE: a record whose status did not
+        #: parse is an error charged to NEITHER half -- `count_record` increments
+        #: `errors` and returns, deliberately, so that "client errors" does not
+        #: absorb the pipeline's own failures. Demanding equality here would fail
+        #: on exactly the line the whole retention policy exists to keep.
+        if "errors_4xx" in r or "errors_5xx" in r:
+            e4, e5 = (_as_int(r.get(k)) for k in ("errors_4xx", "errors_5xx"))
+            den = _as_int(r.get("auth_denied"))
+            if e4 + e5 > er:
+                bad.append(f"{who}: errors_4xx+errors_5xx {e4 + e5} > errors {er}")
+            if den > e4:
+                bad.append(f"{who}: auth_denied {den} > errors_4xx {e4}")
 
     if summaries:
         s = summaries[0]
@@ -1563,16 +1624,80 @@ def check_invariants(rows, strict_fields=True, merged=False):
                 f"access_seen-parse_errors={want}. The report is miscounting; "
                 "no trend built on it can be trusted."
             )
-        if _as_int(s.get("distinct_resources")) != len(resources):
+
+        #: v2 EXTENDS THE SELF-CHECK, and this is new capability rather than more
+        #: fields. Under v1 the only counter reconciled across two independently
+        #: built row sets was `requests`; an error attributed to the wrong
+        #: principal, or bytes charged to the wrong resource, had nowhere to show
+        #: up. Each of these is now built once per resource and once per
+        #: principal, so a disagreement names the counter.
+        for field in MARGIN_FIELDS[1:]:
+            if not any(field in r for r in resources + principals):
+                continue
+            a = sum(_as_int(r.get(field)) for r in resources)
+            b = sum(_as_int(r.get(field)) for r in principals)
+            if a != b:
+                bad.append(
+                    f"MARGINS DISAGREE on {field}: sum(resource)={a}, "
+                    f"sum(principal)={b}"
+                )
+
+        #: The summary's split is SUMMED OVER RESOURCES by `build_report` (not
+        #: over principals -- the margin above makes either side do, and doing
+        #: both would double-count). So on oracle rows this holds by
+        #: construction; on STORED rows it is a transport check across Fluent
+        #: Bit's array split, which is where it can actually fail.
+        for field, source in (
+            ("errors_4xx", "errors_4xx"),
+            ("errors_5xx", "errors_5xx"),
+            ("auth_denied", "auth_denied"),
+            ("bytes_total", "response_bytes"),
+        ):
+            if field not in s:
+                continue
+            total = sum(_as_int(r.get(source)) for r in resources)
+            if _as_int(s.get(field)) != total:
+                bad.append(
+                    f"summary.{field}={s.get(field)} but "
+                    f"sum(resource.{source})={total}"
+                )
+        if "errors_4xx" in s and _as_int(s.get("auth_denied")) > _as_int(
+            s.get("errors_4xx")
+        ):
+            bad.append(
+                f"summary.auth_denied={s.get('auth_denied')} > "
+                f"errors_4xx={s.get('errors_4xx')}"
+            )
+
+        #: CARDINALITY, v2. `distinct_resources` counts rows with traffic, NOT
+        #: rows emitted -- v1 conflated them and an idle window reported two
+        #: distinct resources while showing zero of everything. The carried rows
+        #: are the difference and are now a field, so the three close exactly
+        #: against the row count. A merge drops carried rows entirely, which is
+        #: why `merge_windows` sets `carried_rows` to 0 rather than summing it.
+        active_res = sum(1 for r in resources if _as_int(r.get("requests")) > 0)
+        active_pri = sum(1 for r in principals if _as_int(r.get("requests")) > 0)
+        if _as_int(s.get("distinct_resources")) != active_res:
             bad.append(
                 f"distinct_resources={s.get('distinct_resources')} but "
-                f"{len(resources)} resource rows were emitted"
+                f"{active_res} resource row(s) carry traffic "
+                f"({len(resources)} emitted)"
             )
-        if _as_int(s.get("distinct_principals")) != len(principals):
+        if _as_int(s.get("distinct_principals")) != active_pri:
             bad.append(
                 f"distinct_principals={s.get('distinct_principals')} but "
-                f"{len(principals)} principal rows were emitted"
+                f"{active_pri} principal row(s) carry traffic "
+                f"({len(principals)} emitted)"
             )
+        if "carried_rows" in s:
+            carried = _as_int(s.get("carried_rows"))
+            emitted = len(rows) - 1
+            if active_res + active_pri + carried != emitted:
+                bad.append(
+                    f"CARDINALITY: distinct_resources {active_res} + "
+                    f"distinct_principals {active_pri} + carried_rows {carried} "
+                    f"!= {emitted} rows beside the summary"
+                )
     return bad
 
 
@@ -1651,21 +1776,104 @@ def report_mismatches(diff):
     return [d for d in diff if d["status"] != "match"]
 
 
-#: Summary counters that are sums across windows. `distinct_resources` and
-#: `distinct_principals` are NOT here: they are cardinalities, and adding them
-#: across windows double-counts every resource that stayed busy.
-SUMMABLE_SUMMARY_FIELDS = (
-    "access_seen",
-    "access_kept",
-    "access_counted",
-    "counted_get",
-    "counted_post",
-    "errors_kept",
-    "parse_errors",
-    "resources_other",
-    "principals_other",
+#: THE HARDCODED LIST THAT USED TO LIVE HERE IS THE BUG THIS PIPELINE KEEPS
+#: REPEATING. `SUMMABLE_SUMMARY_FIELDS` and `ROW_COUNTERS` named the v1 counters,
+#: so when the filter shipped v2 the merge added `errors` and silently did not add
+#: `errors_4xx` -- in the SAME ROW, with no exception and a plausible number out.
+#: `type_int_key` on the shipper failed the same way, and so did the Prometheus
+#: parser. So the merge now derives what to add FROM THE ROW ITSELF, and a field
+#: nobody has heard of yet is summed rather than dropped.
+#:
+#: What must never be summed, and why each one:
+#:   envelope     `window_seconds` x5 windows is 150, `report_seq` is a counter,
+#:                `schema_version` is 2. Adding any of them is nonsense.
+#:   identity     the row's own key, and `resource_kind`. A principal named "42"
+#:                is a string that looks like a number.
+#:   cardinality  `distinct_*` count ACTIVE rows and are recomputed from the merged
+#:                set; adding them double-counts every resource that stayed busy.
+#:   carried      a carried row is all-zero and does not survive a merge at all, so
+#:                the merged set has none: `carried_rows` is recomputed as 0.
+#:   union        `resources_other_distinct` counts DISTINCT `__other__` keys, and
+#:                the keys are not emitted as rows -- so the union across windows is
+#:                not derivable from the merge. Reported as the max, which is a
+#:                lower bound, and said to be one.
+ROW_IDENTITY_FIELDS = frozenset({"resource", "resource_kind", "user_principal_name"})
+CARDINALITY_FIELDS = frozenset({"distinct_resources", "distinct_principals"})
+UNION_FIELDS = frozenset({"resources_other_distinct"})
+NON_SUMMABLE_FIELDS = (
+    ROW_IDENTITY_FIELDS | CARDINALITY_FIELDS | UNION_FIELDS | {"carried_rows"}
 )
-ROW_COUNTERS = ("requests", "reads", "writes", "errors", "response_bytes")
+
+#: The numeric fields the deployed filter hands to `type_int_key` (fb-values.yaml,
+#: read 2026-09-07). NOT what the merge iterates -- it derives that from the row --
+#: but the list a `field:>0` sweep should cover, because a counter stored as the
+#: STRING "3.0" renders in every count and matches no range filter, silently.
+NUMERIC_FIELDS = frozenset(
+    {
+        "schema_version",
+        "report_seq",
+        "window_seconds",
+        "access_seen",
+        "access_kept",
+        "access_counted",
+        "counted_read",
+        "counted_post",
+        "errors_kept",
+        "parse_errors",
+        "errors_4xx",
+        "errors_5xx",
+        "auth_denied",
+        "bytes_total",
+        "distinct_resources",
+        "distinct_principals",
+        "carried_rows",
+        "resources_other",
+        "resources_other_distinct",
+        "principals_other",
+        "windows_skipped",
+        "requests",
+        "reads",
+        "writes",
+        "errors",
+        "response_bytes",
+    }
+)
+
+#: The six counters reconciled across two independently built row sets. Under v1
+#: only `requests` was, and a single identity satisfied even that by accident.
+MARGIN_FIELDS = (
+    "requests",
+    "errors",
+    "errors_4xx",
+    "errors_5xx",
+    "auth_denied",
+    "response_bytes",
+)
+
+_NUMERIC_TEXT = re.compile(r"^-?\d+(?:\.\d+)?$")
+
+
+def summable_fields(row):
+    """The fields of `row` a merge may add up -- DERIVED, never listed.
+
+    VictoriaLogs hands every field back as a string, so "is it numeric" is a
+    question about the VALUE and not about the type. `partial_window` is
+    "true"/"false" and `min_record_time` is a timestamp; neither survives the
+    test. Everything excluded by name is excluded for a reason recorded above.
+    """
+    skip = ENVELOPE_FIELDS | NON_SUMMABLE_FIELDS | VLOGS_META
+    out = set()
+    for key, value in (row or {}).items():
+        name = str(key)
+        if name in skip or name.startswith("_"):
+            continue
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            out.add(name)
+        elif isinstance(value, str) and _NUMERIC_TEXT.match(value.strip()):
+            out.add(name)
+    return out
 
 
 def merge_windows(windows):
@@ -1701,29 +1909,51 @@ def merge_windows(windows):
         #: `setdefault(key, dict(r))` and then "is it the same object?" does NOT
         #: work here: dict(r) is always a copy, so the first row of every key was
         #: added to itself and every count came out doubled. Track the key.
-        out = {}
+        #:
+        #: The fields added are the UNION of what each row of this key offered,
+        #: so a window that omitted a zero does not remove the field from the
+        #: merged row, and a field this module has never heard of is still summed.
+        out, fields = {}, {}
         for r in (r for r in rows if r.get("report_type") == kind):
             key = r.get(key_field)
+            here = summable_fields(r)
             if key not in out:
                 acc = dict(r)
-                for f in ROW_COUNTERS:
+                for f in here:
                     acc[f] = _as_int(r.get(f))
-                out[key] = acc
+                out[key], fields[key] = acc, set(here)
             else:
                 acc = out[key]
-                for f in ROW_COUNTERS:
-                    acc[f] = acc[f] + _as_int(r.get(f))
-        return [r for r in out.values() if any(_as_int(r.get(f)) for f in ROW_COUNTERS)]
+                for f in here:
+                    acc[f] = _as_int(acc.get(f)) + _as_int(r.get(f))
+                fields[key] |= here
+        #: A row that was only ever carried at zero is not a row this range saw.
+        return [
+            row
+            for key, row in out.items()
+            if any(_as_int(row.get(f)) for f in fields[key])
+        ]
 
     res = merge("resource", "resource")
     pri = merge("principal", "user_principal_name")
 
     ordered = sorted(summaries, key=lambda r: str(r.get("window_start", "")))
     s = dict(ordered[0])
-    for f in SUMMABLE_SUMMARY_FIELDS:
+    for f in sorted(set().union(*(summable_fields(r) for r in summaries))):
         s[f] = sum(_as_int(r.get(f)) for r in summaries)
+    #: Recomputed, never summed -- see NON_SUMMABLE_FIELDS.
     s["distinct_resources"] = len(res)
     s["distinct_principals"] = len(pri)
+    #: No carried row survives the merge, so the merged set contains none and the
+    #: cardinality rule (`distinct_* + carried_rows == rows - 1`) still closes.
+    if any("carried_rows" in r for r in summaries):
+        s["carried_rows"] = 0
+    #: A LOWER BOUND, and said to be one: the `__other__` keys are not emitted as
+    #: rows, so their union across windows cannot be recovered from the merge.
+    if any("resources_other_distinct" in r for r in summaries):
+        s["resources_other_distinct"] = max(
+            _as_int(r.get("resources_other_distinct")) for r in summaries
+        )
     s["window_start"] = ordered[0].get("window_start")
     s["window_end"] = ordered[-1].get("window_end")
     s["_time"] = s["window_end"]
@@ -1737,10 +1967,16 @@ def merge_windows(windows):
     ]
     s["min_record_time"] = min(times) if times else ""
     s["max_record_time"] = max(times) if times else ""
+    #: `.get`, not `[...]`. The merged `_msg` is a human convenience and must not
+    #: be the thing that raises: a row missing a counter is a schema question for
+    #: `check_invariants` to report, not a KeyError from a format string three
+    #: functions away from the cause.
     s["_msg"] = (
-        f"merged {len(summaries)} windows {s['window_start']}..{s['window_end']}: "
-        f"{s['access_seen']} access lines, {s['access_kept']} kept, "
-        f"{s['access_counted']} counted, {len(res)} resources, {len(pri)} principals"
+        f"merged {len(summaries)} windows {s.get('window_start')}.."
+        f"{s.get('window_end')}: {_as_int(s.get('access_seen'))} access lines, "
+        f"{_as_int(s.get('access_kept'))} kept, "
+        f"{_as_int(s.get('access_counted'))} counted, "
+        f"{len(res)} resources, {len(pri)} principals"
     )
     return [s] + res + pri
 
