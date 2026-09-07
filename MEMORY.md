@@ -4,41 +4,42 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-07 (session 8, run 3 of v3)
+## Now — 2026-09-07 (session 8)
 
 **Read [`log-coverage/PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md) first — standalone.**
 
-**Run 3 (`1788745242`) is the first run whose report can be checked against itself throughout.**
-The fixture diff is down to **30** with **0** metadata lines and, for the second run running,
-**0 mismatches in the direction that would mean a lost record**; all four named assertions
-PASS; the margin holds across four principals with distinct mixes; 6 of 6 management POSTs;
-volume reconciles exactly. What remains in that diff is entirely the notebook's own fixture
-setup and teardown, which are not in `ALL_CALLS` — the last structural gap, and the only thing
-between it and a strict assertion.
+**Run 3 (`1788745242`) is the first run whose report can be checked against itself throughout,
+and the two questions it left open are now closed.** The fixture diff is down to 30 with **0**
+metadata lines and, for the second run running, **0 mismatches in the direction that would mean
+a lost record**; all four named assertions PASS; the margin holds across four principals with
+distinct mixes; 6 of 6 management POSTs; volume reconciles exactly. What remains in that diff
+is entirely the notebook's own fixture setup and teardown, which are not in `ALL_CALLS` — the
+last structural gap between oracle and pipeline.
 
-**Questions 1 and 3 have data for the first time: 5 ERROR records, 0 carrying an exception
-object.** Not yet a conclusion — Polaris may never have written a throwable, or the pipeline
-may drop them; `grep -c stackTrace /deployments/logs/polaris.log` decides. Either way `_msg` is
-only `Unhandled exception returning INTERNAL_SERVER_ERROR`, so **a 500 currently reaches
-VictoriaLogs as proof that something failed and nothing about what.** The path was exercised by
-accident (the PG-HA 500s on `create_namespace`/`create_view`); `neg.500_null_pointer` has
-returned 200 for three runs.
+**STACK TRACES: there are none to lose.** `grep -c stackTrace` on the source log returns **0**,
+so the pipeline is not dropping them — **Polaris never writes them**, and the remedy is a
+Quarkus encoder setting, not a retention one. Every 500 here reaches VictoriaLogs as one line
+with no exception class, message or cause: **undiagnosable from logs alone.**
 
-**`fluentbit_filter_drop_records_total` has never been read correctly** — its first-ever value
-was 7,154,980,971,680, four times the epoch in milliseconds. Guarded now; the parser still
-needs the endpoint's real shape, which no Cowork shell can reach.
+**THE DROP COUNTER now works.** Fluent Bit's Prometheus encoder appends a millisecond timestamp
+after the sample value and the parser was reading it as the value (hence 7,154,980,971,680).
+Fixed; the real figure is 1,943 and it reconciles with the tick and tail counters exactly.
 
-**Also open:** three consecutive report windows missing at `00:36:00Z`–`00:37:00Z`, cause not
-distinguished between a shipper stall and transit loss.
+**THE MISSING WINDOWS are the MacBook sleeping.** Transit loss is excluded (output `errors`,
+`retries_failed`, `dropped_records` all 0 since the pod started); the tick input has fired
+1,495 times against ~65.5h of uptime, ~3%. The OrbStack VM suspends with the host, so windows
+never open. A gap here is expected after any sleep — **and no report-stream measurement
+spanning a sleep can be read as elapsed time.**
 
 **Fast-run settings still live and TEMPORARY** (sha `063c184df3f9…`): `WINDOW_SECONDS` 30,
 `Interval_Sec` 5. **Revert together** when the run of record is done.
 
-**Next:** settle the stack-trace question and the metrics shape (one command each), then decide
-whether to tag setup/teardown into `ALL_CALLS` before the final run and the revert.
+**Next:** `neg.500_null_pointer` has returned 200 for three runs — the ERROR path has only ever
+been driven by accident, via the PG-HA 500s. Fix that probe, decide whether to tag
+setup/teardown into `ALL_CALLS`, take the run of record, then revert.
 
-**Gate:** 86 green under the minimal pytest stand-in; `pytest` on Kade's machine last ran
-719 passed / 1 pre-existing `test_privilege_scan` renderer drift.
+**Gate:** 88 green under the minimal pytest stand-in; Kade's `pytest` last ran 719 passed /
+1 pre-existing `test_privilege_scan` renderer drift.
 
 ## Where the detail is
 

@@ -309,3 +309,45 @@ def test_the_drop_breakdown_names_the_plugin():
     m = {"lua.0": {"drop_records": 7}, "record_modifier.0": {"drop_records": 0}}
     assert vlogs.drop_records_by_plugin(m) == {"lua.0": 7, "record_modifier.0": 0}
     assert vlogs.drop_records_by_plugin(None) == {}
+
+
+PROM_SAMPLE = (
+    '# HELP fluentbit_filter_drop_records_total drops\n'
+    '# TYPE fluentbit_filter_drop_records_total counter\n'
+    'fluentbit_filter_drop_records_total{name="polaris_noise_filter"} 1943 1788745242920\n'
+    'fluentbit_filter_add_records_total{name="polaris_noise_filter"} 534 1788745242920\n'
+    'fluentbit_output_retries_failed_total{name="http.0"} 0 1788745242920\n'
+    'fluentbit_output_dropped_records_total{name="http.0"} 0 1788745242920\n'
+)
+
+
+def test_the_prometheus_value_is_not_the_trailing_timestamp():
+    #: Fluent Bit's Prometheus encoder appends an optional MILLISECOND
+    #: timestamp after the sample value. Reading the line with rpartition(" ")
+    #: takes that timestamp, and since fluentbit_metrics tries the prometheus
+    #: path FIRST, every filter reported the epoch in ms as its drop_records:
+    #: run 1788745242 printed the sum of four of them, 7,154,980,971,680, as a
+    #: record count. It also broke the plugin name, which came back as
+    #: 'polaris_noise_filter"} 1943'.
+    m = vlogs.parse_fluentbit_metrics(PROM_SAMPLE)
+    assert set(m) == {"polaris_noise_filter"}
+    assert m["polaris_noise_filter"] == {"drop_records": 1943.0, "add_records": 534.0}
+    assert vlogs.drop_records_total(m) == 1943.0
+    #: and the same reading now passes the plausibility guard it used to fail
+    delta, note = vlogs.drop_records_delta({}, m)
+    assert (delta, note) == (1943.0, None)
+
+
+def test_the_output_section_is_readable_and_names_transit_loss():
+    #: The counters that separate "the filter never emitted it" from "it was
+    #: emitted and the HTTP output dropped it" -- the two candidates for the
+    #: missing report windows of 2026-09-07.
+    out = vlogs.parse_fluentbit_metrics(PROM_SAMPLE, section="output")
+    assert vlogs.output_health(out)["lost"] is False
+    doc = (
+        '{"output": {"http.0": {"errors": 0, "retries_failed": 2,'
+        ' "dropped_records": 0, "proc_records": 20408}}}'
+    )
+    health = vlogs.output_health(vlogs.parse_fluentbit_metrics(doc, section="output"))
+    assert health["lost"] is True and health["retries_failed"] == 2
+    assert health["proc_records"] == 20408

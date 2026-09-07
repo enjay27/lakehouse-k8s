@@ -241,7 +241,7 @@ def numeric_status_filters_work(client, since="24h", end=None, scope=None):
     return ok, f"{detail}  [{scope}]"
 
 
-def parse_fluentbit_metrics(text):
+def parse_fluentbit_metrics(text, section="filter"):
     """Fluent Bit `/api/v1/metrics` -> {plugin_name: {metric: value}}.
 
     Accepts BOTH shapes the HTTP server serves: the native JSON document, and
@@ -249,37 +249,79 @@ def parse_fluentbit_metrics(text):
     build serves at which path has moved between Fluent Bit versions, and the
     number wanted here -- `fluentbit_filter_drop_records_total`, the source
     plan's only measure of total suppression -- is in both.
+
+    `section` selects `filter` (the retention policy's own counters), `output`
+    (whether anything was lost in transit) or `input`.
+
+    THE VALUE IS NOT THE LAST FIELD ON THE LINE. Fluent Bit's Prometheus
+    encoder appends an optional MILLISECOND TIMESTAMP after the sample value:
+
+        fluentbit_filter_drop_records_total{name="polaris_noise_filter"} 1943 1788745242920
+
+    An earlier version read the line with `rpartition(" ")` and took that
+    timestamp as the value. `fluentbit_metrics` tries the prometheus path
+    FIRST, so every filter reported the epoch in milliseconds as its
+    `drop_records`, and run `1788745242` printed the sum of four of them --
+    **7,154,980,971,680** -- as a record count, with a 52,000 "delta" between
+    two such readings passed off as suppression. It also broke the plugin name,
+    which came back as `polaris_noise_filter"} 1943`. Parsed correctly, the same
+    reading is **1943**, which decomposes into the swallowed ticks plus the
+    counted-only access records and reconciles with the input counters.
     """
     text = (text or "").strip()
     if not text:
         return {}
     if text.startswith("{"):
         doc = json.loads(text)
-        out = {}
-        for name, metrics in (doc.get("filter") or {}).items():
-            out[name] = dict(metrics)
-        return out
+        return {n: dict(m) for n, m in (doc.get(section) or {}).items()}
+    prefix = f"fluentbit_{section}_"
     out = {}
     for line in text.splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
+        if not line or line.startswith("#") or not line.startswith(prefix):
             continue
-        head, _, value = line.rpartition(" ")
-        if not head:
-            continue
-        metric, _, labels = head.partition("{")
-        if not metric.startswith("fluentbit_filter_"):
+        if "{" in line:
+            metric, _, rest = line.partition("{")
+            labels, _, tail = rest.partition("}")
+        else:
+            metric, _, tail = line.partition(" ")
+            labels = ""
+        #: `value [timestamp]` -- the FIRST field, never the last.
+        fields = tail.split()
+        if not fields:
             continue
         name = "unknown"
-        for kv in labels.rstrip("}").split(","):
+        for kv in labels.split(","):
             k, _, v = kv.partition("=")
             if k.strip() == "name":
                 name = v.strip().strip('"')
-        short = metric[len("fluentbit_filter_") :].removesuffix("_total")
+        short = metric[len(prefix) :].removesuffix("_total")
         try:
-            out.setdefault(name, {})[short] = float(value)
+            out.setdefault(name, {})[short] = float(fields[0])
         except ValueError:
             continue
+    return out
+
+
+#: The output counters that mean a record the filter emitted never reached
+#: VictoriaLogs. Read them before blaming the filter for a missing window: on
+#: 2026-09-07 three consecutive report windows were missing and the two
+#: candidate causes were "never emitted" and "lost in transit". These settle it.
+OUTPUT_LOSS_FIELDS = ("errors", "retries_failed", "dropped_records")
+
+
+def output_health(metrics):
+    """`{field: total}` for the output plugins, plus `lost` -- anything > 0.
+
+    Counters are cumulative since the pod started, so a zero here is a
+    statement about the whole life of that pod, not about one run.
+    """
+    out = {f: 0.0 for f in OUTPUT_LOSS_FIELDS}
+    out["proc_records"] = 0.0
+    for m in (metrics or {}).values():
+        for f in list(out):
+            out[f] += m.get(f, 0) or 0
+    out["lost"] = any(out[f] for f in OUTPUT_LOSS_FIELDS)
     return out
 
 
@@ -593,7 +635,7 @@ class VLogs:
         return _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(closed))
 
 
-def fluentbit_metrics(base_url, timeout=10, session=None):
+def fluentbit_metrics(base_url, timeout=10, session=None, section="filter"):
     """Read the shipper's metrics. Returns (metrics, error_or_None).
 
     NEVER raises. The metrics port needs its own port-forward and is the most
@@ -606,7 +648,7 @@ def fluentbit_metrics(base_url, timeout=10, session=None):
         try:
             r = sess.get(f"{base_url.rstrip('/')}{path}", timeout=timeout)
             if r.status_code == 200 and r.text.strip():
-                parsed = parse_fluentbit_metrics(r.text)
+                parsed = parse_fluentbit_metrics(r.text, section=section)
                 if parsed:
                     return parsed, None
         except Exception as exc:  # noqa: BLE001
