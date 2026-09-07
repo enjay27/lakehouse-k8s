@@ -83,6 +83,9 @@ PARSE_CASES = [
 CAT  = "/api/catalog/v1/c"
 TBL  = CAT + "/namespaces/ns1/tables/ta"
 MG   = "/api/management/v1"
+# invented table names: an error against one of these must never create a resource key
+NOPE1 = CAT + "/namespaces/ns1/tables/nope1"
+NOPE2 = CAT + "/namespaces/ns1/tables/nope2"
 
 
 def acc(t, method, path, status, level="INFO", user="root", size=0):
@@ -180,38 +183,88 @@ REPORT_CASES = [
     ("the boundary tick emits the window", "tick", tick(T0 + WINDOW), EMIT, {
         "nrec": "6",
         "access_seen": "7", "access_kept": "3", "access_counted": "4",
-        "counted_get": "3", "counted_post": "1", "errors_kept": "1",
+        "counted_read": "3", "counted_post": "1", "errors_kept": "1",
         "distinct_resources": "3", "distinct_principals": "2",
-        "resources_other": "1", "principals_other": "0",
+        "carried_rows": "0", "windows_skipped": "0",
+        # the 404 on the invented table, split by kind (v1 had one `errors` integer)
+        "errors_4xx": "1", "errors_5xx": "0", "auth_denied": "0",
+        "bytes_total": "175",
+        "resources_other": "1", "resources_other_distinct": "1",
+        "principals_other": "0",
         "tbl_requests": "5", "tbl_reads": "3", "tbl_writes": "2", "tbl_bytes": "175",
         "other_errors": "1",
         "root_requests": "6", "root_reads": "3", "root_writes": "3",
         "alice_reads": "1",
         "min_time": "2026-09-05T16:00:00Z", "max_time": "2026-09-05T16:06:00Z",
-        "schema": "1",
+        "schema": "2",
         # the schema's own self-check: both margins must sum to the same total,
         # and that total must be access_seen - parse_errors
         "res_total": "7", "pri_total": "7",
     }),
 
     # zero-carry: every key that was non-zero is emitted once more as an explicit 0,
-    # so a fall to nothing is a data point instead of a missing row
+    # so a fall to nothing is a data point instead of a missing row.
+    # v2: the rows are still emitted, but distinct_resources no longer counts them --
+    # it reads 0 here, where v1 reported 3 resources in a window with no traffic at all.
+    # carried_rows is where that number went: 3 resources + 2 principals.
     ("a quiet window carries the keys as zeros", "tick", tick(T0 + 2 * WINDOW), EMIT, {
-        "nrec": "6", "access_seen": "0", "distinct_resources": "3",
+        "nrec": "6", "access_seen": "0", "distinct_resources": "0",
+        "distinct_principals": "0", "carried_rows": "5", "windows_skipped": "0",
         "tbl_requests": "0", "tbl_reads": "0", "root_requests": "0",
     }),
 
     # ...and the carry decays: a key that stayed zero is not carried again
     ("the carry decays after one window", "tick", tick(T0 + 3 * WINDOW), EMIT, {
         "nrec": "1", "access_seen": "0", "distinct_resources": "0",
-        "distinct_principals": "0", "tbl_requests": "<none>",
+        "distinct_principals": "0", "carried_rows": "0", "tbl_requests": "<none>",
+    }),
+
+    # ── v2 fields ──────────────────────────────────────────────────────────────
+    # A fresh window (opened by the tick above, no carry) exercising every field the
+    # schema bump added. Order matters: the 500 lands on the table only because the
+    # table was already created by a successful read -- an error never creates a key.
+    ("HEAD counts as a read, not a GET", "rec", acc(W + "7:00Z", "HEAD", TBL, 200, size=10), DROP, {}),
+    ("a successful GET creates the key",  "rec", acc(W + "7:01Z", "GET", TBL, 200, size=20), DROP, {}),
+    ("a 500 on the known table",          "rec", acc(W + "7:02Z", "GET", TBL, 500, size=5), KEEP, {}),
+    ("a 404 folds into __other__",        "rec", acc(W + "7:03Z", "GET", NOPE1, 404, size=1), KEEP, {}),
+    ("a second invented name folds too",  "rec", acc(W + "7:04Z", "GET", NOPE2, 404, size=1), KEEP, {}),
+    # the same folded key again: resources_other counts REQUESTS folded and goes to 3,
+    # resources_other_distinct counts KEYS and stays at 2. One broken client is not a
+    # scanner walking twenty names, and v1 could not tell them apart.
+    ("the same invented name again",      "rec", acc(W + "7:05Z", "GET", NOPE1, 404, size=1), KEEP, {}),
+    ("a 401 is denied, not just 4xx",     "rec", acc(W + "7:06Z", "GET", TBL, 401, user="denied", size=1), KEEP, {}),
+    ("a 403 is denied too",               "rec", acc(W + "7:07Z", "GET", TBL, 403, user="denied", size=1), KEEP, {}),
+
+    ("the v2 window emits its split counters", "tick", tick(T0 + 4 * WINDOW), EMIT, {
+        "nrec": "5",                       # summary + tbl + __other__ + root + denied
+        "access_seen": "8", "access_kept": "6", "access_counted": "2",
+        "counted_read": "2", "counted_post": "0", "errors_kept": "6",
+        "errors_4xx": "5", "errors_5xx": "1", "auth_denied": "2",
+        "bytes_total": "40",
+        "distinct_resources": "2", "distinct_principals": "2", "carried_rows": "0",
+        "resources_other": "3", "resources_other_distinct": "2",
+        "windows_skipped": "0",
+        "tbl_requests": "5", "tbl_reads": "5", "tbl_5xx": "1", "tbl_4xx": "2",
+        "tbl_denied": "2", "tbl_bytes": "37",
+        "other_4xx": "3", "other_5xx": "0",
+        "denied_requests": "2", "denied_denied": "2",
+        "res_total": "8", "pri_total": "8",
+    }),
+
+    # a tick that jumps two window indices: the skipped windows were never built, so
+    # report_seq still increments by exactly 1 and v1 said nothing at all about the gap
+    ("a jumped tick states the windows it skipped", "tick", tick(T0 + 7 * WINDOW), EMIT, {
+        "nrec": "5", "access_seen": "0", "windows_skipped": "2",
+        "distinct_resources": "0", "carried_rows": "4",
     }),
 ]
 
-SUMMARY_FIELDS = ["access_seen", "access_kept", "access_counted", "counted_get",
+SUMMARY_FIELDS = ["access_seen", "access_kept", "access_counted", "counted_read",
                   "counted_post", "errors_kept", "parse_errors",
-                  "distinct_resources", "distinct_principals",
-                  "resources_other", "principals_other"]
+                  "errors_4xx", "errors_5xx", "auth_denied", "bytes_total",
+                  "distinct_resources", "distinct_principals", "carried_rows",
+                  "resources_other", "resources_other_distinct",
+                  "principals_other", "windows_skipped"]
 
 # (probe name, report_type, key field, key value, field to read)
 ROW_PROBES = [
@@ -221,14 +274,63 @@ ROW_PROBES = [
     ("tbl_bytes",     "resource",  "resource", TBL, "response_bytes"),
     ("tbl_kind",      "resource",  "resource", TBL, "resource_kind"),
     ("other_errors",  "resource",  "resource", "__other__", "errors"),
+    ("tbl_4xx",       "resource",  "resource", TBL, "errors_4xx"),
+    ("tbl_5xx",       "resource",  "resource", TBL, "errors_5xx"),
+    ("tbl_denied",    "resource",  "resource", TBL, "auth_denied"),
+    ("other_4xx",     "resource",  "resource", "__other__", "errors_4xx"),
+    ("other_5xx",     "resource",  "resource", "__other__", "errors_5xx"),
     ("root_requests", "principal", "user_principal_name", "root", "requests"),
     ("root_reads",    "principal", "user_principal_name", "root", "reads"),
     ("root_writes",   "principal", "user_principal_name", "root", "writes"),
     ("alice_reads",   "principal", "user_principal_name", "alice", "reads"),
+    ("denied_requests", "principal", "user_principal_name", "denied", "requests"),
+    ("denied_denied",   "principal", "user_principal_name", "denied", "auth_denied"),
 ]
 
 SUMMARY_STR = [("min_time", "min_record_time"), ("max_time", "max_record_time"),
                ("schema", "schema_version")]
+
+
+# ---------------------------------------------------------------- suite 4
+# A numeric field missing from filter 3's type_int_key is encoded as a double,
+# VictoriaLogs stores "482.0", and `requests:>0` silently matches nothing -- the
+# failure is invisible until someone writes a query. Reading it out of the same
+# values file the Lua came from is the only way this stays true after an edit.
+TYPE_INT_CHECKS = 2
+_STR_SUMMARY = {"min_record_time", "max_record_time", "partial_window", "_msg"}
+_STR_ROW = {"resource", "resource_kind", "user_principal_name", "_msg"}
+# set by base(), not by an assignment the regexes below can see
+_ENVELOPE_INTS = {"schema_version", "report_seq", "window_seconds"}
+
+
+def check_type_int_key():
+    filters = yaml.safe_load(VALUES.read_text(encoding="utf-8"))["config"]["filters"]
+    # the comment above the directive contains the words too; the directive is longest
+    lines = re.findall(r"^\s*type_int_key\s+(.+)$", filters, re.M)
+    if not lines:
+        print("  FAIL no type_int_key directive in config.filters")
+        return TYPE_INT_CHECKS
+    declared = set(max(lines, key=len).split())
+
+    emitted = set(re.findall(r"^\s*s\.(\w+)\s*=", SCRIPT, re.M)) - _STR_SUMMARY
+    emitted |= set(re.findall(r"e\.(\w+)", SCRIPT)) - _STR_ROW
+
+    failures = 0
+    missing = sorted(emitted - declared)
+    if missing:
+        print("  FAIL numeric fields NOT in type_int_key: " + ", ".join(missing))
+        failures += 1
+    else:
+        print("  ok   every emitted numeric field is declared")
+
+    stale = sorted(declared - emitted - _ENVELOPE_INTS)
+    if stale:
+        print("  FAIL type_int_key names fields the report no longer emits: "
+              + ", ".join(stale))
+        failures += 1
+    else:
+        print("  ok   type_int_key names nothing the report stopped emitting")
+    return failures
 
 
 def lua_binary():
@@ -324,7 +426,12 @@ def main():
                   % (want_code, checks, code, rest))
             failures += 1
 
-    total = len(PARSE_CASES) + len(POLICY_CASES) + len(REPORT_CASES)
+    print("\ntype_int_key -- every numeric field the report emits")
+    int_failures = check_type_int_key()
+    failures += int_failures
+
+    total = (len(PARSE_CASES) + len(POLICY_CASES) + len(REPORT_CASES)
+             + TYPE_INT_CHECKS)
     print("\n%d/%d passed" % (total - failures, total))
     sys.exit(1 if failures else 0)
 

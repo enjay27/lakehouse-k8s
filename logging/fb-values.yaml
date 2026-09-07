@@ -183,7 +183,19 @@ luaScripts:
     -- ── Tunables ───────────────────────────────────────────────────────────────────
     local REPORT_TAG     = "polaris.report"
     local REPORT_APP     = "polaris-shipper-report"
-    local SCHEMA_VERSION = 1
+    local SCHEMA_VERSION = 2   -- v2 (2026-09-07): distinct_resources/_principals now
+                               -- count only rows with requests > 0 (v1 counted zero-carry
+                               -- rows too, so an idle window reported resources it never
+                               -- saw) and carried_rows carries that number instead;
+                               -- counted_get -> counted_read, because READ_METHODS is
+                               -- GET *and* HEAD and v1 reported HEADs as GETs. Both are
+                               -- meaning changes to shipped field names -- which is what
+                               -- this constant is for. Additive in the same version:
+                               -- errors_4xx / errors_5xx / auth_denied (summary + rows),
+                               -- bytes_total, resources_other_distinct, windows_skipped.
+                               -- EVERY one of them is also in type_int_key on filter 3;
+                               -- a numeric field missing there stores as a string and
+                               -- numeric LogsQL filters return nothing, silently.
     local WINDOW_SECONDS = 30      -- TEMPORARY FAST RUN (2026-09-04). Steady state is
                                    -- 1800 (:00 and :30 wall-clock; KST is UTC+9:00
                                    -- exactly, so that boundary is the same in both
@@ -253,8 +265,13 @@ luaScripts:
     -- Reset on every emit, so each report is a delta and needs no arithmetic to read.
     local counts, report_seq = nil, 0
 
+    -- errors is the TOTAL and stays the total; the three below partition it by kind so
+    -- an alert can be written against one. A 404 is traffic, a 500 is an incident, and
+    -- schema v1 put both in the same integer. auth_denied (401|403) overlaps errors_4xx
+    -- deliberately: it is the security question, which was buried under 404s.
     local function new_row()
-        return { requests = 0, reads = 0, writes = 0, errors = 0, response_bytes = 0 }
+        return { requests = 0, reads = 0, writes = 0, errors = 0, response_bytes = 0,
+                 errors_4xx = 0, errors_5xx = 0, auth_denied = 0 }
     end
 
     -- carry_res / carry_pri implement ZERO-CARRY, for exactly one window: a resource
@@ -265,10 +282,11 @@ luaScripts:
         local w = {
             window = idx, partial = partial and true or false,
             access_seen = 0, access_counted = 0,
-            counted_get = 0, counted_post = 0,
+            counted_read = 0, counted_post = 0,
             errors_kept = 0, parse_errors = 0,
             resources = {}, kinds = {}, n_resources = 0, resources_over = 0,
             principals = {}, n_principals = 0, principals_over = 0,
+            other_keys = {}, n_other_keys = 0,
             min_time = nil, max_time = nil,
         }
         for key, kind in pairs(carry_res or {}) do
@@ -287,11 +305,21 @@ luaScripts:
     -- run hammered a table called `nope` twenty times. Their counts are NOT lost: they
     -- land in __other__, which is what keeps the margin totals exact. And every one of
     -- those requests is stored as a full record anyway, by rule 3.
+    --
+    -- resources_over counts REQUESTS folded, which cannot tell one broken client
+    -- hammering one URL from a scanner walking twenty names. n_other_keys counts the
+    -- DISTINCT keys folded, bounded by the same REPORT_MAX_RESOURCES so the set cannot
+    -- become the key space this branch exists to protect.
     local function touch_resource(key, kind, create)
         local r = counts.resources[key]
         if r ~= nil then return r end
         if (not create) or counts.n_resources >= REPORT_MAX_RESOURCES then
             counts.resources_over = counts.resources_over + 1
+            if counts.other_keys[key] == nil
+               and counts.n_other_keys < REPORT_MAX_RESOURCES then
+                counts.other_keys[key] = true
+                counts.n_other_keys = counts.n_other_keys + 1
+            end
             r = counts.resources[REPORT_OTHER]
             if r == nil then
                 r = new_row()
@@ -360,16 +388,37 @@ luaScripts:
             elseif WRITE_METHODS[method] then
                 row.writes = row.writes + 1
             end
-            if is_error then row.errors = row.errors + 1 end
+            if is_error then
+                row.errors = row.errors + 1
+                -- status == nil is an unparsed or absent status. It is an error by the
+                -- rule above and it is NOT a 4xx: charging it to errors_4xx would make
+                -- "client errors" absorb the pipeline's own failures.
+                if status ~= nil then
+                    if status >= 500 then
+                        row.errors_5xx = row.errors_5xx + 1
+                    else
+                        row.errors_4xx = row.errors_4xx + 1
+                        if status == 401 or status == 403 then
+                            row.auth_denied = row.auth_denied + 1
+                        end
+                    end
+                end
+            end
             row.response_bytes = row.response_bytes + bytes
         end
     end
 
     -- ── Building the report ────────────────────────────────────────────────────────
-    -- Schema v1. Three record types on one envelope, all sharing the window's _time so
+    -- Schema v2. Three record types on one envelope, all sharing the window's _time so
     -- `stats by (_time)` groups a window. Field names are contract: renaming one after
-    -- a month of data is the expensive kind of mistake.
-    local function build_report(idx)
+    -- a month of data is the expensive kind of mistake -- which is why v2 renames two
+    -- of them NOW, while the only consumer is the coverage harness. See SCHEMA_VERSION.
+    --
+    -- level stays "REPORT" rather than becoming INFO: it is the stream selector every
+    -- existing query and the harness's vlogs.py helper use. The cost is that the
+    -- severity column is meaningless for this stream -- a decision, not an oversight;
+    -- report_type is the discriminator.
+    local function build_report(idx, windows_skipped)
         local starts, ends = iso(idx * WINDOW_SECONDS), iso((idx + 1) * WINDOW_SECONDS)
         report_seq = report_seq + 1
         local host = os.getenv("HOSTNAME") or "unknown"
@@ -383,54 +432,98 @@ luaScripts:
         end
 
         local out = {}
-
         local s = base("summary")
-        s.access_seen         = counts.access_seen
-        s.access_kept         = counts.access_seen - counts.access_counted
-        s.access_counted      = counts.access_counted
-        s.counted_get         = counts.counted_get
-        s.counted_post        = counts.counted_post
-        s.errors_kept         = counts.errors_kept
-        s.parse_errors        = counts.parse_errors
-        s.distinct_resources  = counts.n_resources
-        s.distinct_principals = counts.n_principals
-        s.resources_other     = counts.resources_over
-        s.principals_other    = counts.principals_over
-        s.min_record_time     = counts.min_time or ""
-        s.max_record_time     = counts.max_time or ""
-        s.partial_window      = counts.partial and "true" or "false"
-        s._msg = string.format(
-            "polaris shipper report seq=%d %s..%s: %d access lines, %d kept, %d counted "
-            .. "(%d GET, %d POST), %d errors kept, %d resources, %d principals",
-            report_seq, starts, ends, counts.access_seen, s.access_kept,
-            counts.access_counted, counts.counted_get, counts.counted_post,
-            counts.errors_kept, counts.n_resources, counts.n_principals)
-        out[#out + 1] = s
 
+        -- The rows are built first, because the summary's cardinality and error split
+        -- are derived from them. v1 reported n_resources -- the number of rows EMITTED,
+        -- which includes zero-carry rows -- under a name that promises resources
+        -- touched, so a window with no traffic at all reported two distinct resources.
+        -- Active rows and carried rows are now separate fields, and neither is a guess.
         local carry_res, carry_pri = {}, {}
+        local n_active_res, n_active_pri, n_carried = 0, 0, 0
+        local rows = {}
+        local tot_4xx, tot_5xx, tot_denied, tot_bytes = 0, 0, 0, 0
 
         for key, r in pairs(counts.resources) do
             local e = base("resource")
             e.resource       = key
             e.resource_kind  = counts.kinds[key] or "other"
             e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
+            e.errors_4xx, e.errors_5xx, e.auth_denied = r.errors_4xx, r.errors_5xx, r.auth_denied
             e.response_bytes = r.response_bytes
-            e._msg = string.format("resource %s (%s): %d requests, %d reads, %d writes, %d errors",
-                                   key, e.resource_kind, r.requests, r.reads, r.writes, r.errors)
-            out[#out + 1] = e
-            if r.requests > 0 then carry_res[key] = e.resource_kind end
+            e._msg = string.format(
+                "seq=%d resource %s (%s): %d requests, %d reads, %d writes, "
+                .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes",
+                report_seq, key, e.resource_kind, r.requests, r.reads, r.writes,
+                r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes)
+            rows[#rows + 1] = e
+            if r.requests > 0 then
+                carry_res[key] = e.resource_kind
+                n_active_res = n_active_res + 1
+            else
+                n_carried = n_carried + 1
+            end
+            -- Summed over resources, not principals: the two margins are equal by the
+            -- invariant, so either side would do, and doing both would double-count.
+            tot_4xx    = tot_4xx + r.errors_4xx
+            tot_5xx    = tot_5xx + r.errors_5xx
+            tot_denied = tot_denied + r.auth_denied
+            tot_bytes  = tot_bytes + r.response_bytes
         end
 
         for user, r in pairs(counts.principals) do
             local e = base("principal")
             e.user_principal_name = user
             e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
+            e.errors_4xx, e.errors_5xx, e.auth_denied = r.errors_4xx, r.errors_5xx, r.auth_denied
             e.response_bytes = r.response_bytes
-            e._msg = string.format("principal %s: %d requests, %d reads, %d writes, %d errors",
-                                   user, r.requests, r.reads, r.writes, r.errors)
-            out[#out + 1] = e
-            if r.requests > 0 then carry_pri[user] = true end
+            e._msg = string.format(
+                "seq=%d principal %s: %d requests, %d reads, %d writes, "
+                .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes",
+                report_seq, user, r.requests, r.reads, r.writes,
+                r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes)
+            rows[#rows + 1] = e
+            if r.requests > 0 then
+                carry_pri[user] = true
+                n_active_pri = n_active_pri + 1
+            else
+                n_carried = n_carried + 1
+            end
         end
+
+        s.access_seen         = counts.access_seen
+        s.access_kept         = counts.access_seen - counts.access_counted
+        s.access_counted      = counts.access_counted
+        s.counted_read        = counts.counted_read
+        s.counted_post        = counts.counted_post
+        s.errors_kept         = counts.errors_kept
+        s.parse_errors        = counts.parse_errors
+        s.errors_4xx          = tot_4xx
+        s.errors_5xx          = tot_5xx
+        s.auth_denied         = tot_denied
+        s.bytes_total         = tot_bytes
+        s.distinct_resources  = n_active_res
+        s.distinct_principals = n_active_pri
+        s.carried_rows        = n_carried
+        s.resources_other     = counts.resources_over
+        s.resources_other_distinct = counts.n_other_keys
+        s.principals_other    = counts.principals_over
+        s.windows_skipped     = windows_skipped or 0
+        s.min_record_time     = counts.min_time or ""
+        s.max_record_time     = counts.max_time or ""
+        s.partial_window      = counts.partial and "true" or "false"
+        s._msg = string.format(
+            "polaris shipper report seq=%d@%s %s..%s: %d access lines, %d kept, "
+            .. "%d counted (%d read, %d POST), %d errors kept (%d 4xx, %d 5xx, "
+            .. "%d denied), %d resources, %d principals, %d carried, %d bytes, "
+            .. "%d windows skipped",
+            report_seq, host, starts, ends, counts.access_seen, s.access_kept,
+            counts.access_counted, counts.counted_read, counts.counted_post,
+            counts.errors_kept, tot_4xx, tot_5xx, tot_denied,
+            n_active_res, n_active_pri, n_carried, tot_bytes, s.windows_skipped)
+
+        out[#out + 1] = s
+        for _, e in ipairs(rows) do out[#out + 1] = e end
 
         return out, carry_res, carry_pri
     end
@@ -460,7 +553,17 @@ luaScripts:
         if idx == counts.window then
             return -1, timestamp, record
         end
-        local out, carry_res, carry_pri = build_report(counts.window)
+        -- Windows between the one being closed and the one now open were never built,
+        -- so report_seq increments by 1 across a gap of any size and the gap is silent.
+        -- It is stated instead. EXPECT IT TO BE NON-ZERO ON THIS CLUSTER: the OrbStack
+        -- VM suspends with the MacBook, the tick timer does not fire, and a window that
+        -- never opened cannot be reported. Sleep looks like a large windows_skipped with
+        -- access_seen 0 and no min_record_time; a real tick failure looks like
+        -- windows_skipped >= 1 WITH a min/max span wider than window_seconds. Do not
+        -- alert on this field alone.
+        local skipped = idx - counts.window - 1
+        if skipped < 0 then skipped = 0 end
+        local out, carry_res, carry_pri = build_report(counts.window, skipped)
         counts = new_window(idx, false, carry_res, carry_pri)
         return 2, timestamp, out
     end
@@ -524,7 +627,7 @@ luaScripts:
         -- 6. Successful reads are counts, never records.
         if READ_METHODS[method] then
             if counts ~= nil then
-                counts.counted_get    = counts.counted_get + 1
+                counts.counted_read   = counts.counted_read + 1
                 counts.access_counted = counts.access_counted + 1
             end
             return -1, timestamp, record
@@ -657,7 +760,7 @@ config:
         Match         polaris.*
         script        /fluent-bit/scripts/polaris_access_log.lua
         call          polaris_noise_filter
-        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted counted_get counted_post errors_kept parse_errors distinct_resources distinct_principals resources_other principals_other requests reads writes errors response_bytes
+        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals carried_rows resources_other resources_other_distinct principals_other windows_skipped requests reads writes errors response_bytes
 
     # 4. Drop fields that cost storage on every single record and answer nothing.
     #    processName is a ~60-byte absolute JVM path; loggerClassName is the

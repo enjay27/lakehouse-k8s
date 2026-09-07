@@ -1,6 +1,10 @@
 # HANDOFF — nine changes to the flush report's schema, and why two of them are corrections
 
-**Status: PROPOSED, not signed off. Nothing in `logging/fb-values.yaml` has been changed.**
+**Status: IMPLEMENTED 2026-09-07 (commit `Report schema v2: the cardinality fields counted
+carried zeros...`), minus `top_error_path`. WRITTEN AND NOT RUNNING** — the file carries
+`SCHEMA_VERSION 2`; the shipper still runs v1 until Kade upgrades it. Results at the foot of
+this document; the decisions and their reasoning are in
+[`.memory/sessions/2026-09-07-report-schema-v2.md`](../.memory/sessions/2026-09-07-report-schema-v2.md).
 Step 1 of the repo's plan-first protocol; step 2 is Kade's confirmation. Written 2026-09-07 to
 be read cold in a new session.
 
@@ -348,14 +352,27 @@ they are not discovered late. Every one of them is a consequence of a change abo
 
 ---
 
-> **RESULT (fill in):**
->
-> - decisions 1–5:
-> - `SCHEMA_VERSION` as shipped:
-> - fields added, and all present in `type_int_key`:
-> - `helm lint` / `--dry-run`:
-> - `test-polaris-filters.py`:
-> - ConfigMap sha after upgrade:
-> - a real record showing the new fields as numbers:
-> - fast-run settings reverted in the same upgrade (y/n):
-> - harness updated (§7), characterization test read and updated:
+## RESULT — 2026-09-07
+
+- **Decisions 1–5:** (1) **bump to v2** with both renames; (2) `top_error_path` **out**;
+  (3) **keep `level: REPORT`**, cost documented in the Lua; (4) **two upgrades** — schema
+  first, fast-run revert after the coverage run (Kade); (5) `windows_skipped` **in**, with the
+  sleep caveat in the code and the commit body.
+- **`SCHEMA_VERSION` as shipped in the file:** 2. **Not deployed.**
+- **Fields added, all present in `type_int_key`:** `carried_rows`, `errors_4xx`, `errors_5xx`,
+  `auth_denied`, `windows_skipped`, `resources_other_distinct`, `bytes_total`, `counted_read`;
+  `counted_get` removed from the directive with the rename. Checked mechanically, not by eye —
+  see the next line.
+- **`helm lint` / `--dry-run`:** NOT RUN — no cluster reach from a Cowork session.
+- **`test-polaris-filters.py`:** **60/60**, on Lua 5.4 in the Cowork container. Eight new
+  report cases covering every §9 requirement, plus a **new suite 4** that reads `type_int_key`
+  and the emitted field names out of the same values file and fails on a missing *or* stale
+  entry. Verified to fail by removing `auth_denied` from the directive.
+- **ConfigMap sha after upgrade:** *(pending — Kade's upgrade)*
+- **A real record showing the new fields as numbers:** *(pending — this is the §4 check and the
+  reason suite 4 exists; the suite proves the directive, only a record proves the encoding)*
+- **Fast-run settings reverted in the same upgrade:** **no, by decision.** `WINDOW_SECONDS 30`
+  / `Interval_Sec 5` stay live for one fast run against v2; revert both to 1800/30 after it.
+- **Harness updated (§7), characterization test read and updated:** *(pending — not mounted in
+  a Cowork session. Frozen field sets, `diff_reports` excluding `windows_skipped`, and the
+  characterization test going red on `SCHEMA_VERSION 2`.)*

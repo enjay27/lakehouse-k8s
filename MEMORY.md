@@ -3,27 +3,22 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-04
+## Now — 2026-09-07
 
-**Next:** v3 is deployed (2026-09-04, Kade — not yet independently verified here). First
-confirm the report's shape: three `report_type`s present means the Lua array return split, and
-**if it did not, the schema is different and the coverage work targets the wrong thing** — gate
-in [`POLARIS-LOG-COVERAGE-V3-HANDOFF.md`](POLARIS-LOG-COVERAGE-V3-HANDOFF.md), which is the
-handoff for extending `polaris-learning/log-coverage` to the full schema. Its characterization
-test is built to fail on a policy change: read the diff, then update it and
-`doc-log-coverage-results.md` together.
+**Report schema v2 is written and NOT running.** `fb-values.yaml` carries `SCHEMA_VERSION = 2`:
+`distinct_resources`/`_principals` count only rows with `requests > 0` (v1 counted zero-carry
+rows, so an idle window reported resources it never saw — remainder now in `carried_rows`);
+`counted_get` -> `counted_read`, it had always counted HEAD. Added `errors_4xx`/`errors_5xx`/
+`auth_denied`, `bytes_total`, `resources_other_distinct`, `windows_skipped`. **60/60** in
+`logging/scripts/test-polaris-filters.py`; its suite 4 fails if a numeric field is missing from
+`type_int_key`. `helm lint`/`--dry-run` NOT run — no cluster reach from Cowork. Decisions:
+[`sessions/2026-09-07-report-schema-v2.md`](.memory/sessions/2026-09-07-report-schema-v2.md);
+proposal: [`HANDOFF-report-schema-v2`](logging/HANDOFF-report-schema-v2-2026-09-07.md).
 
-**Written and NOT running:** `logging/fb-values.yaml` carries policy **v3** and the flush
-report — and, since 2026-09-04, a **temporary 30s report window** (`WINDOW_SECONDS = 30`,
-tick `Interval_Sec 5`) for a fast coverage run: three boundaries in ~2 minutes instead of ~90.
-**Revert both together to 1800/30** — at tick == window a boundary can pass unnoticed and the
-counts stop being attributable; `active-issues.md` **#14d** has the mechanism and the two
-consequences (~60× report volume, and the post-upgrade replay landing in one window). It is one
-`helm upgrade` away — [`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md)
-is the whole procedure. Errors and mutations kept in full, successful reads and catalog POSTs
-counted only; **v2 was superseded before it was ever deployed**, and the dedup cap question went
-with it. The rule table, the report schema and what stays deferred are
-[`active-issues.md`](.memory/active-issues.md) **#14**.
+**Also written and NOT running:** the temporary **30s window** (`Interval_Sec 5`), kept on
+purpose for one fast coverage run against v2 — **revert both to 1800/30 in a second upgrade
+after it** (#14d: a late tick makes counts unattributable; ~60x report volume).
+[`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md) is the procedure.
 
 **Standing, and both outrank inference.** Polaris is not to be changed — it works and ships
 continuously (Kade's observation, over the reasoning in #11). And **verify against the running

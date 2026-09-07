@@ -30,6 +30,7 @@ gaps is [`sessions/2026-09-03-polaris-vlogs-audit.md`](sessions/2026-09-03-polar
 | 5 | Decide on `autoscaling` vs the shared log file | `active-issues.md` #8. Three Polaris pods appending to one file; RWO does not stop it on one node. Needs a Polaris change, so it waits. |
 | 6 | `%D` in the access-log pattern — **then exempt slow requests from dedup** | spec §7's P99 panels need it, and a table GET that normally takes 8ms taking 4s is exactly the record daily dedup discards. Needs a Polaris change, so parked with #5. |
 | 6b | The "Deprecated Config" WARN exclusion, and PUT request bodies | hook is in the filter, marked TODO. Request bodies are not in the access log at all — Kade is locating the source. |
+| 6c | **Report schema v2 — written 2026-09-07, NOT running.** `SCHEMA_VERSION 2`: `distinct_resources`/`_principals` count only rows with `requests > 0`, remainder in `carried_rows`; `counted_get` -> `counted_read` (it counted HEAD); added `errors_4xx`/`errors_5xx`/`auth_denied`, `bytes_total`, `resources_other_distinct`, `windows_skipped` | **60/60** in `logging/scripts/test-polaris-filters.py`, incl. a new suite 4 that fails when a numeric field is missing from `type_int_key` — the failure mode is a silently-stored string and an empty numeric query. `helm lint`/`--dry-run` NOT run, no cluster reach. Decisions in [`sessions/2026-09-07-report-schema-v2.md`](sessions/2026-09-07-report-schema-v2.md). |
 | 7 | `vmalert` + log→metric downsampling | spec §8. **The shipper-side half now exists**: the flush report counts table reads, principal requests and suppressions per 30-minute window and ships them to VictoriaLogs as `app:polaris-shipper-report`, queryable with `\| stats`. What is still missing is alerting on it, and there is no VictoriaMetrics in this cluster — the alternative shape, a `log_to_metrics` filter scraped into a TSDB, needs a component that does not exist yet. |
 | 8 | Hand back to `polaris-learning` | The platform exists to serve that suite; see below. |
 
@@ -73,3 +74,22 @@ Tail `deploy/benchmarks-polaris` into `capture/polaris.log`, then
 to carry across: `polaris-learning/CLAUDE.md` says PgBouncer and must say
 **Pgpool-II**, and its pre-rebuild configuration table is now historical — the
 cluster it describes no longer exists.
+
+**Measured 2026-09-07** — three runs (`1788511328`, `1788744260`, `1788745242`), full record in
+`logging/HANDOFF-polaris-log-coverage-2026-09-07.md`:
+
+- **146 API calls stored 2,500 records; 56 of them — 2.2% — are access-log lines.** Everything
+  the retention policy can decide about is that 2.2%. `…jdbc.DatasourceOperations` alone is
+  **1,521 records, 60.8%**, and no retention rule touches it. The spec's ">99% access-log
+  reduction" strategy is pointed at a fiftieth of this cluster's volume. Single-user local
+  traffic, so the finding is that **the assumption has never been measured**, not that it is wrong.
+- **Exception stack traces DO survive the pipeline.** Quarkus writes a structured `exception`
+  object with a ~60-frame `frames` array; VictoriaLogs flattens it, so the stored field is
+  **`exception.frames`**, not `exception`. The earlier "no stack traces" claim was two searches
+  for a name this build does not emit, agreeing with each other.
+- `fluentbit_filter_drop_records_total` on `polaris_noise_filter` = **1,943**, reconciling
+  exactly against 21,817 records seen (20,322 tailed + 1,495 ticks). The 7.1-trillion reading
+  was the test repo's parser taking Fluent Bit's millisecond timestamp as the sample value.
+- **A gap in the report stream is usually the OrbStack VM suspending with the laptop**, not a
+  stalled filter: 1,495 ticks against ~65.5h of uptime where `Interval_Sec 5` implies ~47,000.
+  **No measurement over the report stream that spans a sleep can be read as elapsed time.**
