@@ -1578,7 +1578,7 @@ def check_invariants(rows, strict_fields=True, merged=False):
     return bad
 
 
-def diff_reports(expected, actual, ignore=VOLATILE_FIELDS):
+def diff_reports(expected, actual, ignore=VOLATILE_FIELDS | VLOGS_META):
     """Field-by-field diff of two windows' report rows.
 
     This is what makes "all schema coverage" a DIFF rather than a set of
@@ -1588,7 +1588,13 @@ def diff_reports(expected, actual, ignore=VOLATILE_FIELDS):
 
     Rows join on `(report_type, row_key)`. `ignore` defaults to the fields that
     describe the emitting PROCESS rather than the window -- comparing those
-    would fail on every row, since the oracle does not run in the shipper pod.
+    would fail on every row, since the oracle does not run in the shipper pod --
+    PLUS `VLOGS_META`, which VictoriaLogs ADDS on the way out. The filter never
+    emitted `_stream` / `_stream_id`, so the oracle cannot have them and every
+    stored row otherwise contributes two guaranteed mismatches: 34 of the 60
+    fixture mismatches listed for run `1788744260`, and the same fault
+    `check_invariants` was fixed for on 2026-09-04. It is in the DEFAULT rather
+    than left to the caller because the caller forgot.
     """
     ignore = set(ignore or ())
 
@@ -1984,7 +1990,10 @@ def named_assertions(rows, summary=None, started=None, ended=None):
     folding onto its table is the v2 two-rows-per-table bug staying fixed, and
     nothing in the results document said so.
 
-    `ok` is None where the run gave the check nothing to decide on.
+    `ok` is None where the run gave the check nothing to decide on. `started`
+    and `ended` override the window range the time fields are checked against;
+    they default to the summary's own `window_start` / `window_end`, which is
+    the only bound that is a statement about the pipeline.
     """
     res = resource_rows(rows)
     summary = summary or next(
@@ -2020,24 +2029,34 @@ def named_assertions(rows, summary=None, started=None, ended=None):
         )
     )
 
+    #: THE BOUND IS THE WINDOW RANGE, NOT THE WALL CLOCK. These are the
+    #: timestamps of the records the WINDOWS saw, so the only thing assertable
+    #: about them is that they fall inside the windows being summarised.
+    #: Bracketing them against the notebook's own start and end reads as a
+    #: check and is not one: the merged range always runs past `RUN_END` (to
+    #: the last window's boundary) and opens before `STARTED` (the first window
+    #: opened before the notebook did), so any traffic in either overhang fails
+    #: an assertion about the pipeline that is really an assertion about when a
+    #: human pressed run. Run `1788744260` FAILED it in exactly that way:
+    #: max_record_time 01:25:18Z against a `RUN_END` a few seconds earlier,
+    #: inside a window that closed at 01:25:30Z.
     lo, hi = summary.get("min_record_time"), summary.get("max_record_time")
+    w0 = started if started is not None else _epoch_of(summary.get("window_start"))
+    w1 = ended if ended is not None else _epoch_of(summary.get("window_end"))
+    label = "min/max_record_time fall inside the merged window range"
     if not (lo and hi):
         #: VictoriaLogs does not store empty values, so a quiet window simply
         #: has no time fields. Absent is not drift and not a failure.
-        out.append(
-            ("min/max_record_time bracket the run", None, "absent (quiet window)")
-        )
-    elif started is None or ended is None:
-        out.append(("min/max_record_time bracket the run", None, f"{lo} .. {hi}"))
+        out.append((label, None, "absent (quiet window)"))
+    elif w0 is None or w1 is None:
+        out.append((label, None, f"{lo} .. {hi}"))
     else:
         a, b = _epoch_of(str(lo)[:19] + "Z"), _epoch_of(str(hi)[:19] + "Z")
-        ok = (
-            a is not None
-            and b is not None
-            and a >= int(started) - 1
-            and b <= int(ended) + 1
-        )
-        out.append(("min/max_record_time bracket the run", ok, f"{lo} .. {hi}"))
+        ok = a is not None and b is not None and a >= int(w0) and b <= int(w1)
+        detail = f"{lo} .. {hi}"
+        if not ok:
+            detail += f"   (window range {_iso_z(int(w0))} .. {_iso_z(int(w1))})"
+        out.append((label, ok, detail))
     return out
 
 

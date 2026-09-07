@@ -4,42 +4,39 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-07 (session 8)
+## Now — 2026-09-07 (session 8, run 2 of v3)
 
 **Read [`log-coverage/PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md) first — standalone.**
 
-**v3 is deployed and run 1 happened (`1788511328`, 132 calls, correlation exact on all 132).
-The report works; its results document cannot be trusted as it stands.** Settled: the policy
-keeps every `POST` under `/api/management/` (the v2 audit hole, where a credential reset left
-no trace), counts every successful read, and emits a flush report per window on its own stream;
-Fluent Bit splits the array, VictoriaLogs indexes the numbers as numbers, zero-carry and carry
-decay hold in the pipeline and not only in the oracle.
+**Run 2 (`1788744260`, 146 calls) settled the question run 1 left open: the 66 fixture
+mismatches were NOT the pipeline disagreeing with the deployed Lua.** 34 were `_stream` /
+`_stream_id`, which VictoriaLogs adds on the way out and the oracle cannot have; 5 were rows
+the oracle never could predict; 21 were count deltas, **every one `stored > oracle`**, all of
+them the notebook's own untagged fixture setup and cleanup. **Zero mismatches in the direction
+that would mean a lost record.**
 
-**NOT settled, and the next run's first question: run 1's oracle diff FAILED.** `oracle diff,
-THIS run's fixture resources | 66 mismatches` sits two lines under `merged invariants | OK`,
-and none of the 66 was named. One query decides which kind of failure it is —
-`app:polaris-shipper-report | stats by (window_start, report_type) count()` over
-08:41:00–08:43:30: traffic in `08:41:30` means the run was split and cell 10 read part of it;
-none means the pipeline and the deployed Lua disagree. `.memory/active-issues.md`.
+**Also measured, for the first time:** the margin equality with content — four principals, none
+carrying the total, `249 == access_seen - parse_errors`; **6 of 6** management POSTs (5 by
+rule 5, the 403 `reset` by rule 3); volume reconciling exactly (2,416 = 2,408 + 8 + 0) with
+**only 2.2% of stored records access-log** and `DatasourceOperations` at 61%; the multi-window
+merge running live across 3 windows; and `type_int_key` settled (`>=400 -> 41`, `"404" -> 25`).
 
-**Session 8 reviewed that document against the code that wrote it: nine harness defects, none
-in the filter.** Kept management POSTs were counted from a display column truncated to 58
-characters (six, not five); `principal_row` was a constant, hiding that ONE identity drove the
-run — which makes the margin equality satisfiable by a global counter; the merged row count and
-the record total reconciled against nothing; `window_start`/`counted_where` (PLAN 7) were
-missing; four named assertions were computed and never stated. The notebook now drives **two
-principals with different mixes**, names every fixture mismatch, and states each assertion
-PASS/FAIL. `.memory/roadmap.md`; wrong turns in
-`.memory/sessions/2026-09-07-log-coverage-harness-review.md`.
+**Two things carried out of it.** A real **skipped window** — `00:36:00Z`–`00:37:00Z`, three
+windows with no report, cause not yet distinguished between a shipper stall and transit loss;
+the Fluent Bit output metrics settle it and are still readable. And **questions 1 and 3 remain
+unanswered for the second run running**, because `neg.500_null_pointer` returns 200
+(`error-cases/09` is stale) — so whether an exception stack trace survives this pipeline has
+never been measured.
 
-**Fast-run settings are live and TEMPORARY** (sha `063c184df3f9…`): `WINDOW_SECONDS` 1800→**30**,
-`Interval_Sec` 30→**5**, both read from the deployed file, never hardcoded. **Revert together.**
+**Fast-run settings are still live and TEMPORARY** (sha `063c184df3f9…`): `WINDOW_SECONDS` 30,
+`Interval_Sec` 5, both read from the deployed file. **Revert together** once the next run is in.
 
-**Next:** re-run the notebook, read the oracle diff row by row, then revert those two values.
+**Next:** re-run with the two fixes from this session (VictoriaLogs metadata out of the diff,
+record times bracketed by the window range) for a fixture diff that should be near-clean; then
+revert the fast-run values.
 
-**Gate:** 81 green under the minimal pytest stand-in (`test_log_coverage` 54, `test_vlogs` 27),
-and the oracle now runs from Cowork (`luatex --luaonly` + access to `~/hynix/local-k8s/logging`).
-`pytest`/`black`/`isort` still not installable there — **the real gate is Kade's `pytest`.**
+**Gate:** `pytest` on Kade's machine — **719 passed, 1 failed**, the failure being the
+pre-existing `test_privilege_scan` renderer drift. That retires the `NOT VERIFIED` on `bb08dce`.
 
 ## Where the detail is
 

@@ -847,3 +847,56 @@ def test_a_named_assertion_fails_loudly_rather_than_reading_as_absent():
     named = dict((n, ok) for n, ok, _ in lc.named_assertions(rows))
     assert named["no /metrics row (it folds onto its table; v2 emitted two)"] is False
     assert named["resources_other > 0 (an error never creates a resource key)"] is False
+
+
+def test_victorialogs_own_fields_are_not_counted_as_diff_mismatches():
+    #: `_stream` and `_stream_id` are added by VictoriaLogs on the way out. The
+    #: filter never emitted them, so the oracle cannot have them, and every
+    #: stored row was contributing two guaranteed mismatches -- 34 of the 60
+    #: fixture mismatches listed for run 1788744260, which is most of why that
+    #: number looked like a pipeline disagreement. `check_invariants` was fixed
+    #: for exactly this on 2026-09-04 and `diff_reports` was not.
+    exp = [{"report_type": "resource", "resource": T, "requests": 3}]
+    act = [
+        {
+            "report_type": "resource",
+            "resource": T,
+            "requests": 3,
+            "_stream": '{app="polaris-shipper-report"}',
+            "_stream_id": "0000000000000000d209",
+        }
+    ]
+    assert lc.report_mismatches(lc.diff_reports(exp, act)) == []
+    #: and the exclusion must not swallow a real difference on the same row
+    act[0]["requests"] = 4
+    fields = {m["field"] for m in lc.report_mismatches(lc.diff_reports(exp, act))}
+    assert fields == {"requests"}
+
+
+def test_the_record_time_bracket_is_the_window_range_not_the_wall_clock():
+    #: `min`/`max_record_time` are the timestamps of the records the WINDOWS
+    #: saw. The merged range runs to the last window's boundary, which is
+    #: always after the notebook captured RUN_END, and opens before STARTED --
+    #: so bracketing them against the run's own clock asserts when a human
+    #: pressed run. Run 1788744260 failed it that way: max 01:25:18Z against a
+    #: RUN_END seconds earlier, inside a window closing at 01:25:30Z.
+    summary = {
+        "report_type": "summary",
+        "window_start": "2026-09-07T01:24:00Z",
+        "window_end": "2026-09-07T01:25:30Z",
+        "min_record_time": "2026-09-07T01:24:02.771243337Z",
+        "max_record_time": "2026-09-07T01:25:18.079449696Z",
+        "resources_other": 1,
+    }
+    label = "min/max_record_time fall inside the merged window range"
+    named = dict((n, ok) for n, ok, _ in lc.named_assertions([summary], summary))
+    assert named[label] is True
+    #: a record stamped outside the windows it is summarised in IS drift
+    late = dict(summary, max_record_time="2026-09-07T01:25:41Z")
+    named = dict((n, ok) for n, ok, _ in lc.named_assertions([late], late))
+    assert named[label] is False
+    #: and a quiet window, which VictoriaLogs stores without the fields at all,
+    #: is neither
+    quiet = dict(summary, min_record_time="", max_record_time="")
+    named = dict((n, ok) for n, ok, _ in lc.named_assertions([quiet], quiet))
+    assert named[label] is None
