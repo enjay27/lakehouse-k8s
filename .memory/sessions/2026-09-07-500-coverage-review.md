@@ -88,3 +88,59 @@ uncommitted** — it is a chat artefact, not part of the record.
 No `helm`, `kubectl` or `psql` from a Cowork session, and this task touched no chart: nothing
 was rendered and no live object was queried. Every claim above is arithmetic over the pasted
 report windows or a read of a file in this repo.
+
+---
+
+## The eight 500s, named — and three of my own leads refuted
+
+Kade ran the queries against VictoriaLogs (`192.168.139.2:9428`, its LoadBalancer, not a
+port-forward). All eight are `java.lang.NullPointerException` through
+`IcebergExceptionMapper`. Full record in [`../active-issues.md`](../active-issues.md) **#15**.
+
+**Reconciliation is exact, and it corrects how a window is read.** By record time, 5 of the 8
+fall inside `05:59:00..05:59:30` and 3 inside `05:59:30..06:00:00` — but the report says 7 and
+1. Both are right: **a record is counted into the window it ARRIVES in, not the window its
+timestamp falls in.** Seq 196's own `max_record_time` is `05:59:31.893`, past its
+`window_end` of `05:59:30`. So rows at `:30.15` and `:31.46` were counted into 196, and 7 + 1
+is exact.
+
+That is a harness finding as much as a filter one: the coverage matrix's `window_start` column
+is assigned from the call, while the filter counts on arrival, so **the two disagree by up to
+a couple of seconds at every boundary**. Any per-window assertion that predicts a counter from
+the matrix's `window_start` is wrong near a boundary — including the ladder's own
+"pure-500 burst inside one window".
+
+**Refuted, and worth recording because they were mine:**
+
+1. *"Seq 197's `__other__` 9 requests / 8 4xx / 1 5xx means a ladder rung returned 500, or
+   client and access-log status disagree."* **No.** The 1 5xx in that row is the `nobkt`
+   rung's *namespace* create at `05:59:32.893`, not a `create_table`. The client statuses were
+   right, the access log agrees with them, and `NOT PROVOKED` is **correct about what it
+   measured**: no storage-misconfiguration rung produced a 500 on `create_table`.
+2. *"The 500 on `/api/management/v1/catalogs` is probably `neg.client_timeout` logged as a
+   5xx."* **No.** It is a `POST` by `root` — a catalog create — with the `grantee_not_found`
+   NPE. A client abort is not known to produce an access-log 5xx here, and nothing suggests
+   it does.
+3. *"`errors_5xx` was not exercised by anything driven."* Half wrong. It was not exercised by
+   anything **aimed at it** — but the ladder's own setup drove three, and nobody checked the
+   status of a setup call.
+
+**What is actually true, and it closes §4.1's blocker:** the ladder never looked at its own
+setup. `POST /{catalog}/namespaces` on a brand-new catalog returned 500 on **3 of 3** rungs,
+about 1.3s apart, immediately after each catalog was created. That is a repeatable, API-only
+provoker — no `kubectl`, no `pg_wal_replay_pause()`. The rung to add is *create a catalog,
+then create a namespace in it*, and it should assert on the **access-log** status, not the
+client's.
+
+**Still open:** the denominator. We queried 500s, so we have no count of the namespace creates
+that succeeded. `probe_ns`, `probe_ns2` and `probe_ns_tmp` all exist, so a retry evidently
+works — "first create fails, retry succeeds" is an inference until
+`stats by (http_status)` over `POST …/namespaces` is run.
+
+**Also settled:** `neg.500_null_pointer` was retired for the right reason and the wrong one.
+Its *trigger* (`create_catalog_no_endpoint`) stopped working; its *name* was accurate — an NPE
+is the only 500 this build produces. And `HANDOFF-500-coverage` §3's "IcebergExceptionMapper
+catches and maps them, none reaches `errors_5xx`" holds for storage errors, but the same
+mapper emits all eight of these at ERROR with a trace, so `lc.trace_verdict` now has eight
+real records to judge — logged by an exception *mapper* while the message says *Unhandled*.
+That ambiguity is exactly what it was written for.

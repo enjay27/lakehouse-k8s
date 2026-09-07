@@ -5,6 +5,41 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#15 — Polaris 500s on create-then-resolve, and it is a NullPointerException, not a
+"PG-HA read-after-write signature". OPEN.**
+
+Every 500 this cluster has stored is a `java.lang.NullPointerException` logged by
+`org.apache.polaris.service.exception.IcebergExceptionMapper`. Eight of them in run
+`1788760757`, `05:59:20Z .. 05:59:33Z`, in three signatures:
+
+| exception.message | n | on |
+|---|---|---|
+| `…getPassthroughResolvedPath(Object)" is null` | 6 | `POST …/{catalog}/namespaces` |
+| `grantee_not_found: grantee={}, [… name='catalog_admin' …]` | 1 | `POST /api/management/v1/catalogs` |
+| `metadata` | 1 | `POST …/namespaces/probe_ns/views` |
+
+**The trigger is a fresh parent entity, not load.** Three of the six namespace NPEs are the
+`polaris-learning` 500-ladder's *setup* step — one per rung, `nb1788760757bh`, `…dns`,
+`…nobkt`, **3 of 3 brand-new catalogs**, each 500ing on the first namespace created in it.
+The catalog-create NPE is the same shape one level up: the `catalog_admin` role is created
+and immediately looked up as a grantee, and the lookup returns nothing.
+
+**Read-after-write against a standby remains the plausible mechanism** — an entity written
+on the primary and resolved microseconds later — but that label had been treated as settled
+and it never was. What the log carries is an unresolved entity and an NPE. Do not write
+"PG-HA read-after-write" into a document again without the replication evidence beside it.
+
+**Open, and it is one query:** the denominator. We have the 500s and not the successes, so
+"first namespace create in a new catalog fails, a retry succeeds" is 3-of-3 plus an inference
+from `probe_ns`/`probe_ns2`/`probe_ns_tmp` existing. `stats by (http_status)` over
+`POST …/namespaces` settles it.
+
+**Two consequences, both real.** For the platform: writes 500 at roughly 3% (8 of 275
+requests in 60s) on a single-node cluster, and nothing was watching. For
+`polaris-learning`: this is the **repeatable provoker** `HANDOFF-500-coverage` §4.1 says does
+not exist — API-only, no `kubectl`, no `pg_wal_replay_pause()`. Detail in
+[`sessions/2026-09-07-500-coverage-review.md`](sessions/2026-09-07-500-coverage-review.md).
+
 **#14 — The noise filter governs 4.5% of the volume, and policy v2 is not running yet. OPEN.**
 
 Two things, from the second coverage run (`polaris-learning/log-coverage`, 2026-09-04, run
