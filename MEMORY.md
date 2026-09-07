@@ -16,8 +16,8 @@ principals + 6 carried = 48 rows; the next window carries 42 and decays.
 window merge that does not sum fields it does not know, so a v2 field reads as one window:
 **a wrong number, not an error**, the same failure mode as `type_int_key`. Fix those, then
 rerun to [`PLAN-log-coverage-schema-v2`](logging/PLAN-log-coverage-schema-v2-2026-09-07.md)
-(per window, not per merge; a negative case per field; `errors_5xx` has **no repeatable
-provocation** — the 500 probe has returned 200 three runs running).
+(per window, not per merge; a negative case per field). **`errors_5xx` has a repeatable
+provocation after all: catalog, then a namespace in it — 3 of 3 fresh catalogs 500** (#15).
 
 **Still written and NOT running:** the temporary **30s window** (`Interval_Sec 5`) — keep it
 until that rerun, which costs ~2 minutes at 30s and ~90 at 1800. Then revert to 1800/30 (#14d)

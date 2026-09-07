@@ -29,10 +29,24 @@ on the primary and resolved microseconds later — but that label had been treat
 and it never was. What the log carries is an unresolved entity and an NPE. Do not write
 "PG-HA read-after-write" into a document again without the replication evidence beside it.
 
-**Open, and it is one query:** the denominator. We have the 500s and not the successes, so
-"first namespace create in a new catalog fails, a retry succeeds" is 3-of-3 plus an inference
-from `probe_ns`/`probe_ns2`/`probe_ns_tmp` existing. `stats by (http_status)` over
-`POST …/namespaces` settles it.
+**The denominator cannot be read from this pipeline, by construction.** Scoped to the window,
+`POST …/namespaces` stored **6 x 500** — 3 on the fixture catalog, 1 each on `nb1788760757bh`,
+`…dns`, `…nobkt` — **and 1 x 409, and nothing else**. No 2xx, at any scope: that path is not
+under `/api/management/`, so rule 5 does not keep it and a **successful namespace create leaves
+no individual record**. Rule 3 keeps the failures. So `stats by (http_status)` over stored
+access records for this path can only ever return errors, and its zero is the policy working,
+not a measurement. The per-resource `writes` counter cannot supply it either: two of the three
+fixture 500s were charged to `__other__` because the key did not exist yet, so the key's own
+`writes` is 2 for 4 error POSTs.
+
+**It exists in the driver.** The notebook knows every call it made and its status; the ladder
+simply throws its setup statuses away. That single omission is why the three 500s were
+invisible AND why the rate is unmeasurable — one fix closes both.
+
+**What is established:** 3 of 3 brand-new catalogs 500 on the first namespace created in them,
+and the namespace is usable afterwards — each rung went on to `create_table` and got a 4xx from
+the storage layer, which requires the namespace to exist. Consistent with a write that
+committed and a resolution that then dereferenced null.
 
 **Two consequences, both real.** For the platform: writes 500 at roughly 3% (8 of 275
 requests in 60s) on a single-node cluster, and nothing was watching. For

@@ -144,3 +144,24 @@ catches and maps them, none reaches `errors_5xx`" holds for storage errors, but 
 mapper emits all eight of these at ERROR with a trace, so `lc.trace_verdict` now has eight
 real records to judge — logged by an exception *mapper* while the message says *Unhandled*.
 That ambiguity is exactly what it was written for.
+
+## The denominator: answered, and not by a query
+
+`stats by (api_path, http_status)` over `POST …/namespaces`, scoped to the window: **6 x 500**
+(3 fixture catalog, 1 each on `bh` / `dns` / `nobkt`) **and 1 x 409**. Nothing else — no 2xx at
+any scope, because that path is not under `/api/management/`, rule 5 does not keep it, and a
+**successful namespace create leaves no individual record**. The zero is the retention policy
+working, not a measurement. Per-resource `writes` cannot supply it either: two of the three
+fixture 500s were diverted to `__other__` because the key did not exist yet, so the key's own
+`writes` reads 2 against 4 error POSTs.
+
+The denominator lives in the driver, which already knows it and discards it. The ladder records
+its measured `create_table` and throws its setup statuses away — the same omission that hid the
+three 500s.
+
+**A scope-drift near-miss, kept because this repo keeps producing it.** The first run of that
+query returned **25** 500s and **8** 409s. It reads like an answer. It was ~4x the truth,
+almost certainly the `_time:[...]` filter not surviving into the query, and it was caught only
+because it contradicted a query run three minutes earlier over the same window. Same family as
+`http_status:"404" -> 138` for a run with 23. **A count without its scope attached is not a
+result**, and the check that catches it is an independent number that must agree.
