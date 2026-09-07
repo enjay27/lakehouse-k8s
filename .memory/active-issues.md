@@ -149,9 +149,20 @@ errors kept), collection listings (counted, like every other successful read), `
 | | evidence | why deferred |
 |---|---|---|
 | the 95.5% — routing the DEBUG SQL records | 1,928 of 2,018 stored records are application lines | needs the `loggerName` distribution first; #5b already fixes the direction — route, never turn down |
-| no `%D`, no stack traces | question 3: 0 of 5 ERROR records carried an `exception` | Polaris-side, and **Polaris is not to be changed** (#11) |
+| no `%D` — no request duration is recorded anywhere | the access-log pattern carries no latency token | Polaris-side, and **Polaris is not to be changed** (#11). The *no stack traces* half of this row is **CLOSED** — see immediately below |
 | retention for the report stream | reads now live only as counts | VictoriaLogs single has one global retention and no disk cap (#7); the counts eventually want a TSDB, roadmap 7 |
 | `neg.client_timeout` "EXPECTED DROPPED, PRESENT" | the run's only matrix discrepancy | oracle artefact — a call with no client-side status is not predictable and should not be scored `drop`. Harness fix, in `polaris-learning` |
+
+**CLOSED 2026-09-07 — stack traces DO survive, and the `0 of 5` was a mis-named search.**
+Run `1788760757`: **8 of 8** WARN/ERROR records carry an exception payload, stored flattened as
+`exception.exceptionType`, `exception.frames`, `exception.message`, `exception.refId`.
+VictoriaLogs flattens nested objects, so a query for `exception` matches nothing and a
+`grep -c stackTrace` finds nothing — **two searches for a name this build does not emit,
+agreeing with each other**, which is what the `0 of 5` was. Query `exception.*`, never
+`exception`. The fact with its numbers is in [`roadmap.md`](roadmap.md), *Handing back*; the
+review that re-proved it is
+[`sessions/2026-09-07-500-coverage-review.md`](sessions/2026-09-07-500-coverage-review.md).
+Only the `%D` half of that row is still open, and it is Polaris-side.
 
 **#1 — The repo has not been reconciled against the live cluster. OPEN.**
 Kade reset and rebuilt the cluster on 2026-09-03 without following
