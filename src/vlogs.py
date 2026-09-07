@@ -95,7 +95,21 @@ REPORT_TAG = "polaris.report"
 
 def app_report():
     """The report stream selector."""
-    return f'app:{quote(REPORT_APP)}'
+    return f"app:{quote(REPORT_APP)}"
+
+
+#: Field names an exception payload can arrive under. `exception` is the
+#: unflattened shape; `exception.frames` / `exception.exceptionType` are what
+#: VictoriaLogs actually stores, because IT FLATTENS NESTED OBJECTS -- the same
+#: reason this notebook joins every call on `mdc.requestId` rather than on
+#: `mdc`. Querying only the unflattened name is what produced the "Polaris
+#: writes no stack traces" conclusion, twice, in agreement with itself.
+EXCEPTION_FIELDS = ("exception", "exception.frames", "exception.exceptionType")
+
+
+def exception_term(fields=EXCEPTION_FIELDS):
+    """A LogsQL term matching a record carrying a throwable, flattened or not."""
+    return "(" + " OR ".join(f"{f}:*" for f in fields) + ")"
 
 
 def tick_leak():
@@ -454,9 +468,7 @@ class VLogs:
             return (False, f"{type(exc).__name__}: {exc}")
 
     # -- polling -------------------------------------------------------
-    def poll_until(
-        self, logsql, expect_at_least=1, timeout=30.0, interval=1.0, **kw
-    ):
+    def poll_until(self, logsql, expect_at_least=1, timeout=30.0, interval=1.0, **kw):
         """Poll until `expect_at_least` records match, or the timeout expires.
 
         Ingest is asynchronous. The source plan's rule is **poll, do not
@@ -553,6 +565,37 @@ class VLogs:
         """
         kw.setdefault("start", since)
         return self.query(and_(app_polaris(), "_msg:*exception* OR exception:*"), **kw)
+
+    def exception_records(self, since="10m", fields=EXCEPTION_FIELDS, **kw):
+        """Records carrying a throwable, asked for by EVERY name it can have.
+
+        `with_exception` above searches `exception:*`, which a store that
+        FLATTENS nested objects never matches -- the field is `exception.frames`.
+        That single missing name is why this notebook reported "0 of 5 records
+        carried an exception object" on 2026-09-07 while VMUI showed sixty
+        frames with `IcebergCatalogHandler.createNamespace:306` at the top.
+        `with_exception` is kept as it was, so a run comparing the two can see
+        the difference rather than inherit the fix silently.
+        """
+        kw.setdefault("start", since)
+        return self.query(and_(app_polaris(), exception_term(fields)), **kw)
+
+    def field_is_numeric(self, field, scope=None, since="2h", **kw):
+        """Does `field:>0` match anything -- i.e. is it STORED as a number?
+
+        `type_int_key` in `fb-values.yaml` is what makes a counter a number
+        rather than the string `"482.0"`, and when it silently stops applying
+        to a newly added field every range filter over that field returns
+        nothing while every count still renders. A plausible number rather than
+        an exception, which is this pipeline's signature failure. Returns
+        `(numeric_hits, any_hits)`: numeric 0 with any_hits > 0 is the failure.
+        """
+        kw.setdefault("start", since)
+        scope = scope or app_report()
+        return (
+            self.count(and_(scope, f"{field}:>0"), **kw),
+            self.count(and_(scope, f"{field}:*"), **kw),
+        )
 
     # -- the scheduled flush report ------------------------------------
     def reports(self, report_type=None, window_start=None, since="2h", **kw):

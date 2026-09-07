@@ -276,10 +276,46 @@ Nine new cases in `test_log_coverage.py` cover the module functions these use.
 row — that is the question run 1 left open. Then revert `WINDOW_SECONDS` and `Interval_Sec`
 together.
 
+## Coverage: 500 error — 2026-09-07
+
+**The ERROR path had never been driven on purpose.** `neg.500_null_pointer` returned **200 for
+three runs running**: `create_catalog_no_endpoint` omitted `endpointInternal` only, and this
+build falls back to `endpoint`, so the NullPointerException it was named for cannot happen any
+more. Nothing caught it, because nothing asserted on its status and the report's
+"0 of 0 WARN/ERROR records carried an exception object" reads exactly like an answer. Every 500
+this pipeline has ever stored arrived by accident, from the PG-HA read-after-write failures on
+`create_namespace` / `create_view` — and those are writes that **committed**, so they are not
+evidence about unhandled exceptions at all.
+
+**A 500 is two records, and section 5c checks each half separately.** The access-log line
+(`http_status 500`) is kept by rule 3 *and* counted — every access-log record is counted before
+any keep/drop decision. The application ERROR line is not an access-log record, so rule 2 hands
+it to rule 1: kept, and counted into nothing. Only the second half carries the exception
+payload, and it is stored **flattened**, as `exception.frames`. A check that reads one half
+passes while the other is missing.
+
+**The provoker is a ladder, not a probe.** `lc.provokers_500` returns three API-only, reversible
+rungs — a catalog whose *both* storage endpoints point at a dead port, a catalog on a bucket
+that does not exist, and a stale-`entityVersion` PUT (`[assumed]`; `update_catalog`'s own
+docstring says that is a 409). `lc.drive_500` walks them and stops at the first that really
+returns 500. **If none fires it reports NOT PROVOKED and question 3 stays unanswered** — it does
+not fall back to counting the accidental 500s. All three rungs are `[assumed]` until a run says
+otherwise; the ladder is ordered, not proven.
+
+**Driven as a pure-500 burst inside one window** (`PLAN-log-coverage-schema-v2` §2), so
+`errors_4xx` and `auth_denied` have a *predicted* value of zero. `>=` on the 5xx count, because
+neighbour traffic lands in the same window; `==` on the negatives, because nothing driven there
+can add a 4xx — an inequality would pass a filter that charged the 500 to the wrong counter.
+
+`errors_5xx` is a **schema v2** field and this repo's oracle is still `SCHEMA_VERSION = 1`, so
+where a stored window carries no error split the window-level checks read **VOID**, never PASS.
+Migrating the oracle to v2 is that plan's §1 and is deliberately a separate task.
+
 ## Files
 
 | file | |
 |---|---|
+| `PLAN-log-coverage-schema-v2.md` | the report **schema** v2 plan, from `local-k8s` — the harness fixes this repo still owes it, and §4 is the 500 gap |
 | `PLAN-log-coverage-v3.md` | **read this first** — policy v3, the scheduled report, and what the notebook must prove about both |
 | `PLAN-log-coverage.md` | the v2 plan. Still the right description of how the oracle works; its policy table is superseded |
 | `polaris_log_coverage.ipynb` | the run. Cells 0–14, linear, `Restart & Run All`. Cells 11–14 are the scheduled report and need real boundaries. |

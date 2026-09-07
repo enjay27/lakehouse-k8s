@@ -131,8 +131,10 @@ def test_deployed_policy_status_accepts_a_reindented_configmap():
     class P:
         script = "function polaris_noise_filter(t, ts, r)\n  return 0\nend"
 
-    cm = ("data:\n  x.lua: |\n      function polaris_noise_filter(t, ts, r)\n"
-          "        return 0\n      end\n")
+    cm = (
+        "data:\n  x.lua: |\n      function polaris_noise_filter(t, ts, r)\n"
+        "        return 0\n      end\n"
+    )
     assert lc.deployed_policy_status(cm, P())[0] is True
 
 
@@ -373,9 +375,9 @@ def test_the_tick_interval_stays_well_under_the_window(policy):
     #: shows it. Cell 14 looks for exactly that gap.
     W, tick = policy.window_seconds, policy.tick_seconds
     assert tick is not None, "the dummy INPUT's Interval_Sec could not be read"
-    assert tick < W, (
-        f"Interval_Sec {tick} >= WINDOW_SECONDS {W}: a late tick skips a window"
-    )
+    assert (
+        tick < W
+    ), f"Interval_Sec {tick} >= WINDOW_SECONDS {W}: a late tick skips a window"
     assert W / tick >= 4, (
         f"only {W / tick:.0f} ticks per window (Interval_Sec {tick}, "
         f"WINDOW_SECONDS {W}) -- too little margin for scheduling jitter"
@@ -399,9 +401,7 @@ def test_a_resource_active_in_one_window_reports_an_explicit_zero_in_the_next(po
     #: cannot tell "no traffic" from "no shipper".
     _, reports = _window(policy, [("GET", T, 200)], silent=1)
     w1 = {r["resource"] for r in reports["w1"] if r["report_type"] == "resource"}
-    w2 = {
-        r["resource"]: r for r in reports["w2"] if r["report_type"] == "resource"
-    }
+    w2 = {r["resource"]: r for r in reports["w2"] if r["report_type"] == "resource"}
     assert w1 and w1 <= set(w2)
     assert all(w2[k]["requests"] == 0 for k in w1)
 
@@ -592,8 +592,11 @@ def test_victorialogs_metadata_is_not_read_as_schema_drift(policy):
     #: real run and read as the report drifting from its own schema.
     _, reports = _window(policy, [("GET", T, 200), ("PUT", T, 200)])
     stored = [
-        dict(r, _stream='{app="polaris-shipper-report",level="REPORT"}',
-             _stream_id="0000000000000000d2093bd84cc34837")
+        dict(
+            r,
+            _stream='{app="polaris-shipper-report",level="REPORT"}',
+            _stream_id="0000000000000000d2093bd84cc34837",
+        )
         for r in reports["w1"]
     ]
     assert lc.check_invariants(stored) == []
@@ -769,17 +772,26 @@ def test_the_merged_row_count_is_reconciled_against_the_calls_that_explain_it():
     rows = [
         {"report_type": "summary"},
         {"report_type": "resource", "resource": T, "requests": 2},
-        {"report_type": "resource", "resource": "/api/catalog/v1/someone_else",
-         "requests": 9},
+        {
+            "report_type": "resource",
+            "resource": "/api/catalog/v1/someone_else",
+            "requests": 9,
+        },
         {"report_type": "resource", "resource": lc.REPORT_OTHER, "requests": 1},
         {"report_type": "principal", "user_principal_name": "nb_p", "requests": 3},
     ]
-    r = lc.reconcile_merged_rows(rows, [_call("ok", "GET", T, 200),
-                                        _call("bad", "GET", T, 404)], keys)
+    r = lc.reconcile_merged_rows(
+        rows, [_call("ok", "GET", T, 200), _call("bad", "GET", T, 404)], keys
+    )
     assert r["unexplained"] == ["/api/catalog/v1/someone_else"]
     assert r["missing"] == []
-    assert r["counts"] == {"summary": 1, "resource": 3, "principal": 1,
-                           "total": 5, "resource_expected": 2}
+    assert r["counts"] == {
+        "summary": 1,
+        "resource": 3,
+        "principal": 1,
+        "total": 5,
+        "resource_expected": 2,
+    }
 
 
 def test_volume_reconciles_to_the_records_actually_pulled():
@@ -841,8 +853,12 @@ def test_a_named_assertion_fails_loudly_rather_than_reading_as_absent():
     #: back as FAIL rather than as a missing line nobody notices.
     rows = [
         {"report_type": "summary", "resources_other": 0},
-        {"report_type": "resource", "resource": f"{T}/metrics", "requests": 1,
-         "response_bytes": 0},
+        {
+            "report_type": "resource",
+            "resource": f"{T}/metrics",
+            "requests": 1,
+            "response_bytes": 0,
+        },
     ]
     named = dict((n, ok) for n, ok, _ in lc.named_assertions(rows))
     assert named["no /metrics row (it folds onto its table; v2 emitted two)"] is False
@@ -935,18 +951,347 @@ def test_a_structured_exception_is_found_whatever_the_store_called_it():
     #: STRUCTURED exception output -- an object with a `frames` array of
     #: {class, method, line} -- so there is no `stackTrace` string to grep for,
     #: and `"exception" in record` fails once a store flattens the object.
-    nested = {"level": "ERROR", "exception": {"exceptionType": "java.lang.NullPointerException",
-                                              "frames": [{"class": "C", "method": "m", "line": 1}]}}
+    nested = {
+        "level": "ERROR",
+        "exception": {
+            "exceptionType": "java.lang.NullPointerException",
+            "frames": [{"class": "C", "method": "m", "line": 1}],
+        },
+    }
     flattened = {
         "level": "ERROR",
         "exception.exceptionType": "java.lang.NullPointerException",
         "exception.frames": '[{"class": "C"}]',
     }
     assert lc.exception_fields(nested) == ["exception"]
-    assert lc.exception_fields(flattened) == ["exception.exceptionType", "exception.frames"]
+    assert lc.exception_fields(flattened) == [
+        "exception.exceptionType",
+        "exception.frames",
+    ]
     #: the `formatted` output type puts the trace in a value, not a named field
-    formatted = {"level": "ERROR", "_msg": "boom\n\tat org.apache.polaris.C.m(C.java:1)"}
+    formatted = {
+        "level": "ERROR",
+        "_msg": "boom\n\tat org.apache.polaris.C.m(C.java:1)",
+    }
     assert lc.exception_fields(formatted) == ["_msg (formatted trace in the value)"]
     #: and a message that merely mentions one is not a trace
     assert lc.exception_fields({"_msg": "Unhandled exception returning 500"}) == []
     assert lc.exception_fields(None) == []
+
+
+# ---------------------------------------------------------------- coverage: 500 error
+#: The ERROR path had never been driven on purpose: `neg.500_null_pointer`
+#: returned 200 for three runs running, and the only 500s ever stored came from
+#: the PG-HA read-after-write failures -- writes that COMMITTED, and therefore
+#: no evidence at all about unhandled exceptions. These tests are deliberately
+#: split: the two oracle ones need Lua, and the rest are pure Python so the
+#: honest-failure contract can be checked without a cluster, a drive, or a
+#: window boundary to wait for.
+def test_a_500_is_kept_and_also_counted(policy):
+    #: BOTH, and the "and" is the point. Rule 3 keeps it; every access-log
+    #: record is COUNTED before any keep/drop decision is taken, so the same
+    #: record moves `access_seen` and the row's `errors`. `access_counted` is
+    #: the notebook's other sense of the word -- records that left no
+    #: individual trace -- and a kept 500 is not one of those.
+    verdicts, reports = _window(policy, [("POST", T, 500)] * 3)
+    assert verdicts.count("keep") == 3
+    summary = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
+    assert summary["access_seen"] == 3
+    assert summary["access_kept"] == 3
+    assert summary["access_counted"] == 0
+    assert summary["errors_kept"] == 3
+
+
+def test_an_application_error_line_is_kept_and_counted_into_no_window(policy):
+    #: The other half of a 500. It is not an access-log record, so rule 2 hands
+    #: it to rule 1: kept, and invisible to every counter -- which is why a
+    #: check that reads only the summary can pass while the half carrying the
+    #: stack trace is missing.
+    err = lc.app_log_record(
+        "Unhandled exception returning INTERNAL_SERVER_ERROR",
+        level="ERROR",
+        logger="org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandler",
+    )
+    verdicts, reports = policy.report_windows([err])
+    assert verdicts == ["keep"]
+    summary = [r for r in reports["w1"] if r["report_type"] == "summary"][0]
+    assert summary["access_seen"] == 0
+    assert not [r for r in reports["w1"] if r["report_type"] == "resource"]
+
+
+def test_a_500_on_an_unread_resource_never_creates_a_key(policy):
+    #: The 404 case is already covered; this is the 5xx one, and it matters
+    #: more here because section 5c's provoker fails on CREATE -- so the table
+    #: it names has never been read successfully and must not become a key.
+    _, reports = _window(
+        policy, [("POST", f"{CAT}/c1/namespaces/ns1/tables/bh_tbl_0", 500)] * 3
+    )
+    keys = {r["resource"] for r in reports["w1"] if r["report_type"] == "resource"}
+    assert keys == {lc.REPORT_OTHER}
+
+
+def test_classify_500_never_folds_an_accident_into_coverage():
+    #: THE SUBSTITUTION THIS EXISTS TO STOP. The PG-HA read-after-write 500s
+    #: are writes that committed -- on 2026-09-01 `load_view`, `head_view` and
+    #: `drop_view` all answered 2xx after one -- so counting them as ERROR-path
+    #: coverage claims a measurement nobody took. Anything unrecognised is
+    #: `unknown`, not folded into either bucket: an unexplained 500 is a
+    #: finding.
+    calls = [
+        _call(
+            f"{lc.DELIBERATE_500_PREFIX}black_hole_endpoint.create_table_0",
+            "POST",
+            T,
+            500,
+        ),
+        _call("iceberg.create_namespace", "POST", f"{CAT}/c1/namespaces", 500),
+        _call("iceberg.create_view", "POST", f"{CAT}/c1/namespaces/ns1/views", 500),
+        _call("mgmt.something_new", "POST", f"{MGMT}/principals", 500),
+        _call("iceberg.load_table", "GET", T, 200),
+        _call("neg.404", "GET", T, 404),
+    ]
+    got = lc.classify_500s(calls)
+    assert [c["label"] for c in got["deliberate"]] == [
+        f"{lc.DELIBERATE_500_PREFIX}black_hole_endpoint.create_table_0"
+    ]
+    assert len(got["read_after_write"]) == 2
+    assert [c["label"] for c in got["unknown"]] == ["mgmt.something_new"]
+    #: a 2xx and a 4xx are not 500s and appear in none of the three
+    assert sum(len(v) for v in got.values()) == 4
+
+
+def test_error_record_pair_splits_the_two_halves_and_finds_a_flattened_trace():
+    stored = [
+        {
+            "mdc.requestId": "nb-1-001-x",
+            "loggerName": lc.ACCESS_LOGGER,
+            "http_status": "500",
+        },
+        {
+            "mdc.requestId": "nb-1-001-x",
+            "level": "ERROR",
+            "loggerName": "o.a.p.IcebergCatalogHandler",
+            "exception.frames": '[{"class": "C"}]',
+        },
+        {"mdc.requestId": "nb-1-002-y", "loggerName": lc.ACCESS_LOGGER},
+    ]
+    pair = lc.error_record_pair(stored, "nb-1-001-x")
+    assert pair["access_records"] == 1 and pair["app_records"] == 1
+    assert pair["levels"] == ["ERROR"]
+    #: FLATTENED. `exception` alone matches nothing here, and asking only for
+    #: it is what produced "no stack traces" twice, in agreement with itself.
+    assert pair["exception_fields"] == {
+        "o.a.p.IcebergCatalogHandler": ["exception.frames"]
+    }
+    #: the other call's records are not swept in
+    assert lc.error_record_pair(stored, "nb-1-002-y")["app_records"] == 0
+
+
+class _FakeProv:
+    """A rung with no cluster behind it: statuses are handed in."""
+
+    def __init__(self, name, statuses, fail_setup=False):
+        self.name = name
+        self.why = "test"
+        self.assumed = True
+        self.statuses = statuses
+        self.prepared = self.cleaned = 0
+        self._fail = fail_setup
+
+    def prepare(self):
+        self.prepared += 1
+        if self._fail:
+            raise RuntimeError("no catalog for you")
+
+    def calls(self):
+        return [
+            (f"c{i}", (lambda: None), "POST", "/p") for i in range(len(self.statuses))
+        ]
+
+    def cleanup(self):
+        self.cleaned += 1
+
+
+def _fake_call(statuses):
+    it = iter(statuses)
+
+    def call(clients, run, seq, label, fn, method="", path="", principals=None):
+        return {
+            "label": label,
+            "method": method,
+            "path": path,
+            "seq": seq,
+            "status": next(it),
+            "request_id": f"nb-{run}-{seq:03d}",
+        }
+
+    return call
+
+
+def test_drive_500_reports_not_provoked_rather_than_inventing_coverage():
+    #: THE HONEST-FAILURE CONTRACT. A ladder that fires on nothing must say so.
+    #: The alternative is what shipped for three runs: a probe returning 200,
+    #: a report reading "0 of 0 records carried an exception object", and a
+    #: reader taking that for a statement about the pipeline.
+    rungs = [_FakeProv("a", [200, 200]), _FakeProv("b", [201, 200])]
+    out = lc.drive_500([], "9", 0, rungs, call=_fake_call([200, 200, 201, 200]))
+    assert out["winner"] is None
+    assert [e["provoked"] for e in out["ladder"]] == [0, 0]
+    assert all(r.cleaned == 1 for r in rungs)
+    assert not lc.classify_500s(out["rows"])["deliberate"]
+
+
+def test_drive_500_stops_at_the_first_rung_that_actually_fires():
+    rungs = [_FakeProv("a", [200]), _FakeProv("b", [500, 500]), _FakeProv("c", [500])]
+    out = lc.drive_500([], "9", 10, rungs, call=_fake_call([200, 500, 500]))
+    assert out["winner"] == "b"
+    #: the third rung is never prepared -- a rung that did not run left nothing
+    #: behind to clean up, and cleanup on a rung that did run always happens
+    assert (rungs[2].prepared, rungs[2].cleaned) == (0, 0)
+    assert rungs[1].cleaned == 1
+    assert out["seq"] == 13
+    assert len(lc.classify_500s(out["rows"])["deliberate"]) == 2
+
+
+def test_drive_500_survives_a_rung_whose_setup_fails():
+    #: A rung whose catalog cannot be created is a rung that did not get to
+    #: answer, not a rung that answered "no". It is recorded and the ladder
+    #: continues.
+    rungs = [_FakeProv("a", [500], fail_setup=True), _FakeProv("b", [500])]
+    out = lc.drive_500([], "9", 0, rungs, call=_fake_call([500]))
+    assert out["ladder"][0]["calls"] == 0
+    assert out["ladder"][0]["note"].startswith("setup: RuntimeError")
+    assert out["winner"] == "b"
+
+
+def _sum_row(**kw):
+    row = {
+        "report_type": "summary",
+        "errors": 0,
+        "errors_4xx": 0,
+        "errors_5xx": 0,
+        "auth_denied": 0,
+    }
+    row.update(kw)
+    return row
+
+
+def test_check_500_window_is_void_not_green_on_a_schema_v1_window():
+    #: ABSENT IS NOT ZERO. A v1 window carries no error split at all, and a
+    #: check that reads a missing field as 0 reports PASS for a measurement
+    #: nobody took -- the same shape as "0 of 0 carried an exception object".
+    v1 = [{"report_type": "summary", "access_seen": 5, "errors_kept": 1}]
+    got = lc.check_500_window(v1, driven_500=3)
+    assert [ok for _, ok, _ in got] == [None]
+    assert "VOID" in got[0][2]
+
+
+def test_check_500_window_catches_a_500_charged_to_the_4xx_counter():
+    #: The negative case, and the reason the 4xx check is an EQUALITY. A filter
+    #: that put the 500 in `errors_4xx` would still satisfy `errors_5xx >= 0`
+    #: and every total in the report.
+    rows = [_sum_row(errors=3, errors_4xx=3, errors_5xx=0)]
+    named = {n: ok for n, ok, _ in lc.check_500_window(rows, driven_500=3)}
+    assert named["a 500 does not increment errors_4xx"] is False
+    assert named["errors_5xx >= the 3 driven 500(s)"] is False
+
+
+def test_check_500_window_passes_a_clean_pure_500_burst():
+    rows = [
+        _sum_row(errors=3, errors_4xx=0, errors_5xx=3, auth_denied=0),
+        {
+            "report_type": "resource",
+            "resource": lc.REPORT_OTHER,
+            "errors": 3,
+            "errors_5xx": 3,
+        },
+        {
+            "report_type": "principal",
+            "user_principal_name": "nb_p",
+            "errors": 3,
+            "errors_5xx": 3,
+        },
+    ]
+    got = lc.check_500_window(rows, driven_500=3)
+    assert all(ok for _, ok, _ in got), [c for c in got if not c[1]]
+
+
+def test_check_500_window_allows_a_neighbours_500_but_not_a_neighbours_4xx():
+    #: The asymmetry, stated as a test. Neighbour traffic and an accidental
+    #: PG-HA 500 land in the same window and can only ADD to `errors_5xx`;
+    #: nothing this notebook drove can add a 4xx to a pure-500 burst, so an
+    #: inequality there would pass a filter charging the 500 to the wrong
+    #: counter.
+    rows = [_sum_row(errors=5, errors_4xx=0, errors_5xx=5)]
+    named = {n: ok for n, ok, _ in lc.check_500_window(rows, driven_500=3)}
+    assert named["errors_5xx >= the 3 driven 500(s)"] is True
+    assert named["a 500 does not increment errors_4xx"] is True
+
+    rows = [_sum_row(errors=5, errors_4xx=2, errors_5xx=3)]
+    named = {n: ok for n, ok, _ in lc.check_500_window(rows, driven_500=3)}
+    assert named["a 500 does not increment errors_4xx"] is False
+
+
+def test_check_500_window_margin_is_void_when_no_row_carries_the_field():
+    #: A margin computed over rows that do not carry the counter is `0 == 0`,
+    #: which is a pass nobody earned.
+    rows = [
+        _sum_row(errors=1, errors_5xx=1),
+        {"report_type": "resource", "resource": "r", "errors": 1},
+        {"report_type": "principal", "user_principal_name": "p", "errors": 1},
+    ]
+    named = {n: (ok, d) for n, ok, d in lc.check_500_window(rows, driven_500=1)}
+    assert (
+        named["margin: sum(resource.errors_5xx) == sum(principal.errors_5xx)"][0]
+        is None
+    )
+    assert named["margin: sum(resource.errors) == sum(principal.errors)"][0] is True
+
+
+def test_provokers_500_refuses_to_guess_a_table_payload():
+    with pytest.raises(ValueError, match="table_payload"):
+        lc.provokers_500(None, None, "9", bucket="b", endpoint="e")
+
+
+def test_the_ladder_points_both_storage_endpoints_at_the_black_hole():
+    #: WHY `error-cases/09` STOPPED WORKING, encoded so it cannot regress:
+    #: it omitted `endpointInternal` only, and this build falls back to
+    #: `endpoint`. A rung that leaves a working endpoint in place is a rung
+    #: that provokes nothing and reports 200 forever.
+    seen = {}
+
+    class _PC:
+        def create_catalog(self, name, bucket, endpoint, minio_endpoint_internal=None):
+            seen.update(
+                name=name,
+                endpoint=endpoint,
+                internal=minio_endpoint_internal,
+                bucket=bucket,
+            )
+            return type("R", (), {"status_code": 201, "text": ""})()
+
+        def delete_catalog(self, name, purge=False):
+            seen["purge"] = purge
+            return type("R", (), {"status_code": 204})()
+
+    class _IC:
+        def create_namespace(self, catalog, ns):
+            return type("R", (), {"status_code": 200})()
+
+    rungs = lc.provokers_500(
+        _PC(),
+        _IC(),
+        "9",
+        bucket="b",
+        endpoint="http://real:9000",
+        table_payload=lambda n: {"name": n},
+        repeat=3,
+    )
+    assert rungs[0].name == "black_hole_endpoint"
+    rungs[0].prepare()
+    assert seen["endpoint"] == seen["internal"] != "http://real:9000"
+    assert len(rungs[0].calls()) == 3
+    rungs[0].cleanup()
+    #: purge=False deliberately: purging talks to the endpoint this rung just
+    #: pointed at a dead port, so it hangs or provokes a second untagged 500.
+    assert seen["purge"] is False

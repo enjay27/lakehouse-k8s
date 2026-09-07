@@ -589,9 +589,7 @@ def access_log_line(
     """
     stamp = time.strftime("%d/%b/%Y:%H:%M:%S +0000", time.gmtime(when or time.time()))
     body = "-" if not size else str(size)
-    return (
-        f'{ip} - {user} [{stamp}] "{method} {path} HTTP/1.1" {status} {body}'
-    )
+    return f'{ip} - {user} [{stamp}] "{method} {path} HTTP/1.1" {status} {body}'
 
 
 def access_log_record(
@@ -679,7 +677,7 @@ def canonical(path):
 
 
 def api_of(label_or_path):
-    """"management" or "catalog", from an `api_surface` label or a path."""
+    """ "management" or "catalog", from an `api_surface` label or a path."""
     s = str(label_or_path)
     if s.startswith("mgmt.") or s.startswith(MGMT_PREFIX):
         return "management"
@@ -819,13 +817,13 @@ def spec_inventory(spec_dir):
 def coverage_rows(spec, captured, driven):
     """One row per endpoint across all three sources, with a three-way verdict.
 
-        confirmed gap  this deployment SERVED it and the notebook does not
-                       drive it. A fact, and the number that should be zero.
-        unverified     driven here, never observed on this cluster before.
-                       An open question, resolved by running the notebook.
-        candidate      the spec names it; nothing observed it, nothing drives
-                       it. May not exist in this build at all.
-        driven         driven and previously observed. Nothing to report.
+    confirmed gap  this deployment SERVED it and the notebook does not
+                   drive it. A fact, and the number that should be zero.
+    unverified     driven here, never observed on this cluster before.
+                   An open question, resolved by running the notebook.
+    candidate      the spec names it; nothing observed it, nothing drives
+                   it. May not exist in this build at all.
+    driven         driven and previously observed. Nothing to report.
     """
     rows = []
     for k in sorted(set(spec) | set(captured) | set(driven)):
@@ -1049,8 +1047,8 @@ def elect_drive_identity(
 
     Returns (label, pc, ic, principal_name, notes).
     """
-    from polaris_rest import PolarisREST
     from iceberg_rest import IcebergREST
+    from polaris_rest import PolarisREST
 
     notes = []
     try:
@@ -2078,7 +2076,6 @@ def principal_mix(rows):
     }
 
 
-
 def correlation_stats(stored, calls, id_field="mdc.requestId"):
     """How many of THESE calls had their request id recovered.
 
@@ -2140,3 +2137,520 @@ def exception_fields(record):
         elif isinstance(value, str) and ("\n\tat " in value or ".java:" in value):
             found.append(f"{key} (formatted trace in the value)")
     return sorted(found)
+
+
+# ---------------------------------------------------------------------------
+# COVERAGE: 500 ERROR
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. `neg.500_null_pointer` has returned 200 for three runs: the
+# `create_catalog_no_endpoint` provocation stopped reproducing on this build,
+# and nothing noticed because "0 of 0 records carried an exception object"
+# reads exactly like an answer. The only 500s ever stored arrived BY ACCIDENT,
+# from the PG-HA read-after-write failures on `iceberg.create_namespace` and
+# `create_view` -- which are writes that COMMITTED, and therefore say nothing
+# about the unhandled-exception path. So the ERROR path has never been driven
+# on purpose, and `errors_5xx` has never been exercised against the real
+# pipeline.
+#
+# A 500 IS TWO RECORDS, NOT ONE, and the whole section turns on the split:
+#
+#   the access-log line   loggerName io.quarkus.http.access-log, http_status
+#                         500. Rule 3 KEEPS it, and every access-log record is
+#                         COUNTED before any keep/drop decision -- so it is
+#                         kept AND counted, and it moves `errors`, `errors_5xx`
+#                         and the row's own `errors`.
+#   the application line  the ERROR record the handler logs. Not an access-log
+#                         record, so rule 2 hands it to rule 1: KEPT and NOT
+#                         counted. This is the one carrying `exception.frames`.
+#
+# The two join on `mdc.requestId`. A check that looks at one of them can pass
+# while the other is missing, which is how a half-working ERROR path would
+# survive a run.
+
+#: Label prefix `drive_500` puts on every call it issues. `classify_500` reads
+#: it, and the results document reads that: coverage claimed for the ERROR path
+#: must be traceable to a call this notebook made on purpose.
+DELIBERATE_500_PREFIX = "probe.500."
+
+#: The PG-HA read-after-write signature. A 500 on one of these is a write that
+#: COMMITTED -- `load_view`/`head_view`/`drop_view` all answered 2xx afterwards
+#: on 2026-09-01 -- so it is a replica-lag artefact, not an unhandled
+#: exception, and counting it as ERROR-path coverage is the substitution this
+#: whole section exists to stop.
+PG_HA_500_LABELS = ("iceberg.create_namespace", "iceberg.create_view")
+
+#: The v2 report's error split. Absent on a schema v1 window, and the
+#: difference between "absent" and "zero" is the difference between a check
+#: that is VOID and one that PASSED.
+ERROR_SPLIT_FIELDS = ("errors", "errors_4xx", "errors_5xx", "auth_denied")
+
+
+class Provoker:
+    """One rung of the 500 ladder: API-only, reversible, self-cleaning.
+
+    `prepare` and `cleanup` are the fixture; `calls` returns
+    `(label, fn, method, path)` tuples for `call_once` to drive, and is called
+    AFTER `prepare` so it can close over whatever prepare built. Nothing here
+    touches kubectl, psql or the schema -- a rung that needs the cluster is not
+    a rung this notebook can own.
+    """
+
+    def __init__(self, name, why, calls, prepare=None, cleanup=None, assumed=False):
+        self.name = name
+        self.why = why
+        self._calls = calls
+        self.prepare = prepare
+        self.cleanup = cleanup
+        #: True where the rung has never been observed to return 500 on this
+        #: build. The ladder is ordered, not proven.
+        self.assumed = assumed
+
+    def calls(self):
+        return list(self._calls())
+
+    def __repr__(self):  # pragma: no cover - debugging aid
+        return f"<Provoker {self.name}{' [assumed]' if self.assumed else ''}>"
+
+
+def provokers_500(
+    adm_pc,
+    ic,
+    run,
+    *,
+    bucket,
+    endpoint,
+    endpoint_internal=None,
+    table_payload=None,
+    unreachable="http://127.0.0.1:1",
+    bad_bucket=None,
+    repeat=3,
+):
+    """The ladder, cheapest and most likely first. Drive it with `drive_500`.
+
+    Every rung creates its own catalog and deletes it in `cleanup`, so a rung
+    that fails leaves nothing behind and the next one starts clean.
+
+    Args:
+        adm_pc: a `PolarisREST` that may create and delete catalogs.
+        ic: an `IcebergREST` on the same realm.
+        run: the run id, so every fixture name is unique to this run.
+        bucket / endpoint / endpoint_internal: the REAL storage config, from
+            `init_env`. Rungs 1 and 3 differ from it in exactly one field.
+        table_payload: `lambda name: <CreateTableRequest>`. Passed in rather
+            than imported so this module keeps no dependency on
+            `iceberg_rest`.
+        unreachable: the black hole rung 1 points Polaris' own S3 client at.
+            127.0.0.1:1 is chosen because it FAILS FAST -- a routable-but-dead
+            host would hang, and a hang leaves no access-log line at all,
+            which is the one failure this pipeline is blind to.
+        repeat: how many 500s each rung drives. More than one because rule 3
+            keeps errors with NO CAP, and one call cannot show the absence of
+            a cap.
+
+    Returns:
+        a list of `Provoker`, in the order they should be tried.
+    """
+    if table_payload is None:
+        raise ValueError(
+            "provokers_500 needs table_payload=lambda name: <CreateTableRequest>; "
+            "build it with iceberg_rest.build_create_table_payload in the notebook"
+        )
+
+    state = {}
+
+    # -- rung 1: the storage endpoint Polaris itself cannot reach ------------
+    # This is `error-cases/09`'s intent, repaired. 09 broke because it left
+    # `endpoint` valid and only omitted `endpointInternal`, and this build
+    # falls back to `endpoint` -- so the catalog worked and the notebook
+    # reported 200 while still calling itself a NullPointerException test.
+    # Pointing BOTH at a dead port removes the fallback.
+    bh_cat = f"nb{run}bh"
+    bh_ns = "bh_ns"
+
+    def bh_prepare():
+        r = adm_pc.create_catalog(
+            bh_cat, bucket, unreachable, minio_endpoint_internal=unreachable
+        )
+        state["bh_catalog"] = r.status_code
+        if r.status_code not in (200, 201):
+            raise RuntimeError(
+                f"catalog create returned {r.status_code}: {r.text[:200]}"
+            )
+        # The namespace is metadata only and must SUCCEED -- it gives the
+        # window a resource key that was read cleanly, so the 500s that follow
+        # can be shown to land in `__other__` instead of creating one.
+        state["bh_ns"] = ic.create_namespace(bh_cat, bh_ns).status_code
+
+    def bh_calls():
+        return [
+            (
+                f"create_table_{i}",
+                (
+                    lambda n=f"bh_tbl_{i}": ic.create_table(
+                        bh_cat, bh_ns, table_payload(n)
+                    )
+                ),
+                "POST",
+                f"{CAT_PREFIX}/v1/{bh_cat}/namespaces/{bh_ns}/tables",
+            )
+            for i in range(repeat)
+        ]
+
+    def bh_cleanup():
+        # purge=False DELIBERATELY. `purgeRequested=true` asks Polaris to
+        # delete the underlying files, which means talking to the storage
+        # endpoint this rung just pointed at a dead port -- so a purge here
+        # either hangs or provokes a second, untagged 500 during cleanup.
+        try:
+            adm_pc.delete_catalog(bh_cat, purge=False)
+        except Exception:  # noqa: BLE001 - cleanup never fails the run
+            pass
+
+    # -- rung 2: a bucket that is not there ---------------------------------
+    nb_cat = f"nb{run}nobkt"
+    nb_ns = "nobkt_ns"
+    missing_bucket = bad_bucket or f"nb-{run}-no-such-bucket"
+
+    def nb_prepare():
+        r = adm_pc.create_catalog(
+            nb_cat,
+            missing_bucket,
+            endpoint,
+            minio_endpoint_internal=endpoint_internal or endpoint,
+        )
+        state["nb_catalog"] = r.status_code
+        if r.status_code not in (200, 201):
+            raise RuntimeError(
+                f"catalog create returned {r.status_code}: {r.text[:200]}"
+            )
+        state["nb_ns"] = ic.create_namespace(nb_cat, nb_ns).status_code
+
+    def nb_calls():
+        return [
+            (
+                f"create_table_{i}",
+                (
+                    lambda n=f"nobkt_tbl_{i}": ic.create_table(
+                        nb_cat, nb_ns, table_payload(n)
+                    )
+                ),
+                "POST",
+                f"{CAT_PREFIX}/v1/{nb_cat}/namespaces/{nb_ns}/tables",
+            )
+            for i in range(repeat)
+        ]
+
+    def nb_cleanup():
+        try:
+            adm_pc.delete_catalog(nb_cat, purge=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # -- rung 3: a stale entity version -------------------------------------
+    # [assumed], and flagged as such: `PolarisREST.update_catalog`'s own
+    # docstring says a stale `currentEntityVersion` returns 409, not 500. If
+    # that is right this rung can never fire and its value is the record of
+    # having tried it. `error-cases/18` believed otherwise.
+    sv_cat = f"nb{run}stale"
+
+    def sv_prepare():
+        r = adm_pc.create_catalog(
+            sv_cat,
+            bucket,
+            endpoint,
+            minio_endpoint_internal=endpoint_internal or endpoint,
+        )
+        if r.status_code not in (200, 201):
+            raise RuntimeError(
+                f"catalog create returned {r.status_code}: {r.text[:200]}"
+            )
+        cat = adm_pc.get_catalog(sv_cat).json()
+        state["sv_props"] = dict(cat.get("properties") or {})
+        state["sv_version"] = _as_int(cat.get("entityVersion"), 1)
+
+    def sv_calls():
+        return [
+            (
+                f"stale_put_{i}",
+                (
+                    lambda i=i: adm_pc.update_catalog(
+                        sv_cat,
+                        {**state["sv_props"], "nb.stale": f"{run}-{i}"},
+                        max(0, state["sv_version"] - 5),
+                    )
+                ),
+                "PUT",
+                f"{MGMT_PREFIX}/v1/catalogs/{sv_cat}",
+            )
+            for i in range(repeat)
+        ]
+
+    def sv_cleanup():
+        try:
+            adm_pc.delete_catalog(sv_cat, purge=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return [
+        Provoker(
+            "black_hole_endpoint",
+            "both storage endpoints point at a dead port, so Polaris' own S3 "
+            "client cannot resolve storage on table create",
+            bh_calls,
+            prepare=bh_prepare,
+            cleanup=bh_cleanup,
+            assumed=True,
+        ),
+        Provoker(
+            "nonexistent_bucket",
+            "the catalog's bucket does not exist in MinIO (error-cases/23, "
+            "API-only half)",
+            nb_calls,
+            prepare=nb_prepare,
+            cleanup=nb_cleanup,
+            assumed=True,
+        ),
+        Provoker(
+            "stale_entity_version",
+            "optimistic-lock conflict on PUT /catalogs (error-cases/18) -- "
+            "[assumed], and update_catalog's docstring says this is a 409",
+            sv_calls,
+            prepare=sv_prepare,
+            cleanup=sv_cleanup,
+            assumed=True,
+        ),
+    ]
+
+
+def drive_500(clients, run, seq, provokers, principals=None, call=None, on_rung=None):
+    """Walk the ladder and STOP at the first rung that really returns >= 500.
+
+    THE HONEST-FAILURE CONTRACT IS THE POINT. If every rung returns 2xx the
+    result carries `winner=None` and the per-rung statuses, and the caller
+    reports NOT PROVOKED. It does not quietly fall back to whatever 500s the
+    drive produced by itself: that substitution is what let `0 of 0` be read as
+    an answer for three runs.
+
+    Returns:
+        `{"rows": [...], "ladder": [...], "winner": name or None, "seq": int}`
+        -- `rows` in `call_once`'s shape, so they join the run's other calls.
+    """
+    call = call or call_once
+    rows, ladder, winner = [], [], None
+    for prov in provokers:
+        note, rung_rows = None, []
+        try:
+            if prov.prepare is not None:
+                prov.prepare()
+            prepared = True
+        except Exception as exc:  # noqa: BLE001
+            prepared, note = False, f"setup: {type(exc).__name__}: {exc}"
+        if prepared:
+            try:
+                for label, fn, method, path in prov.calls():
+                    seq += 1
+                    rung_rows.append(
+                        call(
+                            clients,
+                            run,
+                            seq,
+                            f"{DELIBERATE_500_PREFIX}{prov.name}.{label}",
+                            fn,
+                            method,
+                            path,
+                            principals=principals,
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001
+                note = f"drive: {type(exc).__name__}: {exc}"
+            finally:
+                if prov.cleanup is not None:
+                    try:
+                        prov.cleanup()
+                    except Exception as exc:  # noqa: BLE001
+                        note = f"{note + ' | ' if note else ''}cleanup: {type(exc).__name__}"
+        statuses = [r.get("status") for r in rung_rows]
+        provoked = [s for s in statuses if s is not None and int(s) >= 500]
+        entry = {
+            "rung": prov.name,
+            "why": prov.why,
+            "calls": len(rung_rows),
+            "statuses": statuses,
+            "provoked": len(provoked),
+            "note": note,
+        }
+        ladder.append(entry)
+        rows.extend(rung_rows)
+        if on_rung is not None:
+            on_rung(entry)
+        if provoked:
+            winner = prov.name
+            break
+    return {"rows": rows, "ladder": ladder, "winner": winner, "seq": seq}
+
+
+def classify_500(call):
+    """`deliberate` / `read_after_write` / `unknown` for one call row.
+
+    Classified from the LABEL, not from the response: a 500 body cannot say
+    whether the write committed, and the PG-HA signature is precisely a 500
+    whose write DID commit. Anything unrecognised is `unknown` rather than
+    folded into either bucket -- an unexplained 500 is a finding, not a
+    rounding error.
+    """
+    label = str(call.get("label") or "")
+    if label.startswith(DELIBERATE_500_PREFIX):
+        return "deliberate"
+    if any(label.startswith(sig) for sig in PG_HA_500_LABELS):
+        return "read_after_write"
+    return "unknown"
+
+
+def classify_500s(calls):
+    """`{deliberate: [...], read_after_write: [...], unknown: [...]}`."""
+    out = {"deliberate": [], "read_after_write": [], "unknown": []}
+    for call in calls or ():
+        status = call.get("status")
+        if status is None or int(status) < 500:
+            continue
+        out[classify_500(call)].append(call)
+    return out
+
+
+def error_record_pair(records, request_id, id_field="mdc.requestId"):
+    """Both halves of one 500, split by logger, with the exception names found.
+
+    `exception_fields` is applied to the application lines only and returns
+    NAMES: the payload is stored FLATTENED as `exception.frames`, so a check
+    for a key called `exception` reports absence for a record that carries the
+    trace. That mistake was made twice and agreed with itself both times.
+    """
+    mine = [r for r in (records or ()) if str(r.get(id_field, "")) == str(request_id)]
+    access = [r for r in mine if r.get("loggerName") == ACCESS_LOGGER]
+    app = [r for r in mine if r.get("loggerName") != ACCESS_LOGGER]
+    found = {}
+    for rec in app:
+        names = exception_fields(rec)
+        if names:
+            found.setdefault(rec.get("loggerName") or "(no loggerName)", []).extend(
+                names
+            )
+    return {
+        "request_id": str(request_id),
+        "access": access[0] if access else None,
+        "access_records": len(access),
+        "app_records": len(app),
+        "levels": sorted({str(r.get("level")) for r in app if r.get("level")}),
+        "exception_fields": {k: sorted(set(v)) for k, v in found.items()},
+        "loggers": sorted(
+            {str(r.get("loggerName")) for r in app if r.get("loggerName")}
+        ),
+    }
+
+
+def check_500_window(rows, driven_500, driven_4xx=0, driven_auth_denied=0):
+    """The `errors_5xx` assertions, as `(name, ok, detail)` -- `ok=None` = VOID.
+
+    Written for a PURE-500 BURST: a window into which this notebook drove
+    nothing but 500s, so `errors_4xx` and `auth_denied` have a predicted value
+    of zero and the negative cases have something to catch. Pass
+    `driven_4xx` / `driven_auth_denied` if the burst was not pure; the checks
+    then compare against what was driven rather than against zero.
+
+    `>=` on the 5xx count, `==` on the 4xx and auth negatives. The asymmetry is
+    deliberate: neighbour traffic and a PG-HA read-after-write 500 can ADD to
+    `errors_5xx` in the same window, but nothing this notebook drove can add a
+    4xx to a pure-500 burst, so an inequality there would pass a filter that
+    charged the 500 to the wrong counter -- the exact bug the split exists to
+    catch.
+    """
+    rows = list(rows or ())
+    summary = next((r for r in rows if r.get("report_type") == "summary"), {})
+    out = []
+
+    present = [f for f in ERROR_SPLIT_FIELDS if f in summary]
+    if "errors_5xx" not in present:
+        out.append(
+            (
+                "the window carries the v2 error split",
+                None,
+                "`errors_5xx` is absent from the summary row -- this window came "
+                "from a schema v1 filter, or the field was not stored. Every check "
+                "below is VOID, not passed. Fields seen: "
+                + (", ".join(present) or "none of them"),
+            )
+        )
+        return out
+    out.append(("the window carries the v2 error split", True, ", ".join(present)))
+
+    errors = _as_int(summary.get("errors"))
+    e5 = _as_int(summary.get("errors_5xx"))
+    e4 = _as_int(summary.get("errors_4xx"))
+    denied = _as_int(summary.get("auth_denied"))
+
+    out.append(
+        (
+            f"errors_5xx >= the {driven_500} driven 500(s)",
+            e5 >= driven_500,
+            f"errors_5xx={e5}, driven={driven_500}"
+            + (
+                "  (>= because neighbour traffic and a PG-HA 500 land in the "
+                "same window)"
+                if e5 > driven_500
+                else ""
+            ),
+        )
+    )
+    out.append(
+        (
+            "a 500 does not increment errors_4xx",
+            e4 == driven_4xx,
+            f"errors_4xx={e4}, driven 4xx={driven_4xx}",
+        )
+    )
+    out.append(
+        (
+            "a 500 does not increment auth_denied",
+            denied == driven_auth_denied,
+            f"auth_denied={denied}, driven 401/403={driven_auth_denied}",
+        )
+    )
+    out.append(
+        (
+            "auth_denied <= errors_4xx",
+            denied <= e4,
+            f"{denied} <= {e4}",
+        )
+    )
+    #: INEQUALITY ON PURPOSE. A record with no parsable status is an error
+    #: charged to neither split, so the two halves are a lower bound on
+    #: `errors` and demanding equality would fail on a line that did not parse.
+    out.append(
+        (
+            "errors_4xx + errors_5xx <= errors",
+            e4 + e5 <= errors,
+            f"{e4} + {e5} <= {errors}",
+        )
+    )
+
+    for field in ("errors", "errors_5xx"):
+        res = sum(
+            _as_int(r.get(field)) for r in rows if r.get("report_type") == "resource"
+        )
+        pri = sum(
+            _as_int(r.get(field)) for r in rows if r.get("report_type") == "principal"
+        )
+        has = any(
+            field in r
+            for r in rows
+            if r.get("report_type") in ("resource", "principal")
+        )
+        out.append(
+            (
+                f"margin: sum(resource.{field}) == sum(principal.{field})",
+                None if not has else res == pri,
+                f"{res} vs {pri}" if has else f"no row carries `{field}`",
+            )
+        )
+    return out

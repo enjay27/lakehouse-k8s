@@ -6,46 +6,45 @@ handoff named in *Now* — it is standalone.
 
 ## Now — 2026-09-07 (session 8)
 
-**Read [`log-coverage/PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md) first — standalone.**
+**Read [`log-coverage/PLAN-log-coverage-schema-v2.md`](log-coverage/PLAN-log-coverage-schema-v2.md)
+first, then [`PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md) — both standalone.**
 
-**Run 3 (`1788745242`) is the first run whose report can be checked against itself throughout,
-and the two questions it left open are now closed.** The fixture diff is down to 30 with **0**
-metadata lines and, for the second run running, **0 mismatches in the direction that would mean
-a lost record**; all four named assertions PASS; the margin holds across four principals with
-distinct mixes; 6 of 6 management POSTs; volume reconciles exactly. What remains in that diff
-is entirely the notebook's own fixture setup and teardown, which are not in `ALL_CALLS` — the
-last structural gap between oracle and pipeline.
+**THE DEPLOYED REPORT IS SCHEMA v2 AND THIS REPO'S ORACLE IS STILL v1.** `src/log_coverage.py`
+says `SCHEMA_VERSION = 1` and its frozen field sets still carry `counted_get`, which v2 removed.
+Migrating it is that plan's §1 (start at 1.1: the window merge must sum every numeric field, read
+from the row's own keys — a hardcoded list has now produced the same silent failure twice here).
+**Not done, and nothing that asserts on a v2 field can be trusted until it is.**
 
-**STACK TRACES SURVIVE, END TO END — and the two findings that said otherwise were both mine.**
-An ERROR record carries a top-level `exception` key at the source, the payload is Quarkus's
-**structured** output (a `frames` array of `{class, method, line}`), and it reaches VictoriaLogs
-intact — read back from VMUI. **No Quarkus change is needed; the spec's §1 SLA holds.** It was
-reported missing twice because `grep -c stackTrace` used a name this build does not emit and
-`"exception" in record` missed the flattened key: **VictoriaLogs flattens nested objects**, so
-it is stored as `exception.frames` — exactly as `mdc.requestId` is the flattened form of `mdc`,
-which this notebook has relied on all along. `lc.exception_fields` now reports field NAMES.
-**What is left is coverage, not capability:** the 500s arrived by accident, and
-`neg.500_null_pointer` has returned 200 for three runs.
+**COVERAGE: 500 ERROR now exists, and it can fail.** The ERROR path had never been driven on
+purpose: `neg.500_null_pointer` returned **200 for three runs** (this build falls back to
+`endpoint` when `endpointInternal` is absent), and every stored 500 arrived by accident from the
+PG-HA read-after-write signature — writes that **committed**, so not evidence about unhandled
+exceptions. Notebook §5c drives a **ladder** of three API-only rungs as a pure-500 burst inside
+one window and stops at the first that really 500s; §11c checks **both halves** of a 500 (the
+access line, kept *and* counted by rule 3; the application ERROR line, kept and counted into
+nothing, carrying the trace as flattened `exception.frames`) and the pure-500 window's
+`errors_5xx` / `errors_4xx` / `auth_denied`. **If no rung fires it says NOT PROVOKED and question
+3 stays unanswered** — the accidental 500s are not a substitute. All three rungs are `[assumed]`;
+no run has confirmed one yet.
 
-**THE DROP COUNTER now works.** Fluent Bit's Prometheus encoder appends a millisecond timestamp
-after the sample value and the parser was reading it as the value (hence 7,154,980,971,680).
-Fixed; the real figure is 1,943 and it reconciles with the tick and tail counters exactly.
+**STACK TRACES SURVIVE, END TO END** — Quarkus's **structured** exception output reaches
+VictoriaLogs intact, stored **flattened** as `exception.frames`. Reported missing twice because
+both searches used a name this build does not emit. No Quarkus change is needed; what was left
+was coverage, not capability, and that is §5c.
 
-**THE MISSING WINDOWS are the MacBook sleeping.** Transit loss is excluded (output `errors`,
-`retries_failed`, `dropped_records` all 0 since the pod started); the tick input has fired
-1,495 times against ~65.5h of uptime, ~3%. The OrbStack VM suspends with the host, so windows
-never open. A gap here is expected after any sleep — **and no report-stream measurement
-spanning a sleep can be read as elapsed time.**
+**Run 3 (`1788745242`)** remains the run whose report checks against itself throughout: fixture
+diff 30, **0** metadata lines, **0 mismatches in the loss direction**, four named assertions PASS,
+6 of 6 management POSTs, volume reconciles. The drop counter works (1,943). Missing windows are
+the MacBook sleeping — no report-stream measurement spanning a sleep is elapsed time.
 
-**Fast-run settings still live and TEMPORARY** (sha `063c184df3f9…`): `WINDOW_SECONDS` 30,
+**Fast-run settings still live and TEMPORARY** (sha `d58b9203a8304030`): `WINDOW_SECONDS` 30,
 `Interval_Sec` 5. **Revert together** when the run of record is done.
 
-**Next:** `neg.500_null_pointer` has returned 200 for three runs — the ERROR path has only ever
-been driven by accident, via the PG-HA 500s. Fix that probe, decide whether to tag
-setup/teardown into `ALL_CALLS`, take the run of record, then revert.
+**Next:** run §5c and find out whether any rung fires. Then schema-v2 §1 (1.1 first), then the run
+of record, then revert.
 
-**Gate:** 88 green under the minimal pytest stand-in; Kade's `pytest` last ran 719 passed /
-1 pre-existing `test_privilege_scan` renderer drift.
+**Gate:** 705 passed / 1 pre-existing `test_privilege_scan` renderer drift, under a `uv run
+--no-project` stand-in (`.venv` is a macOS build the Cowork bridge cannot execute).
 
 ## Where the detail is
 
