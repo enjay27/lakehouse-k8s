@@ -2459,6 +2459,7 @@ def provokers_500(
     endpoint_internal=None,
     table_payload=None,
     unreachable="http://127.0.0.1:1",
+    unresolvable="http://nb-no-such-minio.datahub-hynix.svc.invalid:9000",
     bad_bucket=None,
     repeat=3,
 ):
@@ -2480,6 +2481,10 @@ def provokers_500(
             127.0.0.1:1 is chosen because it FAILS FAST -- a routable-but-dead
             host would hang, and a hang leaves no access-log line at all,
             which is the one failure this pipeline is blind to.
+        unresolvable: rung 2's endpoint, whose HOSTNAME does not resolve. Kept
+            separate from `unreachable` because the two fail at different
+            layers -- DNS versus TCP -- and the S3 client may handle them in
+            different code paths, so one can 500 where the other does not.
         repeat: how many 500s each rung drives. More than one because rule 3
             keeps errors with NO CAP, and one call cannot show the absence of
             a cap.
@@ -2543,7 +2548,50 @@ def provokers_500(
         except Exception:  # noqa: BLE001 - cleanup never fails the run
             pass
 
-    # -- rung 2: a bucket that is not there ---------------------------------
+    # -- rung 2: an endpoint whose HOSTNAME does not resolve ----------------
+    # Kade's case, and a more realistic mistake than rung 1: a typo in the
+    # in-cluster MinIO service name. It fails at a DIFFERENT layer -- DNS
+    # resolution (UnknownHostException) rather than a refused TCP connect
+    # (ConnectException) -- and the two can be handled by different code paths
+    # in the S3 client, so one can 500 while the other does not. `.svc.invalid`
+    # keeps the shape of the real internal name while RFC 2606 guarantees the
+    # lookup fails; a plausible-but-wrong name risks resolving to something.
+    dns_cat = f"nb{run}dns"
+    dns_ns = "dns_ns"
+
+    def dns_prepare():
+        r = adm_pc.create_catalog(
+            dns_cat, bucket, unresolvable, minio_endpoint_internal=unresolvable
+        )
+        state["dns_catalog"] = r.status_code
+        if r.status_code not in (200, 201):
+            raise RuntimeError(
+                f"catalog create returned {r.status_code}: {r.text[:200]}"
+            )
+        state["dns_ns"] = ic.create_namespace(dns_cat, dns_ns).status_code
+
+    def dns_calls():
+        return [
+            (
+                f"create_table_{i}",
+                (
+                    lambda n=f"dns_tbl_{i}": ic.create_table(
+                        dns_cat, dns_ns, table_payload(n)
+                    )
+                ),
+                "POST",
+                f"{CAT_PREFIX}/v1/{dns_cat}/namespaces/{dns_ns}/tables",
+            )
+            for i in range(repeat)
+        ]
+
+    def dns_cleanup():
+        try:
+            adm_pc.delete_catalog(dns_cat, purge=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # -- rung 3: a bucket that is not there ---------------------------------
     nb_cat = f"nb{run}nobkt"
     nb_ns = "nobkt_ns"
     missing_bucket = bad_bucket or f"nb-{run}-no-such-bucket"
@@ -2583,7 +2631,7 @@ def provokers_500(
         except Exception:  # noqa: BLE001
             pass
 
-    # -- rung 3: a stale entity version -------------------------------------
+    # -- rung 4: a stale entity version -------------------------------------
     # [assumed], and flagged as such: `PolarisREST.update_catalog`'s own
     # docstring says a stale `currentEntityVersion` returns 409, not 500. If
     # that is right this rung can never fire and its value is the record of
@@ -2636,6 +2684,16 @@ def provokers_500(
             bh_calls,
             prepare=bh_prepare,
             cleanup=bh_cleanup,
+            assumed=True,
+        ),
+        Provoker(
+            "unresolvable_host",
+            "the storage endpoint's hostname does not resolve -- a typo in the "
+            "in-cluster MinIO service name, failing at DNS rather than at "
+            "connect",
+            dns_calls,
+            prepare=dns_prepare,
+            cleanup=dns_cleanup,
             assumed=True,
         ),
         Provoker(
@@ -2783,6 +2841,51 @@ def error_record_pair(records, request_id, id_field="mdc.requestId"):
             {str(r.get("loggerName")) for r in app if r.get("loggerName")}
         ),
     }
+
+
+#: What the application half of a 500 turned out to be. THE THREE ARE DIFFERENT
+#: RESULTS AND ONLY ONE OF THEM IS ABOUT THE PIPELINE.
+#:
+#:   unhandled  an application line carrying a throwable -- `exception.frames`
+#:              or whatever the store called it. The trace survived; this is
+#:              the outcome section 5c exists to demonstrate.
+#:   handled    application line(s), no throwable anywhere. Polaris CAUGHT the
+#:              failure and mapped it to a 500, logging it without attaching
+#:              the exception. Nothing was lost in transit -- there was never a
+#:              trace to carry -- so this is a fact about the PROVOCATION and
+#:              reporting it as a pipeline failure would be wrong.
+#:   absent     no application line at all for a request that returned 500.
+#:              Rule 2 keeps every non-access-log record untouched, so this is
+#:              the only one of the three that accuses the pipeline -- or says
+#:              Polaris logged nothing at all for the failure.
+TRACE_UNHANDLED = "unhandled"
+TRACE_HANDLED = "handled"
+TRACE_ABSENT = "absent"
+
+
+def trace_verdict(pair):
+    """`unhandled` / `handled` / `absent` for one `error_record_pair` result.
+
+    Written because the alternative collapses two different findings into one
+    FAIL. A 500 that Polaris handled and logged at WARN carries no throwable,
+    and a check that only asks "did a trace arrive?" reports that identically
+    to a pipeline that dropped one -- with opposite remedies: change the probe,
+    or fix the shipper.
+    """
+    pair = pair or {}
+    if pair.get("exception_fields"):
+        return TRACE_UNHANDLED
+    if _as_int(pair.get("app_records")) > 0:
+        return TRACE_HANDLED
+    return TRACE_ABSENT
+
+
+def trace_verdicts(pairs):
+    """`{verdict: [pair, ...]}` over `error_record_pair` results."""
+    out = {TRACE_UNHANDLED: [], TRACE_HANDLED: [], TRACE_ABSENT: []}
+    for pair in pairs or ():
+        out[trace_verdict(pair)].append(pair)
+    return out
 
 
 def check_500_window(rows, driven_500, driven_4xx=0, driven_auth_denied=0):

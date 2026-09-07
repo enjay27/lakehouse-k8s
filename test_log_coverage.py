@@ -1560,3 +1560,79 @@ def test_the_deployed_schema_version_is_read_and_not_assumed(policy):
     #: module said 1, and the gate's report was eight "unexpected fields" per
     #: row with nothing naming the cause. Cell 0b compares these two.
     assert policy.schema_version == lc.SCHEMA_VERSION
+
+
+def test_a_handled_500_is_not_reported_as_a_lost_stack_trace():
+    #: THE COLLAPSE THIS PREVENTS. Polaris can CATCH a storage failure, map it
+    #: to a 500 and log it without attaching the throwable. A check that asks
+    #: only "did a trace arrive?" reports that identically to a pipeline that
+    #: dropped one -- and the remedies are opposite: change the probe, or fix
+    #: the shipper. Three verdicts, and only `absent` accuses the pipeline.
+    unhandled = {
+        "app_records": 2,
+        "exception_fields": {"o.a.p.Handler": ["exception.frames"]},
+    }
+    handled = {"app_records": 3, "exception_fields": {}}
+    absent = {"app_records": 0, "exception_fields": {}}
+    assert lc.trace_verdict(unhandled) == lc.TRACE_UNHANDLED
+    assert lc.trace_verdict(handled) == lc.TRACE_HANDLED
+    assert lc.trace_verdict(absent) == lc.TRACE_ABSENT
+    #: a WARN-only line with a throwable is still `unhandled` -- the level is not
+    #: the question, the payload is. Rule 2 keeps the line whatever its level.
+    warned = {
+        "app_records": 1,
+        "levels": ["WARN"],
+        "exception_fields": {"x": ["exception.exceptionType"]},
+    }
+    assert lc.trace_verdict(warned) == lc.TRACE_UNHANDLED
+    got = lc.trace_verdicts([unhandled, handled, handled, absent])
+    assert [
+        len(got[k]) for k in (lc.TRACE_UNHANDLED, lc.TRACE_HANDLED, lc.TRACE_ABSENT)
+    ] == [1, 2, 1]
+    assert lc.trace_verdict(None) == lc.TRACE_ABSENT
+
+
+def test_the_dns_rung_fails_at_a_different_layer_than_the_black_hole():
+    #: Kade's case: a typo in the in-cluster MinIO service name. It is a
+    #: SEPARATE rung rather than a different constant for rung 1, because DNS
+    #: resolution and TCP connect are different failure layers and the S3
+    #: client may handle them in different code paths -- so one can 500 where
+    #: the other does not, and a ladder that tried only one would report NOT
+    #: PROVOKED while the other rung was sitting there.
+    seen = []
+
+    class _PC:
+        def create_catalog(self, name, bucket, endpoint, minio_endpoint_internal=None):
+            seen.append((name, endpoint, minio_endpoint_internal))
+            return type("R", (), {"status_code": 201, "text": ""})()
+
+        def delete_catalog(self, name, purge=False):
+            return type("R", (), {"status_code": 204})()
+
+    class _IC:
+        def create_namespace(self, catalog, ns):
+            return type("R", (), {"status_code": 200})()
+
+    rungs = lc.provokers_500(
+        _PC(),
+        _IC(),
+        "9",
+        bucket="b",
+        endpoint="http://real:9000",
+        endpoint_internal="http://real-internal:9000",
+        table_payload=lambda n: {"name": n},
+    )
+    assert [r.name for r in rungs] == [
+        "black_hole_endpoint",
+        "unresolvable_host",
+        "nonexistent_bucket",
+        "stale_entity_version",
+    ]
+    rungs[1].prepare()
+    _, endpoint, internal = seen[-1]
+    assert endpoint == internal
+    #: RFC 2606 reserves `.invalid`, so the lookup is guaranteed to fail. A
+    #: plausible-but-wrong name risks resolving to something real.
+    assert ".invalid" in endpoint and "real" not in endpoint
+    #: and it is not rung 1's constant wearing a second name
+    assert endpoint != "http://127.0.0.1:1"

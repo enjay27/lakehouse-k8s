@@ -23,10 +23,13 @@ inequalities and all six reconciled margins.
 `endpointInternal` is absent), and every stored 500 arrived by accident from the PG-HA
 read-after-write signature — writes that **committed**. §5c drives a **ladder** of three API-only
 rungs as a pure-500 burst in one window, stopping at the first that really 500s; §11c checks
-**both halves** (the access line, kept *and* counted; the application ERROR line, kept and counted
-into nothing, carrying the trace as flattened `exception.frames`) and the window's `errors_5xx` /
-`errors_4xx` / `auth_denied`. **No rung has ever fired** — all three are `[assumed]`. If none
-does, it says NOT PROVOKED; the accidental 500s are not a substitute.
+**both halves** (the access line, kept *and* counted; the application line, kept and counted into
+nothing, carrying the trace as flattened `exception.frames`) and the window's `errors_5xx` /
+`errors_4xx` / `auth_denied`. The application half has **three** verdicts and only `absent`
+accuses the pipeline — a `handled` 500 carries no throwable because Polaris caught it, and
+nothing was lost. **No rung has ever fired**; all four are `[assumed]`, and wrong MinIO *auth*
+is deliberately not one (static server-side creds, not client-reachable). Scenario in full:
+[`log-coverage/doc-500-coverage-scenario.md`](log-coverage/doc-500-coverage-scenario.md).
 
 **Run 3 (`1788745242`)** remains the run whose report checks against itself throughout: fixture
 diff 30, **0** in the loss direction, four named assertions PASS, volume reconciles. The drop

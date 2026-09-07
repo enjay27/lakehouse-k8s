@@ -302,6 +302,9 @@ returns 500. **If none fires it reports NOT PROVOKED and question 3 stays unansw
 not fall back to counting the accidental 500s. All three rungs are `[assumed]` until a run says
 otherwise; the ladder is ordered, not proven.
 
+The full scenario — every rung, every assertion, and what each outcome means —
+is `doc-500-coverage-scenario.md`.
+
 **Driven as a pure-500 burst inside one window** (`PLAN-log-coverage-schema-v2` §2), so
 `errors_4xx` and `auth_denied` have a *predicted* value of zero. `>=` on the 5xx count, because
 neighbour traffic lands in the same window; `==` on the negatives, because nothing driven there
@@ -322,6 +325,7 @@ reads a missing field as `0` reports PASS for a measurement nobody took — the 
 | `polaris_log_coverage.ipynb` | the run. Cells 0–14, linear, `Restart & Run All`. Cells 11–14 are the scheduled report and need real boundaries. |
 | `fetch_specs.sh` | vendors the 1.3.0 OpenAPI documents (this Polaris serves none of its own) |
 | `spec/` | the vendored documents — gitignored; `spec/inventory.json` is tracked |
+| `doc-500-coverage-scenario.md` | the 500 scenario in full — the ladder, every assertion, and what each outcome means. Read before running section 5c |
 | `doc-log-coverage-results.md` | written by cell 10, for someone who was not there |
 | `../src/vlogs.py` | the VictoriaLogs client |
 | `../src/log_coverage.py` | the deployed-Lua oracle, the three-way inventory, the tagged driver |
