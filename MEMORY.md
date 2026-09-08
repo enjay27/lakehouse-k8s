@@ -5,17 +5,21 @@ everything else is a link into [`.memory/`](.memory/README.md).
 
 ## Now — 2026-09-08
 
-**Next is the sink, not the harness** — the harness bugs are in code that queries the sink.
-VictoriaLogs is being retired for the existing Docker OpenSearch as a **three-tier retention
-ladder**: `k8s-logs` 5d unfiltered (**untouched**), `polaris-logs-*` 30d policy-v3 filtered,
-`polaris-report-*` 365d schema-v2 rows.
+**Next is the sink, and the source moved too.** VictoriaLogs is being retired for the existing
+Docker OpenSearch as a **three-tier ladder**: `k8s-logs` 5d unfiltered (**untouched**),
+`polaris-logs-*` 30d policy-v3 filtered, `polaris-report-*` 365d schema-v2 rows. **Tier 2 is
+sourced from Polaris stdout, not the log PVC** — Kade confirmed access-log records are in
+`k8s-logs`, so the container log carries them.
 Plan, gates and traps: [`PLAN-opensearch-cutover`](logging/PLAN-opensearch-cutover-2026-09-08.md).
+**Cut over before fixing the harness** — its bugs are in code that queries the sink.
 
-**It is NOT a one-line output swap**, and both reasons fail silently. The tail INPUT has never
-parsed Polaris' `timestamp`, so `Logstash_Format` would date every document on arrival; and
-`Id_Key sequence` is **data loss, not dedup** — a per-JVM counter that resets on restart, with
-`doc_as_upsert` field-unioning the collision. Plan §10 lists ten v1 claims that were wrong, five
-of which returned a plausible number rather than an error.
+**Sourcing from stdout deletes four risks**: the unaccounted `polaris-shared-logs-pvc` (#5) stops
+being a dependency; #8's three-writers-one-file hazard cannot arise; the offset DB moves to a host
+path so `helm upgrade` no longer replays; and with the replay goes the document-id scheme, so
+**`polaris_access_log.lua` stays byte-identical** and the notebook's sha gate holds. What survives:
+the tail must parse `timestamp` (a second `Parsers_File` line — `customParsers` is written and
+never loaded — plus `Time_Keep On`, without which `_time` vanishes and filter 3's replay detector
+skips **silently**).
 
 **Still written and NOT running:** the temporary **30s window** (`Interval_Sec 5`) — now a
 **prerequisite**, not cleanup. Tier 3 is long-retention, so 30s density (~138k docs/day vs ~2.3k)
@@ -25,7 +29,7 @@ riding `resources_other`/`_distinct` into the summary `_msg`.
 
 **Standing, and all three outrank inference.** Polaris is not to be changed. **Verify against the
 running object, never an intent artifact.** And **a gate that cannot fail is not a gate** — plan
-§7 replaces one that was built to pass.
+§6 replaces one that was built to pass.
 
 ## Where the detail is
 

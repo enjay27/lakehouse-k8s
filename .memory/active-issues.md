@@ -8,6 +8,11 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 **#16 — The DaemonSet writes every Polaris console line to `k8s-logs` TWICE, and its dedup key
 cannot dedup. OPEN (accepted for now).**
 
+**Update 2026-09-08:** this issue got more load-bearing, not less. The cutover plan now sources
+**tier 2 from stdout as well**, so `k8s-logs` is the denominator for proving tier 2 is a subset of
+tier 1 — and an undeduplicated denominator is ~2x wrong. Every comparison against tier 1
+deduplicates on `sequence` first.
+
 `fluent-bit/values.yaml:155` OUTPUT 1 matches `kube.*benchmarks-polaris*`; `:179` OUTPUT 2
 matches `kube.*`. **Fluent Bit routes a record to every matching output** and both target
 `k8s-logs` — one copy keyed `Id_Key sequence` + `Write_Operation upsert`, one with
