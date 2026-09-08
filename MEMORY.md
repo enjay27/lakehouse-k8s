@@ -45,6 +45,16 @@ filter (`lua5.4` in the cloud container + `FB_VALUES_PATH` at a staged `fb-value
 that had never executed from this side found three real bugs on their first run. Device suite:
 708 passed / 1 pre-existing `test_privilege_scan` drift.
 
+**Side task 2026-09-08 — the api-sql-profile workbooks now have a Korean reading
+guide.** [`diagnostics/api-sql-profile/doc-api-sql-profile-guide-ko.md`](diagnostics/api-sql-profile/doc-api-sql-profile-guide-ko.md)
+(method, cases, 8 sheets, trap columns) +
+[`doc-api-sql-profile-results-ko.md`](diagnostics/api-sql-profile/doc-api-sql-profile-results-ko.md)
+(the 2026-09-03 run; replace it, not the guide, after the next sweep).
+Hand-written prose, so `_check_guide_figures.py` recomputes all 22 quoted
+figures from the workbooks and run files — negative-tested. **`pytest` could not
+be run at all that session** (macOS `.venv` unusable in the VM; PyPI 403 from
+both the device and Cowork) — see `.memory/active-issues.md`.
+
 ## Where the detail is
 
 | read | when |
