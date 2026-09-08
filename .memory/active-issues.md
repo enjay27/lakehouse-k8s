@@ -5,6 +5,32 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#16 — The DaemonSet writes every Polaris console line to `k8s-logs` TWICE, and its dedup key
+cannot dedup. OPEN (accepted for now).**
+
+`fluent-bit/values.yaml:155` OUTPUT 1 matches `kube.*benchmarks-polaris*`; `:179` OUTPUT 2
+matches `kube.*`. **Fluent Bit routes a record to every matching output** and both target
+`k8s-logs` — one copy keyed `Id_Key sequence` + `Write_Operation upsert`, one with
+`Generate_ID On`. So every Polaris stdout line exists twice.
+
+**Consequence for measurement, which is why this is filed rather than just fixed:** any count
+over `k8s-logs` is **~2x inflated**, so it must be deduplicated on `sequence` before it is
+compared with anything — including the tier-1 vs tier-2 comparison in
+[`PLAN-opensearch-cutover`](../logging/PLAN-opensearch-cutover-2026-09-08.md) §7.
+
+**And `sequence` cannot carry that load either.** It is the JBoss per-`ExtLogRecord` counter,
+**per JVM from JVM start** (2026-09-03 audit: 3723/3724 = ~3.7k records since JVM start). It
+resets on every Polaris restart, and #8's three HPA replicas would each run their own. Worse,
+`upsert` sends `doc_as_upsert`, so a collision does not overwrite — it produces a **field-union
+of two unrelated log lines**, an access record's `http_status` stapled onto an application
+record's `exception.*`. Plausible, fictional, no error.
+
+**Kade's call 2026-09-08: leave tier 1's config alone.** Defensible at 5-day retention and
+unfiltered. **It must not become the precedent** — the plan gives tiers 2 and 3 a composed
+`_doc_id` instead. Testable prediction if it ever matters: `k8s-logs`' Polaris count for a day
+spanning a Polaris restart should be near `max(sequence)`, not the true line count. Nobody has
+run it.
+
 **#15 — Polaris 500s on create-then-resolve, and it is a NullPointerException, not a
 "PG-HA read-after-write signature". OPEN.**
 
