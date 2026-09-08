@@ -27,9 +27,19 @@ plausible-looking name.
 - **Pgpool-II, not PgBouncer.** It load-balances SELECTs across all three
   replicas, so a PostgreSQL server log tailed from one pod misses statements.
 - VictoriaLogs UI/ingest: `9428`, namespace `logging`, LoadBalancer.
-- **OpenSearch runs in Docker**, not in Kubernetes — outside this repo, so no compose
-  file is versioned here. It survives a cluster reset because nothing in the cluster
-  owns it.
+- **OpenSearch `3.5.0` runs in Docker**, not in Kubernetes — outside this repo, so no
+  compose file is versioned here. It survives a cluster reset because nothing in the
+  cluster owns it. **Version measured 2026-09-08** (`GET /`, container
+  `opensearch-node`, published `0.0.0.0:9200->9200`); it had never been recorded
+  anywhere. Being 3.x, mapping types are gone: `Suppress_Type_Name On` is correct and
+  `fluent-bit/values.yaml`'s `Type _doc` is dead config.
+  `opensearch-dashboards` runs beside it on `5601`.
+- **A pod reaches OpenSearch at `192.168.194.1:9200` on the ordinary pod network.**
+  Neither Fluent Bit values file sets `hostNetwork`, and the DaemonSet has shipped to
+  that address continuously — so this is not a host-network privilege. `192.168.194.1`
+  is the host as the cluster sees it, and it appears as `client_ip` in Polaris access
+  logs, so it routes both ways. **The Fluent Bit image has no `curl`**: probe it with a
+  throwaway `curlimages/curl` pod, not `kubectl exec` into the shipper.
 - **Fluent Bit runs as a K8s DaemonSet** (confirmed working 2026-09-03). Which sink it
   ships to is `active-issues.md` #2.
 

@@ -225,7 +225,7 @@ them at 400M / 400M / 200M.
 
 | # | step | gate |
 |---|---|---|
-| **1** | `curl` 9200 **from inside a `datahub-hynix` pod**; confirm a doc with a `_msg` field is accepted; create the Secret | reachability proven, not assumed (§5 Q2) |
+| **1** | **DONE 2026-09-08** — OpenSearch `3.5.0` recorded; `_msg` accepted (so §2.4 stands); Secret `opensearch-shipper-credentials` created; reachability closed by §5 Q2 on the DaemonSet's own evidence | ✅ |
 | **2** | Edit `fb-values.yaml`: §2.1–§2.6, keeping the `http` output | **render greps** below |
 | **3** | `helm upgrade`; **read the pod log first** | no parser/Lua rejection, no crashloop; `Trace_Error` shows no per-item errors; **`polaris_access_log.lua` sha unchanged** vs the deployed ConfigMap |
 | **4** | **Skip one full window**, then check | see below |
@@ -264,11 +264,31 @@ grep -c 'Trace_Error'               /tmp/render.txt   # 2   (3.7)
 **Q1 — does chart 0.58.1 render `extraVolumes` hostPath in **Deployment** mode?** §2.3 rests on it.
 Settle in the step-2 render.
 
-**Q2 — is `192.168.194.1:9200` reachable from a Deployment pod in `datahub-hynix`?** The DaemonSet
-reaches it from a host-network context; the shipper does not. **Assume nothing.**
+**Q2 — CLOSED 2026-09-08, and the question was built on a false premise.** Earlier revisions of
+this plan asserted that *"the DaemonSet reaches it from a host-network context, so the shipper's
+reach is unproven"*. **That was never checked and it is wrong.** Neither Fluent Bit values file
+sets `hostNetwork`, so the chart default (`false`) applies: the DaemonSet is an ordinary pod on the
+same CNI, in the same namespace, on the same node as the shipper — and it has been shipping to
+`192.168.194.1:9200` continuously. The shipper has the same egress. Corroborating: `docker ps`
+shows `0.0.0.0:9200->9200/tcp`, and `192.168.194.1` appears as `client_ip` in Polaris access logs,
+so the address routes both ways.
 
-**Q3 — nanosecond timestamps.** `_time` is `…24.504420706Z` (9 fractional digits). Whether `%L`
-accepts them is a render-and-test question, not a default.
+Confirm in one command rather than re-deriving it:
+`kubectl -n datahub-hynix get ds -o jsonpath='{.items[*].spec.template.spec.hostNetwork}'` — empty
+or `false`. **Note the Fluent Bit image carries no `curl`**, so `kubectl exec` into the shipper
+cannot probe this; use a throwaway `curlimages/curl` pod if a direct test is still wanted.
+
+*The lesson is the repo's own: a claim about the running object needed evidence about the running
+object. This one shaped three revisions of a plan and cost a gate that could never have passed.*
+
+**Q3 — nanosecond timestamps: PARTLY ANSWERED 2026-09-08.** A probe document carrying
+`_time: "2026-09-08T00:00:00.123456789Z"` was **accepted** by OpenSearch 3.5.0 and dynamically
+mapped as `date`. So 9 fractional digits do not fail on ingest — they are **truncated to
+milliseconds**. Harmless for the Lua replay detector, which compares `_time` as a *string* on the
+record and never reads the indexed date. Whether tier 2 should pin `date_nanos` instead is §6's
+call, not a blocker for this change. **Still open on the Fluent Bit side:** whether the parser's
+`%L` accepts 9 digits when setting the *record* timestamp — that is a render-and-test question and
+a different mechanism from the one the probe exercised.
 
 **Q4 — single-node dependency.** A Deployment tailing host logs sees only its own node. Correct
 here — CLAUDE.md pins exactly one single-node OrbStack cluster — but it belongs as a **comment in
