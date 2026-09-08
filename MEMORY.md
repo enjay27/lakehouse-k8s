@@ -5,31 +5,25 @@ everything else is a link into [`.memory/`](.memory/README.md).
 
 ## Now — 2026-09-08
 
-**Next is the sink, and the source moved too.** VictoriaLogs is being retired for the existing
-Docker OpenSearch as a **three-tier ladder**: `k8s-logs` 5d unfiltered (**untouched**),
-`polaris-logs-*` 30d policy-v3 filtered, `polaris-report-*` 365d schema-v2 rows. **Tier 2 is
-sourced from Polaris stdout, not the log PVC** — Kade confirmed access-log records are in
-`k8s-logs`, so the container log carries them.
-Plan, gates and traps: [`PLAN-opensearch-cutover`](logging/PLAN-opensearch-cutover-2026-09-08.md).
-**Cut over before fixing the harness** — its bugs are in code that queries the sink.
+**The task is the Fluent Bit config, and only that** (Kade, scoped 2026-09-08). `fb-polaris-shipper`
+stops tailing the Polaris log PVC and tails the **container log** instead — stdout carries the
+access-log records, confirmed from `k8s-logs` — and its VictoriaLogs `http` output is replaced by
+two `opensearch` outputs: `polaris-logs-*` and `polaris-report-*`. The DaemonSet is untouched, and
+**`polaris_access_log.lua` is byte-identical**: no Lua edit anywhere in this change.
+Blocks, gates and render greps: [`PLAN-opensearch-cutover`](logging/PLAN-opensearch-cutover-2026-09-08.md).
 
-**Sourcing from stdout deletes four risks**: the unaccounted `polaris-shared-logs-pvc` (#5) stops
-being a dependency; #8's three-writers-one-file hazard cannot arise; the offset DB moves to a host
-path so `helm upgrade` no longer replays; and with the replay goes the document-id scheme, so
-**`polaris_access_log.lua` stays byte-identical** and the notebook's sha gate holds. What survives:
-the tail must parse `timestamp` (a second `Parsers_File` line — `customParsers` is written and
-never loaded — plus `Time_Keep On`, without which `_time` vanishes and filter 3's replay detector
-skips **silently**).
+**Duplicates, mappings, ISM and the query layer are handed off** (plan §6) — but note the one
+sequencing item that is still ours: revert the **30s window** to 1800/30 **before** the long
+retention policy is applied, or ~138k report docs/day against ~2.3k is baked in for a year.
 
-**Still written and NOT running:** the temporary **30s window** (`Interval_Sec 5`) — now a
-**prerequisite**, not cleanup. Tier 3 is long-retention, so 30s density (~138k docs/day vs ~2.3k)
-would be baked in for a year. Revert to 1800/30 (#14d) **before** tier 3 gets its ISM policy,
-riding `resources_other`/`_distinct` into the summary `_msg`.
-[`shipper-v3-upgrade-runbook.md`](shipper-v3-upgrade-runbook.md) is the procedure.
+**Five of the eight traps in that config fail silently** — `customParsers` is written and never
+loaded; without `Time_Keep On` the parser eats `timestamp`, `_time` never exists and filter 3's
+replay detector skips without erroring; renaming the tag without the INPUT that *defines* it drops
+the whole log stream while reports keep flowing; a second `@timestamp` is rejected per-item inside
+an HTTP 200; an undefined `${OS_USER}` expands to empty and 401s past every render grep. Plan §3.
 
 **Standing, and all three outrank inference.** Polaris is not to be changed. **Verify against the
-running object, never an intent artifact.** And **a gate that cannot fail is not a gate** — plan
-§6 replaces one that was built to pass.
+running object, never an intent artifact.** And **a gate that cannot fail is not a gate.**
 
 ## Where the detail is
 
