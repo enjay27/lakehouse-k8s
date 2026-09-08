@@ -51,6 +51,12 @@ number rather than an error* — the exact failure mode this pipeline has now hi
 (`type_int_key`, #13, harness bug 1). They are §3 below. Do not treat this as a one-line change
 because the OUTPUT block is one block.
 
+**One amendment, added after Q2 was settled.** The *change* is still a bit of pipeline. But
+collapsing two sinks into one surfaces something that was structurally invisible while they were
+separate systems: Polaris very likely lands in OpenSearch **twice** — unfiltered via the
+DaemonSet's stdout tail, and curated via the shipper's file tail. **§8.** It does not enlarge the
+cutover; it enlarges what you should measure while doing it.
+
 ---
 
 ## 2. What actually changes in the pipeline
@@ -203,7 +209,10 @@ note **not** `report_seq`, which §7.4 trap 3 says is per-pod and resets. Either
 the Lua, or accept `Generate_ID On` and duplicate rows on replay. Recommend composing it: this is
 the cheap moment to make the report stream replay-safe.
 
-**3.6 The committed plaintext password.** `fluent-bit/values.yaml` carries
+**3.6 The committed plaintext password — already filed as active-issues #4.** I presented this
+as a fresh observation in the first draft; it is not, and #4 goes further than I did: rewriting
+the file does not unleak it, so **the credential has to be rotated on the OpenSearch side too.**
+`fluent-bit/values.yaml` carries
 `HTTP_Passwd Str0ngP@ssw0rd123!` in the tree. That violates CLAUDE.md's Zero Hardcoded Credentials
 rule today. **Do not copy it into `fb-values.yaml`.** The shipper takes the credential from a
 Secret via env expansion (`${OS_USER}` / `${OS_PASSWORD}`), and fixing the DaemonSet's copy the
@@ -259,6 +268,7 @@ independently summed:
 | `stats by (loggerName)` and the `.keyword` terms agg return the **same** group set | 3.1, caught explicitly rather than assumed |
 | `errors_4xx` / `auth_denied` / `bytes_total` reconcile across resource rows, principal rows and summary | the v2 self-check that already passed on VictoriaLogs — it must still pass |
 | a deliberate shipper restart produces **no duplicate** `sequence` in OpenSearch | proves 3.5 |
+| **Polaris doc count in `k8s-logs` vs `polaris-logs-*` for the same window**, joined on `sequence` | the §8 measurement — impossible until both landed in one system |
 
 If the last one fails, `Id_Key` is not doing what this plan claims and the dedup caveat must be
 carried over into the guide rather than deleted from it.
@@ -274,12 +284,10 @@ and gets more expensive with every document written. **Recommend renaming**, and
 noise filter's `Match polaris.*` — which is load-bearing, it is how the report tick reaches the
 stateful instance — is unaffected either way.
 
-**Q2 — does the DaemonSet already carry these Polaris lines?** It tails
-`/var/log/containers/*benchmarks-polaris*` into `k8s-logs` **today**. If Polaris' console output
-carries the access-log lines too, then `polaris-logs-*` and `k8s-logs` overlap, and the shipper's
-value narrows to the *filtering and the report* rather than the collection. Worth one query before
-building two retention policies over possibly-duplicated data. This is also #11 territory —
-`logging.file.enabled: false` reads as off and the file is written anyway.
+**Q2 — SETTLED 2026-09-08 (Kade): the DaemonSet reads stdout/stderr, never the log file.**
+Its input is container console output; the Polaris log PVC is the shipper's alone. Its two
+`opensearch` OUTPUTs are real and running. **This does not close the overlap question, it
+relocates it — see §8, which is now the most consequential open item in this plan.**
 
 **Q3 — is `192.168.194.1:9200` reachable from a pod in `datahub-hynix`?** The DaemonSet reaches it
 from the host network context. The shipper is a Deployment. **Assume nothing; test it** with a
@@ -309,6 +317,65 @@ Consider a rollover alias for the report instead.
 **Recommend: docs follow the reconciliation, not the edit.** Rewriting §7 against a query layer
 that has not been run once is how a guide acquires recipes nobody has executed. Guide §5 and §7 get
 rewritten in the step-6 commit, from queries that actually ran.
+
+---
+
+## 8. The consequence of one sink: Polaris now lands in OpenSearch twice, and it is finally measurable
+
+Kade settled Q2 on 2026-09-08: **the DaemonSet's input is stdout/stderr, not the log file.**
+That closes the question I asked and opens a larger one, because *source* and *event* are not
+the same thing.
+
+Polaris is a Quarkus app with **two handlers**. The console handler writes to stdout — which the
+DaemonSet tails into `k8s-logs`, unfiltered, through its `polaris_json` parser. The file handler
+writes `/deployments/logs/polaris.log` — which the shipper tails, filters under policy v3, and
+will now write to `polaris-logs-*`. Different sources; **very likely the same events**. The
+access log is a logger (`io.quarkus.http.access-log` at INFO), so it goes to whatever handlers
+are attached, and nothing in this repo says the console handler is not one of them.
+
+**Why this was invisible until now, and is not any more.** While the two sinks were different
+systems — OpenSearch and VictoriaLogs — the duplication cost nothing anyone could see, and guide
+§2.2 turned it into a *diagnostic*: "if you see a log in OpenSearch that is not in VictoriaLogs,
+that is the DaemonSet, not this pipeline." **Point both at OpenSearch and that sentence stops
+being a diagnostic and becomes the problem statement.**
+
+**And it puts a question mark on what the noise filter is buying.** Policy v3's whole design is
+about what is *worth storing* — successful reads become counts, never records. But if the
+console handler is emitting those same lines and the DaemonSet is storing all of them in
+`k8s-logs` with no filter at all, then at the level of *the OpenSearch cluster* nothing was
+dropped; it was written twice and curated once. That does not make the filter useless — the
+curated stream is what the audit story rests on, and it is what carries the report — but it does
+mean **#14a's framing ("the filter governs 4.5% of the volume") is measuring one path while a
+second, unfiltered path exists.** Restate it once the number below is known.
+
+**The measurement, which nobody has been able to make before.** Both copies now carry
+`sequence`. One window, two indices, joined on it:
+
+```
+count(k8s-logs where kubernetes.container_name = polaris, window W)
+count(polaris-logs-* , window W)
+|intersection on `sequence`|
+```
+
+That intersection is the true overlap, and it settles in one query what five readings of this
+pipeline have guessed at — including **#11** (`logging.file.enabled: false` reads as off and the
+file ships anyway): if console and file carry identical `sequence` sets, both handlers are live
+and #11's mystery is about the *values*, not about the logging.
+
+**Do not act on it in the cutover commit.** Three options exist and each is a separate decision:
+accept the split (`k8s-logs` = raw firehose, short retention; `polaris-logs-*` = curated audit,
+long retention — defensible, and it turns policy v3's drops into a *retention* decision rather
+than an existence one); exclude Polaris from the DaemonSet so the shipper is the only Polaris
+path in; or turn off Polaris' console handler. **Recommend the first for now** — do not change
+two things at once — with the measurement added to §5's gate so the decision is made on a number.
+
+**One thing to be careful of, whichever way it goes.** The DaemonSet's OUTPUT 1 already uses
+`Id_Key sequence` + `Write_Operation upsert` for Polaris, and §2.1 gives the shipper the same
+key. Separate indices keep them apart. **If the two are ever pointed at one index, that upsert
+will silently merge the console-sourced and file-sourced copies of the same event into a single
+document** — last writer wins, no error, and the record that survives depends on arrival order.
+This is an argument for the two-index decision beyond retention, and it should be a comment in
+`fb-values.yaml`, not only here.
 
 ---
 
