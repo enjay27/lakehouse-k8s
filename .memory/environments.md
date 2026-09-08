@@ -20,8 +20,16 @@ plausible-looking name.
 
 ## Reaching things
 
-- **Only pgpool is a LoadBalancer.** Direct PostgreSQL access needs
+- **Of the PostgreSQL components, only pgpool is a LoadBalancer.** Direct access to a
+  *replica* needs
   `kubectl -n datahub-hynix port-forward pod/benchmarks-postgresql-postgresql-ha-postgresql-0 5433:5432`.
+  Read this as scoped to PostgreSQL — **the cluster has five LoadBalancer Services**, one
+  `svclb-*` DaemonSet each in `kube-system` (measured 2026-09-08, `kubectl get ds -A`):
+  `benchmarks-minio`, `benchmarks-polaris`, `benchmarks-polaris-mgmt`,
+  `benchmarks-postgresql-postgresql-ha-pgpool`, `vlsingle-victoria-logs-single-server`.
+  That is a wider exposed surface than #7 describes for 9428 alone; Polaris' management
+  port and MinIO are published the same way. `svclb-vlsingle-…` disappears with the
+  VictoriaLogs uninstall.
 - **Polaris management port is 8182**, not the 8282 the upstream docs default to.
   `/q/health` and `/q/metrics` live there.
 - **Pgpool-II, not PgBouncer.** It load-balances SELECTs across all three
@@ -40,8 +48,10 @@ plausible-looking name.
   is the host as the cluster sees it, and it appears as `client_ip` in Polaris access
   logs, so it routes both ways. **The Fluent Bit image has no `curl`**: probe it with a
   throwaway `curlimages/curl` pod, not `kubectl exec` into the shipper.
-- **Fluent Bit runs as a K8s DaemonSet** (confirmed working 2026-09-03). Which sink it
-  ships to is `active-issues.md` #2.
+- **Fluent Bit runs as two releases**, both in `datahub-hynix`: the DaemonSet
+  **`benchmarks-fluent-bit`** (container stdout → OpenSearch) and the Deployment
+  `fb-polaris-shipper`. Names and sinks are settled in `active-issues.md` #2.
+  **Neither sets `hostNetwork`** (measured 2026-09-08).
 
 ## Secrets
 

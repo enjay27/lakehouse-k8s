@@ -273,9 +273,11 @@ same CNI, in the same namespace, on the same node as the shipper — and it has 
 shows `0.0.0.0:9200->9200/tcp`, and `192.168.194.1` appears as `client_ip` in Polaris access logs,
 so the address routes both ways.
 
-Confirm in one command rather than re-deriving it:
-`kubectl -n datahub-hynix get ds -o jsonpath='{.items[*].spec.template.spec.hostNetwork}'` — empty
-or `false`. **Note the Fluent Bit image carries no `curl`**, so `kubectl exec` into the shipper
+**Measured 2026-09-08**, with a denominator rather than a bare jsonpath (an empty
+`{.items[*]…}` is silent about whether the field is unset or the list is empty):
+`kubectl get ds -A -o custom-columns=NS:…,NAME:…,HOSTNET:.spec.template.spec.hostNetwork` returns
+**`datahub-hynix / benchmarks-fluent-bit / <none>`** — the DaemonSet exists, in the namespace
+CLAUDE.md claimed, with `hostNetwork` unset. **Note the Fluent Bit image carries no `curl`**, so `kubectl exec` into the shipper
 cannot probe this; use a throwaway `curlimages/curl` pod if a direct test is still wanted.
 
 *The lesson is the repo's own: a claim about the running object needed evidence about the running

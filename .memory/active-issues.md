@@ -286,13 +286,16 @@ the cluster**. Two of them are worth checking on disk regardless: a plaintext
 secret key stays a leaked secret even after the cluster stops using it, and an
 unpinned image is still unpinned for the next install.
 
-**#2 — Which sink does Fluent Bit ship to? SETTLED for the shipper.**
+**#2 — Which sink does Fluent Bit ship to? SETTLED — both halves, as of 2026-09-08.**
 Not one shipper choosing a sink — **two releases**. Confirmed from `helm list` on
 2026-09-03: **`fb-polaris-shipper`**, namespace **`datahub-hynix`**, chart
 `fluent-bit-0.58.1` / app **5.1.1**, **revision 10**, deployed 2026-08-22 — the Deployment
 that tails the Polaris log PVC into VictoriaLogs (`logging/fb-values.yaml`). The DaemonSet
-release (`fluent-bit/values.yaml`) ships container logs to OpenSearch in Docker; its release
-name has not been quoted yet. `CLAUDE.md`'s tech stack now says so.
+release (`fluent-bit/values.yaml`) ships container logs to OpenSearch in Docker. **Its name is
+`benchmarks-fluent-bit`, in `datahub-hynix`** — quoted 2026-09-08 from `kubectl get ds -A`, the
+half of this issue that had been open since 2026-09-03. **`hostNetwork` is unset**, so it is an
+ordinary pod on the cluster network: reaching `192.168.194.1:9200` is not a host-network
+privilege, and any pod in the namespace has the same egress. `CLAUDE.md`'s tech stack now says so.
 
 Two things that follow. The shipper is in `datahub-hynix`, which is the only namespace it
 could be in — #6 was a real constraint and is already satisfied. And **revision 10** on a
