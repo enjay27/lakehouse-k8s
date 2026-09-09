@@ -524,3 +524,43 @@ offset stores (verified unique: `flb_kube.db`, `flb_polaris.db`, `flb_hb_tail.db
 same run, and REVISION 5 is the first upgrade this session that is provably *running*. Step 7 read
 `0 B over 0 rec` because the pod had just restarted and no Polaris traffic had arrived within the
 40s settle — expected, not a failure. Re-read the delta after traffic.
+
+---
+
+## The byte-model method is now validated against ground truth
+
+Two independent readings of the same three probes, and they agree completely:
+
+| tag | docs | `loggerName` | `log` | byte model said |
+|---|---|---|---|---|
+| `heartbeat.parse` | 44 | **44** | 0 | 130 = PARSED |
+| `heartbeat.parsenl` | 19 | **19** | 0 | 133 = PARSED |
+| `heartbeat.parsereal` | 19 | **19** | 0 | 553 = PARSED |
+| `heartbeat.raw` | 44 | 0 | 0 | control, no `log` key at all |
+
+Every parsed record carries `loggerName` as a field and **no `log`** — the parser consumed it, as
+`Reserve_Data On` does on success. This is not another restatement of the same finding: it is a
+*different instrument* agreeing with the byte arithmetic on all three cases.
+
+That matters because **the whole diagnosis rests on that arithmetic.** The claim that the real
+chain fails is the 12.00 vs 9.00 B/record delta and nothing else. Until now the model had never
+been checked against an independent ground truth; now it has been, three times, exactly. The
+method can be trusted for the reading that counts.
+
+`heartbeat.raw` showing `log=0` is the control behaving: its payload has no `log` key, so neither
+column should light up, and neither does.
+
+## Still blocked on one thing: Polaris is idle
+
+`heartbeat.tail` has **0 docs**, `hb_tail_probe` 0 records, `polaris_cri_unwrap` 0 records. No
+Polaris output since the REVISION 6 restart. Probe 5 reads only new lines (fresh DB,
+`Read_from_Head` off), so it cannot report until Polaris logs something.
+
+This also settles the earlier question about background volume: **Polaris is genuinely idle when
+nothing is calling it.** The probe-5 volume warning (~5k records/hour) applies only under load,
+and `3436e5f`'s "logs DEBUG continuously" is now definitively wrong — corrected in `696baef` and
+confirmed here by a third empty window.
+
+**One notebook run now yields three things at once:** probe 5's verdict, a re-confirmation of the
+real chain's delta on fresh records, and traffic for the §3 stdout-vs-file measurement. Run the
+notebook, then `step6-probe-readout.sh` — no config change, no roll.
