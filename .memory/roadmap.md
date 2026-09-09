@@ -133,3 +133,8 @@ cluster it describes no longer exists.
   unknown. Tier 1 always used `docker, cri`, which is why only tier 2 was affected.
 - **The `unwrap -> rename` byte delta is the tier 2 health check: 12.00 B/rec = failing
   (`app` added, neither rename fires), 5.00-7.00 = working.** Measured 6.97 after the fix.
+- **There is no `k8s-logs` double write: ratio 1.000 (13,796 docs / 13,797 distinct `sequence`,
+  30-minute window), busiest buckets one document each.** #16's "~2x inflated, dedup before any
+  comparison" is disproved and the instruction is removed from `PLAN-opensearch-cutover` §7.
+  Cause: OUTPUT 1 drops every record because `Id_Key sequence` is an integer and the plugin needs
+  a string, so **tier 1 has no dedup at all and never had** (#18).

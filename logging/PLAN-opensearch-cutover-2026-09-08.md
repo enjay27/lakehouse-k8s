@@ -569,8 +569,15 @@ Owned downstream, listed so nothing is assumed done:
   verification band must be dropped by hand (§4.1).
 - **Query layer** — `.keyword` for aggregations; `_search` silently caps at 10,000 hits;
   OpenSearch returns `0.0` where LogsQL returned `NaN`, so pair every `sum` with `value_count`.
-- **`k8s-logs` double-write** (#16) — the DaemonSet's two outputs both match Polaris, so tier-1
-  counts are ~2x inflated and must be deduplicated on `sequence` before any comparison.
+- ~~**`k8s-logs` double-write** (#16) — tier-1 counts are ~2x inflated and must be deduplicated on
+  `sequence` before any comparison.~~ **MEASURED FALSE, 2026-09-09. Do NOT deduplicate.** There is
+  no double write: 13,796 documents carrying `sequence` over 13,797 distinct values in a 30-minute
+  window, ratio **1.000**, and the *busiest* `sequence` buckets each hold exactly one document —
+  any duplicate would sort above them. OUTPUT 1 indexes nothing at all, because Polaris emits
+  `sequence` as an integer and the plugin requires the `Id_Key` value to be a string (#18). Every
+  Polaris record in `k8s-logs` comes from OUTPUT 2 alone. **Deduplicating here would have halved a
+  count that was never doubled** — and this instruction was written into the plan before anyone
+  measured it.
 - **VictoriaLogs decommission** — destructive; separate authorisation at the moment of execution.
 
 ---

@@ -5,8 +5,35 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
-**#16 — The DaemonSet writes every Polaris console line to `k8s-logs` TWICE, and its dedup key
-cannot dedup. OPEN (accepted for now).**
+**#16 — RESOLVED-INSTRUCTIVE 2026-09-09: the double write DOES NOT HAPPEN. The reasoning was
+sound and the conclusion was wrong.**
+
+Measured: 13,796 documents carrying `sequence` over 13,797 distinct values in 30 minutes, ratio
+**1.000**, and the *busiest* `sequence` buckets each hold exactly one document — a duplicate would
+sort above them. `logging/scripts/step7-dedup-check.sh`.
+
+**Why the config reasoning failed.** It was right that Fluent Bit routes a record to every matching
+output, and right that both outputs match Polaris. What it could not see is that **OUTPUT 1 never
+indexes anything**: Polaris emits `sequence` as a JSON integer, the OpenSearch plugin requires the
+`Id_Key` value to be a *string*, and it drops the record instead (#18). So the second copy is
+discarded before it reaches the index, and everything downstream of the "twice" claim goes with it:
+
+- **counts over `k8s-logs` are NOT ~2x inflated**, and the dedup instruction this issue placed on
+  `PLAN-opensearch-cutover` §7 is **void** — deduping there would have halved a count that was
+  never doubled. The plan is corrected.
+- the `doc_as_upsert` field-union hazard cannot occur, because no upsert is ever sent;
+- `sequence`'s per-JVM reset does not matter for dedup, because nothing dedups.
+
+**What remains true and is now `#18`'s problem:** tier 1 has no dedup at all, and never had. A
+retried chunk produces duplicates via OUTPUT 2's `Generate_ID On`. The gain `Id_Key sequence` was
+sold on has never once been delivered.
+
+*Original entry follows, kept because the failure mode is the instructive part — a claim derived
+correctly from configuration, never checked against the data, and cited as fact in a plan for a
+month.*
+
+**#16 (original) — The DaemonSet writes every Polaris console line to `k8s-logs` TWICE, and its
+dedup key cannot dedup. OPEN (accepted for now).**
 
 **Update 2026-09-08:** this issue got more load-bearing, not less. The cutover plan now sources
 **tier 2 from stdout as well**, so `k8s-logs` is the denominator for proving tier 2 is a subset of
@@ -576,6 +603,11 @@ chunk produces **duplicates** instead of upserts. `repository-map`/roadmap's "se
 particular makes a gap in ingestion visible" describes a mechanism that is not running.
 Fix is `type_int_key`-style coercion to string, or `Id_Key` on a string field, or drop OUTPUT 1
 and let OUTPUT 2 own the tag.
+
+**SETTLED 2026-09-09: `#18` IS RIGHT, `#16` IS NOT.** Ratio 1.000 over 13,796 documents; the
+busiest `sequence` buckets hold one document each. OUTPUT 1 indexes nothing, so the record really
+is dropped rather than merely losing its `_id`, and `#16`'s double-write claim is disproved. The
+contradiction as it stood is kept below.
 
 **THIS CONTRADICTS `#16`, AND ONE OF THEM IS WRONG.** `#16` states every Polaris stdout line
 exists in `k8s-logs` **twice** — both outputs match the tag — and instructs every comparison
