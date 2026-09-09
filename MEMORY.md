@@ -13,21 +13,24 @@ repo, **`k8s-logs` still taking ~23k docs/10m**, and `polaris-report-*` is recei
 proves the tick, the noise-filter Lua, the report output and `${OS_PASSWORD}` expansion.
 Plan and gates: [`PLAN-opensearch-cutover`](logging/PLAN-opensearch-cutover-2026-09-08.md).
 
-**Open: `polaris-logs-*` has never received a document** (absent from `_cat/indices`, not
-merely empty). The readout was run 2026-09-09 on an **idle** cluster: `access_seen` **0 in
-every window on both sides**, so it decides nothing. It did prove the instrument — both report
-streams arrive and the two releases share `window_start` on one 30s grid, so the comparison
-needs **traffic**, not repair. Baseline: [`sessions/2026-09-09-notebook-baseline`](.memory/sessions/2026-09-09-notebook-baseline.md).
+**§3 IS ANSWERED, AND THE ANSWER IS NO. Do not uninstall `fb-polaris-shipper`.** Notebook run
+2026-09-09 ~05:07Z, the same two windows on both sides: file-sourced (shipper -> VictoriaLogs)
+**`05:07:00Z` seen 226 / kept 99, `05:07:30Z` seen 44 / kept 33**; stdout-sourced (DaemonSet ->
+OpenSearch) **0 in both**. 270 access-log lines to 0. The measurement is valid — same
+`window_start`, one side non-zero — and it stops existing the moment the shipper goes.
 
-**The next action is a notebook run in `polaris-learning`, handed off in
-[`HANDOFF-notebook-run`](logging/HANDOFF-notebook-run-2026-09-09.md) — run it UNCHANGED; porting
-it to `_search` is step 7 and doing it first destroys the measurement below.**
+**But the naive reading of that is wrong**, and this is the finding: `polaris-logs-2026.09.09`
+now exists with **4,718 docs / 2.7 MB**, created during the very run that reported `access_seen 0`.
+Records reach the chain and the output fine. **Not one of ~4,718 was recognised as an access-log
+line**, i.e. `loggerName ~= "io.quarkus.http.access-log"` on the stdout path. So policy v3 is
+**inert on tier 2**: the 30d "filtered" tier is currently storing the raw firehose — 4,718 docs
+for ~270 requests — and it looks healthy doing it. **Cause is NOT in the values file**: the
+`polaris_cri_unwrap` filter, `Parsers_File custom_parsers.conf` and `Time_Keep On` are all
+present and were each checked. Only the running object can say. Diagnosis and the decisive
+queries: [`sessions/2026-09-09-stdout-not-equivalent`](.memory/sessions/2026-09-09-stdout-not-equivalent.md).
 
-**Do this before uninstalling `fb-polaris-shipper` — it cannot be measured afterwards.** Both
-releases are running the same filter over the same traffic from two sources: the shipper from the
-log FILE into VictoriaLogs, the DaemonSet from STDOUT into OpenSearch. Equal `access_seen` for one
-window is the proof that stdout carries the same access-log set as the file — the question every
-earlier revision of this plan had to leave open.
+**Cutover step 7 (port the notebook to `_search`) and the shipper uninstall are BLOCKED** on
+that. The PVC path stays; the fallback is fully specified in git at `fb91949`.
 
 **Still written and NOT running:** the temporary **30s window** (`Interval_Sec 5`). It stays until
 everything else is done; the revert to 1800/30 is the plan's **last step and its final gate**

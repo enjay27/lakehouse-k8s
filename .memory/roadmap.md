@@ -114,3 +114,12 @@ cluster it describes no longer exists.
   beside an OpenSearch side sorted desc. Invisible while everything was 0; with traffic it
   compares unrelated windows. Now `| sort by (window_start) desc | limit 12`. **Match by
   `window_start`, never by position.**
+- **Stdout carries 0 of the 270 access-log lines the file carried.** 2026-09-09, matched windows:
+  `05:07:00Z` file 226 seen / 99 kept, `05:07:30Z` file 44 / 33; stdout 0 in both. The question
+  three plan revisions had to leave open is answered, and answered NO. It was takeable only while
+  both releases ran.
+- **`polaris-logs-2026.09.09`: 4,718 docs / 2.7 MB for ~270 requests, with `access_seen 0`.**
+  Both figures at once are the finding: the chain works, recognition does not, so policy v3 keeps
+  everything. ~17 stored documents per request on a tier whose purpose is >99% reduction.
+- **`polaris-report-*` 56 -> 74 docs across the run** — the report stream stayed healthy
+  throughout, so the zero on the stdout side is a real count, not a missing one.

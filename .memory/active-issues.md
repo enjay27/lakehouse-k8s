@@ -521,3 +521,22 @@ replaces.
   `postgresql-ha-*.tgz` and `.DS_Store`. Still check `git status` **before**
   `git add -A`, never after — chart tarballs and `helm get values` exports are not
   covered by any pattern.
+
+**#16 — Policy v3 is INERT on tier 2: `polaris-logs-*` is storing unfiltered stdout. OPEN, LIVE.**
+Measured 2026-09-09. The notebook run put **4,718 docs / 2.7 MB** into `polaris-logs-2026.09.09`
+for roughly 270 requests, while the DaemonSet's own report said `access_seen 0` for the same
+windows. Both are true: records traverse the chain and index fine, but **none is recognised as an
+access-log line** (`loggerName ~= "io.quarkus.http.access-log"`), so every record takes the keep
+path and no retention rule applies. The tier advertised as "30d, policy-v3 filtered" is currently
+a firehose with a 30d retention on it, and it looks healthy — no errors, no restarts, no drop
+counters. Storage grows with traffic until fixed. **Not a values-file fault**: the
+`polaris_cri_unwrap` filter, `Parsers_File custom_parsers.conf` and `Time_Keep On` were each
+checked and are present. Decisive query and the three readings of it:
+`sessions/2026-09-09-stdout-not-equivalent.md`.
+
+**#17 — The stdout/file equivalence assumption is DISPROVED; the shipper is now load-bearing. OPEN.**
+The cutover assumed Polaris stdout carries the same access-log set as the log file. Measured on
+matched windows 2026-09-09: file 226 + 44 = **270**, stdout **0**. Until #16 is resolved,
+`fb-polaris-shipper` and `polaris-shared-logs-pvc` are the ONLY path that recognises an access-log
+record. Uninstalling the shipper — cutover step 7 — would destroy the capability, not just the
+duplicate. Fallback specified in git at `fb91949`.
