@@ -522,13 +522,13 @@ replaces.
   `git add -A`, never after — chart tarballs and `helm get values` exports are not
   covered by any pattern.
 
-**#16 — RESOLVED 2026-09-09 (REVISION 7).** Cause: `multiline.parser cri` alone on the tier 2
+**#21 — RESOLVED 2026-09-09 (REVISION 7).** *(filed as #16 by mistake — #16 was taken; renumbered.)* Cause: `multiline.parser cri` alone on the tier 2
 tail; `docker, cri` fixes it. Verified on post-fix documents — 4,403/4,403 with `loggerName`, 0
 with `log` — and by the `unwrap -> rename` delta moving 12.00 -> 6.97 B/rec. The ~29,800 raw
 documents already in `polaris-logs-*` predate the fix, are not rewritten, and age out under the
 30d policy. Mechanism unknown; measurement unambiguous. Original entry follows.
 
-**#16 (original) — Policy v3 is INERT on tier 2: `polaris-logs-*` is storing unfiltered stdout. OPEN, LIVE.**
+**#21 (original) — Policy v3 is INERT on tier 2: `polaris-logs-*` is storing unfiltered stdout. OPEN, LIVE.**
 Measured 2026-09-09. The notebook run put **4,718 docs / 2.7 MB** into `polaris-logs-2026.09.09`
 for roughly 270 requests, while the DaemonSet's own report said `access_seen 0` for the same
 windows. Both are true: records traverse the chain and index fine, but **none is recognised as an
@@ -545,17 +545,17 @@ Until `helm upgrade` runs and §A's gate passes, this issue is live exactly as d
 Evidence: `sessions/2026-09-09-stdout-not-equivalent.md`; change and gate:
 `logging/PLAN-tier2-parse-fault-2026-09-09.md`.
 
-**#17 — RESOLVED 2026-09-09, AND THE ORIGINAL FINDING WAS WRONG.** Re-measured after the
+**#22 — RESOLVED 2026-09-09, AND THE ORIGINAL FINDING WAS WRONG.** *(filed as #17; renumbered with #21.)* Re-measured after the
 `multiline.parser` fix, one burst, matched windows: **`access_seen` 265 (stdout) == 265 (file)**
 and **`access_kept` 126 == 126**. Per-window differences (+15, -17, +2) sum to zero — records fall
 in adjacent 30s buckets, none is lost. Stdout carries the same access-log set as the file AND
 policy v3 decides identically on both. The original "file 270, stdout 0" was taken while the CRI
 unwrap was silently not parsing, so the stdout side could not count anything: **the disproof was
-an artefact of `#16`, not a property of stdout.** Cutover step 7 is unblocked; `helm uninstall` of
+an artefact of `#21`, not a property of stdout.** Cutover step 7 is unblocked; `helm uninstall` of
 the shipper still needs authorisation at the moment of execution and destroys the ability to
 repeat this. Original entry follows.
 
-**#17 (original, SUPERSEDED) —**
+**#22 (original, SUPERSEDED) —**
 The cutover assumed Polaris stdout carries the same access-log set as the log file. Measured on
 matched windows 2026-09-09: file 226 + 44 = **270**, stdout **0**. Until #16 is resolved,
 `fb-polaris-shipper` and `polaris-shared-logs-pvc` are the ONLY path that recognises an access-log
@@ -576,6 +576,25 @@ chunk produces **duplicates** instead of upserts. `repository-map`/roadmap's "se
 particular makes a gap in ingestion visible" describes a mechanism that is not running.
 Fix is `type_int_key`-style coercion to string, or `Id_Key` on a string field, or drop OUTPUT 1
 and let OUTPUT 2 own the tag.
+
+**THIS CONTRADICTS `#16`, AND ONE OF THEM IS WRONG.** `#16` states every Polaris stdout line
+exists in `k8s-logs` **twice** — both outputs match the tag — and instructs every comparison
+against tier 1 to deduplicate on `sequence` first, calling an undeduplicated count "~2x wrong".
+But if OUTPUT 1 skips each record for an unusable `Id_Key`, **only OUTPUT 2 ever indexes it and
+there is no second copy.** `#16` was reasoned from the config; `#18` is read from the pod log.
+Neither has been measured against the index, and `#18`'s "skips the record" is my reading of the
+message text, not a proven drop.
+
+**One query settles both**, and until it is run neither number should be used in a measurement:
+```bash
+curl -sk -u "$OS_USER:$OS_PASSWORD" -H 'Content-Type: application/json' \
+  "$OS_URL/k8s-logs-*/_search?pretty" -d '{"size":0,"query":{"exists":{"field":"sequence"}},
+   "aggs":{"per_seq":{"terms":{"field":"sequence","size":5},
+     "aggs":{"n":{"value_count":{"field":"sequence"}}}}}}'
+```
+2 docs per `sequence` -> `#16` is right, `#18`'s drop reading is wrong. 1 doc -> `#18` is right and
+`#16`'s 2x-inflation warning is void, along with the dedup instruction in
+`PLAN-opensearch-cutover` §7.
 
 **#19 — Tier 1 is LOSING CHUNKS: the OpenSearch response exceeds the output's buffer. OPEN, LIVE.**
 ```

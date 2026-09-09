@@ -836,7 +836,7 @@ and is not worth chasing — it moves records between adjacent buckets and conse
 
 ### What this overturns
 
-**`#17` is WRONG and is now resolved.** It recorded "the stdout/file equivalence assumption is
+**`#22` is WRONG and is now resolved.** It recorded "the stdout/file equivalence assumption is
 DISPROVED — file 270, stdout 0". That measurement was taken while `multiline.parser cri` was
 silently refusing to parse, so the stdout side could not have counted anything. **The disproof was
 an artefact of the parse fault, not a property of stdout.** With the fault fixed the two are equal.
