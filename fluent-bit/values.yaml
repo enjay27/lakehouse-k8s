@@ -772,6 +772,24 @@ config:
         Rate              1
         Interval_Sec      30
 
+    # Probe 4 -- the EXACT `log` value from the stored Polaris document, verbatim,
+    # trailing newline included: nested `mdc` object, integer `sequence` and
+    # `threadId`, empty-string `ndc`, absolute processName, the lot. If THIS
+    # parses, the record CONTENT is fully exonerated and the fault is in the tail
+    # input path itself, not in anything the payload carries.
+    # Caution on probe 3's hypothesis: the kubernetes filter's Merge_Log parses
+    # `log` values that also end in \n -- that is where tier 1's 2.6M loggerName
+    # docs come from -- so a trailing newline is NOT obviously fatal to Fluent
+    # Bit's JSON parsing. Probe 3 may well pass. Probe 4 is why both are worth
+    # one roll.
+    [INPUT]
+        Name              dummy
+        Alias             hb_parse_real_tick
+        Tag               heartbeat.parsereal
+        Dummy             {"probe":"parse_real","log":"{\"timestamp\":\"2026-09-09T05:07:07.697818537Z\",\"sequence\":49687,\"loggerClassName\":\"org.slf4j.spi.DefaultLoggingEventBuilder\",\"loggerName\":\"org.apache.polaris.service.catalog.api.IcebergRestOAuth2Api\",\"level\":\"DEBUG\",\"message\":\"operation=getToken Invoking OAuth2Api with params\",\"threadName\":\"executor-thread-21\",\"threadId\":78,\"mdc\":{\"requestId\":\"dce356e7-539d-444f-a854-c9b17cf4a0a2_0000000000000001316\",\"realmId\":\"POLARIS\"},\"ndc\":\"\",\"hostName\":\"benchmarks-polaris-585587454b-nhzdr\",\"processName\":\"/usr/lib/jvm/java-21-openjdk-21.0.9.0.10-1.el9.aarch64/bin/java\",\"processId\":1}\n"}
+        Rate              1
+        Interval_Sec      30
+
   # ── Filters ────────────────────────────────────────────────
   filters: |
     # Enrich with K8s metadata
@@ -900,6 +918,14 @@ config:
         Name          parser
         Alias         hb_parse_nl_probe
         Match         heartbeat.parsenl
+        Key_Name      log
+        Parser        polaris_stdout_json
+        Reserve_Data  On
+
+    [FILTER]
+        Name          parser
+        Alias         hb_parse_real_probe
+        Match         heartbeat.parsereal
         Key_Name      log
         Parser        polaris_stdout_json
         Reserve_Data  On

@@ -426,3 +426,48 @@ probe 2 except for a trailing `\n` on the `log` value, with its own filter alias
   envelope keys.
 
 Either way it is decided by one number, and both numbers are predicted in advance.
+
+---
+
+## The delta is in, and it is 12.00 to the hundredth. Same instance, both results.
+
+Full filter map, one read, one Fluent Bit process:
+
+```
+polaris_cri_unwrap  4993 rec  10,196,501 B
+polaris_key_rename  4993 rec  10,256,417 B   delta  +59,916 =  12.00 B/rec
+polaris_access_log  4993 rec  10,256,417 B   delta        0 =   0.00 B/rec
+polaris_field_trim  4993 rec  10,097,219 B   delta -159,198 = -31.88 B/rec
+hb_parse_probe         9 rec       1,170 B                  = 130.0  B/rec
+```
+
+Predicted in advance: a **working** unwrap gives 9.00 B/rec (`app` +12, `message`->`_msg` +1,
+`timestamp`->`_time` -4); a **failed** one gives 12.00 (only `app`; both renames find nothing).
+The reading is 12.00.
+
+**So in one process, at the same moment: the probe parses (130.0 = the parsed model exactly) and
+the real records do not (12.00 = the failed model exactly).** Same filter type, same parser, same
+`Reserve_Data On`. The parser is exonerated by direct comparison, not by inference.
+
+`hb_parse_nl_probe` is **absent from the map** — probe 3 is committed but not running. #20 again:
+confirm the roll, do not assume it.
+
+## Probe 4, and an honest caution about probe 3
+
+Probe 3's hypothesis has a problem worth stating before it is tested: **the `kubernetes` filter's
+`Merge_Log` parses `log` values that also end in `\n`** — that is exactly where tier 1's 2.6M
+`loggerName` docs come from. So a trailing newline is not obviously fatal to Fluent Bit's JSON
+parsing, and probe 3 may well pass. That is a reason to test it, not to skip it, but do not expect
+it to be the answer.
+
+**Probe 4 (`heartbeat.parsereal`) is the stronger test**: the exact `log` value from the stored
+Polaris document, verbatim — nested `mdc` object, integer `sequence` and `threadId`, empty-string
+`ndc`, absolute `processName`, 13 keys, trailing newline included.
+
+| probe 4 | conclusion |
+|---|---|
+| **parses** | the record CONTENT is fully exonerated. The fault is in the tail input path itself — how `multiline.parser cri` hands the record to the filter — and no payload experiment will find it. Next: compare the record shape at the input, not the content. |
+| **does not parse** | something in the real payload breaks the parser where the synthetic one does not. Bisect it: drop `mdc`, then the integers, then `ndc`. |
+
+Both probes go in one roll. Payloads validated by round-tripping the parsed YAML through
+`json.loads` twice, asserting the newline is a real terminator, and counting keys (4, 4, 13).
