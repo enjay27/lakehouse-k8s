@@ -281,6 +281,16 @@ luaScripts:
     -- Bounds on the two margins. Beyond them, requests land in one __other__ row: the
     -- totals stay exact and only per-key detail is capped, which is the difference
     -- between this cap and one that would have lost counts.
+    -- A denied grant is the security question a role row exists to answer, and
+    -- create=false would send it to __other__ with no attribution unless that role
+    -- also succeeded in the same 30s window. Role kinds may therefore create a row
+    -- on an ERROR -- but under their OWN cap, because role names are unbounded
+    -- client input and that is exactly what create=false defends against.
+    -- role_keys_forced is emitted on the summary so hitting the cap is visible
+    -- rather than a silent truncation.
+    local ROLE_KINDS            = { ["catalog-role"] = true, ["principal-role"] = true }
+    local REPORT_MAX_ROLE_KEYS  = 100
+
     local REPORT_MAX_RESOURCES  = 500
     local REPORT_MAX_PRINCIPALS = 200
     local REPORT_OTHER          = "__other__"
@@ -337,7 +347,7 @@ luaScripts:
     local function new_window(idx, partial, carry_res, carry_pri)
         local w = {
             window = idx, partial = partial and true or false,
-            access_seen = 0, access_counted = 0,
+            access_seen = 0, access_counted = 0, role_keys_forced = 0,
             counted_read = 0, counted_post = 0,
             errors_kept = 0, parse_errors = 0,
             resources = {}, kinds = {}, n_resources = 0, resources_over = 0,
@@ -437,7 +447,16 @@ luaScripts:
         local is_error = (status == nil or status >= 400)
         local key, kind = classify(path)
 
-        local rows = { touch_resource(key, kind, not is_error), touch_principal(user) }
+        local create = not is_error
+        if (not create) and ROLE_KINDS[kind] then
+            if counts.resources[key] ~= nil then
+                create = true                      -- already known, no new key
+            elseif counts.role_keys_forced < REPORT_MAX_ROLE_KEYS then
+                counts.role_keys_forced = counts.role_keys_forced + 1
+                create = true
+            end
+        end
+        local rows = { touch_resource(key, kind, create), touch_principal(user) }
         for _, row in ipairs(rows) do
             row.requests = row.requests + 1
             if READ_METHODS[method] then
@@ -579,6 +598,9 @@ luaScripts:
         s.access_seen         = counts.access_seen
         s.access_kept         = counts.access_seen - counts.access_counted
         s.access_counted      = counts.access_counted
+        -- Role rows created by an ERRORED request. == REPORT_MAX_ROLE_KEYS means the
+        -- cap was reached and further denied roles fell to __other__ unattributed.
+        s.role_keys_forced    = counts.role_keys_forced
         s.counted_read        = counts.counted_read
         s.counted_post        = counts.counted_post
         s.errors_kept         = counts.errors_kept
@@ -894,7 +916,7 @@ config:
         Match         polaris.*
         script        /fluent-bit/scripts/polaris_access_log.lua
         call          polaris_noise_filter
-        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted last_read_bytes last_write_bytes counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals carried_rows resources_other resources_other_distinct principals_other windows_skipped requests reads writes errors response_bytes
+        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted role_keys_forced last_read_bytes last_write_bytes counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals carried_rows resources_other resources_other_distinct principals_other windows_skipped requests reads writes errors response_bytes
 
     # 4. Drop fields that cost storage on every record and answer nothing, plus the
     #    CRI envelope leftovers. Remove_key on an absent key is a no-op, so the

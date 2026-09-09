@@ -57,6 +57,9 @@ polaris_noise_filter("polaris.logs", 0, rec("GET", "/api/management/v1/principal
 polaris_noise_filter("polaris.logs", 0, rec("GET", "/api/management/v1/principals/p1/principal-roles", 200, 31))
 -- plain principal management is NOT a role
 polaris_noise_filter("polaris.logs", 0, rec("GET", "/api/management/v1/principals/p1", 200, 64))
+-- a DENIED grant on a role with NO successful request this window. create=false would
+-- send it to __other__; ROLE_KINDS lets it create its own row, under its own cap.
+polaris_noise_filter("polaris.logs", 0, rec("PUT", "/api/management/v1/catalogs/c1/catalog-roles/nobody/grants", 403, 88))
 
 local _, _, out = polaris_noise_filter("polaris.report", 0, {tick="x", _now_override=T0+90})
 local sum, res, sr, sp = nil, {}, 0, 0
@@ -106,6 +109,13 @@ check("principal's role list is its own key",
       res["/api/management/v1/principals/p1/principal-roles"] ~= nil, true)
 check("plain principal stays management", res["/api/management/v1/principals/p1"] and
       res["/api/management/v1/principals/p1"].resource_kind, "management")
+check("denied grant keeps its role row",
+      res["/api/management/v1/catalogs/c1/catalog-roles/nobody"] ~= nil, true)
+check("  and records the denial",
+      res["/api/management/v1/catalogs/c1/catalog-roles/nobody"] and
+      res["/api/management/v1/catalogs/c1/catalog-roles/nobody"].auth_denied, 1)
+check("  did NOT fall to __other__", res["__other__"], "nil")
+check("role_keys_forced counts it", sum.role_keys_forced, 1)
 check("sum(resource) == seen-parse", sr, sum.access_seen - sum.parse_errors)
 check("sum(principal) == seen-parse", sp, sum.access_seen - sum.parse_errors)
 check("schema_version", sum.schema_version, 3)

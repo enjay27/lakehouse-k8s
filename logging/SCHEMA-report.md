@@ -34,6 +34,7 @@ agg on `window_start` — groups one window.
 | `carried_rows` | int | ⚠ **resources AND principals combined** — see review #3. |
 | `resources_other` / `principals_other` | int | requests that overflowed the 500 / 200 caps into `__other__`. |
 | `resources_other_distinct` | int | distinct keys behind the overflow. |
+| `role_keys_forced` | int | **v3.** Role rows created by an **errored** request. Equal to `REPORT_MAX_ROLE_KEYS` (100) means the cap was hit and further denied roles fell to `__other__` unattributed. |
 | `windows_skipped` | int | windows that closed with no tick. |
 | `min_record_time` / `max_record_time` | string | ⚠ default `""`, not absent — see review #2. |
 | `partial_window` | **string** | ⚠ `"true"` / `"false"`, **not a boolean** — see review #1. |
@@ -95,6 +96,9 @@ row. `/catalogs/{cat}/catalog-roles/{cr}/grants` keys to `/catalogs/{cat}/catalo
 **`writes` on that row is the number of privileges granted in the window**; `reads` are grant
 listings plus role reads. Principal-role rules are ordered first, so
 `/principal-roles/{pr}/catalog-roles/{cat}` keys to the *principal* role being assigned to.
+**Role kinds are the one exception to the `create=false` guard**: a denied grant creates its own row
+rather than falling to `__other__`, capped at `REPORT_MAX_ROLE_KEYS` and counted by
+`role_keys_forced`.
 
 **3c. `__other__` is mostly ERRORS, not overflow.** `touch_resource(key, kind, not is_error)` means
 an errored request whose resource is not *already* in the window's map gets no row of its own and

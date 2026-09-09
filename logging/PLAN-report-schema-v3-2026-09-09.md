@@ -474,3 +474,61 @@ That is finding C (`§C`) landing squarely on the case the manager cares about. 
 role give `requests 4 / writes 3 / reads 1`, `last_write_bytes` is the last grant, no separate
 `/grants` row exists, a second catalog role is a separate row, the assignment path keys to the
 principal role, no `__authorization__` row remains, and both margin invariants are exact.
+
+---
+
+# Option 1 applied, and what is left in `other` / `management`
+
+## Denied grants keep their role row
+
+`ROLE_KINDS = { catalog-role, principal-role }` may create a row on an **error**, under
+`REPORT_MAX_ROLE_KEYS = 100` — its own cap, because role names are unbounded client input and that
+is exactly what `create=false` defends against. `role_keys_forced` on the summary counts rows
+created this way, so **hitting the cap is visible rather than a silent truncation**. Verified:
+a 403 on a catalog role with no successful request in the window keeps its own row with
+`auth_denied 1`, does not appear in `__other__`, and increments `role_keys_forced`.
+
+## v3 traffic by kind, whole export (268 requests)
+
+| kind | req | share |
+|---|---|---|
+| catalog-role | 59 | 22.0% |
+| collection | 57 | 21.3% |
+| table | 52 | 19.4% |
+| **other** | **38** | **14.2%** |
+| management | 30 | 11.2% |
+| principal-role | 8 | 3.0% |
+| namespace / auth / config / view | 24 | 8.9% |
+
+## `other` is now ONLY `__other__` — and it is 100% errors
+
+**38 requests, 38 errors.** Every path that used to sit in `other` with its own raw key is now
+classified; there is no unclassified *surface* left. What remains in `other` is entirely traffic
+that **lost its key** to the `create=false` guard. So no new `RESOURCE_PATTERNS` rule would move
+the needle — the only lever on this 14.2% is the guard itself, and option 1 has just taken the
+role-shaped slice of it. The rest is 404s and 4xx on tables and namespaces that had no successful
+request in the same 30s window.
+
+## `management` is two families, and both are legitimately not roles
+
+| resource | req | rd | wr | err | bytes |
+|---|---|---|---|---|---|
+| `MG/catalogs` | 8 | 3 | 5 | 0 | **1,181,599** |
+| `MG/principals` | 7 | 3 | 4 | 0 | **536,175** |
+| `MG/catalogs/{id}stale` | 5 | 1 | 4 | 3 | 944 |
+| `MG/principals/{id}_p` | 3 | 1 | 2 | 1 | 298 |
+| `MG/catalogs/{id}_cat` | 3 | 2 | 1 | 0 | 1,068 |
+| `MG/principals/{id}_asym/reset` | 1 | 0 | 1 | 0 | 271 |
+| *(3 more principal rows)* | 3 | 0 | 3 | 0 | 0 |
+
+Catalogs and principals are **identity and containers**, not authorization, so leaving them as
+`management` is right. Two observations worth acting on separately:
+
+- **The two collection endpoints are by far the heaviest responses in the export** — 1.18 MB over
+  8 requests (~148 KB each) and 536 KB over 7. That is 91% of the export's total response bytes in
+  15 requests. `last_read_bytes` will now show this per window, which may be the most actionable
+  new signal in v3 outside tables.
+- **A cosmetic asymmetry, not proposed:** a catalog-role is `catalog-role` but a catalog is
+  `management`. Giving catalogs and principals their own kinds (`catalog`, `principal`) would be
+  consistent — but `management` is still accurate, and renaming a kind splits query history. Left
+  alone unless asked.
