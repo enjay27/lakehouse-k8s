@@ -19,6 +19,10 @@ stdout does not carry what the file carries. **The report answers it itself**: `
 counts what the filter SAW, before any keep/drop.
 `logging/scripts/step4-report-readout.sh` reads it and says which.
 
+**The next action is a notebook run in `polaris-learning`, handed off in
+[`HANDOFF-notebook-run`](logging/HANDOFF-notebook-run-2026-09-09.md) — run it UNCHANGED; porting
+it to `_search` is step 7 and doing it first destroys the measurement below.**
+
 **Do this before uninstalling `fb-polaris-shipper` — it cannot be measured afterwards.** Both
 releases are running the same filter over the same traffic from two sources: the shipper from the
 log FILE into VictoriaLogs, the DaemonSet from STDOUT into OpenSearch. Equal `access_seen` for one
