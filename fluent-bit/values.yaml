@@ -211,8 +211,7 @@ luaScripts:
     local REPORT_APP     = "polaris-shipper-report"
     local SCHEMA_VERSION = 3   -- v3 (2026-09-09): last_read_bytes/last_write_bytes on
                                -- resource rows, five new RESOURCE_PATTERNS, and
-                               -- and all role/grant traffic folded into one
-                               -- __authorization__ row. v2 (2026-09-07): distinct_resources/_principals now
+                               -- and grants keyed to their catalog role. v2 (2026-09-07): distinct_resources/_principals now
                                -- count only rows with requests > 0 (v1 counted zero-carry
                                -- rows too, so an idle window reported resources it never
                                -- saw) and carried_rows carries that number instead;
@@ -254,6 +253,18 @@ luaScripts:
         -- has to come BEFORE that rule. These set the KIND only -- reads/writes keep
         -- coming from the HTTP method, so POST /properties is a write and rename is a
         -- write because rename is a POST, not because a rule says so.
+        -- ROLES. classify returns the MATCHED SPAN as the resource key, so a rule that
+        -- stops at the role makes everything deeper fold into THAT ROLE'S ROW. That is
+        -- how `/catalog-roles/{cr}/grants` becomes "N privileges granted into this
+        -- catalog role this window" instead of a row of its own -- the grant count is
+        -- the row's `writes`, and reads are the grant listings.
+        --
+        -- principal-role rules come FIRST so `/principal-roles/{pr}/catalog-roles/{cat}`
+        -- keys to the PRINCIPAL role being assigned to, not to the catalog role.
+        { kind = "principal-role", pattern = "^.-/principal%-roles/[^/]+" },
+        { kind = "collection",     pattern = "^.-/principal%-roles$" },
+        { kind = "catalog-role",   pattern = "^.-/catalog%-roles/[^/]+" },
+        { kind = "collection",     pattern = "^.-/catalog%-roles$" },
         { kind = "auth",       pattern = "^.-/oauth/tokens$" },
         { kind = "config",     pattern = "^.-/v1/config$" },
         { kind = "table",      pattern = "^.-/tables/rename$" },
@@ -270,26 +281,6 @@ luaScripts:
     -- Bounds on the two margins. Beyond them, requests land in one __other__ row: the
     -- totals stay exact and only per-key detail is capped, which is the difference
     -- between this cap and one that would have lost counts.
-    -- v3 AUTHORIZATION FOLDING. Every role/grant path collapses into ONE row keyed
-    -- __authorization__, kind "authorization": how much authz traffic, how it split
-    -- read/write, and how much of it failed -- without a row per role.
-    --
-    -- This replaces the excluded_requests design. Folding is strictly better than
-    -- excluding: the requests stay in a resource row, so the margin invariant needs
-    -- NO extra term and no new summary field, and the volume is not merely visible
-    -- as a number -- it is queryable, split by read/write/error, in the same shape
-    -- as every other row.
-    local AUTHZ_PATTERNS = { "/principal%-roles", "/catalog%-roles", "/grants" }
-    local AUTHZ_KEY      = "__authorization__"
-    local AUTHZ_KIND     = "authorization"
-
-    local function is_authz(path)
-        for _, pat in ipairs(AUTHZ_PATTERNS) do
-            if path:find(pat) then return true end
-        end
-        return false
-    end
-
     local REPORT_MAX_RESOURCES  = 500
     local REPORT_MAX_PRINCIPALS = 200
     local REPORT_OTHER          = "__other__"
@@ -303,8 +294,6 @@ luaScripts:
     end
 
     local function classify(path)
-        -- Checked FIRST so a role path cannot be claimed by another rule.
-        if is_authz(path) then return AUTHZ_KEY, AUTHZ_KIND end
         for _, r in ipairs(RESOURCE_PATTERNS) do
             local span = path:match(r.pattern)
             if span then return span, r.kind end
@@ -448,15 +437,7 @@ luaScripts:
         local is_error = (status == nil or status >= 400)
         local key, kind = classify(path)
 
-        -- create=false sends an errored request to __other__ unless its resource is
-        -- already known (the 404-scanner defence). For __authorization__ that guard is
-        -- pointless -- it is ONE bounded key, it cannot inflate cardinality -- and
-        -- actively harmful: a DENIED grant is precisely what an authorization row
-        -- exists to record, and it would otherwise land in __other__ with no
-        -- attribution. Measured 2026-09-09: every __other__ request in a busy window
-        -- was an error, including the window's only auth_denied.
-        local create = (not is_error) or (key == AUTHZ_KEY)
-        local rows = { touch_resource(key, kind, create), touch_principal(user) }
+        local rows = { touch_resource(key, kind, not is_error), touch_principal(user) }
         for _, row in ipairs(rows) do
             row.requests = row.requests + 1
             if READ_METHODS[method] then

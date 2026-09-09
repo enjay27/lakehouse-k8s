@@ -40,16 +40,23 @@ polaris_noise_filter("polaris.logs", 0, rec("POST", CAT.."/views/rename", 200, 1
 polaris_noise_filter("polaris.logs", 0, rec("POST", CAT.."/namespaces/ns1/properties", 200, 43))
 polaris_noise_filter("polaris.logs", 0, rec("POST", "/api/catalog/v1/oauth/tokens", 200, 685))
 polaris_noise_filter("polaris.logs", 0, rec("GET",  "/api/catalog/v1/config", 200, 1757))
--- authorization folding: five different role/grant paths, one row
-polaris_noise_filter("polaris.logs", 0, rec("PUT",  "/api/management/v1/principal-roles/r1", 200, 77))
-polaris_noise_filter("polaris.logs", 0, rec("GET",  "/api/management/v1/principal-roles/r1", 200, 55))
-polaris_noise_filter("polaris.logs", 0, rec("GET",  "/api/management/v1/principals/p1/principal-roles", 200, 31))
-polaris_noise_filter("polaris.logs", 0, rec("PUT",  "/api/management/v1/catalogs/c1/catalog-roles/cr1/grants", 200, 19))
--- a DENIED grant, on a path with no prior success this window. Under create=false it
--- would land in __other__ with no attribution; the authz key forces creation.
-polaris_noise_filter("polaris.logs", 0, rec("PUT",  "/api/management/v1/catalogs/c9/catalog-roles/cr9/grants", 403, 88))
--- plain principal management is NOT authorization
-polaris_noise_filter("polaris.logs", 0, rec("GET",  "/api/management/v1/principals/p1", 200, 64))
+-- ROLES. Everything under a role folds into that role's row, so the grant count is
+-- the row's `writes`. Three grants + one CRUD read on ONE catalog role.
+local CR = "/api/management/v1/catalogs/c1/catalog-roles/analyst"
+polaris_noise_filter("polaris.logs", 0, rec("PUT", CR.."/grants", 200, 19))
+polaris_noise_filter("polaris.logs", 0, rec("PUT", CR.."/grants", 200, 19))
+polaris_noise_filter("polaris.logs", 0, rec("PUT", CR.."/grants", 200, 21))
+polaris_noise_filter("polaris.logs", 0, rec("GET", CR,            200, 64))
+-- a different catalog role stays a different row
+polaris_noise_filter("polaris.logs", 0, rec("PUT", "/api/management/v1/catalogs/c1/catalog-roles/reader/grants", 200, 11))
+-- principal-role rules win over catalog-role for the assignment path
+polaris_noise_filter("polaris.logs", 0, rec("PUT", "/api/management/v1/principal-roles/pr1/catalog-roles/c1", 200, 12))
+polaris_noise_filter("polaris.logs", 0, rec("GET", "/api/management/v1/principal-roles/pr1", 200, 55))
+-- collections
+polaris_noise_filter("polaris.logs", 0, rec("GET", "/api/management/v1/principal-roles", 200, 90))
+polaris_noise_filter("polaris.logs", 0, rec("GET", "/api/management/v1/principals/p1/principal-roles", 200, 31))
+-- plain principal management is NOT a role
+polaris_noise_filter("polaris.logs", 0, rec("GET", "/api/management/v1/principals/p1", 200, 64))
 
 local _, _, out = polaris_noise_filter("polaris.report", 0, {tick="x", _now_override=T0+90})
 local sum, res, sr, sp = nil, {}, 0, 0
@@ -76,20 +83,29 @@ check("ns/properties -> namespace",  res[CAT.."/namespaces/ns1/properties"].reso
 check("POST properties is a WRITE",  res[CAT.."/namespaces/ns1/properties"].writes, 1)
 check("POST properties is not a read", res[CAT.."/namespaces/ns1/properties"].reads, 0)
 
-print("== authorization folding and the margin invariant ==")
-local AZ = res["__authorization__"]
-check("authorization row exists",    AZ ~= nil, true)
-check("  folds all 5 role/grant reqs", AZ and AZ.requests, 5)
-check("  reads",                     AZ and AZ.reads,  2)
-check("  writes",                    AZ and AZ.writes, 3)
-check("  errors incl. the denial",   AZ and AZ.errors, 1)
-check("  auth_denied captured",      AZ and AZ.auth_denied, 1)
-check("  kind",                      AZ and AZ.resource_kind, "authorization")
-check("no per-role row remains",     res["/api/management/v1/principal-roles/r1"], "nil")
-check("plain principal NOT folded",  res["/api/management/v1/principals/p1"] and
-                                     res["/api/management/v1/principals/p1"].resource_kind, "management")
-check("denial did NOT fall to __other__", res["__other__"], "nil")
-check("no excluded_requests field",  sum.excluded_requests, "nil")
+print("== roles: grants fold into the role they are granted on ==")
+local CRrow = res[CR]
+check("catalog-role row exists",        CRrow ~= nil, true)
+check("  kind",                         CRrow and CRrow.resource_kind, "catalog-role")
+check("  3 grants + 1 read = 4 req",    CRrow and CRrow.requests, 4)
+check("  writes == the grant count",    CRrow and CRrow.writes, 3)
+check("  reads == the CRUD read",       CRrow and CRrow.reads, 1)
+check("  last_write == last grant",     CRrow and CRrow.last_write_bytes, 21)
+check("no separate /grants row",        res[CR.."/grants"], "nil")
+check("other catalog role is its own row",
+      res["/api/management/v1/catalogs/c1/catalog-roles/reader"] ~= nil, true)
+check("assignment keys to the PRINCIPAL role",
+      res["/api/management/v1/principal-roles/pr1"] and
+      res["/api/management/v1/principal-roles/pr1"].requests, 2)
+check("  and its kind",                 res["/api/management/v1/principal-roles/pr1"] and
+      res["/api/management/v1/principal-roles/pr1"].resource_kind, "principal-role")
+check("no __authorization__ row",       res["__authorization__"], "nil")
+check("principal-roles collection",     res["/api/management/v1/principal-roles"] and
+      res["/api/management/v1/principal-roles"].resource_kind, "collection")
+check("principal's role list is its own key",
+      res["/api/management/v1/principals/p1/principal-roles"] ~= nil, true)
+check("plain principal stays management", res["/api/management/v1/principals/p1"] and
+      res["/api/management/v1/principals/p1"].resource_kind, "management")
 check("sum(resource) == seen-parse", sr, sum.access_seen - sum.parse_errors)
 check("sum(principal) == seen-parse", sp, sum.access_seen - sum.parse_errors)
 check("schema_version", sum.schema_version, 3)

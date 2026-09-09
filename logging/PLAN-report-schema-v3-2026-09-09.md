@@ -402,3 +402,75 @@ every window.
    auth_denied** — some of which are authz. Under real v3 those move into `__authorization__`.
    **So the live authz row will show more errors and denials than the table above** — which is
    precisely the blind spot the forced-create change exists to close.
+
+---
+
+# ROLLED BACK: no `__authorization__` fold. Grants key to their catalog role.
+
+Kade, 2026-09-09: *roll this back so I can see which role was granted what on which catalog;
+instead summarise privilege requests per catalog role.*
+
+The fold is removed. `AUTHZ_PATTERNS`, `is_authz`, the `__authorization__` key and the forced-create
+special case are all gone.
+
+## The mechanism — no new machinery at all
+
+`classify` already returns the **matched span** as the resource key. So a rule that stops at the
+role makes everything deeper fold into that role's row automatically, exactly as the existing table
+rule folds sub-paths into a table:
+
+```lua
+{ kind = "principal-role", pattern = "^.-/principal%-roles/[^/]+" },
+{ kind = "collection",     pattern = "^.-/principal%-roles$" },
+{ kind = "catalog-role",   pattern = "^.-/catalog%-roles/[^/]+" },
+{ kind = "collection",     pattern = "^.-/catalog%-roles$" },
+```
+
+**`writes` on a `catalog-role` row is the number of privileges granted in that window.** `reads` are
+grant listings plus reads of the role itself. Principal-role rules are ordered first so
+`/principal-roles/{pr}/catalog-roles/{cat}` keys to the **principal** role being assigned to, not to
+the catalog role.
+
+## Measured on the real export
+
+| kind | resource | req | rd | wr | err | bytes |
+|---|---|---|---|---|---|---|
+| **catalog-role** | `…/catalog-roles/{id}_shared` | **51** | 25 | **26** | 0 | 16,205 |
+| principal-role | `/principal-roles/{id}_pr` | 5 | 2 | 3 | 1 | 475 |
+| collection | `…/catalog-roles` | 5 | 3 | 2 | 0 | 1,109 |
+| collection | `/principal-roles` | 4 | 1 | 3 | 0 | 170,972 |
+| catalog-role | `…/catalog-roles/catalog_admin` | 4 | 2 | 2 | 0 | 304 |
+| catalog-role | `…/catalog-roles/{id}_cr` | 4 | 2 | 2 | 0 | 74 |
+| principal-role | `/principal-roles/{id}_prole` | 2 | 0 | 2 | 0 | 0 |
+| | **total role traffic** | **80** | 35 | 45 | 1 | 189,139 |
+
+The `_shared` catalog role is the one the manager is describing: **51 requests on it, of which 26
+were writes — the privilege grants — and 25 were listings.** Same 80 requests as the fold covered,
+now attributable per role.
+
+## ⚠ The cost of rolling back, and it is real
+
+The fold made `__authorization__` the one key that bypassed `create=false`, so a **denied** grant
+was recorded there. Per-role keys cannot take that shortcut — the guard exists to stop a client
+walking invented role names from filling the key space, and role names are now unbounded input.
+
+So with the rollback: **a 403 on a catalog role that had no successful request in the same 30s
+window lands in `__other__`, with no role attribution.** "Which role was granted what" is now
+answerable; **"which role was DENIED what" is not**, unless that role also succeeded at something
+in the same window.
+
+That is finding C (`§C`) landing squarely on the case the manager cares about. Options, none applied:
+
+- allow creation for `catalog-role` / `principal-role` kinds only, capped separately — bounded by
+  the number of real roles, and these are the security-relevant rows;
+- split `__other__` into `__other__` and `__errors_unattributed__` so the blind spot is at least
+  measurable;
+- leave it, and read denials from the individual records in `polaris-logs-*`, which rule 3 keeps in
+  full.
+
+## Verified
+
+`test-schema-v3.lua`, 26 assertions, all passing: three grants plus one CRUD read on one catalog
+role give `requests 4 / writes 3 / reads 1`, `last_write_bytes` is the last grant, no separate
+`/grants` row exists, a second catalog role is a separate row, the assignment path keys to the
+principal role, no `__authorization__` row remains, and both margin invariants are exact.

@@ -44,7 +44,7 @@ agg on `window_start` — groups one window.
 | field | type | meaning |
 |---|---|---|
 | `resource` | string | the matched path span, or `__other__` beyond the cap. |
-| `resource_kind` | string | `table` \| `view` \| `collection` \| `namespace` \| `auth` \| `config` \| `management` \| `other`. **v3** added `authorization` (all role/grant traffic, folded into one `__authorization__` row), `auth` (`/oauth/tokens`), `config` (`/v1/config`), and rules routing `tables/rename` -> table, `views/rename` -> view, `namespaces/{ns}/properties` -> namespace. These set the **kind only** — `reads`/`writes` still come from the HTTP method, so `POST /properties` is a write. |
+| `resource_kind` | string | `table` \| `view` \| `collection` \| `namespace` \| `auth` \| `config` \| `management` \| `other`. **v3** added `catalog-role`, `principal-role`, `auth` (`/oauth/tokens`), `config` (`/v1/config`), and rules routing `tables/rename` -> table, `views/rename` -> view, `namespaces/{ns}/properties` -> namespace. These set the **kind only** — `reads`/`writes` still come from the HTTP method, so `POST /properties` is a write. |
 | `requests` `reads` `writes` `errors` | int | reads = GET\|HEAD, writes = POST\|PUT\|DELETE\|PATCH, errors = status ≥ 400. ⚠ `errors` **overlaps** reads/writes and the 4xx/5xx split — never sum them together. |
 | `errors_4xx` `errors_5xx` `auth_denied` | int | as above; `auth_denied` overlaps `errors_4xx`. |
 | `response_bytes` | int | **SUM over the window.** |
@@ -89,12 +89,12 @@ exactly that empty string, and a fresh daily index very often opens on an idle w
 field. It is a real population, not missing data: a sample row carried 9 requests and 1
 `auth_denied`. Deliberately **not renamed** — every stored document and existing query uses `-`.
 
-**3a. `__authorization__` is a fold, not a resource.** v3 collapses every path containing
-`/principal-roles`, `/catalog-roles` or `/grants` into a single row with kind `authorization`.
-On real data that is **16 distinct paths, 80 requests -> 1 row**. Per-role detail is deliberately
-gone; `requests`/`reads`/`writes`/`errors`/`auth_denied` for the whole authz surface remain.
-It is the one key that bypasses the `create=false` guard, so **a denied grant lands here rather
-than in `__other__`.**
+**3a. Grants fold into the role they are granted on.** `classify` returns the **matched span** as
+the resource key, so a rule that stops at the role makes everything deeper fold into that role's
+row. `/catalogs/{cat}/catalog-roles/{cr}/grants` keys to `/catalogs/{cat}/catalog-roles/{cr}`, and
+**`writes` on that row is the number of privileges granted in the window**; `reads` are grant
+listings plus role reads. Principal-role rules are ordered first, so
+`/principal-roles/{pr}/catalog-roles/{cat}` keys to the *principal* role being assigned to.
 
 **3c. `__other__` is mostly ERRORS, not overflow.** `touch_resource(key, kind, not is_error)` means
 an errored request whose resource is not *already* in the window's map gets no row of its own and
