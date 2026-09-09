@@ -706,3 +706,52 @@ landed parsed.
 3. Remove all five probes. Probe 5 now duplicates tier 2's tail exactly — the identical 2360.8
    B/rec proves it — so it is pure duplicate load and its `fb-heartbeat-*` writes are waste.
 4. `#18`, `#19` untouched. Then the 1800/30 revert as the cutover's final gate.
+
+---
+
+## Reading C: tier 2 IS parsing. The mixed bucket is the roll, not a partial failure.
+
+```
+older     24,873 docs   loggerName=0       log=24,873
+last_10m   9,333 docs   loggerName=4,403   log=4,930
+```
+
+`4,403 + 4,930 = 9,333` **exactly**. Every document carries one key or the other — none has both,
+none has neither. That is a clean bimodal split, which is the signature of a **cutover instant**;
+a partial failure would scatter, with some records parsed and some not for reasons unrelated to
+time. The 10-minute window simply straddles the roll.
+
+Corroborated from the other side: `polaris_cri_unwrap` has processed **4,542 records since the
+restart** at a **6.97 B/rec** delta, and the parsed bucket holds **4,403 documents**. Those are the
+same records. **The parsed half is the post-roll half.**
+
+`older` staying 100% raw is correct and permanent — those 24,873 documents predate the fix and
+nothing rewrites them. They age out under the 30d policy.
+
+So tier 2 now: parses, applies policy v3, and stores `loggerName` as a field. Three independent
+instruments agree — the delta (6.97, working), reading B (`heartbeat.tail` 9,169/9,169), and
+reading C's post-roll bucket.
+
+### Two script defects fixed
+
+1. **A shell bug in my own gate.** The PASS line used backticks inside a double-quoted `echo`, so
+   the shell tried to execute `older` and printed `line 75: older: command not found`. Harmless to
+   the measurement, but it corrupted the one line that tells the reader how to interpret the
+   output. Removed.
+2. **A single 10-minute bucket cannot distinguish a transition from a partial failure** — it just
+   showed "mixed" and left the reader to guess, which is the failure mode this whole exercise keeps
+   hitting. Reading C now splits into four buckets (`>10m`, `10-5m`, `5-2m`, `<2m`) so the
+   transition is *visible* rather than inferred, and the instruction is to read the newest bucket
+   only.
+
+### Now genuinely open
+
+1. **Re-run reading C** and confirm the newest bucket is `loggerName>0, log=0`. Expected to pass —
+   but it has not been read yet, and this session has been wrong about a confident expectation
+   before.
+2. The **§3 re-measurement**. Stdout `access_seen` should now equal the file's on matched windows.
+   `fb-polaris-shipper` stays installed until it does. This is the measurement that expires.
+3. **Remove all five probes.** Probe 5 is now an exact duplicate of tier 2's tail — identical
+   record counts and identical B/rec, twice over — so it is pure duplicate read load and its
+   `fb-heartbeat-*` writes are waste.
+4. `#18`, `#19`, then the 1800/30 revert as the cutover's final gate.

@@ -66,11 +66,19 @@ if [ -n "${OS_URL:-}" ] && [ -n "${OS_PASSWORD:-}" ]; then
   curl -sS -k --max-time 20 -u "${OS_USER}:${OS_PASSWORD}" -H 'Content-Type: application/json' \
     "${OS_URL}/polaris-logs-*/_search" -d '{"size":0,"aggs":{
       "when":{"date_range":{"field":"@timestamp","ranges":[
-                {"key":"older","to":"now-10m"},{"key":"last_10m","from":"now-10m"}]},
+                {"key":"1_older_than_10m","to":"now-10m"},
+                {"key":"2_10m_to_5m","from":"now-10m","to":"now-5m"},
+                {"key":"3_5m_to_2m","from":"now-5m","to":"now-2m"},
+                {"key":"4_last_2m","from":"now-2m"}]},
         "aggs":{"parsed":{"filter":{"exists":{"field":"loggerName"}}},
                 "raw":{"filter":{"exists":{"field":"log"}}}}}}}' 2>/dev/null \
   | jq -r '.aggregations.when.buckets[]?
       | "  \(.key): \(.doc_count) docs   loggerName=\(.parsed.doc_count)   log=\(.raw.doc_count)"' \
   || echo "  (no answer)"
-  echo "  PASS = last_10m has loggerName>0 and log=0. `older` staying raw is expected and correct."
+  echo
+  echo "  Read the LAST bucket only. A roll part-way through a window splits it, so a mixed"
+  echo "  bucket is a transition, not a failure -- the buckets exist to show which."
+  echo "  PASS = the newest bucket has loggerName>0 and log=0."
+  echo "  Older buckets staying raw is expected and correct: those documents predate the fix"
+  echo "  and nothing rewrites them. They age out with the 30d policy."
 fi
