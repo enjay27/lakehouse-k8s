@@ -38,6 +38,15 @@ failing). **The next action is `helm upgrade` + the gate**, both in
 [`PLAN-tier2-parse-fault`](logging/PLAN-tier2-parse-fault-2026-09-09.md) §A — and the gate query
 **must be restricted to docs indexed after the rollout**, or 5,030 existing raw docs mask it.
 
+**The gate FAILED on first read — `has_logger 0`, `has_raw_log 4994` — but it is NOT known
+whether the upgrade had run**, so that is not yet evidence against the fix. Next flow is a
+**heartbeat probe** ([`PLAN-heartbeat-probe`](logging/PLAN-heartbeat-probe-2026-09-09.md), written
+into the values file, not deployed): two dummy ticks every 30s on `heartbeat.*`, one flat control
+and one feeding `polaris_stdout_json` a CRI-shaped record. It splits "parser filter is broken"
+from "the real records do not look like we think" **without Polaris in the path**, and it retests
+Fault A without waiting for traffic. Prefer its filter-metrics gate — byte delta on
+`hb_parse_probe` — over doc counts, which old records mask.
+
 **Cutover step 7 and the shipper uninstall stay BLOCKED** until the re-measured `access_seen`
 matches. The PVC path stays; the fallback is specified at `fb91949`. Two more live tier 1 faults
 found in the same pod log and NOT touched — `#18` `Id_Key sequence` drops every record it should

@@ -732,6 +732,31 @@ config:
         Interval_Sec      5
         Interval_NSec     0
 
+    # ══ HEARTBEAT PROBE — isolates the parser from Polaris. REMOVE when done. ══
+    # Tags are heartbeat.*, which NO existing Match catches: tier 1 is kube.*,
+    # tier 2 polaris.logs, tier 3 polaris.report, the noise filter polaris.*.
+    # Interval_Sec here is a PROBE CADENCE. It has nothing to do with
+    # WINDOW_SECONDS and must not be touched by the 1800/30 revert.
+    [INPUT]
+        Name              dummy
+        Alias             hb_raw_tick
+        Tag               heartbeat.raw
+        Dummy             {"probe":"raw"}
+        Rate              1
+        Interval_Sec      30
+
+    # The experiment. Same SHAPE the tail produces for Polaris -- the JSON as a
+    # STRING under `log` -- but from a source with no connection to the tail
+    # input, the CRI multiline parser, Polaris, or its traffic. Nine fractional
+    # digits and a literal Z are deliberate: that is what the real records carry.
+    [INPUT]
+        Name              dummy
+        Alias             hb_parse_tick
+        Tag               heartbeat.parse
+        Dummy             {"probe":"parse","log":"{\"timestamp\":\"2026-09-09T05:07:07.697818537Z\",\"loggerName\":\"io.quarkus.http.access-log\",\"level\":\"INFO\",\"message\":\"probe\"}"}
+        Rate              1
+        Interval_Sec      30
+
   # ── Filters ────────────────────────────────────────────────
   filters: |
     # Enrich with K8s metadata
@@ -841,6 +866,20 @@ config:
         Remove_key    processId
         Remove_key    logtag
         Remove_key    time
+
+    # ══ HEARTBEAT PROBE — the experiment. REMOVE when done. ══════════════════
+    # Feeds polaris_stdout_json a known-good CRI-shaped record. loggerName
+    # present as a FIELD downstream => the parser filter works and the fault is
+    # in what the real records look like when they reach it. `log` still a
+    # string => the parser filter is inert in this build, reproduced without
+    # Polaris in the path.
+    [FILTER]
+        Name          parser
+        Alias         hb_parse_probe
+        Match         heartbeat.parse
+        Key_Name      log
+        Parser        polaris_stdout_json
+        Reserve_Data  On
 
   # ── Custom parsers ─────────────────────────────────────────
   customParsers: |
@@ -1001,6 +1040,26 @@ config:
         Generate_ID         On
         Trace_Error         On
         storage.total_limit_size 200M
+
+    # ══ HEARTBEAT PROBE — its own index, 2 records/30s. REMOVE when done. ═════
+    [OUTPUT]
+        Name                opensearch
+        Match               heartbeat.*
+        Host                192.168.194.1
+        Port                9200
+        HTTP_User           ${OS_USER}
+        HTTP_Passwd         ${OS_PASSWORD}
+        Logstash_Format     On
+        Logstash_Prefix     fb-heartbeat
+        Logstash_DateFormat %Y.%m.%d
+        Include_Tag_Key     On
+        Tag_Key             flb_tag
+        Retry_Limit         3
+        tls                 On
+        tls.verify          Off
+        Suppress_Type_Name  On
+        Generate_ID         On
+        Trace_Error         On
 
 # ── Liveness probe ───────────────────────────────────────────
 livenessProbe:
