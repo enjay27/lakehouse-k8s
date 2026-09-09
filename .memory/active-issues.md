@@ -628,7 +628,23 @@ curl -sk -u "$OS_USER:$OS_PASSWORD" -H 'Content-Type: application/json' \
 `#16`'s 2x-inflation warning is void, along with the dedup instruction in
 `PLAN-opensearch-cutover` §7.
 
-**#19 — Tier 1 is LOSING CHUNKS: the OpenSearch response exceeds the output's buffer. OPEN, LIVE.**
+**#19 — RESOLVED 2026-09-09 (REVISION 10).** `Buffer_Size False` on all four OpenSearch outputs.
+**Gate passed against a real baseline: 7 -> 0** occurrences of
+`cannot increase buffer|cannot be retried` in a 10-minute window, both windows containing a
+notebook run so the load is comparable. A zero measured while idle would have proved nothing;
+the 7 is what made this a gate.
+
+**One thing this DID NOT settle, and cannot any more.** Whether the historical failures lost
+records or duplicated them is now unanswerable: the fix removed the failures, so the window that
+was both *loaded* and *failing* no longer exists. The dedup ratio measured after the fix, under
+load — 13,737 documents over 13,737 distinct `sequence`, ratio **1.000**, busiest buckets one
+document each — says the steady state is clean, which is what matters going forward. It says
+nothing about what happened during the four dropped chunks on 2026-09-09. Do not cite it as
+evidence those chunks did not duplicate.
+
+*Original entry follows.*
+
+**#19 (original) — Tier 1 is LOSING CHUNKS: the OpenSearch response exceeds the output's buffer.**
 ```
 [warn ] [http_client] cannot increase buffer: current=512000 requested=544768 max=512000
 [warn ] [output:opensearch:opensearch.1] http_do=-1 URI=/_bulk
@@ -693,3 +709,21 @@ kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=fluent-bit \
 
 Durable fix either way: a `checksum/config` pod annotation so a values change always rolls the
 pods, instead of "deployed" and "running" being two different facts nobody checks.
+
+**#23 — Two documents in a post-fix window still carry a raw `log`. OPEN (low), unexplained.**
+2026-09-09, `polaris-logs-*` split by time: the newest bucket is 3,575/3,575 parsed with **0** raw,
+but the bucket before it holds **2 raw documents out of 4,576 — 0.04%**. Not a failure of the
+`multiline.parser` fix, which is working on everything else in the same window, and far too rare to
+be a parser regression.
+
+Most likely a Polaris stdout line that **is not JSON** — a JVM or container message, or a
+stack-trace fragment the multiline parser did not join — which `polaris_stdout_json` correctly
+declines, leaving `log` intact via `Reserve_Data On`. That would be right behaviour, not a bug.
+**Unverified**; nobody has looked at the two documents. One query names them:
+```bash
+curl -sk -u "$OS_USER:$OS_PASSWORD" -H 'Content-Type: application/json' \
+  "$OS_URL/polaris-logs-*/_search?pretty" -d '{"size":5,"query":{"bool":{"filter":[
+     {"exists":{"field":"log"}},{"range":{"@timestamp":{"gte":"now-30m"}}}]}}}'
+```
+Worth knowing because if they are NOT stray non-JSON lines, the tier 2 parse has a rare failure
+mode and the 0.04% is the only place it shows.
