@@ -32,7 +32,18 @@ seqs () {  # $1 = index pattern
 }
 t1=$(seqs 'k8s-logs-*'); t2=$(seqs 'polaris-logs-*')
 
-python3 - "$t1" "$t2" "$MINS" "$CAP" <<'PY'
+# The difference is not merely "expected" -- it is PREDICTED. Policy v3 keeps every
+# NON-access-log record, so the only records tier 1 can hold and tier 2 lack are
+# access-log lines the policy COUNTED instead of storing. That number is reported by
+# the pipeline itself as `access_counted`, so the gap is checkable rather than assumed.
+rep=$("${OS[@]}" "${OS_URL}/polaris-report-*/_search" -d "{\"size\":0,
+  \"query\":{\"bool\":{\"filter\":[{\"match\":{\"report_type\":\"summary\"}},
+                                   {\"range\":{\"@timestamp\":{\"gte\":\"now-${MINS}m\"}}}]}},
+  \"aggs\":{\"counted\":{\"sum\":{\"field\":\"access_counted\"}},
+            \"n\":{\"value_count\":{\"field\":\"access_counted\"}},
+            \"seen\":{\"sum\":{\"field\":\"access_seen\"}}}}" 2>/dev/null)
+
+python3 - "$t1" "$t2" "$MINS" "$CAP" "$rep" <<'PY'
 import json, sys
 t1, t2, mins, cap = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 def load(raw, name):
@@ -63,6 +74,30 @@ print()
 if not missing:
     print("  PASS: tier 2 is a strict subset of tier 1. Every record tier 2 stored,")
     print("        tier 1 also saw. The two tails agree about what Polaris wrote.")
+    # Account for the gap rather than calling it expected.
+    try:
+        a = json.loads(sys.argv[5])["aggregations"]
+        counted, nrows = int(a["counted"]["value"]), int(a["n"]["value"])
+    except Exception:
+        counted, nrows = None, 0
+    print()
+    if not nrows:
+        print("  Gap unaccounted: no summary rows in this window, so `access_counted` could not")
+        print("  be read. The 'expected' above is an assumption, not a measurement.")
+    else:
+        d = len(extra)
+        print(f"  ACCOUNTING FOR THE GAP: policy v3 keeps every NON-access-log record, so the")
+        print(f"  only records tier 1 can hold and tier 2 lack are access-log lines the policy")
+        print(f"  COUNTED instead of storing.")
+        print(f"    tier1-only records : {d}")
+        print(f"    access_counted     : {counted}   (summed over {nrows} summary rows)")
+        if counted and abs(d - counted) <= max(3, 0.05 * counted):
+            print(f"  => accounted for. The gap IS the counted-only traffic, not loss.")
+        else:
+            print(f"  => NOT accounted for: {d - counted:+d} unexplained. The report window and the")
+            print(f"     log window do not align exactly, so a small residue is normal -- a large")
+            print(f"     one is not. Re-run over a window that fully contains one traffic burst")
+            print(f"     before treating this as a fault.")
 else:
     print(f"  FAIL: {len(missing)} sequence value(s) exist in tier 2 and not in tier 1.")
     print(f"        sample: {sorted(missing)[:10]}")

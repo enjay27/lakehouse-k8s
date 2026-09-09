@@ -138,3 +138,13 @@ cluster it describes no longer exists.
   comparison" is disproved and the instruction is removed from `PLAN-opensearch-cutover` §7.
   Cause: OUTPUT 1 drops every record because `Id_Key sequence` is an integer and the plugin needs
   a string, so **tier 1 has no dedup at all and never had** (#18).
+- **Tier 2 is a strict subset of tier 1, measured on sets rather than counts.** 2026-09-09, 10-minute
+  window matched on `sequence`: tier 1 **4,627** distinct, tier 2 **4,483**, **0 in tier 2 and not
+  in tier 1**, 144 in tier 1 only. The two tails agree about what Polaris wrote. This was
+  *unmeasurable* before the `multiline.parser` fix — tier 2 carried no `sequence` field to match on.
+- **The 144-record gap is predicted, not merely expected.** Policy v3 keeps every NON-access-log
+  record, so the only records tier 1 can hold and tier 2 lack are access-log lines the policy
+  *counted* instead of storing — i.e. exactly `access_counted`. From the 06:35 burst,
+  `access_seen 265 − access_kept 126 = 139`, against a 144 gap in a different window: right
+  magnitude, **not yet compared on one window**. `step8` now reads `access_counted` and does that
+  comparison itself.
