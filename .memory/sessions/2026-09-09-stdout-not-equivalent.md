@@ -635,3 +635,74 @@ The ratio test was a different, weaker construction that should not have been gi
 3. Then, and only then, the §3 re-measurement: stdout `access_seen` should finally equal the
    file's on matched windows. `fb-polaris-shipper` stays installed until it does.
 4. Then remove all five probes — they are scaffolding, and probe 5 duplicates tier 2's tail.
+
+---
+
+## The fix is working — and my "9.00" gate value was arithmetic I got wrong
+
+After the roll, on 3,703 records:
+
+```
+unwrap -> rename = 6.98 B/rec      (was 12.00, stable across several reads on ~5,000 records)
+hb_tail_probe      3703 rec  2360.8 B/rec
+polaris_cri_unwrap 3703 rec  2360.8 B/rec   <- IDENTICAL, to the tenth
+```
+
+**The two are now byte-identical because they are now the same pipeline** — same files, same
+multiline parser, same parser filter. That equality is itself a check: two independent tails of the
+same source agreeing exactly is what a working, deterministic chain looks like.
+
+### Where 6.98 comes from, and why 9.00 was never right
+
+`polaris_key_rename` does three things per record:
+
+| | |
+|---|---|
+| `Add app polaris` | `app` (1+3) + `polaris` (1+7) = **+12** |
+| `Rename message _msg` | key `message` 8 B -> `_msg` 5 B = **-3** |
+| `Rename timestamp _time` | key `timestamp` 10 B -> `_time` 6 B = **-4** |
+| subtotal | **+5** |
+
+msgpack maps: `fixmap` holds ≤15 entries in a 1-byte header; 16+ needs `map16`, 3 bytes. A parsed
+record sitting at 15 entries crosses to 16 when `app` is added: **+2**. So a *working* delta is
+**5.00 or 7.00** depending on the record's key count. Measured **6.98** — the working value, with
+a ~0.3% residue from records of other shapes.
+
+**I had published 9.00**, in the step5/step6 legends and in several commits, from writing
+`message -> _msg` as **+1** when it is **-3**. Wrong number, and it was the stated PASS criterion.
+Had the delta landed on 9.00 I would have called a broken chain fixed.
+
+What survives untouched: **12.00 as the FAILING value.** That is `app` alone with neither rename
+firing, it needs no key-count assumption, and it is what the entire diagnosis rested on. It was
+also confirmed independently by reading B. The error was in the pass threshold, not the fail one.
+
+### Two instrument corrections in two commits
+
+`35c5e5b` retired the ratio heuristic's verdict after it read `1.015` on a chain that had parsed
+4,314 of 4,314. This one corrects the delta legend. Both were gates I wrote, both stated a
+threshold more confidently than the arithmetic behind them, and in both cases the instrument that
+needed no model — reading B, the stored documents — was right. `step6` now carries no verdict on
+the ratio at all and the delta legend reads `12.00 = FAILING; 5.00-7.00 = working`.
+
+### READING C added — the gate this script never had
+
+`step6` checked `fb-heartbeat-*` and never once looked at `polaris-logs-*`, the index the whole
+cutover exists to fill. It now splits that index by time rather than filtering it, because the
+~5,000 pre-fix raw documents share it and would mask the result:
+
+```
+older     -> expected to stay raw. That is correct, not a failure.
+last_10m  -> PASS = loggerName > 0 and log == 0
+```
+
+Only reading C settles tier 2. The delta says the renames fire; reading C says the documents
+landed parsed.
+
+### Still open
+
+1. Reading C on `polaris-logs-*` — the actual gate.
+2. The §3 re-measurement: stdout `access_seen` vs the file's, on matched windows.
+   `fb-polaris-shipper` stays installed until they agree.
+3. Remove all five probes. Probe 5 now duplicates tier 2's tail exactly — the identical 2360.8
+   B/rec proves it — so it is pure duplicate load and its `fb-heartbeat-*` writes are waste.
+4. `#18`, `#19` untouched. Then the 1800/30 revert as the cutover's final gate.

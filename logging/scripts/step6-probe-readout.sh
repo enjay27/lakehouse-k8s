@@ -33,14 +33,18 @@ jq -r '.filter as $f
   | "  hb_tail_probe       \($hn) rec   \(if $hn>0 then ($f.hb_tail_probe.bytes/$hn*10|round/10) else 0 end) B/rec   [multiline.parser docker, cri]",
     "  polaris_cri_unwrap  \($pn) rec   \(if $pn>0 then ($f.polaris_cri_unwrap.bytes/$pn*10|round/10) else 0 end) B/rec   [multiline.parser cri]",
     (if $hn>0 and $pn>0 then
-      "  ratio \(($f.hb_tail_probe.bytes/$hn) / ($f.polaris_cri_unwrap.bytes/$pn) * 1000 | round / 1000)   <1.0 by ~10% => probe 5 PARSED, the cri multiline parser is the fault"
+      "  ratio \(($f.hb_tail_probe.bytes/$hn) / ($f.polaris_cri_unwrap.bytes/$pn) * 1000 | round / 1000)   NO VERDICT -- see below"
      else "  (need traffic on BOTH -- neither has records yet)" end)' <<<"$m"
+echo "  This ratio carries NO verdict. It was wrong once already: it read 1.015 while probe 5"
+echo "  had in fact parsed every one of 4,314 records. The two inputs emit different envelopes"
+echo "  and the samples are different sizes, so the per-record averages were never comparable."
+echo "  Judge by READING B below, or by the delta above. Kept only as a sanity display."
 
 echo
 echo "== the real chain delta =="
 jq -r '.filter as $f | ($f.polaris_key_rename.bytes - $f.polaris_cri_unwrap.bytes) as $d
   | ($f.polaris_cri_unwrap.records) as $n
-  | if $n>0 then "  unwrap -> rename = \($d) B over \($n) rec = \($d/$n*100|round/100) B/rec   (9.00 working / 12.00 failing)"
+  | if $n>0 then "  unwrap -> rename = \($d) B over \($n) rec = \($d/$n*100|round/100) B/rec   (12.00 = FAILING, neither rename fires; 5.00-7.00 = working)"
     else "  (no Polaris traffic since the last restart)" end' <<<"$m"
 
 if [ -n "${OS_URL:-}" ] && [ -n "${OS_PASSWORD:-}" ]; then
@@ -55,4 +59,18 @@ if [ -n "${OS_URL:-}" ] && [ -n "${OS_PASSWORD:-}" ]; then
       | "  \(.key): \(.doc_count) docs   loggerName=\(.parsed.doc_count)   log=\(.raw.doc_count)"' \
   || echo "  (no answer)"
   echo "  heartbeat.tail with loggerName>0 and log=0 => probe 5 PARSED. This is the unambiguous read."
+
+  echo
+  echo "== READING C: THE ACTUAL GATE -- polaris-logs-* documents, split by time =="
+  echo "   Old raw docs sit in the same index and will mask a fix. Split, do not filter."
+  curl -sS -k --max-time 20 -u "${OS_USER}:${OS_PASSWORD}" -H 'Content-Type: application/json' \
+    "${OS_URL}/polaris-logs-*/_search" -d '{"size":0,"aggs":{
+      "when":{"date_range":{"field":"@timestamp","ranges":[
+                {"key":"older","to":"now-10m"},{"key":"last_10m","from":"now-10m"}]},
+        "aggs":{"parsed":{"filter":{"exists":{"field":"loggerName"}}},
+                "raw":{"filter":{"exists":{"field":"log"}}}}}}}' 2>/dev/null \
+  | jq -r '.aggregations.when.buckets[]?
+      | "  \(.key): \(.doc_count) docs   loggerName=\(.parsed.doc_count)   log=\(.raw.doc_count)"' \
+  || echo "  (no answer)"
+  echo "  PASS = last_10m has loggerName>0 and log=0. `older` staying raw is expected and correct."
 fi
