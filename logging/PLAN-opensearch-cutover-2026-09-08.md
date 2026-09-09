@@ -230,6 +230,7 @@ them at 400M / 400M / 200M.
 | **3** | `helm upgrade`; **read the pod log first** | no parser/Lua rejection, no crashloop; `Trace_Error` shows no per-item errors; **`polaris_access_log.lua` sha unchanged** vs the deployed ConfigMap |
 | **4** | **Skip one full window**, then check | see below |
 | **5** | Remove the `http` output; restore `storage.total_limit_size` | render grep `Name  *http` == 0 |
+| **6** | **LAST — revert `WINDOW_SECONDS` 30→1800 and `Interval_Sec` 5→30**, and verify the pipeline at production cadence | see §4.1. Nothing else in this plan runs after it |
 
 **Render greps for step 2** — `helm upgrade --install … --dry-run --debug > /tmp/render.txt`:
 
@@ -256,6 +257,40 @@ grep -c 'Trace_Error'               /tmp/render.txt   # 2   (3.7)
 - `http_status` answers a numeric range query — the mapping locked numeric.
 - A record with `exception` and a long `_msg` arrived whole (3.5).
 - `fluentbit_output_proc_records_total` for the window ≈ what landed (3.7).
+
+---
+
+### 4.1 Step 6 — the revert is the final verification, not cleanup
+
+**Kade, 2026-09-09: the 30s window stays until every other step is done.** It is what makes each
+verification round cost ~2 minutes instead of ~90, so reverting early would tax steps 3–5 for no
+gain. Step 6 is therefore the **last** step of this change, and it is a *gate*, not tidying: it is
+the only point at which the pipeline is observed at the cadence it will actually run.
+
+Reverting earlier is also what the earlier draft got wrong by listing it beside the credential
+rotation — that read as "do it soon". It is the opposite: **do it last.**
+
+**What step 6 must prove**, at 1800/30, over at least two consecutive windows:
+
+- a report is emitted on the **:00 / :30 wall-clock boundary**, and `report_seq` increments by
+  exactly 1 across the pair — a gap means a boundary was missed at the new tick ratio;
+- `window_seconds` on the row reads **1800** — the deployed Lua, not the file's intent;
+- `max_record_time − min_record_time` ≤ `window_seconds` — the same replay detector as step 4,
+  now over a window 60× longer;
+- `access_seen` for a window is **~60× the 30s figure** for comparable traffic. A number far below
+  that is the tick ratio silently dropping boundaries (`Interval_Sec 30` against a 1800s window is
+  the intended 60:1; the current 5:30 is 6:1).
+
+**Ride the one change that has been waiting on this revert:** `resources_other` /
+`resources_other_distinct` into the summary `_msg`. They are in the JSON and absent from the
+human-readable sentence. `shipper-v3-upgrade-runbook.md` is the procedure.
+
+**One hygiene item the revert does not fix by itself.** Steps 3–5 write report rows into
+`polaris-report-*` at 30s density (~138k/day against ~2.3k). Applying tier 3's long ISM policy
+afterwards governs *deletion*, not what is already written — so the dense verification band stays
+for the policy's lifetime. It is verification data, not production data: **delete the
+`polaris-report-*` indices created during steps 3–5 after the revert**, and let clean ones be
+created at 1800s. Cheap now, permanent if skipped.
 
 ---
 
@@ -312,10 +347,12 @@ Owned downstream, listed so nothing is assumed done:
   `type_int_key` fields, strings to `keyword`, `text` only for `_msg`, `date` or `date_nanos` for
   `_time`. **They must exist before the first document**, because OpenSearch locks a field's type
   on first write and a template written afterwards does nothing to the index already created.
-- **ISM / retention** — `polaris-logs-*` 30d, `polaris-report-*` 365d. **One sequencing note that
-  is ours:** the temporary **30s window** is still live (~138k report docs/day against ~2.3k at
-  1800s), so revert to 1800/30 **before** the long policy is applied or the density is baked in for
-  a year. `shipper-v3-upgrade-runbook.md`.
+- **ISM / retention** — `polaris-logs-*` 30d, `polaris-report-*` 365d. **Blocked on our step 6,
+  and that is a hard ordering, not a preference:** the temporary 30s window stays live through
+  steps 3–5 because it makes each verification round ~2 minutes instead of ~90, and it produces
+  ~138k report docs/day against ~2.3k at 1800s. **Do not apply tier 3's long policy until step 6
+  has landed** — and note the policy governs deletion, not what is already written, so the
+  verification band must be dropped by hand (§4.1).
 - **Query layer** — `.keyword` for aggregations; `_search` silently caps at 10,000 hits;
   OpenSearch returns `0.0` where LogsQL returned `NaN`, so pair every `sum` with `value_count`.
 - **`k8s-logs` double-write** (#16) — the DaemonSet's two outputs both match Polaris, so tier-1
