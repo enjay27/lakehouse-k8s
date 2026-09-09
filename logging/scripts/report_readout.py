@@ -17,15 +17,20 @@ def main(fh, out=sys.stdout):
         return 1
     hdr = f'  {"window_start":24} {"seen":>6} {"kept":>6} {"counted":>8} {"err":>5} {"skipped":>8}'
     print(hdr, file=out); print("  " + "-" * (len(hdr) - 2), file=out)
-    total = 0
-    def i(r, k): 
+    def i(r, k):
         try: return int(r.get(k, 0) or 0)
         except (TypeError, ValueError): return 0
-    for r in rows[:10]:
-        total += i(r, "access_seen")
+    # total over EVERY row, not just the printed ones. It previously accumulated
+    # inside the `rows[:10]` loop while the line below claimed to total them all,
+    # so a window with traffic outside the first ten reported 0.
+    total = sum(i(r, "access_seen") for r in rows)
+    for r in rows[:24]:
         print(f'  {str(r.get("window_start",""))[:24]:24} {i(r,"access_seen"):>6} '
               f'{i(r,"access_kept"):>6} {i(r,"access_counted"):>8} '
               f'{i(r,"errors_kept"):>5} {i(r,"windows_skipped"):>8}', file=out)
+    if len(rows) > 24:
+        print(f'  ... {len(rows)-24} older row(s) not shown; the total below covers all of them.',
+              file=out)
     print(f"\n  {len(rows)} summary row(s); access_seen totals {total}\n", file=out)
     print("  VERDICT:", file=out)
     if total == 0:

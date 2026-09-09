@@ -755,3 +755,52 @@ reading C's post-roll bucket.
    record counts and identical B/rec, twice over — so it is pure duplicate read load and its
    `fb-heartbeat-*` writes are waste.
 4. `#18`, `#19`, then the 1800/30 revert as the cutover's final gate.
+
+---
+
+## §3 still not measured — the two halves covered different windows
+
+The notebook ran and the shipper saw it clearly:
+
+```
+file-sourced (VictoriaLogs)     06:29:00Z seen 224 / kept 93     06:35:00Z seen 227 / kept 99
+                                06:29:30Z seen  44 / kept 31     06:35:30Z seen  38 / kept 27
+stdout-sourced (OpenSearch)     12 summary rows, 06:37:00Z - 06:41:30Z, all zero
+```
+
+**The windows do not overlap.** The OpenSearch half starts at 06:37; the traffic was at 06:29 and
+06:35. Zeros over a window with no traffic say nothing, and nothing here is evidence about stdout
+either way.
+
+### Why the OpenSearch half was short, and it is the nastiest instrument defect yet
+
+`step4`'s query was `{"size":30,"sort":[{"@timestamp":"desc"}]}` with the summary filter applied
+**client-side**, in `report_readout.py`. So it fetched the 30 most recent documents of *every*
+`report_type` and then kept whichever happened to be summaries.
+
+Table and principal rows **only exist when there was traffic**. So the more traffic a window
+carried, the more of the 30 slots went to non-summary rows, and the shorter the summary coverage
+became. The instrument's window contracts in proportion to the thing it exists to measure — and
+during the two idle runs earlier today it returned a comfortable 30 summaries spanning 15 minutes,
+which is exactly why the defect never showed itself until the run that mattered.
+
+Fixed: filter `report_type` **server-side** and raise the size to 60, giving 30 minutes of
+summaries regardless of how many other rows exist — matched to the VictoriaLogs range below it.
+`match` rather than `term` so it works whether the field is mapped text or keyword.
+
+### A second, older bug in the same file
+
+`report_readout.py` accumulated `total` **inside** its `rows[:10]` print loop while the line below
+announced `access_seen totals` for all rows. A window with traffic sitting outside the first ten
+reported zero. Both bugs predate this session; both would have mattered today. Now totals over
+every row, prints 24, and says how many it did not print.
+
+**Three of the four defects found in this sequence had the same shape:** an instrument that reads
+correctly while idle and misreads under load. `grep -c` over a one-line Lua, the ratio heuristic,
+and now a window that shrinks when traffic arrives.
+
+### The measurement is still available
+
+`fb-polaris-shipper` is installed, both report streams are live, and the notebook is repeatable.
+Re-run it and then `step4-report-readout.sh` **within a few minutes**, so the traffic windows fall
+inside both halves' ranges.

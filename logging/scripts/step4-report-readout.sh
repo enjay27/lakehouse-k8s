@@ -26,8 +26,16 @@ echo "    fact from 'no documents in the last 10 minutes'."
 
 echo
 echo "=== the last summary rows ==="
+# Filter to summary rows SERVER-side. With a bare size:30 the query returns the 30
+# most recent docs of EVERY report_type, so table and principal rows crowd out the
+# summaries -- and they only exist when there was traffic. The window therefore
+# SHRANK exactly when traffic appeared: on 2026-09-09 it returned 12 summaries
+# covering 06:37-06:41 while the traffic sat at 06:29 and 06:35, so the two sides
+# had no window in common and the comparison could not be made at all.
+# size 60 = 30 minutes at 30s windows, matching the VictoriaLogs range below.
+# `match` rather than `term` so it works whether report_type is mapped text or keyword.
 "${OS[@]}" -H 'Content-Type: application/json' "${OS_URL}/polaris-report-*/_search" \
-  -d '{"size":30,"sort":[{"@timestamp":"desc"}]}' > "$TMP" 2>/dev/null
+  -d '{"size":60,"query":{"match":{"report_type":"summary"}},"sort":[{"@timestamp":"desc"}]}' > "$TMP" 2>/dev/null
 python3 "$(dirname "$0")/report_readout.py" < "$TMP"
 
 if [ -n "${VL_URL:-}" ]; then
