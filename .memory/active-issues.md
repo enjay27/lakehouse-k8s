@@ -575,3 +575,32 @@ buffer, the flush fails with `http_do=-1`, `Retry_Limit 3` exhausts, and the chu
 every gate used so far: `k8s-logs` doc counts keep rising because most chunks still succeed.
 Candidate fix: raise or unbound `Buffer_Size` on the opensearch outputs (default 512K), and/or
 cut bulk size. NOT a cutover regression by evidence — no before/after measurement exists.
+
+**#20 — A `helm upgrade` may update the ConfigMap without restarting the pod, so committed config
+is not running config. SUSPECTED, not yet confirmed.** 2026-09-09: after `6dfa0d0` the filter map
+shows `hb_parse_probe: null` and `_cat/indices/fb-heartbeat-*` is empty — the heartbeat blocks are
+not in the running instance. Meanwhile `polaris_cri_unwrap`'s cumulative record counter went
+**5,030 -> 5,009**, and cumulative counters only decrease across a process restart, so the pod
+*has* restarted at some point. The fluent-bit chart does not necessarily stamp a
+`checksum/config` pod annotation, and **a DaemonSet does not roll on a ConfigMap change by
+itself** — so `helm upgrade` can report success while every pod keeps serving the previous config
+until something else restarts it.
+
+If true this is not a new fault, it is the explanation for an existing one: **Fault A's gate
+failure (`has_logger 0` after `4788294`) would mean the fix was never running when it was
+measured.** That must be settled before the fix is judged.
+
+Split it with:
+```bash
+helm -n datahub-hynix history benchmarks-fluent-bit | tail -3
+kubectl -n datahub-hynix get cm benchmarks-fluent-bit -o json \
+  | jq -r '.data["fluent-bit.conf"]' | grep -c heartbeat
+kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=fluent-bit \
+  -o custom-columns=NAME:.metadata.name,START:.status.startTime,RESTARTS:.status.containerStatuses[0].restartCount
+```
+- ConfigMap **contains** `heartbeat`, pod does not -> config deployed, pods never rolled.
+  `kubectl -n datahub-hynix rollout restart ds/benchmarks-fluent-bit`.
+- ConfigMap **lacks** it -> the upgrade did not run.
+
+Durable fix either way: a `checksum/config` pod annotation so a values change always rolls the
+pods, instead of "deployed" and "running" being two different facts nobody checks.
