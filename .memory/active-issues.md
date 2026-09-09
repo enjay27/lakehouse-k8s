@@ -640,8 +640,24 @@ node-wide k8s-logs sink. The `_bulk` **response** is larger than the plugin's 51
 buffer, the flush fails with `http_do=-1`, `Retry_Limit 3` exhausts, and the chunk is
 **discarded**. This is unacknowledged data loss on tier 1, happening now, and it is invisible to
 every gate used so far: `k8s-logs` doc counts keep rising because most chunks still succeed.
-Candidate fix: raise or unbound `Buffer_Size` on the opensearch outputs (default 512K), and/or
-cut bulk size. NOT a cutover regression by evidence — no before/after measurement exists.
+**FIX APPLIED 2026-09-09, NOT DEPLOYED:** `Buffer_Size False` on all four OpenSearch outputs.
+Plan, mechanism and gate: `logging/PLAN-bulk-response-buffer-2026-09-09.md`. Not a bulk-size
+reduction — that treats the symptom. Not a cutover regression by evidence; no before/after
+measurement exists.
+
+**`#18` AND `#19` COMPOSE, and it changes what `#19` costs.** The plugin cannot read the reply, so
+it does not know whether the batch was indexed. If it *was*, each retry writes it again — and tier
+1 has **no dedup at all** (`#18`: `Id_Key sequence` drops every record, so only OUTPUT 2 stores
+anything and `Generate_ID On` mints a fresh `_id` per attempt), giving up to 3 duplicate copies per
+failing chunk. If it *was not*, the records are lost when the chunk is discarded. Nothing
+distinguishes the two afterwards. So `#19` is not simply data loss: it is **an unbounded mixture of
+loss and duplication, under load, with no signal either way** — the duplicate-generating machine
+`#16` feared, reached by a route `#16` did not propose.
+
+**This is also why the `sequence` ratio of 1.000 does not clear it.** That window was quiet, and
+these failures only occur under load. A duplicate-ratio measured while idle cannot see `#19`.
+Re-measure `step7-dedup-check.sh` immediately after a notebook run, before the fix is deployed, if
+a number is wanted for the record.
 
 **#20 — A `helm upgrade` may update the ConfigMap without restarting the pod, so committed config
 is not running config. SUSPECTED, not yet confirmed.** 2026-09-09: after `6dfa0d0` the filter map
