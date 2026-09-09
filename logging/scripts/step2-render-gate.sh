@@ -13,7 +13,20 @@
 # the manifest, so every config string appears three times and every count below
 # triples.
 #
-# Every expectation here was MEASURED against fluent-bit/values.yaml, not assumed.
+# TWO THINGS MAKE RENDER COUNTS != VALUES-FILE COUNTS. Both bit the first version
+# of this script, and both are the reason its numbers were corrected on 2026-09-09:
+#
+#   1. Top-level YAML comments DO NOT RENDER. Only text inside a `key: |` block
+#      scalar reaches the ConfigMap. A comment in the values file is invisible here.
+#
+#   2. THE ENTIRE LUA SCRIPT RENDERS AS ONE LINE. The ConfigMap emits it as a single
+#      escaped scalar, so `grep -c` over anything inside those 560 lines returns 1,
+#      never the real number. That is why RESOURCE_PATTERNS, MGMT_PREFIX and
+#      DEDUP_MAX_KEYS are presence checks here and not counts -- and why the Lua's
+#      real integrity is checked by SHA against the deployed ConfigMap, below, not
+#      by grep. Use `grep -o PATTERN file | wc -l` if you ever need a true count.
+#
+# Every expectation here was MEASURED against a real render, not assumed.
 # Two of the guide's §4.7 numbers are wrong and fire on a correct config
 # (type_int_key, DEDUP_MAX_KEYS) -- the corrected values are used below.
 # ============================================================================
@@ -33,7 +46,7 @@ eq "3.1 both Parsers_File lines"            'Parsers_File'            2
 eq "3.2 Time_Keep On (or _time never exists)" 'Time_Keep   On'        1
 eq "3.3 no stale polaris.vlogs tag"         'polaris\.vlogs'          0
 eq "3.4 Time_Key only on tier 1's outputs"  'Time_Key            @timestamp' 2
-eq "3.6 credential reaches the outputs"     'OS_PASSWORD'             4
+eq "3.6 credential reaches the outputs"     'OS_PASSWORD'             3
 eq "3.7 Trace_Error on both new outputs"    'Trace_Error'             3
 
 echo
@@ -53,7 +66,7 @@ echo
 echo "=== policy v3 / schema v2 arrived intact (guide §4.7, corrected) ==="
 ge "RESOURCE_PATTERNS present"              'RESOURCE_PATTERNS'       1
 ge "MGMT_PREFIX present"                    'MGMT_PREFIX'             1
-eq "type_int_key  (guide says 2; ACTUAL 5)" 'type_int_key'            5
+eq "type_int_key  (guide says 2; ACTUAL 4)" 'type_int_key'            4
 eq "DEDUP_MAX_KEYS (guide says 0; ACTUAL 1, a comment)" 'DEDUP_MAX_KEYS' 1
 
 echo
