@@ -327,6 +327,15 @@ Filed first as "the VictoriaLogs path has no input" (wrong — it runs), then re
 about *one file*. The `helm get values fb-polaris-shipper` diff on 2026-09-03 settles that
 half and it went the other way.
 
+**`fluent-bit/values.yaml` is RECONCILED too, 2026-09-09.** `helm get values
+benchmarks-fluent-bit` diffed key by key against the file: **zero differing keys, none present on
+one side only**, and the DaemonSet's running container is
+`cr.fluentbit.io/fluent/fluent-bit:3.2.2` — exactly what the file pins. So the OpenSearch outputs,
+the parsers and the `kube.*` filter chain in that file are all genuinely in effect, which is what
+licenses editing it. (Note `helm get metadata` reports `APP_VERSION 5.0.6`; that is the *chart's*
+appVersion, not the image.) **Both Fluent Bit values files now match their releases**, and
+CLAUDE.md's "neither values file matches its live release" has been corrected.
+
 **`logging/fb-values.yaml` is RECONCILED.** Live revision 10 matched it line for line apart
 from `helm`'s alphabetical key ordering and **one** real difference: the live output streams
 on `_stream_fields=app,level` where the file asked for `app,level,loggerName`. The file now

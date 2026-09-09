@@ -22,9 +22,14 @@
   `fluent-bit/values.yaml` respectively — different deployments, not duplicates.
 - **VictoriaLogs:** log sink in namespace `logging` (9428).
 - **OpenSearch:** runs in **Docker, outside the cluster and outside this repo** — no compose
-  file is versioned here. It is the DaemonSet's sink; VictoriaLogs is the shipper's. That
-  question is settled — but **neither values file matches its live release**; see
-  `.memory/active-issues.md` #5 before trusting one.
+  file is versioned here. **OpenSearch is `3.5.0`** (measured 2026-09-08). It is the DaemonSet's
+  sink; VictoriaLogs is the shipper's. **Both Fluent Bit values files are RECONCILED against their
+  live releases** — the shipper's on 2026-09-03 (`active-issues.md` #5), the DaemonSet's on
+  2026-09-09 by diffing `helm get values benchmarks-fluent-bit` key by key: zero differences, and
+  the running image is `cr.fluentbit.io/fluent/fluent-bit:3.2.2` exactly as
+  `fluent-bit/values.yaml` asks. *This line previously said neither file matched; that is no longer
+  true of either.* **The rule it was protecting still stands** — confirm a setting from the running
+  object, not the file — but for these two files the check has been run and it passed.
 - **Values-only against upstream charts:** DataHub + prerequisites (Kafka / Elasticsearch /
   MySQL / ZooKeeper), Kafka, Schema Registry, Spark, Airflow, Argo Workflows, Jupyter.
   *Service versions are declared explicitly in each chart's `values.yaml`; several charts
