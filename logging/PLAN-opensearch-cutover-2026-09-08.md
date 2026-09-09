@@ -464,6 +464,41 @@ created at 1800s. Cheap now, permanent if skipped.
 
 ---
 
+### 4.2 The `polaris-learning` notebook run IS the completeness measurement
+
+**2026-09-09: both pipelines report `access_seen 0` in every window — from the file AND from
+stdout.** Polaris is idle. That agreement proves the DaemonSet chain is alive but says **nothing**
+about completeness: `0 == 0` is the "0 of 0 is not an answer" trap, and `polaris-logs-*` does not
+exist yet because no record has ever been written to it.
+
+**The `log-coverage` notebook in `polaris-learning` is the traffic.** Run it **unchanged**: it
+drives real Polaris calls, and every one of them reaches *both* pipelines — the shipper from the
+log file, this DaemonSet from stdout. Its own analysis still works, because everything it touches
+(VictoriaLogs, `fb-polaris-shipper`'s ConfigMap for the policy gate, that release's metrics port)
+is still installed. **Porting it to `_search` is step 7 and must not happen first** — a port would
+throw away the second source that makes this measurement possible.
+
+Its negative cases and ×20 probes deliberately generate 4xx/5xx, which is exactly what policy v3
+*keeps*, so this is also the first end-to-end test tier 2 has ever had.
+
+**Immediately after the run, while the windows are still in both sinks:**
+
+```bash
+bash logging/scripts/step4-report-readout.sh      # with VL_URL set
+```
+
+| DaemonSet `access_seen` (stdout) | shipper `access_seen` (file) | what it means |
+|---|---|---|
+| **equal, both > 0** | | **stdout carries the same access-log set as the file.** The last open question in this design closes, and `polaris-logs-*` should now exist |
+| **0** | **> 0** | stdout is not reaching the filter. Suspect the **CRI unwrap** (§2.4 filter 0): if `log` is not the payload key, records arrive with no `loggerName`, are never recognised as access-log lines, and `access_seen` stays 0 while everything looks healthy |
+| **> 0 but lower** | **> 0** | stdout is a **partial** view — the case v4 assumed away. Keep the PVC path (§8 Q1's fallback) |
+| both > 0, equal, but `polaris-logs-*` still empty | | the fault is after the filter: a 401, or a per-item rejection inside an HTTP 200. Pod log, `Trace_Error` |
+
+**This is the last chance.** After `fb-polaris-shipper` is uninstalled the file-sourced figure does
+not exist and none of the rows above can be distinguished.
+
+---
+
 ## 5. Open — Fluent Bit side only
 
 **Q1 — CLOSED 2026-09-09 from the before-render.** Chart 0.58.1 passes `extraVolumes` /
