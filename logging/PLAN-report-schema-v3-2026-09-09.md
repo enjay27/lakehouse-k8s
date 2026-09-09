@@ -38,34 +38,61 @@ manager's number is sometimes a commit and sometimes a zero-length delete, with 
 which. **Same field for principals** if wanted; the row shapes are parallel. *Not proposed* —
 the request is about resources.
 
-## 3. DECIDE 1 — what "latest" means across a window with no traffic
+## 3. DECIDED (Kade, 2026-09-09) — and the rule set collapses the schema
 
-Zero-carry emits a row for a resource that fell to zero requests, so the fall is visible. What
-should `last_*` read on such a row?
+**Two fields only. No status, no method.**
 
-- **(a) Absent — recommended.** No sample this window, no field. The pipeline's own rule is
-  *absence is not zero* (`POLARIS-LOGGING-GUIDE` §7.4 #5), and a stale byte count sitting in a
-  "latest" field is precisely the plausible-wrong-number this pipeline keeps producing. "Latest
-  ever" is then a **query**, not a schema feature: sort by `@timestamp` desc and take the first row
-  where the field exists — three lines in the notebook, and always correct.
-- **(b) Carry the previous value**, plus a `last_read_window` / `last_write_window` so staleness is
-  visible. Two more fields, and every consumer must remember to check them.
-- **(c) Carry silently.** Cheapest, and the option that will eventually put a number from an hour
-  ago on a dashboard labelled "latest". **Do not choose this.**
+```
+last_read_bytes     last GET/HEAD response size in this window
+last_write_bytes    last POST/PUT/DELETE/PATCH response size in this window
+```
 
-## 4. DECIDE 2 — should errors count as "the latest response"?
+Sampling rule, applied per record, last-wins:
 
-A 500's body is an error document; its size is not "the response size" in the sense the manager
-means. Options: capture regardless and expose `last_*_status` so the consumer filters (recommended
-— the filtering is one clause and the raw fact is preserved), or only sample 2xx and lose the
-ability to see that the last commit failed.
+1. **overwrite on every qualifying request** — no averaging, no first-wins;
+2. **2xx only** — an error document's length is not "the response size";
+3. **size > 0 only** — and if nothing in the window qualified, **the field is absent**, never `0`.
 
-## 5. DECIDE 3 — is a `0` meaningful?
+### Why dropping `last_write_method` is right, not a compromise
 
-`record["response_size"] = tonumber(size) or 0` turns a logged `-` (no body) into `0`, so a zero is
-ambiguous between *empty body* and *unparsed*. Recommendation: **only update `last_*` when the
-record parsed** (`parse_failed` false), leaving genuine empty bodies as a true 0. Cheap, and it
-keeps the ambiguity out of the field.
+I proposed it to stop a commit blending with a drop. **Rule 3 removes that problem at the source**,
+and the resource patterns show why:
+
+| on a `resource_kind = "table"` row | verb | body | in `last_write_bytes`? |
+|---|---|---|---|
+| commit — `POST .../tables/{table}` | POST | table metadata | **yes** |
+| drop — `DELETE .../tables/{table}` | DELETE | 204, empty | no — size 0 |
+| create — `POST .../tables` | POST | metadata | no — that is `kind = "collection"`, a different row |
+
+So on a table row **`last_write_bytes` *is* the last successful commit**, with no method field
+needed. The same rule does the same favour on the read side: `HEAD` (tableExists) carries no body
+by definition, so `last_read_bytes` on a table row is the last successful **loadTable**, with HEADs
+excluded automatically.
+
+`RESOURCE_PATTERNS` (`fluent-bit/values.yaml:246`) is what makes this hold — create hits the
+`tables$` collection pattern, commit hits `tables/[^/]+`. This is read off the repo, not off the
+Iceberg spec.
+
+### Why dropping the status fields costs nothing
+
+The worry was distinguishing "no traffic" from "all traffic errored" from "all bodies empty". **The
+row already answers that**: it carries `requests`, `reads`, `writes`, `errors`, `errors_4xx`,
+`errors_5xx`. So `writes > 0` with `last_write_bytes` absent means every write was an error or
+empty-bodied — recoverable from fields that already exist. No new field earns its place.
+
+### Zero-carry rows follow from rule 3, and are hereby decided
+
+A carried row has no requests, so nothing qualifies, so **both fields are absent**. That is
+option (a) from the original draft: *absence is not zero*, and "latest ever" stays a query —
+sort by `@timestamp` desc, take the first row where the field exists.
+
+### One residue, not a blocker
+
+**"Last" means last-processed.** For a single Polaris pod that equals last-logged, because the tail
+reads one file in order. If `#8`'s HPA ever became live, three replicas would write three files and
+the DaemonSet would interleave them arbitrarily — "last" would then be ill-defined across replicas.
+The HPA currently reports `cpu: <unknown>` and cannot scale, so this is dormant. Worth knowing
+before anyone re-enables it.
 
 ## 6. Consequences that are not the Lua
 
