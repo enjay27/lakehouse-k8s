@@ -107,8 +107,17 @@ check("principal-roles collection",     res["/api/management/v1/principal-roles"
       res["/api/management/v1/principal-roles"].resource_kind, "collection")
 check("principal's role list is its own key",
       res["/api/management/v1/principals/p1/principal-roles"] ~= nil, true)
-check("plain principal stays management", res["/api/management/v1/principals/p1"] and
-      res["/api/management/v1/principals/p1"].resource_kind, "management")
+print("== api_kind: the API SURFACE, orthogonal to resource_kind ==")
+local P1 = res["/api/management/v1/principals/p1"]
+check("principal kind (was 'management')", P1 and P1.resource_kind, "principal")
+check("  api_kind",                        P1 and P1.api_kind, "management")
+check("catalog-role api_kind",             CRrow and CRrow.api_kind, "management")
+check("catalog-role kind unchanged",       CRrow and CRrow.resource_kind, "catalog-role")
+check("table api_kind",                    res[T] and res[T].api_kind, "catalog")
+check("table kind unchanged",              res[T] and res[T].resource_kind, "table")
+check("no resource_kind == 'management' anywhere", (function()
+        for _,d in pairs(res) do if d.resource_kind == "management" then return "found" end end
+        return "none" end)(), "none")
 check("denied grant keeps its role row",
       res["/api/management/v1/catalogs/c1/catalog-roles/nobody"] ~= nil, true)
 check("  and records the denial",

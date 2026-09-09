@@ -532,3 +532,64 @@ Catalogs and principals are **identity and containers**, not authorization, so l
   `management`. Giving catalogs and principals their own kinds (`catalog`, `principal`) would be
   consistent — but `management` is still accurate, and renaming a kind splits query history. Left
   alone unless asked.
+
+---
+
+# `api_kind` — the surface becomes its own field
+
+Kade, 2026-09-09: *make an API kind field; management / catalog get assigned there and the other
+APIs can go in the correct kind.*
+
+**The right call, and it fixes a conflation rather than adding a column.** `resource_kind` was
+answering two different questions depending on the row: "what is this thing" for a table, and
+"which API served it" for a catalog. A catalog-role got `catalog-role` while the catalog holding it
+got `management` — same field, different question.
+
+- **`api_kind`** — `management` \| `catalog` \| `mixed` \| `other`. Derived from the path prefix.
+  `mixed` on `__other__`, which by construction aggregates both surfaces.
+- **`resource_kind`** — what the resource is. **The `management` value is gone.** Four new rules
+  give management resources real kinds, placed LAST so the role rules keep priority
+  (`/catalogs/{cat}/catalog-roles/{cr}` stays a catalog-role, not a catalog):
+
+```lua
+{ kind = "catalog",    pattern = "^.-/catalogs/[^/]+" },
+{ kind = "collection", pattern = "^.-/catalogs$" },
+{ kind = "principal",  pattern = "^.-/principals/[^/]+" },
+{ kind = "collection", pattern = "^.-/principals$" },
+```
+
+The `MGMT_PREFIX` fallback in `classify` is removed — an unclassified management path is now
+`other` like any other unclassified path, and `api_kind` says which surface it came from.
+`/principals/{p}/reset` folds into the principal, which is what it acts on.
+
+## The grid, measured on the real export — 268 requests
+
+| api_kind | resource_kind | req | example |
+|---|---|---|---|
+| management | catalog-role | 59 | `MG/catalogs/{id}/catalog-roles/catalog_admin` |
+| catalog | table | 52 | `CT/{id}/namespaces/probe_ns/tables/probe_tbl` |
+| catalog | collection | 44 | `CT/{id}/namespaces` |
+| **mixed** | other | 38 | `__other__` |
+| management | collection | 28 | `MG/catalogs` |
+| management | principal-role | 8 | `MG/principal-roles/{id}` |
+| management | catalog | 8 | `MG/catalogs/{id}` |
+| catalog | namespace | 7 | `CT/{id}/namespaces/probe_ns` |
+| management | principal | 7 | `MG/principals/{id}` |
+| catalog | auth | 7 | `CT/oauth/tokens` |
+| catalog | config | 5 | `CT/config` |
+| catalog | view | 5 | `CT/{id}/namespaces/probe_ns/views/probe_view` |
+
+**`resource_kind == "management"` rows: 0.** The conflation is gone, and the split is now
+queryable both ways — `api_kind:management` gives the whole admin surface, `resource_kind:collection`
+gives list endpoints across *both* APIs, which was impossible before.
+
+## Carry
+
+`api_kind` is carried alongside `resource_kind` across a zero-carry window, so a carried row keeps
+its surface rather than reverting to `other`.
+
+## Verified
+
+`test-schema-v3.lua`, 37 assertions, all passing: a principal is `principal`/`management` rather
+than `management`; a catalog-role keeps its kind and gains `api_kind: management`; a table is
+`table`/`catalog`; and an explicit sweep asserts **no row anywhere has `resource_kind == "management"`.**

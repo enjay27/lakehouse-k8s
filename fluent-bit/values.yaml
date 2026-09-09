@@ -276,6 +276,13 @@ luaScripts:
         { kind = "collection", pattern = "^.-/namespaces/[^/]+/views$" },
         { kind = "namespace",  pattern = "^.-/namespaces/[^/]+$" },
         { kind = "collection", pattern = "^.-/namespaces$" },
+        -- Management-API resources. LAST, so the role rules above keep priority:
+        -- /catalogs/{cat}/catalog-roles/{cr} is a catalog-role, not a catalog.
+        -- /principals/{p}/reset folds into the principal, which is what it acts on.
+        { kind = "catalog",    pattern = "^.-/catalogs/[^/]+" },
+        { kind = "collection", pattern = "^.-/catalogs$" },
+        { kind = "principal",  pattern = "^.-/principals/[^/]+" },
+        { kind = "collection", pattern = "^.-/principals$" },
     }
 
     -- Bounds on the two margins. Beyond them, requests land in one __other__ row: the
@@ -303,12 +310,24 @@ luaScripts:
         return p:match("^[^?]*") or p
     end
 
+    -- api_kind is the API SURFACE, orthogonal to what the resource IS. Before v3 the
+    -- two were conflated: a catalog-role got kind "catalog-role" while the catalog
+    -- holding it got "management", so the same field answered "what is this" for one
+    -- row and "which API" for another. Splitting them means resource_kind no longer
+    -- has a "management" value at all.
+    local function api_of(path)
+        if path:find("^/api/management/") then return "management" end
+        if path:find("^/api/catalog/")    then return "catalog"    end
+        return "other"
+    end
+
     local function classify(path)
         for _, r in ipairs(RESOURCE_PATTERNS) do
             local span = path:match(r.pattern)
             if span then return span, r.kind end
         end
-        if path:find(MGMT_PREFIX) then return path, "management" end
+        -- No management fallback: an unclassified management path is `other` like any
+        -- other unclassified path, and api_kind says which surface it came from.
         return path, "other"
     end
 
@@ -344,19 +363,20 @@ luaScripts:
     -- that falls from 100k reads to none emits an explicit 0 instead of vanishing from
     -- the output, so the fall is a data point rather than a missing row. A carried row
     -- that stays at zero is not carried again, so the set decays.
-    local function new_window(idx, partial, carry_res, carry_pri)
+    local function new_window(idx, partial, carry_res, carry_pri, carry_api)
         local w = {
             window = idx, partial = partial and true or false,
             access_seen = 0, access_counted = 0, role_keys_forced = 0,
             counted_read = 0, counted_post = 0,
             errors_kept = 0, parse_errors = 0,
-            resources = {}, kinds = {}, n_resources = 0, resources_over = 0,
+            resources = {}, kinds = {}, apis = {}, n_resources = 0, resources_over = 0,
             principals = {}, n_principals = 0, principals_over = 0,
             other_keys = {}, n_other_keys = 0,
             min_time = nil, max_time = nil,
         }
         for key, kind in pairs(carry_res or {}) do
             w.resources[key] = new_row(); w.kinds[key] = kind
+        w.apis[key] = (carry_api or {})[key] or "other"
             w.n_resources = w.n_resources + 1
         end
         for user in pairs(carry_pri or {}) do
@@ -376,7 +396,7 @@ luaScripts:
     -- hammering one URL from a scanner walking twenty names. n_other_keys counts the
     -- DISTINCT keys folded, bounded by the same REPORT_MAX_RESOURCES so the set cannot
     -- become the key space this branch exists to protect.
-    local function touch_resource(key, kind, create)
+    local function touch_resource(key, kind, api, create)
         local r = counts.resources[key]
         if r ~= nil then return r end
         if (not create) or counts.n_resources >= REPORT_MAX_RESOURCES then
@@ -391,6 +411,8 @@ luaScripts:
                 r = new_row()
                 counts.resources[REPORT_OTHER] = r
                 counts.kinds[REPORT_OTHER] = "other"
+            -- __other__ aggregates both surfaces, so it has no single api_kind.
+            counts.apis[REPORT_OTHER]  = "mixed"
                 counts.n_resources = counts.n_resources + 1
             end
             return r
@@ -398,6 +420,7 @@ luaScripts:
         r = new_row()
         counts.resources[key] = r
         counts.kinds[key] = kind
+        counts.apis[key]  = api
         counts.n_resources = counts.n_resources + 1
         return r
     end
@@ -456,7 +479,8 @@ luaScripts:
                 create = true
             end
         end
-        local rows = { touch_resource(key, kind, create), touch_principal(user) }
+        local api  = api_of(path)
+        local rows = { touch_resource(key, kind, api, create), touch_principal(user) }
         for _, row in ipairs(rows) do
             row.requests = row.requests + 1
             if READ_METHODS[method] then
@@ -531,7 +555,7 @@ luaScripts:
         -- which includes zero-carry rows -- under a name that promises resources
         -- touched, so a window with no traffic at all reported two distinct resources.
         -- Active rows and carried rows are now separate fields, and neither is a guess.
-        local carry_res, carry_pri = {}, {}
+        local carry_res, carry_pri, carry_api = {}, {}, {}
         local n_active_res, n_active_pri, n_carried = 0, 0, 0
         local rows = {}
         local tot_4xx, tot_5xx, tot_denied, tot_bytes = 0, 0, 0, 0
@@ -540,6 +564,7 @@ luaScripts:
             local e = base("resource")
             e.resource       = key
             e.resource_kind  = counts.kinds[key] or "other"
+            e.api_kind       = counts.apis[key]  or "other"
             e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
             e.errors_4xx, e.errors_5xx, e.auth_denied = r.errors_4xx, r.errors_5xx, r.auth_denied
             e.response_bytes = r.response_bytes
@@ -555,14 +580,15 @@ luaScripts:
                     r.last_write_bytes and tostring(r.last_write_bytes) or "-")
             end
             e._msg = string.format(
-                "seq=%d resource %s (%s): %d requests, %d reads, %d writes, "
+                "seq=%d resource %s (%s/%s): %d requests, %d reads, %d writes, "
                 .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes%s",
-                report_seq, key, e.resource_kind, r.requests, r.reads, r.writes,
+                report_seq, key, e.api_kind, e.resource_kind, r.requests, r.reads, r.writes,
                 r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes,
                 last_txt)
             rows[#rows + 1] = e
             if r.requests > 0 then
                 carry_res[key] = e.resource_kind
+                carry_api[key] = e.api_kind
                 n_active_res = n_active_res + 1
             else
                 n_carried = n_carried + 1
@@ -632,7 +658,7 @@ luaScripts:
         out[#out + 1] = s
         for _, e in ipairs(rows) do out[#out + 1] = e end
 
-        return out, carry_res, carry_pri
+        return out, carry_res, carry_pri, carry_api
     end
 
     -- The tick RATE is not the report period. A tick inside the current window is
@@ -670,8 +696,8 @@ luaScripts:
         -- alert on this field alone.
         local skipped = idx - counts.window - 1
         if skipped < 0 then skipped = 0 end
-        local out, carry_res, carry_pri = build_report(counts.window, skipped)
-        counts = new_window(idx, false, carry_res, carry_pri)
+        local out, carry_res, carry_pri, carry_api = build_report(counts.window, skipped)
+        counts = new_window(idx, false, carry_res, carry_pri, carry_api)
         return 2, timestamp, out
     end
 
