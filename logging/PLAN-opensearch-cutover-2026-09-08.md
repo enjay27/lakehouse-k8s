@@ -1,4 +1,6 @@
-# PLAN v4 — the Fluent Bit change: tail Polaris **stdout**, ship to OpenSearch
+# PLAN v5 — the Fluent Bit change: tail Polaris **stdout**, ship to OpenSearch
+
+*(v5 retargets the edit from `logging/fb-values.yaml` to `fluent-bit/values.yaml`. **Read §0 first.**)*
 
 **Written 2026-09-08. Plan only — `logging/fb-values.yaml` has NOT been edited.**
 
@@ -9,6 +11,84 @@ OpenSearch-side is listed in §6 and owned by someone else.
 **Dropping dedup removes less than it sounds like.** Of the eleven defects found across three
 review rounds, **eight are inside the Fluent Bit config** and five of those fail *silently* — a
 healthy pod, clean `helm` output, and wrong or missing data. Those are §3.
+
+---
+
+## 0. v5 — the target moved: this is now an edit to `fluent-bit/values.yaml`
+
+**Kade, 2026-09-09:** add the Fluent Bit config and the Lua to **`fluent-bit/values.yaml`** — the
+DaemonSet release `benchmarks-fluent-bit` — and **uninstall `fb-polaris-shipper` after this cutover
+lands**, not before. Merged release runs Fluent Bit **5.1.1**, matching the version the Lua chain
+was verified against.
+
+**Read §2.2–§2.6 with `fb-values.yaml` replaced by `fluent-bit/values.yaml` throughout.** The blocks
+themselves are still right; §0.1–§0.4 are the deltas.
+
+### 0.1 Three risks this retarget DELETES
+
+- **Trap 3.1 is gone.** The DaemonSet's `[SERVICE]` **already** declares both
+  `Parsers_File /fluent-bit/etc/parsers.conf` *and*
+  `Parsers_File /fluent-bit/etc/conf/custom_parsers.conf`. The silent never-loaded-parser trap
+  simply does not exist on this target. §2.1 becomes a no-op.
+- **The dual-write conflict is gone.** `fb-polaris-shipper` keeps its own values file and its own
+  VictoriaLogs output for the whole transition, so **no filter of ours can reach it.** §2.5's
+  "keep `_msg`/`_time`, no rename filter" stops being a constraint and becomes a free preference —
+  still worth keeping, because it preserves guide §7's field names so only the query *language*
+  changes downstream.
+- **Trap 3.8 is gone.** The merged release never holds three outputs at once; the `http` output
+  stays in the other release. No `emptyDir` contention, no eviction risk during verification.
+
+### 0.2 What it introduces, and the first one is the serious one
+
+- **A Fluent Bit image bump on the node-wide collector: `3.2.2` → `5.1.1`**
+  (`fluent-bit/values.yaml:12`). This *is* a change to tier 1's runtime, whatever else stays
+  untouched. It needs its own verification pass — tier 1's existing inputs, `kubernetes` filter,
+  parsers and two `opensearch` outputs must all still work on 5.1.1.
+- **Blast radius.** A Lua error or a rejected `type_int_key` line now crashloops the pod that also
+  does node-wide collection. Read the pod log first, always — and that was already §4's step 3.
+- **Two tails over the same files in one instance.** Tier 1 tails
+  `/var/log/containers/*.log` with `DB /var/log/flb_kube.db`; the Polaris tail needs its **own**
+  `DB` path (e.g. `/var/log/flb_polaris.db`). Sharing one would corrupt both offsets.
+- **Do NOT add `Time_Keep On` to the existing `polaris_json` parser.** It has no `Time_Keep`
+  today (`fluent-bit/values.yaml:130-133`), so it consumes `timestamp` — which is what gives tier 1
+  its correct `@timestamp`. Add a **separate** parser for the new chain. Editing the shared one
+  changes tier 1's records.
+- **Report state is now per-DaemonSet-pod.** One node today, so one pod — but `report_seq` resets
+  on any pod replacement, which guide §7.4 trap 3 already warns about.
+- **`[SERVICE]` is now shared.** Tier 1 runs `Flush 5` and no `storage.path`. Adding filesystem
+  buffering would change tier 1's behaviour too — benign, probably an improvement, but it is a
+  change and should be a deliberate one.
+
+### 0.3 The tag keeps tier 1's blocks untouched
+
+Tier 1's input, filters and outputs are **added to, not modified**: a second `[INPUT]` on
+`/var/log/containers/*benchmarks-polaris*.log` tagged **`polaris.logs`**, the `dummy` tick tagged
+`polaris.report`, the filter chain matched on those tags only, and two new outputs. Nothing that
+currently matches `kube.*` changes. Note the `kubernetes` filter matches `kube.*`, so the new tag
+bypasses it — fine, since `hostName` is already in the Polaris JSON.
+
+### 0.4 The transition hands us the gate v4 could not build
+
+For the window between this cutover and the shipper's uninstall, **both releases run**: the shipper
+reading the **log file** into VictoriaLogs, the DaemonSet reading **stdout** into OpenSearch. Same
+traffic, same filter logic, two independent sources — and each emits its own report with its own
+`access_seen`.
+
+**That is the completeness comparison this plan has never been able to make.** Earlier revisions
+gated on "does stdout carry the same access-log set as the file" and could not answer it, because
+during a single-release dual-write both outputs see the same post-filter records and `access_seen`
+is identical by construction. Two releases on two sources break that symmetry.
+
+**Compare `access_seen` for the same window from both reports. If they agree, stdout ⊇ file, and the
+last open question in this design closes.** Do it before the uninstall — afterwards the file-sourced
+figure no longer exists.
+
+### 0.5 Blocker before the edit
+
+**What chart version is `benchmarks-fluent-bit` currently on?** `luaScripts` must be supported by
+the chart, and the shipper's 0.58.1 is known to support it. Settle with
+`helm -n datahub-hynix get metadata benchmarks-fluent-bit`; expect to pin `--version 0.58.1` for
+both releases, which is itself a chart upgrade for tier 1 and part of §0.2's first bullet.
 
 ---
 
