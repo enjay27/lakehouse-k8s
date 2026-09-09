@@ -540,3 +540,33 @@ matched windows 2026-09-09: file 226 + 44 = **270**, stdout **0**. Until #16 is 
 `fb-polaris-shipper` and `polaris-shared-logs-pvc` are the ONLY path that recognises an access-log
 record. Uninstalling the shipper — cutover step 7 — would destroy the capability, not just the
 duplicate. Fallback specified in git at `fb91949`.
+
+**#18 — `Id_Key sequence` skips every record it was meant to dedup. OPEN, LIVE, and it defeats
+the dedup it exists for.** Pod log, 2026-09-09 05:07:
+`[output:opensearch:opensearch.0] the value of sequence is not string` followed by
+`skipping record with missing or unsafe Id_Key value`, repeating continuously.
+`opensearch.0` is OUTPUT 1 (`Match kube.*benchmarks-polaris*`, `Id_Key sequence`,
+`Write_Operation upsert`). Polaris emits `sequence` as a JSON **integer** (`"sequence":49687`);
+the OpenSearch plugin requires the `Id_Key` value to be a **string** and drops the record
+otherwise. So OUTPUT 1 has been indexing **nothing** — and the records survive only because
+OUTPUT 2 (`Match kube.*`, `Generate_ID On`) matches the same records and indexes them with a
+generated id. Net effect: the upsert-by-sequence dedup has never once operated, and a retried
+chunk produces **duplicates** instead of upserts. `repository-map`/roadmap's "sequence in
+particular makes a gap in ingestion visible" describes a mechanism that is not running.
+Fix is `type_int_key`-style coercion to string, or `Id_Key` on a string field, or drop OUTPUT 1
+and let OUTPUT 2 own the tag.
+
+**#19 — Tier 1 is LOSING CHUNKS: the OpenSearch response exceeds the output's buffer. OPEN, LIVE.**
+```
+[warn ] [http_client] cannot increase buffer: current=512000 requested=544768 max=512000
+[warn ] [output:opensearch:opensearch.1] http_do=-1 URI=/_bulk
+[error] [engine] chunk '1-1788930438.635329228.flb' cannot be retried: task_id=11,
+        input=tail.0 > output=opensearch.1
+```
+Four distinct chunks unretryable in ~90 seconds on 2026-09-09. `opensearch.1` is OUTPUT 2, the
+node-wide k8s-logs sink. The `_bulk` **response** is larger than the plugin's 512000-byte read
+buffer, the flush fails with `http_do=-1`, `Retry_Limit 3` exhausts, and the chunk is
+**discarded**. This is unacknowledged data loss on tier 1, happening now, and it is invisible to
+every gate used so far: `k8s-logs` doc counts keep rising because most chunks still succeed.
+Candidate fix: raise or unbound `Buffer_Size` on the opensearch outputs (default 512K), and/or
+cut bulk size. NOT a cutover regression by evidence — no before/after measurement exists.

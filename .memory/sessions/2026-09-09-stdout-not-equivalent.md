@@ -209,3 +209,55 @@ kubectl -n datahub-hynix logs ds/benchmarks-fluent-bit --tail=400 | grep -iE 'pa
 
 The ConfigMap and the DaemonSet spec together answer both halves of trap 3.1 — whether the file
 carries the parser, and whether it is mounted where `[SERVICE]` looks for it.
+
+---
+
+## Trap 3.1 is CLOSED on this release. I was wrong to reopen it.
+
+The deployed `benchmarks-fluent-bit` ConfigMap carries `custom_parsers.conf` with
+`polaris_stdout_json` **including `Time_Keep On`**, and `volumeMounts` puts the `config` volume at
+`/fluent-bit/etc/conf` — so `[SERVICE] Parsers_File /fluent-bit/etc/conf/custom_parsers.conf`
+resolves to a real file containing the parser. The previous commit suspected trap 3.1 had
+recurred on the release it was never checked on. It has not. Read from the running objects,
+which is what should have happened before the suspicion was recorded.
+
+## And the time spec is exonerated too — by tier 1's own numbers
+
+`k8s-logs-*`: `has_logger` **2,617,097**, `has_raw_log` **21,455,617**. Records with a real
+`loggerName` field exist in bulk, so Polaris's nine-fractional-digit, `Z`-suffixed timestamp is
+being handled somewhere in this very pod. `%Y-%m-%dT%H:%M:%S.%L%z` is not the fault.
+
+**But those two numbers do NOT prove `polaris_json` works**, and reading them that way would be
+the third wrong turn in a row. The tier 1 chain begins with:
+
+```
+[FILTER] Name kubernetes  Match kube.*  Merge_Log On  Keep_Log Off
+```
+
+**`Merge_Log On` parses the `log` JSON and merges it into the record itself; `Keep_Log Off` then
+removes `log`.** That is where tier 1's `loggerName` comes from. By the time the downstream
+`parser`/`polaris_json` filter runs there is no `log` key left for it to act on — it is a no-op.
+So tier 1 proves the *payload* parses; it says nothing about either custom parser.
+
+**The tier 2/3 chain has no `kubernetes` filter** — deliberately, it matches `polaris.*` only.
+So it is the sole consumer of `polaris_stdout_json`, and the only chain whose JSON unwrap is not
+being done for it by `Merge_Log`. That is exactly the chain that fails.
+
+## What is still unread — and it is now the only artifact left
+
+The rendered **`fluent-bit.conf`** from the same ConfigMap. Everything about the tier 2/3 filter
+block so far comes from the values file, which is intent:
+
+```bash
+kubectl -n datahub-hynix get cm benchmarks-fluent-bit -o json \
+  | jq -r '.data["fluent-bit.conf"]' | sed -n '/TIER 2\/3/,/OUTPUT/p'
+```
+
+Confirm `polaris_cri_unwrap` is present, that it precedes `polaris_key_rename`, and that
+`Key_Name log` / `Parser polaris_stdout_json` / `Reserve_Data On` survived rendering. The stored
+document proves the filters either side of it ran; only the rendered config can say whether the
+unwrap is in the file at all.
+
+Also worth one query, since `Merge_Log` is now known to be the thing that works: whether adding a
+`kubernetes` filter is even the right fix, or whether the right fix is to stop hand-rolling the
+unwrap and reuse the mechanism tier 1 already proves.
