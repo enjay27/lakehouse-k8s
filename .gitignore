@@ -2,3 +2,8 @@
 node_modules
 postgresql-ha-*.tgz
 .DS_Store
+
+# Helm render dumps and scratch. CLAUDE.md forbids committing these
+# ("exported helm get values dumps"); this makes it hard to do by accident.
+*.render.txt
+.scratch/
