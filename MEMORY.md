@@ -29,8 +29,19 @@ for ~270 requests — and it looks healthy doing it. **Cause is NOT in the value
 present and were each checked. Only the running object can say. Diagnosis and the decisive
 queries: [`sessions/2026-09-09-stdout-not-equivalent`](.memory/sessions/2026-09-09-stdout-not-equivalent.md).
 
-**Cutover step 7 (port the notebook to `_search`) and the shipper uninstall are BLOCKED** on
-that. The PVC path stays; the fallback is fully specified in git at `fb91949`.
+**Root-caused and FIXED IN THE FILE, NOT YET DEPLOYED.** `polaris_cri_unwrap` processed all
+5,030 records, dropped 0, transformed 0 — the byte delta to the next filter is exactly
+**12.00 B/record**, the cost of `Add app polaris` alone, so both renames found nothing and the
+JSON was never unpacked. `Time_Key`/`Time_Format`/`Time_Keep` are now **removed** from
+`polaris_stdout_json` (the only parser here that had to resolve a time key, and the only one
+failing). **The next action is `helm upgrade` + the gate**, both in
+[`PLAN-tier2-parse-fault`](logging/PLAN-tier2-parse-fault-2026-09-09.md) §A — and the gate query
+**must be restricted to docs indexed after the rollout**, or 5,030 existing raw docs mask it.
+
+**Cutover step 7 and the shipper uninstall stay BLOCKED** until the re-measured `access_seen`
+matches. The PVC path stays; the fallback is specified at `fb91949`. Two more live tier 1 faults
+found in the same pod log and NOT touched — `#18` `Id_Key sequence` drops every record it should
+dedup, `#19` `_bulk` responses exceed the output buffer and chunks are discarded.
 
 **Still written and NOT running:** the temporary **30s window** (`Interval_Sec 5`). It stays until
 everything else is done; the revert to 1800/30 is the plan's **last step and its final gate**

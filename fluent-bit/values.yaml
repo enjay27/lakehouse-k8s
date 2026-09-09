@@ -867,18 +867,43 @@ config:
         Format      json
 
     # Polaris stdout JSON for the TIER 2/3 chain only.
-    # SEPARATE from polaris_json above, deliberately. `Time_Keep On` is mandatory
-    # here: a parser consumes its time key by default, and without it `timestamp`
-    # is removed, filter 1's `Rename timestamp _time` no-ops, `_time` never exists,
-    # and the Lua's replay detector hits `if type(t) == "string"` and SKIPS WITHOUT
-    # ERRORING -- every summary row silently loses min/max_record_time.
-    # Do NOT add Time_Keep to polaris_json: tier 1 depends on it consuming the key.
+    # SEPARATE from polaris_json above, deliberately -- see the warning at the end.
+    #
+    # NO Time_Key HERE, ON PURPOSE (2026-09-09). It carried
+    #     Time_Key    timestamp
+    #     Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+    #     Time_Keep   On
+    # and the parse FAILED on every record: `polaris_cri_unwrap` processed 5,030
+    # records, dropped 0, added 0, and the byte delta to the next filter was exactly
+    # 12.00 B/record -- the cost of `Add app polaris` alone, proving `Rename message
+    # _msg` and `Rename timestamp _time` both found nothing. The Polaris JSON stayed
+    # a string in `log`, `loggerName` never became a field, `access_seen` read 0
+    # against 270 real access-log lines, and policy v3 kept 100% of records while
+    # every health check stayed green.
+    #
+    # Suspect was `%L` against the NINE fractional digits in `.697818537Z`, leaving
+    # `818537Z` for `%z`. Not proven -- and deliberately not chased. Removing the
+    # time key removes the failure mode outright instead of guessing at a format
+    # that satisfies it, and it costs nothing:
+    #   * `Time_Keep On` existed ONLY so `timestamp` survived for filter 1's
+    #     `Rename timestamp _time`. With no Time_Key it is never consumed. Same
+    #     outcome, one fewer thing to fail.
+    #   * `_time` still arrives as a STRING, which the Lua replay detector requires
+    #     (`if type(t) == "string"`); without it every summary row silently loses
+    #     min/max_record_time.
+    #   * @timestamp is unaffected because tier 2/3 already takes it from the CRI
+    #     envelope, not the payload: a stored doc read 05:07:07.704Z against a
+    #     payload 05:07:07.697818537Z -- 7 ms apart, precisely BECAUSE the parse
+    #     was failing. There is no behaviour here to regress.
+    #
+    # Do NOT add Time_Key/Time_Keep to polaris_json: tier 1 depends on it consuming
+    # the key. In practice polaris_json is a no-op anyway -- the `kubernetes` filter
+    # above runs `Merge_Log On` with `Keep_Log Off` and deletes `log` before it. That
+    # is what actually parses tier 1, and it is why tier 1's 2.6M `loggerName` docs
+    # say nothing about whether either custom parser works.
     [PARSER]
         Name        polaris_stdout_json
         Format      json
-        Time_Key    timestamp
-        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
-        Time_Keep   On
 
   # ── Output: Docker OpenSearch on Mac ──────────────────────
   outputs: |

@@ -531,8 +531,13 @@ path and no retention rule applies. The tier advertised as "30d, policy-v3 filte
 a firehose with a 30d retention on it, and it looks healthy — no errors, no restarts, no drop
 counters. Storage grows with traffic until fixed. **Not a values-file fault**: the
 `polaris_cri_unwrap` filter, `Parsers_File custom_parsers.conf` and `Time_Keep On` were each
-checked and are present. Decisive query and the three readings of it:
-`sessions/2026-09-09-stdout-not-equivalent.md`.
+checked and are present. **ROOT CAUSE FOUND 2026-09-09:** `polaris_stdout_json` carried
+`Time_Key timestamp` / `Time_Format %Y-%m-%dT%H:%M:%S.%L%z` / `Time_Keep On` and its parse failed
+on every record — measured at the filter, `records 5030 / drop 0 / add 0`, byte delta 12.00 B per
+record. Those three lines are now **removed from `fluent-bit/values.yaml`, and NOT YET DEPLOYED**.
+Until `helm upgrade` runs and §A's gate passes, this issue is live exactly as described.
+Evidence: `sessions/2026-09-09-stdout-not-equivalent.md`; change and gate:
+`logging/PLAN-tier2-parse-fault-2026-09-09.md`.
 
 **#17 — The stdout/file equivalence assumption is DISPROVED; the shipper is now load-bearing. OPEN.**
 The cutover assumed Polaris stdout carries the same access-log set as the log file. Measured on
