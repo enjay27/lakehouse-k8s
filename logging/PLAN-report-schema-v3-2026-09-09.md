@@ -327,3 +327,48 @@ curl -sk -u "$OS_USER:$OS_PASSWORD" "$OS_URL/polaris-report-*/_mapping/field/min
 back to `if path:find(MGMT_PREFIX) then return path, "management"`. The reference table listed it;
 the mechanism is worth knowing before anyone adds a management rule to the pattern list and wonders
 why it never fires.
+
+---
+
+# SUPERSEDES DECIDE 5 and DECIDE 6 — authorization folding
+
+Kade, 2026-09-09: *don't exclude principal-roles; summarise all role requests in an authorization
+row — read, write, error counts for total requests — and the same for catalog-roles grant-privilege
+requests.*
+
+**This is a better design than the one it replaces, and it deletes machinery.** Excluding needed a
+new summary field (`excluded_requests`) and a modified margin invariant, purely to stop a standing
+gate failing on a correct config. Folding needs neither: the requests stay in a resource row, so
+
+```
+sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors
+```
+
+is unchanged from v2. `EXCLUDED_PATTERNS`, `is_excluded` and `excluded_requests` are **removed**.
+
+## The rule
+
+`classify` checks first: any path containing `/principal-roles`, `/catalog-roles` or `/grants`
+returns the single key `__authorization__` with `resource_kind = "authorization"`.
+
+**Measured on the real v2 export: 16 distinct paths, 80 requests, collapse into 1 row** — the
+principal-role CRUD, the catalog-role CRUD, the grants endpoints, and both directions of the
+principal↔role join. The DECIDE 6 asymmetry disappears with it: `/principals/{p}/principal-roles`
+and `/principal-roles/{pr}/principals` now both fold, because the rule matches the segment
+anywhere rather than requiring a trailing slash.
+
+## The one non-obvious part
+
+`touch_resource(key, kind, create)` takes `create = not is_error`, so an errored request whose
+resource is not already known lands in `__other__`. For `__authorization__` that guard is both
+pointless and harmful — it is **one bounded key**, so it cannot inflate cardinality, and **a denied
+grant is exactly what an authorization row exists to record.** v3 forces `create = true` for this
+key alone. Measured on real data, every `__other__` request in the busy window was an error,
+including that window's only `auth_denied` — which is the attribution this fixes.
+
+## Verified
+
+`logging/scripts/test-schema-v3.lua`, 24 assertions, all passing against the deployed script text:
+the fold captures 5 role/grant requests as reads 2 / writes 3 / errors 1 / auth_denied 1; a plain
+`/principals/{p}` stays `management`; the denial does **not** appear in `__other__`; and both
+margin invariants are exact with no `excluded_requests` field present.

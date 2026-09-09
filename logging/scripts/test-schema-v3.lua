@@ -40,8 +40,16 @@ polaris_noise_filter("polaris.logs", 0, rec("POST", CAT.."/views/rename", 200, 1
 polaris_noise_filter("polaris.logs", 0, rec("POST", CAT.."/namespaces/ns1/properties", 200, 43))
 polaris_noise_filter("polaris.logs", 0, rec("POST", "/api/catalog/v1/oauth/tokens", 200, 685))
 polaris_noise_filter("polaris.logs", 0, rec("GET",  "/api/catalog/v1/config", 200, 1757))
+-- authorization folding: five different role/grant paths, one row
 polaris_noise_filter("polaris.logs", 0, rec("PUT",  "/api/management/v1/principal-roles/r1", 200, 77))
 polaris_noise_filter("polaris.logs", 0, rec("GET",  "/api/management/v1/principal-roles/r1", 200, 55))
+polaris_noise_filter("polaris.logs", 0, rec("GET",  "/api/management/v1/principals/p1/principal-roles", 200, 31))
+polaris_noise_filter("polaris.logs", 0, rec("PUT",  "/api/management/v1/catalogs/c1/catalog-roles/cr1/grants", 200, 19))
+-- a DENIED grant, on a path with no prior success this window. Under create=false it
+-- would land in __other__ with no attribution; the authz key forces creation.
+polaris_noise_filter("polaris.logs", 0, rec("PUT",  "/api/management/v1/catalogs/c9/catalog-roles/cr9/grants", 403, 88))
+-- plain principal management is NOT authorization
+polaris_noise_filter("polaris.logs", 0, rec("GET",  "/api/management/v1/principals/p1", 200, 64))
 
 local _, _, out = polaris_noise_filter("polaris.report", 0, {tick="x", _now_override=T0+90})
 local sum, res, sr, sp = nil, {}, 0, 0
@@ -68,11 +76,21 @@ check("ns/properties -> namespace",  res[CAT.."/namespaces/ns1/properties"].reso
 check("POST properties is a WRITE",  res[CAT.."/namespaces/ns1/properties"].writes, 1)
 check("POST properties is not a read", res[CAT.."/namespaces/ns1/properties"].reads, 0)
 
-print("== exclusion and the margin invariant ==")
-check("principal-roles row suppressed", res["/api/management/v1/principal-roles/r1"], "nil")
-check("excluded_requests", sum.excluded_requests, 2)
-check("sum(resource)+excluded == seen-parse", sr + sum.excluded_requests,
-      sum.access_seen - sum.parse_errors)
+print("== authorization folding and the margin invariant ==")
+local AZ = res["__authorization__"]
+check("authorization row exists",    AZ ~= nil, true)
+check("  folds all 5 role/grant reqs", AZ and AZ.requests, 5)
+check("  reads",                     AZ and AZ.reads,  2)
+check("  writes",                    AZ and AZ.writes, 3)
+check("  errors incl. the denial",   AZ and AZ.errors, 1)
+check("  auth_denied captured",      AZ and AZ.auth_denied, 1)
+check("  kind",                      AZ and AZ.resource_kind, "authorization")
+check("no per-role row remains",     res["/api/management/v1/principal-roles/r1"], "nil")
+check("plain principal NOT folded",  res["/api/management/v1/principals/p1"] and
+                                     res["/api/management/v1/principals/p1"].resource_kind, "management")
+check("denial did NOT fall to __other__", res["__other__"], "nil")
+check("no excluded_requests field",  sum.excluded_requests, "nil")
+check("sum(resource) == seen-parse", sr, sum.access_seen - sum.parse_errors)
 check("sum(principal) == seen-parse", sp, sum.access_seen - sum.parse_errors)
 check("schema_version", sum.schema_version, 3)
 

@@ -211,8 +211,8 @@ luaScripts:
     local REPORT_APP     = "polaris-shipper-report"
     local SCHEMA_VERSION = 3   -- v3 (2026-09-09): last_read_bytes/last_write_bytes on
                                -- resource rows, five new RESOURCE_PATTERNS, and
-                               -- principal-roles excluded with excluded_requests to keep
-                               -- the margin invariant exact. v2 (2026-09-07): distinct_resources/_principals now
+                               -- and all role/grant traffic folded into one
+                               -- __authorization__ row. v2 (2026-09-07): distinct_resources/_principals now
                                -- count only rows with requests > 0 (v1 counted zero-carry
                                -- rows too, so an idle window reported resources it never
                                -- saw) and carried_rows carries that number instead;
@@ -270,16 +270,22 @@ luaScripts:
     -- Bounds on the two margins. Beyond them, requests land in one __other__ row: the
     -- totals stay exact and only per-key detail is capped, which is the difference
     -- between this cap and one that would have lost counts.
-    -- v3: resources the manager does not currently want as rows. Their requests are
-    -- still COUNTED -- into excluded_requests on the summary, and into the principal
-    -- rows -- so the margin invariant stays exact and the hidden volume stays visible.
-    -- Suppressing a row without counting it would make a standing gate fail on a
-    -- CORRECT config, which is the one thing this pipeline keeps doing to itself.
-    local EXCLUDED_PATTERNS = { "^.-/principal%-roles/" }
+    -- v3 AUTHORIZATION FOLDING. Every role/grant path collapses into ONE row keyed
+    -- __authorization__, kind "authorization": how much authz traffic, how it split
+    -- read/write, and how much of it failed -- without a row per role.
+    --
+    -- This replaces the excluded_requests design. Folding is strictly better than
+    -- excluding: the requests stay in a resource row, so the margin invariant needs
+    -- NO extra term and no new summary field, and the volume is not merely visible
+    -- as a number -- it is queryable, split by read/write/error, in the same shape
+    -- as every other row.
+    local AUTHZ_PATTERNS = { "/principal%-roles", "/catalog%-roles", "/grants" }
+    local AUTHZ_KEY      = "__authorization__"
+    local AUTHZ_KIND     = "authorization"
 
-    local function is_excluded(path)
-        for _, pat in ipairs(EXCLUDED_PATTERNS) do
-            if path:match(pat) then return true end
+    local function is_authz(path)
+        for _, pat in ipairs(AUTHZ_PATTERNS) do
+            if path:find(pat) then return true end
         end
         return false
     end
@@ -297,6 +303,8 @@ luaScripts:
     end
 
     local function classify(path)
+        -- Checked FIRST so a role path cannot be claimed by another rule.
+        if is_authz(path) then return AUTHZ_KEY, AUTHZ_KIND end
         for _, r in ipairs(RESOURCE_PATTERNS) do
             local span = path:match(r.pattern)
             if span then return span, r.kind end
@@ -340,7 +348,7 @@ luaScripts:
     local function new_window(idx, partial, carry_res, carry_pri)
         local w = {
             window = idx, partial = partial and true or false,
-            access_seen = 0, access_counted = 0, excluded_requests = 0,
+            access_seen = 0, access_counted = 0,
             counted_read = 0, counted_post = 0,
             errors_kept = 0, parse_errors = 0,
             resources = {}, kinds = {}, n_resources = 0, resources_over = 0,
@@ -440,20 +448,15 @@ luaScripts:
         local is_error = (status == nil or status >= 400)
         local key, kind = classify(path)
 
-        -- v3 exclusion. The request still counts -- into excluded_requests and into the
-        -- principal row -- it just gets no resource row of its own. The manager's
-        -- objection was to the resource dimension, not to knowing who called.
-        local excluded = is_excluded(path)
-        if excluded then
-            counts.excluded_requests = counts.excluded_requests + 1
-        end
-
-        local rows
-        if excluded then
-            rows = { touch_principal(user) }
-        else
-            rows = { touch_resource(key, kind, not is_error), touch_principal(user) }
-        end
+        -- create=false sends an errored request to __other__ unless its resource is
+        -- already known (the 404-scanner defence). For __authorization__ that guard is
+        -- pointless -- it is ONE bounded key, it cannot inflate cardinality -- and
+        -- actively harmful: a DENIED grant is precisely what an authorization row
+        -- exists to record, and it would otherwise land in __other__ with no
+        -- attribution. Measured 2026-09-09: every __other__ request in a busy window
+        -- was an error, including the window's only auth_denied.
+        local create = (not is_error) or (key == AUTHZ_KEY)
+        local rows = { touch_resource(key, kind, create), touch_principal(user) }
         for _, row in ipairs(rows) do
             row.requests = row.requests + 1
             if READ_METHODS[method] then
@@ -595,12 +598,6 @@ luaScripts:
         s.access_seen         = counts.access_seen
         s.access_kept         = counts.access_seen - counts.access_counted
         s.access_counted      = counts.access_counted
-        -- v3. Requests whose resource row was suppressed by EXCLUDED_PATTERNS. The margin
-        -- invariant is now:
-        --   sum(resource.requests) + excluded_requests == access_seen - parse_errors
-        --   sum(principal.requests)                    == access_seen - parse_errors
-        -- Both exact. Without this field the first would fail on a correct config.
-        s.excluded_requests   = counts.excluded_requests
         s.counted_read        = counts.counted_read
         s.counted_post        = counts.counted_post
         s.errors_kept         = counts.errors_kept
@@ -916,7 +913,7 @@ config:
         Match         polaris.*
         script        /fluent-bit/scripts/polaris_access_log.lua
         call          polaris_noise_filter
-        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted excluded_requests last_read_bytes last_write_bytes counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals carried_rows resources_other resources_other_distinct principals_other windows_skipped requests reads writes errors response_bytes
+        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted last_read_bytes last_write_bytes counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals carried_rows resources_other resources_other_distinct principals_other windows_skipped requests reads writes errors response_bytes
 
     # 4. Drop fields that cost storage on every record and answer nothing, plus the
     #    CRI envelope leftovers. Remove_key on an absent key is a no-op, so the

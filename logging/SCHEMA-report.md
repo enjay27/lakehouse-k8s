@@ -34,7 +34,6 @@ agg on `window_start` — groups one window.
 | `carried_rows` | int | ⚠ **resources AND principals combined** — see review #3. |
 | `resources_other` / `principals_other` | int | requests that overflowed the 500 / 200 caps into `__other__`. |
 | `resources_other_distinct` | int | distinct keys behind the overflow. |
-| `excluded_requests` | int | **v3.** Requests whose resource row was suppressed by `EXCLUDED_PATTERNS` (currently `/principal-roles/`). They still count toward `principal` rows. |
 | `windows_skipped` | int | windows that closed with no tick. |
 | `min_record_time` / `max_record_time` | string | ⚠ default `""`, not absent — see review #2. |
 | `partial_window` | **string** | ⚠ `"true"` / `"false"`, **not a boolean** — see review #1. |
@@ -45,7 +44,7 @@ agg on `window_start` — groups one window.
 | field | type | meaning |
 |---|---|---|
 | `resource` | string | the matched path span, or `__other__` beyond the cap. |
-| `resource_kind` | string | `table` \| `view` \| `collection` \| `namespace` \| `auth` \| `config` \| `management` \| `other`. **v3** added `auth` (`/oauth/tokens`), `config` (`/v1/config`), and rules routing `tables/rename` -> table, `views/rename` -> view, `namespaces/{ns}/properties` -> namespace. These set the **kind only** — `reads`/`writes` still come from the HTTP method, so `POST /properties` is a write. |
+| `resource_kind` | string | `table` \| `view` \| `collection` \| `namespace` \| `auth` \| `config` \| `management` \| `other`. **v3** added `authorization` (all role/grant traffic, folded into one `__authorization__` row), `auth` (`/oauth/tokens`), `config` (`/v1/config`), and rules routing `tables/rename` -> table, `views/rename` -> view, `namespaces/{ns}/properties` -> namespace. These set the **kind only** — `reads`/`writes` still come from the HTTP method, so `POST /properties` is a write. |
 | `requests` `reads` `writes` `errors` | int | reads = GET\|HEAD, writes = POST\|PUT\|DELETE\|PATCH, errors = status ≥ 400. ⚠ `errors` **overlaps** reads/writes and the 4xx/5xx split — never sum them together. |
 | `errors_4xx` `errors_5xx` `auth_denied` | int | as above; `auth_denied` overlaps `errors_4xx`. |
 | `response_bytes` | int | **SUM over the window.** |
@@ -61,8 +60,7 @@ Identical to `resource` except the key field is `user_principal_name` and there 
 ## Invariants worth asserting
 
 ```
-sum(resource.requests) + excluded_requests == access_seen - parse_errors   # v3
-sum(principal.requests)                    == access_seen - parse_errors
+sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors
 count(rows where requests == 0)                   == carried_rows
 hi - lo + 1 == n     over report_seq, one hostname, one schema_version
 max_record_time - min_record_time  <=  window_seconds
@@ -90,6 +88,13 @@ exactly that empty string, and a fresh daily index very often opens on an idle w
 **3b. `user_principal_name` of `-` is unauthenticated or auth-failed** — the access log's empty
 field. It is a real population, not missing data: a sample row carried 9 requests and 1
 `auth_denied`. Deliberately **not renamed** — every stored document and existing query uses `-`.
+
+**3a. `__authorization__` is a fold, not a resource.** v3 collapses every path containing
+`/principal-roles`, `/catalog-roles` or `/grants` into a single row with kind `authorization`.
+On real data that is **16 distinct paths, 80 requests -> 1 row**. Per-role detail is deliberately
+gone; `requests`/`reads`/`writes`/`errors`/`auth_denied` for the whole authz surface remain.
+It is the one key that bypasses the `create=false` guard, so **a denied grant lands here rather
+than in `__other__`.**
 
 **3c. `__other__` is mostly ERRORS, not overflow.** `touch_resource(key, kind, not is_error)` means
 an errored request whose resource is not *already* in the window's map gets no row of its own and
@@ -124,5 +129,5 @@ interpreter: `logging/scripts/test-schema-v3.lua`, 16 assertions, all passing. T
 have failed the whole chunk at load.
 
 See the tables above for the fields. `SCHEMA_VERSION` is 3; `last_read_bytes`, `last_write_bytes`
-and `excluded_requests` are in `type_int_key`; `last_write_method` was considered and **dropped** —
+are in `type_int_key`; `last_write_method` was considered and **dropped** —
 the size > 0 rule separates commit from drop without it.
