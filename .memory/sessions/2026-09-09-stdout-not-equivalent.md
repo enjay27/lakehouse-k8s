@@ -261,3 +261,64 @@ unwrap is in the file at all.
 Also worth one query, since `Merge_Log` is now known to be the thing that works: whether adding a
 `kubernetes` filter is even the right fix, or whether the right fix is to stop hand-rolling the
 unwrap and reuse the mechanism tier 1 already proves.
+
+---
+
+## The rendered config is byte-for-byte the intent. Every file-level suspect is now dead.
+
+`.data["fluent-bit.conf"]` from the deployed ConfigMap carries the TIER 2/3 block exactly as
+`fluent-bit/values.yaml` writes it: `polaris_cri_unwrap` present, **first** in the block, before
+`polaris_key_rename`, with `Match polaris.logs`, `Key_Name log`, `Parser polaris_stdout_json`,
+`Reserve_Data On`. Order is intact. The parser it names is in the loaded `custom_parsers.conf`
+with `Time_Keep On`. The mount resolves. The filters either side of it demonstrably execute on
+this tag. The payload is valid JSON.
+
+**So the configuration is correct and the behaviour is still wrong.** Everything that can be
+settled from an artifact has been settled. What is left is runtime.
+
+## Correction: I exonerated the time format on bad reasoning
+
+`ffb0e53` said `%Y-%m-%dT%H:%M:%S.%L%z` was cleared because 2.6M tier 1 docs carry `loggerName`.
+In the same commit I established that **`Merge_Log` produces those**, not `polaris_json`. Both
+statements are in one message and they contradict each other. `Merge_Log` does no `Time_Key`
+handling at all, so it exonerates the JSON payload and says nothing whatever about the time spec.
+
+Follow that through and the correlation is tight:
+
+- `polaris_json` — no-op. `Merge_Log`/`Keep_Log Off` deletes `log` before it runs.
+- `polaris_text` — no-op on JSON input, and downstream of the same deletion.
+- `datahub_json` — has **no `Time_Key`**.
+- `polaris_stdout_json` — the ONLY parser in this deployment that must actually resolve a
+  `Time_Key`, and the only one failing.
+
+**No parser with `Time_Format %Y-%m-%dT%H:%M:%S.%L%z` has ever been shown to succeed in this
+pod.** The suspect is back, and specifically: `%L` against **nine** fractional digits in
+`.697818537Z`. If `%L` consumes only three, `%z` is handed `818537Z` and the time lookup fails.
+
+## The one cheap experiment that splits the remaining space, no config change
+
+Fluent Bit's own metrics say whether the filter is even seeing records:
+
+```bash
+kubectl -n datahub-hynix port-forward ds/benchmarks-fluent-bit 2021:2020
+curl -s localhost:2021/api/v1/metrics | jq '.filter'
+```
+
+- `polaris_cri_unwrap` shows **records processed** -> it runs and the parse fails. The time spec
+  is then the leading candidate and the fix is a `Time_Format` that matches nanoseconds, or
+  dropping `Time_Key` from this parser and letting filter 1's `Rename timestamp _time` do the
+  work `Time_Keep On` was added to enable.
+- `polaris_cri_unwrap` shows **nothing** -> it is not receiving records despite matching the tag,
+  and the question becomes a Fluent Bit 5.1.1 behaviour change in the `parser` filter — the
+  release went 3.2.2 -> 5.1.1 on 2026-09-09 04:21 and this chain has never run on any other build.
+
+Note the second branch has a claim behind it worth stating plainly: **the tier 2/3 chain has never
+worked on any version.** It was introduced by this cutover. There is no "it used to parse"
+baseline, so a 5.1.1 regression and a config that never worked look identical from here.
+
+## What would have caught this
+
+Nothing in the step-2 or step-3 gates asserted that a stored tier 2 record has a `loggerName`
+field. The gates counted documents, checked the Lua sha, and read the pod log for complaints —
+all of which pass while every record arrives unparsed. One `exists` query on a stored document,
+run once after the cutover, would have caught it in the first minute.
