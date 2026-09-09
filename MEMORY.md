@@ -5,34 +5,34 @@ everything else is a link into [`.memory/`](.memory/README.md).
 
 ## Now — 2026-09-09
 
-**The task is the Fluent Bit config, and only that** (Kade, scoped 2026-09-08). `fb-polaris-shipper`
-stops tailing the Polaris log PVC and tails the **container log** instead — stdout carries the
-access-log records, confirmed from `k8s-logs` — and its VictoriaLogs `http` output is replaced by
-two `opensearch` outputs: `polaris-logs-*` and `polaris-report-*`. The DaemonSet is untouched, and
-**`polaris_access_log.lua` is byte-identical**: no Lua edit anywhere in this change.
-Blocks, gates and render greps: [`PLAN-opensearch-cutover`](logging/PLAN-opensearch-cutover-2026-09-08.md).
+**The cutover is DEPLOYED and tier 1 survived it.** `benchmarks-fluent-bit` now runs all three
+tiers on Fluent Bit **5.1.1** (chart 0.57.6, no chart bump): `k8s-logs` 5d unfiltered,
+`polaris-logs-*` 30d policy-v3 filtered from **stdout**, `polaris-report-*` 365d schema-v2 rows.
+Rollout clean, 0 restarts, no filter complaints, deployed Lua sha `aa180e90b9f69bda` matches the
+repo, **`k8s-logs` still taking ~23k docs/10m**, and `polaris-report-*` is receiving — which alone
+proves the tick, the noise-filter Lua, the report output and `${OS_PASSWORD}` expansion.
+Plan and gates: [`PLAN-opensearch-cutover`](logging/PLAN-opensearch-cutover-2026-09-08.md).
 
-**Step 1 is DONE (2026-09-08):** OpenSearch is **3.5.0**; `_msg` is accepted, so the field names
-stay; Secret `opensearch-shipper-credentials` exists; and reachability is closed — the DaemonSet is
-**`benchmarks-fluent-bit`** with `hostNetwork` unset, so a Deployment in the namespace has the same
-egress. **Next is step 2, the `fb-values.yaml` edit.**
+**Open: `polaris-logs-*` is empty.** Not "wait a window" — the report arrived through the same
+filter instance and the same credential. Either Polaris is idle (it only logs on requests) or
+stdout does not carry what the file carries. **The report answers it itself**: `access_seen`
+counts what the filter SAW, before any keep/drop.
+`logging/scripts/step4-report-readout.sh` reads it and says which.
 
-**Duplicates, mappings, ISM and the query layer are handed off** (plan §6). The one sequencing item
-still ours: **the 30s window stays until everything else is done** (Kade, 2026-09-09). It makes each
-verification round ~2 minutes instead of ~90, so reverting early taxes steps 3–5 for nothing. The
-revert to 1800/30 is the plan's **last step and its final gate** (§4.1) — the only point the
-pipeline is seen at production cadence. Tier 3's long ISM policy is **blocked on it**, and that
-policy governs deletion rather than what is already written, so the 30s-density band must be
-dropped by hand.
+**Do this before uninstalling `fb-polaris-shipper` — it cannot be measured afterwards.** Both
+releases are running the same filter over the same traffic from two sources: the shipper from the
+log FILE into VictoriaLogs, the DaemonSet from STDOUT into OpenSearch. Equal `access_seen` for one
+window is the proof that stdout carries the same access-log set as the file — the question every
+earlier revision of this plan had to leave open.
 
-**Five of the eight traps in that config fail silently** — `customParsers` is written and never
-loaded; without `Time_Keep On` the parser eats `timestamp`, `_time` never exists and filter 3's
-replay detector skips without erroring; renaming the tag without the INPUT that *defines* it drops
-the whole log stream while reports keep flowing; a second `@timestamp` is rejected per-item inside
-an HTTP 200; an undefined `${OS_USER}` expands to empty and 401s past every render grep. Plan §3.
+**Still written and NOT running:** the temporary **30s window** (`Interval_Sec 5`). It stays until
+everything else is done; the revert to 1800/30 is the plan's **last step and its final gate**
+(§4.1), and tier 3's long ISM policy is blocked on it.
 
 **Standing, and all three outrank inference.** Polaris is not to be changed. **Verify against the
-running object, never an intent artifact.** And **a gate that cannot fail is not a gate.**
+running object, never an intent artifact.** And **a gate that cannot fail is not a gate** — this
+week that cut both ways: one gate was built so it could only pass, two more fire on a *correct*
+config, and several count something `grep -c` cannot count (the whole Lua renders as ONE line).
 
 ## Where the detail is
 
