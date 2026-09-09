@@ -232,17 +232,35 @@ them at 400M / 400M / 200M.
 | **5** | Remove the `http` output; restore `storage.total_limit_size` | render grep `Name  *http` == 0 |
 | **6** | **LAST — revert `WINDOW_SECONDS` 30→1800 and `Interval_Sec` 5→30**, and verify the pipeline at production cadence | see §4.1. Nothing else in this plan runs after it |
 
-**Render greps for step 2** — `helm upgrade --install … --dry-run --debug > /tmp/render.txt`:
+**Capture the BEFORE render first.** A dry-run of an *unedited* `fb-values.yaml` renders the old
+VictoriaLogs config — it proves nothing about this change, and its guide-§4.7 greps all pass, which
+is easy to misread as progress. Run it anyway and keep it: the diff of two renders is stronger
+evidence than any count of greps.
 
 ```bash
-grep -c 'Parsers_File'              /tmp/render.txt   # 2   (3.1)
-grep -c 'Time_Keep   On'            /tmp/render.txt   # 1   (3.2)
-grep -c 'polaris\.vlogs'            /tmp/render.txt   # 0   (3.3)
-grep -c 'Time_Key'                  /tmp/render.txt   # 1   (parser only, NOT the outputs — 3.4)
-grep -c 'Name  *opensearch'         /tmp/render.txt   # 2
-grep -c 'Name  *http'               /tmp/render.txt   # 1   (0 after step 5)
-grep -c 'OS_PASSWORD'               /tmp/render.txt   # 2   (env + output — 3.6)
-grep -c 'Trace_Error'               /tmp/render.txt   # 2   (3.7)
+# BEFORE — with fb-values.yaml unedited
+helm upgrade --install fb-polaris-shipper fluent/fluent-bit --version 0.58.1 \
+  -n datahub-hynix -f logging/fb-values.yaml --dry-run=client --debug > /tmp/render-before.txt 2>/dev/null
+# ... make the step 2 edit ...
+helm upgrade --install fb-polaris-shipper fluent/fluent-bit --version 0.58.1 \
+  -n datahub-hynix -f logging/fb-values.yaml --dry-run=client --debug > /tmp/render-after.txt  2>/dev/null
+diff /tmp/render-before.txt /tmp/render-after.txt        # ← read this, then run the greps
+```
+
+**`--dry-run=client`, not `--dry-run`** — Helm 4 deprecates the bare form (see CLAUDE.md's stack
+line). Send `--debug` to `/dev/null` on stderr so the render is the file's only content.
+
+**Render greps for step 2**, against `/tmp/render-after.txt`:
+
+```bash
+grep -c 'Parsers_File'              /tmp/render-after.txt   # 2   (3.1)
+grep -c 'Time_Keep   On'            /tmp/render-after.txt   # 1   (3.2)
+grep -c 'polaris\.vlogs'            /tmp/render-after.txt   # 0   (3.3)
+grep -c 'Time_Key'                  /tmp/render-after.txt   # 1   (parser only, NOT the outputs — 3.4)
+grep -c 'Name  *opensearch'         /tmp/render-after.txt   # 2
+grep -c 'Name  *http'               /tmp/render-after.txt   # 1   (0 after step 5)
+grep -c 'OS_PASSWORD'               /tmp/render-after.txt   # 2   (env + output — 3.6)
+grep -c 'Trace_Error'               /tmp/render-after.txt   # 2   (3.7)
 # and the UNCHANGED guide §4.7 greps: RESOURCE_PATTERNS, MGMT_PREFIX,
 # 'Name              dummy' == 1, type_int_key == 2, DEDUP_MAX_KEYS == 0
 ```

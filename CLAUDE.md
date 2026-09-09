@@ -1,7 +1,12 @@
 # Infrastructure Environment Rules
 
 ## Tech Stack
-- **Orchestration:** Local Kubernetes (OrbStack, context `orbstack`) via Helm 3.x.
+- **Orchestration:** Local Kubernetes (OrbStack, context `orbstack`) via **Helm 4** — *not* 3.x,
+  as this file claimed until 2026-09-09. The CLI's own output gives it away: `level=DEBUG msg=…`
+  slog lines, `--dry-run is deprecated and should be replaced with '--dry-run=client'`, and
+  `determined release apply method server_side_apply=true`. **Helm 4 defaults to server-side
+  apply**, so field-manager conflicts are a failure mode Helm 3 did not have; existing releases
+  already report `previous_release_apply_method=ssa`. Confirm with `helm version`.
 - **Target Namespace:** `datahub-hynix` — strictly enforced for every K8s asset. The one
   exception is `logging`, which holds the log sink only.
 - **Apache Polaris (Iceberg REST catalog):** local chart, v1.3.0-incubating. Management
@@ -59,7 +64,7 @@ bucket and its metastore.
 - **Check Active Cluster Context:** `kubectl config current-context` (must equal `orbstack`)
 - **Check K8s Cluster State:** `kubectl get pods -n datahub-hynix`
 - **Check Helm Releases:** `helm list -n datahub-hynix`
-- **Verify Manifest Dry-Run:** `helm upgrade --install <release> ./<chart> --namespace datahub-hynix --dry-run --debug`
+- **Verify Manifest Dry-Run:** `helm upgrade --install <release> ./<chart> --namespace datahub-hynix --dry-run=client --debug`
 - **Deploy/Upgrade Chart:** `helm upgrade --install <release> ./<chart> -f values.yaml -n datahub-hynix`
 - **Diff a release against itself:** `helm -n datahub-hynix get values <release> --revision N`
   — turns "what did I break" into a fact rather than a guess.
@@ -77,7 +82,7 @@ sat at the wrong nesting level while the cluster served subchart defaults.
   not evidence: it is indistinguishable from a block that was never applied.
 - **Un-inerting configuration that has never executed is a change, not a fix.** Review it
   line by line against the defaults it replaces before assuming it is safe.
-- **`helm lint` is not a render.** Every change gets `--dry-run --debug` as well; lint does
+- **`helm lint` is not a render.** Every change gets `--dry-run=client --debug` as well; lint does
   not catch values/template errors that only surface at render time.
 - The verification assertions that would have caught this are in
   [`.memory/roadmap.md`](.memory/roadmap.md) — run them after any PostgreSQL change.
@@ -115,7 +120,7 @@ sat at the wrong nesting level while the cluster served subchart defaults.
 ## Definition of Done (DoD)
 Before marking any infrastructure task complete:
 1. **Render, don't guess.** `helm lint` **and** a successful
-   `helm upgrade --install ... --dry-run --debug` for every chart touched.
+   `helm upgrade --install ... --dry-run=client --debug` for every chart touched.
 2. **Verify against defaults**, per the Configuration Policy above — pods `Running`, and the
    changed setting queried from the running object, not read back out of the values file.
 3. **Record the outcome in the memory tree.** `MEMORY.md` is an **index, kept under ~40
@@ -145,7 +150,7 @@ Never commit a state you have not verified. In order:
 
 ```bash
 helm lint ./<chart>
-helm upgrade --install <release> ./<chart> -n datahub-hynix --dry-run --debug
+helm upgrade --install <release> ./<chart> -n datahub-hynix --dry-run=client --debug
 git status                     # check BEFORE -A, never after
 git add -A && git commit
 ```
