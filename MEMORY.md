@@ -3,7 +3,7 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-08
+## Now — 2026-09-09
 
 **The task is the Fluent Bit config, and only that** (Kade, scoped 2026-09-08). `fb-polaris-shipper`
 stops tailing the Polaris log PVC and tails the **container log** instead — stdout carries the
@@ -12,9 +12,18 @@ two `opensearch` outputs: `polaris-logs-*` and `polaris-report-*`. The DaemonSet
 **`polaris_access_log.lua` is byte-identical**: no Lua edit anywhere in this change.
 Blocks, gates and render greps: [`PLAN-opensearch-cutover`](logging/PLAN-opensearch-cutover-2026-09-08.md).
 
-**Duplicates, mappings, ISM and the query layer are handed off** (plan §6) — but note the one
-sequencing item that is still ours: revert the **30s window** to 1800/30 **before** the long
-retention policy is applied, or ~138k report docs/day against ~2.3k is baked in for a year.
+**Step 1 is DONE (2026-09-08):** OpenSearch is **3.5.0**; `_msg` is accepted, so the field names
+stay; Secret `opensearch-shipper-credentials` exists; and reachability is closed — the DaemonSet is
+**`benchmarks-fluent-bit`** with `hostNetwork` unset, so a Deployment in the namespace has the same
+egress. **Next is step 2, the `fb-values.yaml` edit.**
+
+**Duplicates, mappings, ISM and the query layer are handed off** (plan §6). The one sequencing item
+still ours: **the 30s window stays until everything else is done** (Kade, 2026-09-09). It makes each
+verification round ~2 minutes instead of ~90, so reverting early taxes steps 3–5 for nothing. The
+revert to 1800/30 is the plan's **last step and its final gate** (§4.1) — the only point the
+pipeline is seen at production cadence. Tier 3's long ISM policy is **blocked on it**, and that
+policy governs deletion rather than what is already written, so the 30s-density band must be
+dropped by hand.
 
 **Five of the eight traps in that config fail silently** — `customParsers` is written and never
 loaded; without `Time_Keep On` the parser eats `timestamp`, `_time` never exists and filter 3's
