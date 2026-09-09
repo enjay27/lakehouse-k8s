@@ -757,6 +757,21 @@ config:
         Rate              1
         Interval_Sec      30
 
+    # Probe 3 -- IDENTICAL to probe 2 except a TRAILING NEWLINE on the `log`
+    # value. That is the one difference between the probe payload and what the
+    # tail's CRI parser actually hands the filter: the stored Polaris doc ends
+    # ...\"processId\":1}\n. Probe 2 parses (measured 130 B/record, exactly the
+    # parsed-model prediction; raw would be 153). If probe 3 does NOT parse, the
+    # trailing newline is the whole fault and it has nothing to do with the
+    # parser, the time key, or Polaris.
+    [INPUT]
+        Name              dummy
+        Alias             hb_parse_nl_tick
+        Tag               heartbeat.parsenl
+        Dummy             {"probe":"parse_nl","log":"{\"timestamp\":\"2026-09-09T05:07:07.697818537Z\",\"loggerName\":\"io.quarkus.http.access-log\",\"level\":\"INFO\",\"message\":\"probe\"}\n"}
+        Rate              1
+        Interval_Sec      30
+
   # ── Filters ────────────────────────────────────────────────
   filters: |
     # Enrich with K8s metadata
@@ -877,6 +892,14 @@ config:
         Name          parser
         Alias         hb_parse_probe
         Match         heartbeat.parse
+        Key_Name      log
+        Parser        polaris_stdout_json
+        Reserve_Data  On
+
+    [FILTER]
+        Name          parser
+        Alias         hb_parse_nl_probe
+        Match         heartbeat.parsenl
         Key_Name      log
         Parser        polaris_stdout_json
         Reserve_Data  On

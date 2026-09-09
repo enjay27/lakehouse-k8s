@@ -378,3 +378,51 @@ failing. Removing `Time_Key`/`Time_Format` from it removes the sole remaining fa
 The alternative — keeping `Time_Key` and correcting `Time_Format` for nine fractional digits — is
 a guess about `%L`'s digit handling that would need its own run to confirm. Prefer the change that
 removes the failure mode over the one that tries to satisfy it.
+
+---
+
+## THE PARSER WORKS. Measured, to the byte.
+
+`hb_parse_probe`: **3 records, 390 bytes = 130.0 B/record.** Model the two possible outputs of
+that filter on the known probe payload (msgpack, v2+ framing `[[ts_ext, metadata], body]` = 13 B):
+
+| outcome | body | + frame | |
+|---|---|---|---|
+| **RAW** — parse failed, `log` kept as a 121-char string | 140 | **153** | |
+| **PARSED** — `log` consumed, 4 fields merged, `probe` reserved | 117 | **130** | **measured 130** |
+
+Exact. `polaris_stdout_json` parses a CRI-shaped record carrying nine fractional digits and a
+literal `Z`, and produces `loggerName` as a field. **The parser filter is not the fault, the
+parser definition is not the fault, and the time key never was** — Fault A's removal was harmless
+but it was not the cure.
+
+This is the first thing in this investigation measured against a payload whose expected output was
+known in advance rather than inferred from live traffic.
+
+## So the fault is in what the real records carry — and it is one character
+
+The real chain is still failing: `polaris_cri_unwrap` reads **2042.2 B/record** after the fix
+against **2041.4 B/record** before it. Unchanged. Compare the probe payload against the stored
+Polaris document, which is the only place the two differ:
+
+```
+probe  "log":"{\"timestamp\":...,\"message\":\"probe\"}"      -> PARSES (130 B/rec)
+real   "log":"{\"timestamp\":...,\"processId\":1}\n"           -> does not
+                                                        ^^ trailing newline
+```
+
+The tail's CRI multiline parser keeps the line terminator inside `log`. Everything else about the
+two payloads is the same shape.
+
+**Probe 3 tests exactly that.** `hb_parse_nl_tick` / `heartbeat.parsenl` is byte-identical to
+probe 2 except for a trailing `\n` on the `log` value, with its own filter alias
+`hb_parse_nl_probe` so its bytes are separately attributable.
+
+- probe 3 **does not parse** (≈154 B/record, the raw model + 1) -> the trailing newline is the
+  entire fault. Nothing to do with the parser, the time key, Polaris, or the cutover. Fix is to
+  strip the terminator before the unwrap.
+- probe 3 **parses** (≈131 B/record) -> the newline is innocent and the difference is elsewhere in
+  the real record — next suspects are `Skip_Long_Lines` truncation and the `stream`/`logtag`
+  envelope keys.
+
+Either way it is decided by one number, and both numbers are predicted in advance.
