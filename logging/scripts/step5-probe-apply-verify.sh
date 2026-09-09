@@ -36,7 +36,7 @@ echo "    render OK"
 
 # What the values file expects the running instance to contain. Add to this list
 # whenever a probe is added; a gate that does not name what it checks cannot fail.
-EXPECT=(hb_parse_probe hb_parse_nl_probe hb_parse_real_probe polaris_cri_unwrap)
+EXPECT=(hb_parse_probe hb_parse_nl_probe hb_parse_real_probe hb_tail_probe polaris_cri_unwrap)
 
 if [ "$APPLY" != "--apply" ]; then
   echo

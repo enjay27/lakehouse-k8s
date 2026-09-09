@@ -471,3 +471,56 @@ Polaris document, verbatim — nested `mdc` object, integer `sequence` and `thre
 
 Both probes go in one roll. Payloads validated by round-tripping the parsed YAML through
 `json.loads` twice, asserting the newline is a real terminator, and counting keys (4, 4, 13).
+
+---
+
+## ALL THREE PROBES PARSED. The record content is exonerated, and so is the parser.
+
+Measured against models computed before the read (msgpack, v2+ framing 13 B):
+
+| probe | RAW model | PARSED model | measured | verdict |
+|---|---|---|---|---|
+| `hb_parse_probe` (synthetic, no newline) | 153 | **130** | **130** | PARSED |
+| `hb_parse_nl_probe` (+ trailing newline) | 157 | **133** | **133** | PARSED |
+| `hb_parse_real_probe` (**verbatim real payload**) | 615 | **553** | **553** | PARSED |
+
+Every one exact. So, definitively **not** the fault:
+
+- the parser filter, and `polaris_stdout_json`'s definition;
+- the time key — Fault A's removal was harmless, and never the cure;
+- **the trailing newline.** My probe-3 hypothesis was wrong, exactly as the `Merge_Log` counter-
+  argument predicted. Recorded as wrong rather than quietly dropped;
+- the payload's shape: nested `mdc` object, integer `sequence`/`threadId`, empty-string `ndc`,
+  58- and 62-character values, 13 keys. The verbatim record parses.
+
+The eliminations are now total on the content side. **The one thing every passing probe shares is
+its source: `dummy`. The one thing the failing records share is theirs: `tail`.**
+
+## Probe 5 — one variable, real data
+
+Same files the tier 2 input tails, same parser filter, differing in exactly one thing:
+`multiline.parser docker, cri` instead of `cri`. That is also the only structural difference
+between tier 1's input — whose `log` values `Merge_Log` unwraps 2.6M times successfully — and
+tier 2's, whose `log` values the parser filter will not touch.
+
+`hb_tail_probe` is otherwise identical to `polaris_cri_unwrap`: same `Key_Name`, same parser, same
+`Reserve_Data On`. So a difference in outcome is attributable to the **input**, and nothing else.
+
+- **parses** -> the `cri` multiline parser is the fault and the fix is one word in the tier 2 input.
+- **does not parse** -> the fault is `tail` + a `parser` filter generally, not the multiline
+  choice. Then stop hand-rolling the unwrap and use the mechanism that demonstrably works on these
+  records in this pod — the `kubernetes` filter's `Merge_Log`.
+
+Read it the same way as the real chain, since it now sees the same records: the `hb_tail_probe`
+byte delta, not its absolute size.
+
+**VOLUME WARNING:** probe 5 tails every Polaris line into `fb-heartbeat-*`, ~5k records/hour. It is
+short-lived. It has its own `DB /var/log/flb_hb_tail.db` — sharing tier 2's would corrupt both
+offset stores (verified unique: `flb_kube.db`, `flb_polaris.db`, `flb_hb_tail.db`).
+
+## Also from this run
+
+`step5-probe-apply-verify.sh` worked: the ConfigMap check and the process check both passed on the
+same run, and REVISION 5 is the first upgrade this session that is provably *running*. Step 7 read
+`0 B over 0 rec` because the pod had just restarted and no Polaris traffic had arrived within the
+40s settle — expected, not a failure. Re-read the delta after traffic.

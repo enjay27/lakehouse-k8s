@@ -790,6 +790,39 @@ config:
         Rate              1
         Interval_Sec      30
 
+    # ══ PROBE 5 — the ONE variable left ══════════════════════════════════════
+    # Probes 2-4 all PARSED, including the verbatim real payload with its
+    # trailing newline (553 B/rec measured against a 553 parsed model, 615 raw).
+    # So the record CONTENT is exonerated and so is the parser. Every probe so
+    # far came from `dummy`; the failing records come from `tail`.
+    #
+    # This is the same FILES the tier 2 input tails and the same parser filter,
+    # differing in exactly one thing: `multiline.parser docker, cri` instead of
+    # `cri`. That is the only structural difference between tier 1's input --
+    # whose `log` values Merge_Log unwraps successfully, 2.6M of them -- and
+    # tier 2's, whose `log` values the parser filter will not touch.
+    #
+    #   parses (delta ~9 B/rec on hb_tail_probe) -> the `cri` multiline parser is
+    #       the fault, and the fix is one word in the tier 2 input.
+    #   does not parse -> the fault is `tail` + `parser` filter generally, not the
+    #       multiline choice, and the fix is to stop hand-rolling the unwrap.
+    #
+    # VOLUME WARNING: this tails every Polaris log line into fb-heartbeat-*,
+    # roughly 5k records/hour. It is a short-lived experiment. REMOVE IT with the
+    # other probes; it needs its own DB path or it corrupts the tier 2 offsets.
+    [INPUT]
+        Name              tail
+        Alias             hb_tail_tick
+        Path              /var/log/containers/*benchmarks-polaris*.log
+        Tag               heartbeat.tail
+        multiline.parser  docker, cri
+        Refresh_Interval  5
+        Rotate_Wait       10
+        Mem_Buf_Limit     20MB
+        Skip_Long_Lines   On
+        DB                /var/log/flb_hb_tail.db
+        DB.sync           normal
+
   # ── Filters ────────────────────────────────────────────────
   filters: |
     # Enrich with K8s metadata
@@ -926,6 +959,16 @@ config:
         Name          parser
         Alias         hb_parse_real_probe
         Match         heartbeat.parsereal
+        Key_Name      log
+        Parser        polaris_stdout_json
+        Reserve_Data  On
+
+    # Probe 5's filter. Identical to polaris_cri_unwrap in every respect except
+    # the tag it matches, so a difference in outcome is attributable to the INPUT.
+    [FILTER]
+        Name          parser
+        Alias         hb_tail_probe
+        Match         heartbeat.tail
         Key_Name      log
         Parser        polaris_stdout_json
         Reserve_Data  On
