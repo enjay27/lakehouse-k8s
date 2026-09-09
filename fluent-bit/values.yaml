@@ -740,97 +740,6 @@ config:
         Interval_Sec      5
         Interval_NSec     0
 
-    # ══ HEARTBEAT PROBE — isolates the parser from Polaris. REMOVE when done. ══
-    # Tags are heartbeat.*, which NO existing Match catches: tier 1 is kube.*,
-    # tier 2 polaris.logs, tier 3 polaris.report, the noise filter polaris.*.
-    # Interval_Sec here is a PROBE CADENCE. It has nothing to do with
-    # WINDOW_SECONDS and must not be touched by the 1800/30 revert.
-    [INPUT]
-        Name              dummy
-        Alias             hb_raw_tick
-        Tag               heartbeat.raw
-        Dummy             {"probe":"raw"}
-        Rate              1
-        Interval_Sec      30
-
-    # The experiment. Same SHAPE the tail produces for Polaris -- the JSON as a
-    # STRING under `log` -- but from a source with no connection to the tail
-    # input, the CRI multiline parser, Polaris, or its traffic. Nine fractional
-    # digits and a literal Z are deliberate: that is what the real records carry.
-    [INPUT]
-        Name              dummy
-        Alias             hb_parse_tick
-        Tag               heartbeat.parse
-        Dummy             {"probe":"parse","log":"{\"timestamp\":\"2026-09-09T05:07:07.697818537Z\",\"loggerName\":\"io.quarkus.http.access-log\",\"level\":\"INFO\",\"message\":\"probe\"}"}
-        Rate              1
-        Interval_Sec      30
-
-    # Probe 3 -- IDENTICAL to probe 2 except a TRAILING NEWLINE on the `log`
-    # value. That is the one difference between the probe payload and what the
-    # tail's CRI parser actually hands the filter: the stored Polaris doc ends
-    # ...\"processId\":1}\n. Probe 2 parses (measured 130 B/record, exactly the
-    # parsed-model prediction; raw would be 153). If probe 3 does NOT parse, the
-    # trailing newline is the whole fault and it has nothing to do with the
-    # parser, the time key, or Polaris.
-    [INPUT]
-        Name              dummy
-        Alias             hb_parse_nl_tick
-        Tag               heartbeat.parsenl
-        Dummy             {"probe":"parse_nl","log":"{\"timestamp\":\"2026-09-09T05:07:07.697818537Z\",\"loggerName\":\"io.quarkus.http.access-log\",\"level\":\"INFO\",\"message\":\"probe\"}\n"}
-        Rate              1
-        Interval_Sec      30
-
-    # Probe 4 -- the EXACT `log` value from the stored Polaris document, verbatim,
-    # trailing newline included: nested `mdc` object, integer `sequence` and
-    # `threadId`, empty-string `ndc`, absolute processName, the lot. If THIS
-    # parses, the record CONTENT is fully exonerated and the fault is in the tail
-    # input path itself, not in anything the payload carries.
-    # Caution on probe 3's hypothesis: the kubernetes filter's Merge_Log parses
-    # `log` values that also end in \n -- that is where tier 1's 2.6M loggerName
-    # docs come from -- so a trailing newline is NOT obviously fatal to Fluent
-    # Bit's JSON parsing. Probe 3 may well pass. Probe 4 is why both are worth
-    # one roll.
-    [INPUT]
-        Name              dummy
-        Alias             hb_parse_real_tick
-        Tag               heartbeat.parsereal
-        Dummy             {"probe":"parse_real","log":"{\"timestamp\":\"2026-09-09T05:07:07.697818537Z\",\"sequence\":49687,\"loggerClassName\":\"org.slf4j.spi.DefaultLoggingEventBuilder\",\"loggerName\":\"org.apache.polaris.service.catalog.api.IcebergRestOAuth2Api\",\"level\":\"DEBUG\",\"message\":\"operation=getToken Invoking OAuth2Api with params\",\"threadName\":\"executor-thread-21\",\"threadId\":78,\"mdc\":{\"requestId\":\"dce356e7-539d-444f-a854-c9b17cf4a0a2_0000000000000001316\",\"realmId\":\"POLARIS\"},\"ndc\":\"\",\"hostName\":\"benchmarks-polaris-585587454b-nhzdr\",\"processName\":\"/usr/lib/jvm/java-21-openjdk-21.0.9.0.10-1.el9.aarch64/bin/java\",\"processId\":1}\n"}
-        Rate              1
-        Interval_Sec      30
-
-    # ══ PROBE 5 — the ONE variable left ══════════════════════════════════════
-    # Probes 2-4 all PARSED, including the verbatim real payload with its
-    # trailing newline (553 B/rec measured against a 553 parsed model, 615 raw).
-    # So the record CONTENT is exonerated and so is the parser. Every probe so
-    # far came from `dummy`; the failing records come from `tail`.
-    #
-    # This is the same FILES the tier 2 input tails and the same parser filter,
-    # differing in exactly one thing: `multiline.parser docker, cri` instead of
-    # `cri`. That is the only structural difference between tier 1's input --
-    # whose `log` values Merge_Log unwraps successfully, 2.6M of them -- and
-    # tier 2's, whose `log` values the parser filter will not touch.
-    #
-    #   parses (delta ~9 B/rec on hb_tail_probe) -> the `cri` multiline parser is
-    #       the fault, and the fix is one word in the tier 2 input.
-    #   does not parse -> the fault is `tail` + `parser` filter generally, not the
-    #       multiline choice, and the fix is to stop hand-rolling the unwrap.
-    #
-    # VOLUME WARNING: this tails every Polaris log line into fb-heartbeat-*,
-    # roughly 5k records/hour. It is a short-lived experiment. REMOVE IT with the
-    # other probes; it needs its own DB path or it corrupts the tier 2 offsets.
-    [INPUT]
-        Name              tail
-        Alias             hb_tail_tick
-        Path              /var/log/containers/*benchmarks-polaris*.log
-        Tag               heartbeat.tail
-        multiline.parser  docker, cri
-        Refresh_Interval  5
-        Rotate_Wait       10
-        Mem_Buf_Limit     20MB
-        Skip_Long_Lines   On
-        DB                /var/log/flb_hb_tail.db
-        DB.sync           normal
-
   # ── Filters ────────────────────────────────────────────────
   filters: |
     # Enrich with K8s metadata
@@ -940,46 +849,6 @@ config:
         Remove_key    processId
         Remove_key    logtag
         Remove_key    time
-
-    # ══ HEARTBEAT PROBE — the experiment. REMOVE when done. ══════════════════
-    # Feeds polaris_stdout_json a known-good CRI-shaped record. loggerName
-    # present as a FIELD downstream => the parser filter works and the fault is
-    # in what the real records look like when they reach it. `log` still a
-    # string => the parser filter is inert in this build, reproduced without
-    # Polaris in the path.
-    [FILTER]
-        Name          parser
-        Alias         hb_parse_probe
-        Match         heartbeat.parse
-        Key_Name      log
-        Parser        polaris_stdout_json
-        Reserve_Data  On
-
-    [FILTER]
-        Name          parser
-        Alias         hb_parse_nl_probe
-        Match         heartbeat.parsenl
-        Key_Name      log
-        Parser        polaris_stdout_json
-        Reserve_Data  On
-
-    [FILTER]
-        Name          parser
-        Alias         hb_parse_real_probe
-        Match         heartbeat.parsereal
-        Key_Name      log
-        Parser        polaris_stdout_json
-        Reserve_Data  On
-
-    # Probe 5's filter. Identical to polaris_cri_unwrap in every respect except
-    # the tag it matches, so a difference in outcome is attributable to the INPUT.
-    [FILTER]
-        Name          parser
-        Alias         hb_tail_probe
-        Match         heartbeat.tail
-        Key_Name      log
-        Parser        polaris_stdout_json
-        Reserve_Data  On
 
   # ── Custom parsers ─────────────────────────────────────────
   customParsers: |
@@ -1140,26 +1009,6 @@ config:
         Generate_ID         On
         Trace_Error         On
         storage.total_limit_size 200M
-
-    # ══ HEARTBEAT PROBE — its own index, 2 records/30s. REMOVE when done. ═════
-    [OUTPUT]
-        Name                opensearch
-        Match               heartbeat.*
-        Host                192.168.194.1
-        Port                9200
-        HTTP_User           ${OS_USER}
-        HTTP_Passwd         ${OS_PASSWORD}
-        Logstash_Format     On
-        Logstash_Prefix     fb-heartbeat
-        Logstash_DateFormat %Y.%m.%d
-        Include_Tag_Key     On
-        Tag_Key             flb_tag
-        Retry_Limit         3
-        tls                 On
-        tls.verify          Off
-        Suppress_Type_Name  On
-        Generate_ID         On
-        Trace_Error         On
 
 # ── Liveness probe ───────────────────────────────────────────
 livenessProbe:

@@ -17,8 +17,12 @@ boundary assignment, not loss. **The earlier "file 270, stdout 0" is VOID**: it 
 through a filter that was not parsing. Detail:
 [`sessions/2026-09-09-stdout-not-equivalent`](.memory/sessions/2026-09-09-stdout-not-equivalent.md).
 
-**Next, in order.** (1) Remove the five heartbeat probes — scaffolding; probe 5 duplicates tier 2's
-tail exactly. (2) `#18` `Id_Key sequence` drops every record it should dedup; `#19` `_bulk`
+**Next, in order.** (1) ~~Remove the five heartbeat probes~~ **done** — config is back to 3 inputs,
+5 filters, 4 outputs; needs a roll to take effect. (2) **`#16` vs `#18` contradict each other and
+both are cited** — `#16` says every Polaris line is in `k8s-logs` twice and orders a dedup on
+`sequence`; `#18` says OUTPUT 1 indexes nothing. `logging/scripts/step7-dedup-check.sh` settles it,
+read-only, and **`#16`'s dedup rule is load-bearing for the §7 subset proof that has not run yet.**
+(3) `#19` `_bulk`
 responses exceed the output buffer and chunks are discarded — both live, both tier 1, neither
 caused by the cutover. (3) Step 7, the `fb-polaris-shipper` uninstall — **now unblocked but
 `helm uninstall` needs authorisation at the moment of execution**, and it destroys the ability to
