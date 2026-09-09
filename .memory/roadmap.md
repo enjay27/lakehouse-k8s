@@ -102,3 +102,15 @@ cluster it describes no longer exists.
 - **A gap in the report stream is usually the OrbStack VM suspending with the laptop**, not a
   stalled filter: 1,495 ticks against ~65.5h of uptime where `Interval_Sec 5` implies ~47,000.
   **No measurement over the report stream that spans a sleep can be read as elapsed time.**
+- **The stdout-vs-file completeness measurement is still UNTAKEN, and the baseline is
+  `0 == 0`.** 2026-09-09: `polaris-report-2026.09.09` holds **56 docs**, 30 most-recent are
+  all summaries, `access_seen` **0 in every window on both sides**; `polaris-logs-*` does not
+  exist in `_cat/indices` at all. What the baseline did settle: both report streams arrive,
+  and the two releases' windows **share `window_start` on the same 30s wall-clock grid**
+  (`04:53:00Z`…`04:57:00Z` present on both), so the comparison is takeable — it needs traffic,
+  not repair.
+- **An unordered LogsQL query was being printed as if it were sorted.** The readout's
+  VictoriaLogs side had no `sort` pipe and used `tail -8`, i.e. 8 arbitrary rows of ~60,
+  beside an OpenSearch side sorted desc. Invisible while everything was 0; with traffic it
+  compares unrelated windows. Now `| sort by (window_start) desc | limit 12`. **Match by
+  `window_start`, never by position.**

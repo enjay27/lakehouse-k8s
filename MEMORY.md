@@ -13,11 +13,11 @@ repo, **`k8s-logs` still taking ~23k docs/10m**, and `polaris-report-*` is recei
 proves the tick, the noise-filter Lua, the report output and `${OS_PASSWORD}` expansion.
 Plan and gates: [`PLAN-opensearch-cutover`](logging/PLAN-opensearch-cutover-2026-09-08.md).
 
-**Open: `polaris-logs-*` is empty.** Not "wait a window" — the report arrived through the same
-filter instance and the same credential. Either Polaris is idle (it only logs on requests) or
-stdout does not carry what the file carries. **The report answers it itself**: `access_seen`
-counts what the filter SAW, before any keep/drop.
-`logging/scripts/step4-report-readout.sh` reads it and says which.
+**Open: `polaris-logs-*` has never received a document** (absent from `_cat/indices`, not
+merely empty). The readout was run 2026-09-09 on an **idle** cluster: `access_seen` **0 in
+every window on both sides**, so it decides nothing. It did prove the instrument — both report
+streams arrive and the two releases share `window_start` on one 30s grid, so the comparison
+needs **traffic**, not repair. Baseline: [`sessions/2026-09-09-notebook-baseline`](.memory/sessions/2026-09-09-notebook-baseline.md).
 
 **The next action is a notebook run in `polaris-learning`, handed off in
 [`HANDOFF-notebook-run`](logging/HANDOFF-notebook-run-2026-09-09.md) — run it UNCHANGED; porting

@@ -367,6 +367,11 @@ shipper's inode. Unbitten only because nothing has pushed Polaris past 80% CPU. 
 `replicaCount` and disable autoscaling while the shared-file design stands, or give each pod
 its own filename and let the shipper glob.
 
+*2026-09-09:* the HPA currently reports `cpu: <unknown>/80%, memory: <unknown>/80%` at
+`REPLICAS 1`, age 21d — **no metrics, so it cannot scale at all**. That removes the hazard
+from the notebook run in progress, and it is not a fix: the autoscaler has been inert for an
+unknown span, and the interleaved-write hazard returns the moment metrics come back. Still OPEN.
+
 **#9 — A plaintext database password in the live release. OPEN.**
 `persistence.relationalJdbc.secret.password: polaris` in `helm get values` output. Same class
 as #3 and #4. Separately, `minio.accessKeyId`/`secretAccessKey: minioadmin` sit beside
