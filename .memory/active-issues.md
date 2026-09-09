@@ -522,7 +522,13 @@ replaces.
   `git add -A`, never after — chart tarballs and `helm get values` exports are not
   covered by any pattern.
 
-**#16 — Policy v3 is INERT on tier 2: `polaris-logs-*` is storing unfiltered stdout. OPEN, LIVE.**
+**#16 — RESOLVED 2026-09-09 (REVISION 7).** Cause: `multiline.parser cri` alone on the tier 2
+tail; `docker, cri` fixes it. Verified on post-fix documents — 4,403/4,403 with `loggerName`, 0
+with `log` — and by the `unwrap -> rename` delta moving 12.00 -> 6.97 B/rec. The ~29,800 raw
+documents already in `polaris-logs-*` predate the fix, are not rewritten, and age out under the
+30d policy. Mechanism unknown; measurement unambiguous. Original entry follows.
+
+**#16 (original) — Policy v3 is INERT on tier 2: `polaris-logs-*` is storing unfiltered stdout. OPEN, LIVE.**
 Measured 2026-09-09. The notebook run put **4,718 docs / 2.7 MB** into `polaris-logs-2026.09.09`
 for roughly 270 requests, while the DaemonSet's own report said `access_seen 0` for the same
 windows. Both are true: records traverse the chain and index fine, but **none is recognised as an

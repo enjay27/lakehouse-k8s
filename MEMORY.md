@@ -29,7 +29,15 @@ for ~270 requests — and it looks healthy doing it. **Cause is NOT in the value
 present and were each checked. Only the running object can say. Diagnosis and the decisive
 queries: [`sessions/2026-09-09-stdout-not-equivalent`](.memory/sessions/2026-09-09-stdout-not-equivalent.md).
 
-**ROOT CAUSE FOUND: `multiline.parser cri` alone. `docker, cri` works.** Probe 5 tailed the SAME
+**TIER 2 IS FIXED AND VERIFIED (REVISION 7).** Root cause was **`multiline.parser cri` alone**;
+`docker, cri` works. Post-fix documents in `polaris-logs-*`: **4,403 of 4,403 carry `loggerName`,
+0 carry `log`.** Three independent instruments agree — the `unwrap -> rename` delta at **6.97
+B/rec** (12.00 was the failing value), probe 5 at 9,169/9,169, and the time-split index read.
+Pre-fix documents stay raw forever and age out under the 30d policy; nothing rewrites them.
+**Mechanism still unknown** — `docker, cri` fixes it, why `cri` alone yields a `log` the parser
+filter declines is not established.
+
+**Superseded detail:** Probe 5 tailed the SAME
 FILES with the SAME parser filter and only that line different: **4,314 of 4,314 records parsed**
 (`loggerName` a field, `log` consumed) while the real chain sat at the failing 12.00 B/rec delta —
 same process, same moment. Tier 1 has always used `docker, cri`, which is why `Merge_Log` worked

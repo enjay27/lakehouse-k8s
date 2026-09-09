@@ -78,7 +78,8 @@ if [ -n "${OS_URL:-}" ] && [ -n "${OS_PASSWORD:-}" ]; then
   echo
   echo "  Read the LAST bucket only. A roll part-way through a window splits it, so a mixed"
   echo "  bucket is a transition, not a failure -- the buckets exist to show which."
-  echo "  PASS = the newest bucket has loggerName>0 and log=0."
+  echo "  PASS = the newest NON-EMPTY bucket has loggerName>0 and log=0."
+  echo "  An empty newest bucket just means Polaris was idle in that window."
   echo "  Older buckets staying raw is expected and correct: those documents predate the fix"
   echo "  and nothing rewrites them. They age out with the 30d policy."
 fi
