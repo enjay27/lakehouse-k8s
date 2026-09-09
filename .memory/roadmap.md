@@ -142,6 +142,16 @@ cluster it describes no longer exists.
   window matched on `sequence`: tier 1 **4,627** distinct, tier 2 **4,483**, **0 in tier 2 and not
   in tier 1**, 144 in tier 1 only. The two tails agree about what Polaris wrote. This was
   *unmeasurable* before the `multiline.parser` fix — tier 2 carried no `sequence` field to match on.
+- **THE GAP IS FULLY ACCOUNTED FOR: 288 tier1-only records against `access_counted` 288, exact.**
+  Second run, 10-minute window: tier 1 **9,254** distinct, tier 2 **8,966**, 0 in tier 2 and not in
+  tier 1, gap **288**. Every record tier 1 holds and tier 2 lacks is an access-log line policy v3
+  *counted* instead of storing. **No residue, so no loss hiding in that column** — a dropped chunk
+  would land there looking exactly like policy doing its job.
+- **A free corroboration from the same pair of runs:** all three figures are exactly **2.000×** the
+  first run's (4,627/4,483/144 -> 9,254/8,966/288) — a second burst of the same shape. It is the
+  *distinct* counts that doubled, which **a double write cannot do**: duplicating records leaves the
+  distinct-`sequence` count unchanged. Independent re-confirmation that `#16`'s double write does
+  not happen, and that `sequence` is unique per record within a window.
 - **The 144-record gap is predicted, not merely expected.** Policy v3 keeps every NON-access-log
   record, so the only records tier 1 can hold and tier 2 lack are access-log lines the policy
   *counted* instead of storing — i.e. exactly `access_counted`. From the 06:35 burst,

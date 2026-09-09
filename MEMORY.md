@@ -24,8 +24,10 @@ both are cited** — `#16` says every Polaris line is in `k8s-logs` twice and or
 read-only, and **`#16`'s dedup rule is load-bearing for the §7 subset proof that has not run yet.**
 (3) ~~`#19`~~ **done (REVISION 10)** — `Buffer_Size False`, gate passed 7 -> 0 under comparable
 load. (4) `#18` `Id_Key sequence` indexes nothing, so tier 1 has **no dedup at all** — a design
-call, not a bug to fix blind. (5) `#23` two raw `log` docs in 4,576, unexplained, low. (6) The §7
-subset proof, now unblocked and with **no dedup correction** (`#16` disproved). (7) Step 7, the
+call, not a bug to fix blind. (5) `#23` two raw `log` docs in 4,576, unexplained, low. (6) ~~The §7 subset proof~~ **done** — tier 2 is a
+strict **subset** of tier 1 (0 records in tier 2 and not in tier 1), and the gap is **fully
+accounted for**: 288 tier1-only records against `access_counted` 288, exact. No dedup correction
+was applied (`#16` disproved). (7) Step 7, the
 `fb-polaris-shipper` uninstall — unblocked but `helm uninstall` needs authorisation at the moment
 of execution, and it destroys the ability to repeat the 265==265 measurement. (4) The **30s window revert to 1800/30** stays the cutover's last
 step and final gate (§4.1); tier 3's long ISM policy is blocked on it.
