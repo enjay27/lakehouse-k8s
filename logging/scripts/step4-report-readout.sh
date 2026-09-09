@@ -43,10 +43,13 @@ if [ -n "${VL_URL:-}" ]; then
   # sorted desc. At zero traffic the two agreed anyway and the defect was
   # invisible; with traffic it would have compared unrelated windows and called
   # the difference a coverage gap. Sort here, and match rows BY window_start.
+  # 30 rows to match the OpenSearch side's size:30 -- at 30s windows that is 15
+  # minutes of coverage on both halves. Fewer rows here than there silently
+  # shortens the comparable span and can miss the very windows that had traffic.
   curl -sS --max-time 20 "${VL_URL}/select/logsql/query" \
-    --data-urlencode 'query=app:polaris-shipper-report report_type:summary | sort by (window_start) desc | limit 12 | fields window_start, access_seen, access_kept' \
+    --data-urlencode 'query=app:polaris-shipper-report report_type:summary | sort by (window_start) desc | limit 30 | fields window_start, access_seen, access_kept' \
     --data-urlencode "start=$(date -u -v-30M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '30 min ago' +%Y-%m-%dT%H:%M:%SZ)" \
     --data-urlencode "end=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --data-urlencode 'limit=0' 2>/dev/null | head -12 | sed 's/^/    /'
+    --data-urlencode 'limit=0' 2>/dev/null | head -30 | sed 's/^/    /'
   echo "    (empty => the shipper saw no traffic either, which corroborates 'idle')"
 fi
