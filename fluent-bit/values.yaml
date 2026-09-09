@@ -708,7 +708,15 @@ config:
         Name              tail
         Path              /var/log/containers/*benchmarks-polaris*.log
         Tag               polaris.logs
-        multiline.parser  cri
+        # `docker, cri`, NOT `cri` alone (2026-09-09). With `cri` alone the
+        # downstream `parser` filter would not touch the `log` value: 4,993
+        # records in, 0 transformed, unwrap->rename delta 12.00 B/rec. Probe 5
+        # tailed THE SAME FILES with the SAME parser filter and only this line
+        # different, and parsed 4,314 of 4,314 -- loggerName a field, `log`
+        # consumed, on every record. Tier 1 has always used `docker, cri`.
+        # The mechanism is NOT established; the measurement is. See
+        # .memory/sessions/2026-09-09-stdout-not-equivalent.md.
+        multiline.parser  docker, cri
         Refresh_Interval  5
         Rotate_Wait       10
         Mem_Buf_Limit     50MB

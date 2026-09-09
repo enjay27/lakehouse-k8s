@@ -564,3 +564,74 @@ confirmed here by a third empty window.
 **One notebook run now yields three things at once:** probe 5's verdict, a re-confirmation of the
 real chain's delta on fresh records, and traffic for the §3 stdout-vs-file measurement. Run the
 notebook, then `step6-probe-readout.sh` — no config change, no roll.
+
+---
+
+# ROOT CAUSE. `multiline.parser cri` alone; `docker, cri` works.
+
+Probe 5, on real traffic:
+
+```
+heartbeat.tail      4,314 docs   loggerName=4,314   log=0     PARSED, every record
+hb_tail_probe       4,622 rec    [multiline.parser docker, cri]
+polaris_cri_unwrap  4,925 rec    [multiline.parser cri]       delta 12.00 B/rec -- FAILING
+```
+
+**Same files. Same parser (`polaris_stdout_json`). Same filter type, same `Key_Name log`, same
+`Reserve_Data On`. Same process, same moment. One line different, and it decides everything.**
+
+Tier 1 has always used `docker, cri`, which is why `Merge_Log` has been unwrapping those records
+successfully for months while tier 2 — introduced by this cutover with `cri` alone — never once
+parsed a record.
+
+**The mechanism is NOT established.** `docker, cri` fixes it on 4,314 of 4,314 records; *why* the
+`cri` multiline parser produces a `log` value the `parser` filter declines to touch is unknown,
+and nothing here should be read as explaining it. Recorded as an open question rather than
+back-filled with a plausible story.
+
+## The fix, applied
+
+`fluent-bit/values.yaml`, tier 2/3 tail input: `multiline.parser cri` -> `multiline.parser
+docker, cri`. Verified: YAML parses, and all three real `multiline.parser` directive lines in the
+file now read `docker, cri`.
+
+## READING A WAS WRONG, AND WOULD HAVE INVERTED THE CONCLUSION
+
+The ratio heuristic printed `ratio 1.015` under a legend saying *"<1.0 by ~10% => probe 5
+PARSED"*. **Probe 5 had parsed. Reading A said it had not.** Taken alone it would have sent the
+next step in exactly the wrong direction — the week's signature failure, one more time, in an
+instrument I built two commits ago.
+
+Why it was invalid, having thought about it only after it disagreed:
+
+1. **The two inputs do not produce the same envelope.** `docker, cri` and `cri` emit different
+   surrounding fields, so their per-record byte totals were never comparable in the first place.
+   The ratio assumed a difference that had a second cause.
+2. **The samples are different.** 4,622 records against 4,925, over different windows, on
+   variable-length records. Averages across unequal populations are not a controlled comparison.
+3. **The ~10% figure came from the dummy probes**, whose records carry a single extra key. A tail
+   record carries `stream`, `logtag`, `time` and a much longer payload, so the parsed/raw ratio
+   there was never going to be 0.9.
+
+Reading B — `loggerName` present, `log` consumed — needed no model, no assumption about envelopes,
+and no matched samples. It was right.
+
+**The lesson, and it is the same one the pipeline keeps teaching:** an instrument that requires a
+model of what it is measuring inherits every error in that model. Reading B measured the thing
+itself. `696baef` said to trust B if the two ever disagreed — that instruction is the only reason
+this was caught in one step instead of several, and it was written before there was any reason to
+think it would be needed.
+
+Note this does **not** undermine the 12.00-vs-9.00 delta. That one compares two filters *in the
+same chain, on the same records, in the same process* — the difference is one filter's own effect,
+with no cross-population assumption. It was independently confirmed by reading B on the probes.
+The ratio test was a different, weaker construction that should not have been given a verdict line.
+
+## Next
+
+1. Apply and roll: `bash logging/scripts/step5-probe-apply-verify.sh --apply`.
+2. Then traffic, then `step6-probe-readout.sh`. **The gate is `unwrap -> rename = 9.00 B/rec`**,
+   and `polaris-logs-*` documents indexed after the roll carrying `loggerName`.
+3. Then, and only then, the §3 re-measurement: stdout `access_seen` should finally equal the
+   file's on matched windows. `fb-polaris-shipper` stays installed until it does.
+4. Then remove all five probes — they are scaffolding, and probe 5 duplicates tier 2's tail.

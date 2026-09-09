@@ -29,7 +29,14 @@ for ~270 requests — and it looks healthy doing it. **Cause is NOT in the value
 present and were each checked. Only the running object can say. Diagnosis and the decisive
 queries: [`sessions/2026-09-09-stdout-not-equivalent`](.memory/sessions/2026-09-09-stdout-not-equivalent.md).
 
-**Root-caused and FIXED IN THE FILE, NOT YET DEPLOYED.** `polaris_cri_unwrap` processed all
+**ROOT CAUSE FOUND: `multiline.parser cri` alone. `docker, cri` works.** Probe 5 tailed the SAME
+FILES with the SAME parser filter and only that line different: **4,314 of 4,314 records parsed**
+(`loggerName` a field, `log` consumed) while the real chain sat at the failing 12.00 B/rec delta —
+same process, same moment. Tier 1 has always used `docker, cri`, which is why `Merge_Log` worked
+there for months. **Mechanism unknown; measurement unambiguous.** Fix applied to the tier 2 input,
+**not yet deployed**. Gate: `unwrap -> rename = 9.00 B/rec`.
+
+**Superseded (kept so it is not re-derived):** `polaris_cri_unwrap` processed all
 5,030 records, dropped 0, transformed 0 — the byte delta to the next filter is exactly
 **12.00 B/record**, the cost of `Add app polaris` alone, so both renames found nothing and the
 JSON was never unpacked. `Time_Key`/`Time_Format`/`Time_Keep` are now **removed** from
