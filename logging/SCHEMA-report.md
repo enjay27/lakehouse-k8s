@@ -1,4 +1,4 @@
-# Report schema reference — v2 as deployed, v3 as proposed
+# Report schema reference — v3 (written, not yet deployed)
 
 Read off `fluent-bit/values.yaml` (`build_report`, ~line 447) on 2026-09-09, not from intent.
 Three `report_type` values share one envelope and one `_time`, so `stats by (_time)` — or a terms
@@ -10,7 +10,7 @@ agg on `window_start` — groups one window.
 |---|---|---|
 | `app` | string | `polaris-shipper-report`. In OpenSearch the index already isolates the stream. |
 | `level` | string | always `REPORT`. **Severity is meaningless here** — it is a stream selector, not a level. |
-| `schema_version` | int | 2 today. **Always filter it.** |
+| `schema_version` | int | **3** in the file, 2 in everything stored so far. **Always filter it** — three versions will coexist. |
 | `report_type` | string | `summary` \| `resource` \| `principal` |
 | `report_seq` | int | **per pod.** Resets on pod replacement. Always pair with `hostname`. |
 | `hostname` | string | the Fluent Bit pod, not Polaris. |
@@ -34,6 +34,7 @@ agg on `window_start` — groups one window.
 | `carried_rows` | int | ⚠ **resources AND principals combined** — see review #3. |
 | `resources_other` / `principals_other` | int | requests that overflowed the 500 / 200 caps into `__other__`. |
 | `resources_other_distinct` | int | distinct keys behind the overflow. |
+| `excluded_requests` | int | **v3.** Requests whose resource row was suppressed by `EXCLUDED_PATTERNS` (currently `/principal-roles/`). They still count toward `principal` rows. |
 | `windows_skipped` | int | windows that closed with no tick. |
 | `min_record_time` / `max_record_time` | string | ⚠ default `""`, not absent — see review #2. |
 | `partial_window` | **string** | ⚠ `"true"` / `"false"`, **not a boolean** — see review #1. |
@@ -44,10 +45,12 @@ agg on `window_start` — groups one window.
 | field | type | meaning |
 |---|---|---|
 | `resource` | string | the matched path span, or `__other__` beyond the cap. |
-| `resource_kind` | string | `table` \| `view` \| `collection` \| `namespace` \| `other` |
+| `resource_kind` | string | `table` \| `view` \| `collection` \| `namespace` \| `auth` \| `config` \| `management` \| `other`. **v3** added `auth` (`/oauth/tokens`), `config` (`/v1/config`), and rules routing `tables/rename` -> table, `views/rename` -> view, `namespaces/{ns}/properties` -> namespace. These set the **kind only** — `reads`/`writes` still come from the HTTP method, so `POST /properties` is a write. |
 | `requests` `reads` `writes` `errors` | int | reads = GET\|HEAD, writes = POST\|PUT\|DELETE\|PATCH, errors = status ≥ 400. ⚠ `errors` **overlaps** reads/writes and the 4xx/5xx split — never sum them together. |
 | `errors_4xx` `errors_5xx` `auth_denied` | int | as above; `auth_denied` overlaps `errors_4xx`. |
 | `response_bytes` | int | **SUM over the window.** |
+| `last_read_bytes` | int | **v3.** Last `GET`/`HEAD` in **this window** with 2xx **and** size > 0. **Absent** if none — never `0`. |
+| `last_write_bytes` | int | **v3.** Same for `POST`/`PUT`/`DELETE`/`PATCH`. On a `table` row this is the last successful **commit**: a drop returns 204/empty and falls out, and create is a `collection` row. |
 | `_msg` | string | ⚠ does not mention `resources_other` — known gap, rides the 1800/30 revert. |
 
 ## `principal` — one row per principal, per window
@@ -58,7 +61,8 @@ Identical to `resource` except the key field is `user_principal_name` and there 
 ## Invariants worth asserting
 
 ```
-sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors
+sum(resource.requests) + excluded_requests == access_seen - parse_errors   # v3
+sum(principal.requests)                    == access_seen - parse_errors
 count(rows where requests == 0)                   == carried_rows
 hi - lo + 1 == n     over report_seq, one hostname, one schema_version
 max_record_time - min_record_time  <=  window_seconds
@@ -83,6 +87,17 @@ exactly that empty string, and a fresh daily index very often opens on an idle w
 "how many resources fell to zero" is unanswerable from the summary. `distinct_resources` and
 `distinct_principals` are split; their carried counterparts are not.
 
+**3b. `user_principal_name` of `-` is unauthenticated or auth-failed** — the access log's empty
+field. It is a real population, not missing data: a sample row carried 9 requests and 1
+`auth_denied`. Deliberately **not renamed** — every stored document and existing query uses `-`.
+
+**3c. `__other__` is mostly ERRORS, not overflow.** `touch_resource(key, kind, not is_error)` means
+an errored request whose resource is not *already* in the window's map gets no row of its own and
+lands in `__other__`. Cardinality defence against a 404 scanner — but **4xx/5xx lose their resource
+attribution** whenever that resource had no successful request in the same window, and a denied
+principal usually has none. `__other__` therefore conflates overflow with unattributed errors.
+Unresolved policy question, filed in `PLAN-report-schema-v3` §C.
+
 **4. `errors` deliberately overlaps everything.** It is `status >= 400` regardless of method, so it
 overlaps `reads`/`writes`, and `errors_4xx + errors_5xx` overlaps it again, and `auth_denied`
 overlaps `errors_4xx`. All intentional and documented — but any dashboard that adds these columns
@@ -101,31 +116,13 @@ finding, not a rounding difference.
 
 ---
 
-# v3 — proposed additions
+# v3 — written, verified, not deployed
 
-On `resource` rows only:
+Applied to `fluent-bit/values.yaml` on 2026-09-09 and exercised end-to-end through a real Lua
+interpreter: `logging/scripts/test-schema-v3.lua`, 16 assertions, all passing. That harness runs the
+**deployed script text**, not a retyped copy, and it caught an invalid Lua escape (`%\-`) that would
+have failed the whole chunk at load.
 
-| field | type | rule |
-|---|---|---|
-| `last_read_bytes` | int | last GET/HEAD in the window with **2xx** and **size > 0**. Absent if none. |
-| `last_write_bytes` | int | last POST/PUT/DELETE/PATCH with **2xx** and **size > 0**. Absent if none. |
-
-Last-wins, per window, **nothing carries forward**. A zero-carry row has both absent. A `0` is
-never written, so absence means exactly "no successful non-empty response of that kind this
-window".
-
-On a `resource_kind = "table"` row this gives the manager's two numbers directly: `last_write_bytes`
-is the last successful **commit** (`DELETE` drops return 204/empty and are excluded; `create` is a
-`collection` row), and `last_read_bytes` is the last successful **loadTable** (`HEAD` carries no
-body and is excluded).
-
-**Implementation note.** `count_record` builds
-`rows = { touch_resource(...), touch_principal(...) }` and updates both in one loop, so the
-accumulator will hold these values for principals **for free**. Emitting them on `resource` rows
-only is a deliberate choice at `build_report` time, not a limitation — revisit if a per-principal
-"last response" is ever wanted.
-
-**Both new fields must be added to `type_int_key`** on both Lua filter blocks, or Fluent Bit
-encodes them as doubles and numeric filters silently match nothing.
-
-`SCHEMA_VERSION` becomes **3**, putting three versions in the stream.
+See the tables above for the fields. `SCHEMA_VERSION` is 3; `last_read_bytes`, `last_write_bytes`
+and `excluded_requests` are in `type_int_key`; `last_write_method` was considered and **dropped** —
+the size > 0 rule separates commit from drop without it.

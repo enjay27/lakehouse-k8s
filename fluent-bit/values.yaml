@@ -209,7 +209,10 @@ luaScripts:
     -- ── Tunables ───────────────────────────────────────────────────────────────────
     local REPORT_TAG     = "polaris.report"
     local REPORT_APP     = "polaris-shipper-report"
-    local SCHEMA_VERSION = 2   -- v2 (2026-09-07): distinct_resources/_principals now
+    local SCHEMA_VERSION = 3   -- v3 (2026-09-09): last_read_bytes/last_write_bytes on
+                               -- resource rows, five new RESOURCE_PATTERNS, and
+                               -- principal-roles excluded with excluded_requests to keep
+                               -- the margin invariant exact. v2 (2026-09-07): distinct_resources/_principals now
                                -- count only rows with requests > 0 (v1 counted zero-carry
                                -- rows too, so an idle window reported resources it never
                                -- saw) and carried_rows carries that number instead;
@@ -244,6 +247,18 @@ luaScripts:
     -- truncated to its own span. `.-` is lazy, so the catalog prefix is included and
     -- tables of the same name in different catalogs do not collide.
     local RESOURCE_PATTERNS = {
+        -- v3: five rules for paths that fell to kind "other". Two structural reasons
+        -- the originals missed them, both read off real rows: Iceberg's rename has NO
+        -- /namespaces/ segment, and the namespace rule below is ANCHORED, so
+        -- .../namespaces/{ns}/properties could never match it. `properties` therefore
+        -- has to come BEFORE that rule. These set the KIND only -- reads/writes keep
+        -- coming from the HTTP method, so POST /properties is a write and rename is a
+        -- write because rename is a POST, not because a rule says so.
+        { kind = "auth",       pattern = "^.-/oauth/tokens$" },
+        { kind = "config",     pattern = "^.-/v1/config$" },
+        { kind = "table",      pattern = "^.-/tables/rename$" },
+        { kind = "view",       pattern = "^.-/views/rename$" },
+        { kind = "namespace",  pattern = "^.-/namespaces/[^/]+/properties$" },
         { kind = "table",      pattern = "^.-/namespaces/[^/]+/tables/[^/]+" },
         { kind = "view",       pattern = "^.-/namespaces/[^/]+/views/[^/]+" },
         { kind = "collection", pattern = "^.-/namespaces/[^/]+/tables$" },
@@ -255,6 +270,20 @@ luaScripts:
     -- Bounds on the two margins. Beyond them, requests land in one __other__ row: the
     -- totals stay exact and only per-key detail is capped, which is the difference
     -- between this cap and one that would have lost counts.
+    -- v3: resources the manager does not currently want as rows. Their requests are
+    -- still COUNTED -- into excluded_requests on the summary, and into the principal
+    -- rows -- so the margin invariant stays exact and the hidden volume stays visible.
+    -- Suppressing a row without counting it would make a standing gate fail on a
+    -- CORRECT config, which is the one thing this pipeline keeps doing to itself.
+    local EXCLUDED_PATTERNS = { "^.-/principal%-roles/" }
+
+    local function is_excluded(path)
+        for _, pat in ipairs(EXCLUDED_PATTERNS) do
+            if path:match(pat) then return true end
+        end
+        return false
+    end
+
     local REPORT_MAX_RESOURCES  = 500
     local REPORT_MAX_PRINCIPALS = 200
     local REPORT_OTHER          = "__other__"
@@ -296,8 +325,12 @@ luaScripts:
     -- schema v1 put both in the same integer. auth_denied (401|403) overlaps errors_4xx
     -- deliberately: it is the security question, which was buried under 404s.
     local function new_row()
+        -- last_read_bytes / last_write_bytes stay NIL until a qualifying sample lands:
+        -- 2xx, size > 0, last-wins within the window, nothing carried across windows.
+        -- nil (not 0) is the point -- a 0 would be indistinguishable from an empty body.
         return { requests = 0, reads = 0, writes = 0, errors = 0, response_bytes = 0,
-                 errors_4xx = 0, errors_5xx = 0, auth_denied = 0 }
+                 errors_4xx = 0, errors_5xx = 0, auth_denied = 0,
+                 last_read_bytes = nil, last_write_bytes = nil }
     end
 
     -- carry_res / carry_pri implement ZERO-CARRY, for exactly one window: a resource
@@ -307,7 +340,7 @@ luaScripts:
     local function new_window(idx, partial, carry_res, carry_pri)
         local w = {
             window = idx, partial = partial and true or false,
-            access_seen = 0, access_counted = 0,
+            access_seen = 0, access_counted = 0, excluded_requests = 0,
             counted_read = 0, counted_post = 0,
             errors_kept = 0, parse_errors = 0,
             resources = {}, kinds = {}, n_resources = 0, resources_over = 0,
@@ -406,7 +439,21 @@ luaScripts:
 
         local is_error = (status == nil or status >= 400)
         local key, kind = classify(path)
-        local rows = { touch_resource(key, kind, not is_error), touch_principal(user) }
+
+        -- v3 exclusion. The request still counts -- into excluded_requests and into the
+        -- principal row -- it just gets no resource row of its own. The manager's
+        -- objection was to the resource dimension, not to knowing who called.
+        local excluded = is_excluded(path)
+        if excluded then
+            counts.excluded_requests = counts.excluded_requests + 1
+        end
+
+        local rows
+        if excluded then
+            rows = { touch_principal(user) }
+        else
+            rows = { touch_resource(key, kind, not is_error), touch_principal(user) }
+        end
         for _, row in ipairs(rows) do
             row.requests = row.requests + 1
             if READ_METHODS[method] then
@@ -431,6 +478,22 @@ luaScripts:
                 end
             end
             row.response_bytes = row.response_bytes + bytes
+
+            -- v3: last response size, last-wins within the window. 2xx only -- an error
+            -- document's length is not "the response size" -- and size > 0 only, which
+            -- is what makes the field unambiguous: a 0 is never written, so ABSENT means
+            -- exactly "no successful non-empty response of that kind this window".
+            -- That rule also does the separating for free: on a table row a DELETE drop
+            -- returns 204/empty and falls out, so last_write_bytes IS the last commit;
+            -- HEAD carries no body by definition, so last_read_bytes is the last
+            -- loadTable. No method field needed.
+            if status ~= nil and status >= 200 and status < 300 and bytes > 0 then
+                if READ_METHODS[method] then
+                    row.last_read_bytes = bytes
+                elseif WRITE_METHODS[method] then
+                    row.last_write_bytes = bytes
+                end
+            end
         end
     end
 
@@ -477,11 +540,23 @@ luaScripts:
             e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
             e.errors_4xx, e.errors_5xx, e.auth_denied = r.errors_4xx, r.errors_5xx, r.auth_denied
             e.response_bytes = r.response_bytes
+            -- v3. Assigning nil is a no-op in Lua, so an unsampled window simply has no
+            -- field -- which is the intended "absent, never 0". Emitted on resource rows
+            -- only; the accumulator holds them for principals too, for free, if ever wanted.
+            e.last_read_bytes  = r.last_read_bytes
+            e.last_write_bytes = r.last_write_bytes
+            local last_txt = ""
+            if r.last_read_bytes ~= nil or r.last_write_bytes ~= nil then
+                last_txt = string.format(", last read %s, last write %s",
+                    r.last_read_bytes  and tostring(r.last_read_bytes)  or "-",
+                    r.last_write_bytes and tostring(r.last_write_bytes) or "-")
+            end
             e._msg = string.format(
                 "seq=%d resource %s (%s): %d requests, %d reads, %d writes, "
-                .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes",
+                .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes%s",
                 report_seq, key, e.resource_kind, r.requests, r.reads, r.writes,
-                r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes)
+                r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes,
+                last_txt)
             rows[#rows + 1] = e
             if r.requests > 0 then
                 carry_res[key] = e.resource_kind
@@ -520,6 +595,12 @@ luaScripts:
         s.access_seen         = counts.access_seen
         s.access_kept         = counts.access_seen - counts.access_counted
         s.access_counted      = counts.access_counted
+        -- v3. Requests whose resource row was suppressed by EXCLUDED_PATTERNS. The margin
+        -- invariant is now:
+        --   sum(resource.requests) + excluded_requests == access_seen - parse_errors
+        --   sum(principal.requests)                    == access_seen - parse_errors
+        -- Both exact. Without this field the first would fail on a correct config.
+        s.excluded_requests   = counts.excluded_requests
         s.counted_read        = counts.counted_read
         s.counted_post        = counts.counted_post
         s.errors_kept         = counts.errors_kept
@@ -835,7 +916,7 @@ config:
         Match         polaris.*
         script        /fluent-bit/scripts/polaris_access_log.lua
         call          polaris_noise_filter
-        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals carried_rows resources_other resources_other_distinct principals_other windows_skipped requests reads writes errors response_bytes
+        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted excluded_requests last_read_bytes last_write_bytes counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals carried_rows resources_other resources_other_distinct principals_other windows_skipped requests reads writes errors response_bytes
 
     # 4. Drop fields that cost storage on every record and answer nothing, plus the
     #    CRI envelope leftovers. Remove_key on an absent key is a no-op, so the
