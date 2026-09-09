@@ -250,3 +250,80 @@ missing data.
 **Recommend documenting rather than renaming.** `-` is what the access log writes and what every
 existing query and stored document already uses; renaming it to `__unauthenticated__` would split
 the field's history across the rename with no gain. Recorded in `SCHEMA-report.md` instead.
+
+---
+
+# v3 DRY-RUN against real v2 data — 117 rows, seq 1876-1879, 2026-09-09 09:02-09:04
+
+v3's actual rules, extracted from the values file and executed in Lua, run over a real v2 export.
+Not a description of what should happen: the rules, on the data.
+
+## The margin invariant holds on every window
+
+| seq | v2 `sum(res)` | v3 `sum(res)` | `excluded_requests` | `seen - parse` | | rows |
+|---|---|---|---|---|---|---|
+| 1876 | 244 | 239 | 5 | 244 | **EXACT** | 38 -> 34 |
+| 1877 | 24 | 21 | 3 | 24 | **EXACT** | 46 -> 40 |
+| 1878 | 0 | 0 | 0 | 0 | **EXACT** | 20 -> 17 |
+| 1879 | 0 | 0 | 0 | 0 | **EXACT** | 0 -> 0 |
+
+`sum(resource.requests) + excluded_requests == access_seen - parse_errors` on all four. The v2
+invariant also held on all four before the change, so nothing regressed.
+
+## 10 rows reclassify, and every one was `other`
+
+`oauth/tokens` -> `auth`, `v1/config` -> `config`, `tables/rename` -> `table`,
+`views/rename` -> `view`, `namespaces/{ns}/properties` -> `namespace`. **No row that already had a
+real kind changed** — `table`, `view`, `namespace`, `collection` and `management` rows are all
+untouched. That is the safety property worth having checked: the new rules are additive over the
+`other` bucket and cannot silently re-label existing data.
+
+## ⚠ The exclusion catches more than the rows you showed me — DECIDE 6
+
+13 rows / 8 requests excluded. Beyond the `/principal-roles/{name}` rows in the sample, the pattern
+`^.-/principal%-roles/` also removes:
+
+```
+/api/management/v1/principal-roles/{pr}/catalog-roles/{cat}    grants of a catalog role
+/api/management/v1/principal-roles/{pr}/principals             who holds this role
+```
+
+Defensible — they are principal-role administration. But they were **not** what the manager pointed
+at, and the second is arguably the security-relevant one.
+
+**And it does NOT exclude** the mirror-image path, which is present in this data:
+
+```
+/api/management/v1/principals/{p}/principal-roles              roles held by a principal
+```
+
+because the pattern requires a `/` *after* `principal-roles`. A bare
+`/api/management/v1/principal-roles` collection listing would also survive, for the same reason.
+
+So the current rule excludes **sub-resources of a principal-role** but keeps **a principal's role
+list**. That may be exactly right — or exactly backwards. It needs a decision, and it is invisible
+unless someone runs the rule over real paths, which is why this dry-run exists.
+
+## Finding C, confirmed on real data
+
+`__other__` in the busy window: **37 requests, 37 errors, 37 4xx, 1 denied** — and 24 of them were
+reads. Every single `__other__` request was an error, exactly as `touch_resource(key, kind, not
+is_error)` predicts. The one auth-denied request in that window has **no resource attribution at
+all**. v3 does not change this and was not asked to.
+
+## Two things this data corrects in `SCHEMA-report.md`
+
+**`min_record_time`/`max_record_time` are ABSENT on idle windows here, not `""`.** VictoriaLogs
+does not store empty values, so the `""` the Lua writes never lands. **That is a property of the
+sink, not of the pipeline** — OpenSearch *will* store the empty string and dynamic-map the field as
+**text**, permanently for that index. So v2's clean behaviour in VictoriaLogs gives false
+confidence about the OpenSearch tier, and the mapping must be checked there:
+
+```bash
+curl -sk -u "$OS_USER:$OS_PASSWORD" "$OS_URL/polaris-report-*/_mapping/field/min_record_time?pretty"
+```
+
+**`resource_kind` has a `management` value that is not in `RESOURCE_PATTERNS`** — `classify` falls
+back to `if path:find(MGMT_PREFIX) then return path, "management"`. The reference table listed it;
+the mechanism is worth knowing before anyone adds a management rule to the pattern list and wonders
+why it never fires.
