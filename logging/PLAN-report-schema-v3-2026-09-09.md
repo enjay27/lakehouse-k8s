@@ -593,3 +593,53 @@ its surface rather than reverting to `other`.
 `test-schema-v3.lua`, 37 assertions, all passing: a principal is `principal`/`management` rather
 than `management`; a catalog-role keeps its kind and gains `api_kind: management`; a table is
 `table`/`catalog`; and an explicit sweep asserts **no row anywhere has `resource_kind == "management"`.**
+
+---
+
+# `__errors__` — because `__other__` was two facts sharing a name
+
+Kade: *does `mixed` mean both are included? And `other` means error — how about an `error` kind?*
+
+**Yes on both, and the second is the better observation.**
+
+`mixed` means the row can hold records from **both** API surfaces, so no single `api_kind` is true
+of it. That applies to any synthetic bucket, by construction.
+
+And `__other__` was never one thing. It held:
+
+1. requests that overflowed `REPORT_MAX_RESOURCES` — genuinely "other";
+2. **errored requests whose resource was not already known** — not "other" at all: *we lost the
+   attribution*.
+
+Measured on the export: **38 of 38 were case 2, and the cap was nowhere near 500.** The row was
+named after the case that had never occurred, and `resources_other` counted both while claiming to
+count overflow.
+
+## Now
+
+| key | `resource_kind` | holds |
+|---|---|---|
+| `__errors__` | `error` | errored requests on a resource not already known this window |
+| `__other__` | `other` | overflow beyond `REPORT_MAX_RESOURCES`, and nothing else |
+
+`resources_other` / `resources_other_distinct` now count **only** overflow — the name is finally
+accurate. The error bucket needs no summary counter: its own row carries `requests`, `errors`,
+`errors_4xx`, `auth_denied` like any other.
+
+**What is lost is attribution, never the count.** Rule 3 keeps every errored record **in full** in
+`polaris-logs-*`, so "which table was that 404 on" is answerable from the log index — just not from
+the report. That is worth stating plainly, because "the report cannot say" has been read as "the
+pipeline did not record it" more than once.
+
+## Verified
+
+41 assertions. A 404 on an unknown table lands in `__errors__` with `resource_kind: error` and
+`api_kind: mixed`, and `__other__` is absent — the cap was not hit, so the overflow bucket correctly
+does not exist at all.
+
+## Option not taken
+
+`__errors__` could be split per surface (`api_kind: catalog` vs `management`) to show whether a wave
+of denials is hitting the admin API or the data API. Two bounded keys, real diagnostic value. Left
+out because nobody has asked the question yet, and one bucket with a count is enough to notice that
+the question is worth asking.

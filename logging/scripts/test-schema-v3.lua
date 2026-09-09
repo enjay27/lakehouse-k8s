@@ -123,8 +123,20 @@ check("denied grant keeps its role row",
 check("  and records the denial",
       res["/api/management/v1/catalogs/c1/catalog-roles/nobody"] and
       res["/api/management/v1/catalogs/c1/catalog-roles/nobody"].auth_denied, 1)
-check("  did NOT fall to __other__", res["__other__"], "nil")
+check("  did NOT fall to the error bucket", res["__errors__"], "nil")
 check("role_keys_forced counts it", sum.role_keys_forced, 1)
+-- a 404 on an unknown TABLE: not a role kind, so its attribution is lost -- but it
+-- must land in __errors__ (kind "error"), never in __other__, which is cap overflow.
+polaris_noise_filter("polaris.logs", 0, rec("GET", CAT.."/namespaces/ns1/tables/ghost", 404, 51))
+local _,_,out2 = polaris_noise_filter("polaris.report", 0, {tick="x", _now_override=T0+150})
+local res2 = {}
+for _, r in ipairs(out2 or {}) do local d=r[2] or r
+  if d.report_type=="resource" then res2[d.resource]=d end end
+print("== __other__ split into overflow vs lost attribution ==")
+check("unknown-resource 404 -> __errors__", res2["__errors__"] and res2["__errors__"].requests, 1)
+check("  kind is 'error'",                  res2["__errors__"] and res2["__errors__"].resource_kind, "error")
+check("  api_kind mixed",                   res2["__errors__"] and res2["__errors__"].api_kind, "mixed")
+check("  NOT in __other__ (cap overflow)",  res2["__other__"], "nil")
 check("sum(resource) == seen-parse", sr, sum.access_seen - sum.parse_errors)
 check("sum(principal) == seen-parse", sp, sum.access_seen - sum.parse_errors)
 check("schema_version", sum.schema_version, 3)

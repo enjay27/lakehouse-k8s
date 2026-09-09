@@ -301,6 +301,7 @@ luaScripts:
     local REPORT_MAX_RESOURCES  = 500
     local REPORT_MAX_PRINCIPALS = 200
     local REPORT_OTHER          = "__other__"
+    local REPORT_ERRORS         = "__errors__"
 
     -- ── Helpers ────────────────────────────────────────────────────────────────────
     -- Query string off before matching or keying. api_path itself is left alone: it is
@@ -399,7 +400,24 @@ luaScripts:
     local function touch_resource(key, kind, api, create)
         local r = counts.resources[key]
         if r ~= nil then return r end
-        if (not create) or counts.n_resources >= REPORT_MAX_RESOURCES then
+        -- An errored request on a resource that is not already known: the ATTRIBUTION
+        -- is lost, not the count -- and the record itself is kept IN FULL by rule 3,
+        -- so the detail lives in the log index even though the report cannot name the
+        -- resource. Its own bucket, because "we could not attribute this" and "the cap
+        -- was hit" are different facts that shared a name until 2026-09-09.
+        if not create then
+            r = counts.resources[REPORT_ERRORS]
+            if r == nil then
+                r = new_row()
+                counts.resources[REPORT_ERRORS] = r
+                counts.kinds[REPORT_ERRORS] = "error"
+                -- Both buckets aggregate across API surfaces, so neither has one.
+                counts.apis[REPORT_ERRORS]  = "mixed"
+                counts.n_resources = counts.n_resources + 1
+            end
+            return r
+        end
+        if counts.n_resources >= REPORT_MAX_RESOURCES then
             counts.resources_over = counts.resources_over + 1
             if counts.other_keys[key] == nil
                and counts.n_other_keys < REPORT_MAX_RESOURCES then
@@ -411,8 +429,7 @@ luaScripts:
                 r = new_row()
                 counts.resources[REPORT_OTHER] = r
                 counts.kinds[REPORT_OTHER] = "other"
-            -- __other__ aggregates both surfaces, so it has no single api_kind.
-            counts.apis[REPORT_OTHER]  = "mixed"
+                counts.apis[REPORT_OTHER]  = "mixed"
                 counts.n_resources = counts.n_resources + 1
             end
             return r

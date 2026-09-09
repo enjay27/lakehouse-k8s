@@ -115,9 +115,14 @@ is wrong, and nothing in the field names says so.
 **5. `access_kept` is derived and stored.** Harmless, but it can drift from
 `access_seen - access_counted` if anyone ever writes to it directly. Prefer recomputing.
 
-**6. `__other__` is a real row, not just a counter.** Beyond 500 resources the overflow lands in a
-row keyed `__other__` with `resource_kind = "other"`, so it appears in `distinct_resources` and in
-per-resource aggregations. `resources_other` counts the requests behind it.
+**6. There are TWO synthetic rows, and v3 separates them.**
+`__errors__` (`resource_kind: error`) holds errored requests whose resource was not already known —
+the attribution is lost, though rule 3 still keeps every one of those records **in full** in
+`polaris-logs-*`. `__other__` (`resource_kind: other`) holds only genuine overflow beyond
+`REPORT_MAX_RESOURCES`, which is what `resources_other` has always claimed to count. Before v3 both
+shared the `__other__` name, and measurement showed the split was 38 errors to 0 overflow — the row
+was named after the case that had never occurred. Both carry `api_kind: mixed`, because both
+aggregate across API surfaces. Both appear in `distinct_resources`.
 
 **7. `bytes_total` is summed over resources only** — by design, since summing both margins would
 double-count. It is equal to the principal-side sum by the invariant, so a mismatch there is a
