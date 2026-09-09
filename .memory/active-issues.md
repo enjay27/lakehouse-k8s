@@ -645,6 +645,12 @@ Plan, mechanism and gate: `logging/PLAN-bulk-response-buffer-2026-09-09.md`. Not
 reduction — that treats the symptom. Not a cutover regression by evidence; no before/after
 measurement exists.
 
+**BASELINE RECORDED 2026-09-09, under load, BEFORE the fix: `7`** occurrences of
+`cannot increase buffer|cannot be retried` in a 10-minute window containing a notebook run. The
+fix is deployed as **REVISION 10** (ConfigMap and running process both confirmed). **The AFTER
+number is not taken yet** — it requires a second notebook run so the load is comparable. Until
+then `#19` is fixed-but-unverified, not fixed.
+
 **`#18` AND `#19` COMPOSE, and it changes what `#19` costs.** The plugin cannot read the reply, so
 it does not know whether the batch was indexed. If it *was*, each retry writes it again — and tier
 1 has **no dedup at all** (`#18`: `Id_Key sequence` drops every record, so only OUTPUT 2 stores

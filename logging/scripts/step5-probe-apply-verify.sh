@@ -74,15 +74,10 @@ for a in "${EXPECT[@]}"; do
 done
 [ "$miss" -eq 0 ] || die "config deployed but the process does not have it."
 
-step "6. the probe readings"
-echo "    130 B/rec => PARSED   |   ~153 B/rec => raw (probes 2 and 3)"
-echo "    probe 4's payload is ~490 B raw, so its two outcomes are unmistakable"
-jq -r '.filter | to_entries[] | select(.key|startswith("hb_"))
-       | "    \(.key): \(.value.records) rec  \(.value.bytes) B  = \(if .value.records>0 then (.value.bytes/.value.records|.*10|round/10) else 0 end) B/rec"' <<<"$m"
-
-step "7. the real chain, for comparison in the same process"
+step "6. the real chain -- the tier 2 health check"
 jq -r '.filter as $f
        | ($f.polaris_key_rename.bytes - $f.polaris_cri_unwrap.bytes) as $d
        | ($f.polaris_cri_unwrap.records) as $n
        | "    unwrap -> rename delta = \($d) B over \($n) rec = \(if $n>0 then ($d/$n*100|round/100) else 0 end) B/rec",
-         "    9.00 = unwrap WORKING   |   12.00 = unwrap FAILING"' <<<"$m"
+         "    12.00 = unwrap FAILING (app added, neither rename fires) | 5.00-7.00 = working",
+         (if $n == 0 then "    0 rec is EXPECTED right after a roll -- Polaris logs only on request. Re-read after traffic." else "" end)' <<<"$m"
