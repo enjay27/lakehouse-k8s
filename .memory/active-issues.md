@@ -719,11 +719,22 @@ be a parser regression.
 Most likely a Polaris stdout line that **is not JSON** — a JVM or container message, or a
 stack-trace fragment the multiline parser did not join — which `polaris_stdout_json` correctly
 declines, leaving `log` intact via `Reserve_Data On`. That would be right behaviour, not a bug.
-**Unverified**; nobody has looked at the two documents. One query names them:
+**Unverified**; nobody has looked at the two documents.
+
+*A `now-30m` window does NOT find them* — tried 2026-09-09 and it returned far too many, because
+30 minutes reaches back past the roll into the 29,803 pre-fix raw documents that share the index.
+Do not filter by a window at all. **Sort by time descending and take the newest raw documents**,
+which answers "when" and "what" at once:
+
 ```bash
 curl -sk -u "$OS_USER:$OS_PASSWORD" -H 'Content-Type: application/json' \
-  "$OS_URL/polaris-logs-*/_search?pretty" -d '{"size":5,"query":{"bool":{"filter":[
-     {"exists":{"field":"log"}},{"range":{"@timestamp":{"gte":"now-30m"}}}]}}}'
+  "$OS_URL/polaris-logs-*/_search?pretty" -d '{"size":3,
+    "query":{"exists":{"field":"log"}},
+    "sort":[{"@timestamp":"desc"}],
+    "_source":["@timestamp","log","stream","flb_tag"]}'
 ```
+If the newest raw document predates the roll, there are no post-fix ones and this closes itself.
+If it postdates the roll, its `log` value says immediately whether it is a non-JSON line — which
+would be `polaris_stdout_json` correctly declining, and right behaviour.
 Worth knowing because if they are NOT stray non-JSON lines, the tier 2 parse has a rare failure
 mode and the 0.04% is the only place it shows.
