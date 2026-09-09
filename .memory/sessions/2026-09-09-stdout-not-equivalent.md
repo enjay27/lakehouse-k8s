@@ -322,3 +322,59 @@ Nothing in the step-2 or step-3 gates asserted that a stored tier 2 record has a
 field. The gates counted documents, checked the Lua sha, and read the pod log for complaints —
 all of which pass while every record arrives unparsed. One `exists` query on a stored document,
 run once after the cutover, would have caught it in the first minute.
+
+---
+
+## CONFIRMED by the filter metrics: the unwrap runs on every record and transforms none
+
+```
+polaris_cri_unwrap    records 5030   drop 0   bytes 10,268,413
+polaris_key_rename    records 5030   drop 0   bytes 10,328,773
+polaris_access_log    records 5030   drop 0   bytes 10,328,773
+polaris_noise_filter  records 5917   drop 739 bytes 10,454,781
+polaris_field_trim    records 5030   drop 0   bytes 10,168,343
+```
+
+`records 5030` on the unwrap equals the `polaris-logs-*` doc count exactly. It is receiving
+everything. `drop_records 0`, `add_records 0`. **Branch one: it runs, and the parse fails on all
+5,030.** With `Reserve_Data On` a failed parse passes the record through untouched, which is what
+the stored document shows.
+
+### The byte deltas prove the renames no-opped, which proves no fields were produced
+
+- unwrap -> rename: **+60,360 bytes over 5,030 records = exactly 12.00 B/record.** That is the
+  msgpack cost of `Add app polaris` and nothing else.
+- If the unwrap had produced fields, `Rename message _msg` (+1 B) and `Rename timestamp _time`
+  (9 chars -> 5, -4 B) would also have fired, giving **9 B/record**, not 12.00.
+  The figure is 12.00 to the byte. **Neither rename found its key**, so `message` and `timestamp`
+  did not exist on the record — the JSON was never unpacked.
+- rename -> access_log: **delta 0**. The Lua returned every record unmodified, exactly as
+  `loggerName == nil` requires.
+- rename -> field_trim: **-160,430 B = -31.9 B/record**, i.e. `logtag` and `time` removed. The CRI
+  envelope fields were present all along and filter 4 did its job. The chain works; one filter in
+  it is inert.
+
+### And it confirms #16 independently of the index count
+
+`polaris_noise_filter` shows `records 5917` = 5,030 logs + 887 ticks, `drop_records 739` = ticks
+that did not turn a window over (887 - 739 = 148 report records emitted, ~148 windows, consistent
+with a 30s window over the pod's life). **Not one LOG record was dropped.** Policy v3 kept 100% of
+them, measured at the filter rather than inferred from storage.
+
+## The fix, and why it is also the diagnostic
+
+`polaris_stdout_json` is the only parser here that resolves a `Time_Key`, and it is the only one
+failing. Removing `Time_Key`/`Time_Format` from it removes the sole remaining failure mode and
+**loses nothing**:
+
+- `Time_Keep On` exists solely so `timestamp` survives for filter 1's `Rename timestamp _time`.
+  With no `Time_Key` at all, `timestamp` is never consumed — same outcome, one fewer thing to fail.
+- `_time` still arrives as a **string**, which is what the Lua replay detector requires.
+- The record's Fluent Bit timestamp then comes from the CRI envelope's `time`. **This is already
+  what happens**: the stored doc's `@timestamp` is `05:07:07.704Z` against a payload `timestamp`
+  of `05:07:07.697818537Z` — 7 ms apart, because the parse has been failing all along. So this
+  changes nothing about `@timestamp` and cannot regress tier 2/3 time indexing.
+
+The alternative — keeping `Time_Key` and correcting `Time_Format` for nine fractional digits — is
+a guess about `%L`'s digit handling that would need its own run to confirm. Prefer the change that
+removes the failure mode over the one that tries to satisfy it.
