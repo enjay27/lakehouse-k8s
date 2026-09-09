@@ -51,7 +51,11 @@ plausible-looking name.
 - **Fluent Bit runs as two releases**, both in `datahub-hynix`: the DaemonSet
   **`benchmarks-fluent-bit`** (container stdout → OpenSearch) and the Deployment
   `fb-polaris-shipper`. Names and sinks are settled in `active-issues.md` #2.
-  **Neither sets `hostNetwork`** (measured 2026-09-08).
+  **Neither sets `hostNetwork`** (measured 2026-09-08). `benchmarks-fluent-bit` is
+  **chart `fluent-bit-0.57.6`, `appVersion` 5.0.6, REVISION 1, deployed 2026-08-19, SSA** — it has
+  **never been upgraded**. Note `appVersion` is the chart's field, *not* the running image: the
+  values file pins `image.tag: "3.2.2"`, so read the image off the DaemonSet, not off `helm get
+  metadata`.
 
 ## Secrets
 

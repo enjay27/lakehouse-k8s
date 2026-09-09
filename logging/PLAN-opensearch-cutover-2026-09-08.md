@@ -83,12 +83,46 @@ is identical by construction. Two releases on two sources break that symmetry.
 last open question in this design closes.** Do it before the uninstall — afterwards the file-sourced
 figure no longer exists.
 
-### 0.5 Blocker before the edit
+### 0.5 The release, measured 2026-09-09 — and two things that change the approach
 
-**What chart version is `benchmarks-fluent-bit` currently on?** `luaScripts` must be supported by
-the chart, and the shipper's 0.58.1 is known to support it. Settle with
-`helm -n datahub-hynix get metadata benchmarks-fluent-bit`; expect to pin `--version 0.58.1` for
-both releases, which is itself a chart upgrade for tier 1 and part of §0.2's first bullet.
+```
+NAME benchmarks-fluent-bit   CHART fluent-bit-0.57.6   APP_VERSION 5.0.6
+NAMESPACE datahub-hynix      REVISION 1                DEPLOYED 2026-08-19
+APPLY_METHOD server-side apply
+```
+
+**Do NOT bump the chart.** §0.2 assumed pinning both releases to the shipper's `0.58.1`. That is an
+unnecessary second change: `luaScripts` has been in this chart far longer than 0.57.6, so **pin
+`--version 0.57.6` and change only `image.tag`** (`fluent-bit/values.yaml:12`) from `3.2.2` to
+`5.1.1`. One variable instead of two, on the node-wide collector. **Prove it rather than trust it:**
+the step-2 render must show the `-luascripts` ConfigMap. If 0.57.6 does not render it, *then* bump
+the chart — and treat that as its own change.
+
+**`APP_VERSION: 5.0.6` is the chart's `appVersion`, not the running image.** The values file pins
+`image.tag: "3.2.2"`, so if those values are in effect the pod runs **3.2.2** while the metadata
+reads 5.0.6. The two numbers are not in conflict and neither is evidence of what is running.
+
+**REVISION 1, never upgraded since 2026-08-19.** Two consequences:
+
+- **This cutover is that release's first ever upgrade.** Any drift between
+  `fluent-bit/values.yaml` and the live object surfaces at that moment, on the collector that
+  handles every container's logs — not on a spare.
+- **Whether the file is in effect at all has never been tested.** `k8s-logs` is populated, which
+  argues the values *are* applied — but that is inference, and this repo has a Fault 1 precisely
+  because a values block that had never executed looked exactly like one that had. **Un-inerting
+  configuration that has never run is a change, not a fix** (CLAUDE.md).
+
+**Run both before the edit:**
+
+```bash
+helm -n datahub-hynix get values benchmarks-fluent-bit          # is the repo file in effect?
+kubectl -n datahub-hynix get ds benchmarks-fluent-bit \
+  -o jsonpath='{.spec.template.spec.containers[*].image}{"\n"}'  # the RUNNING image
+```
+
+If the first returns the repo's contents and the second says `3.2.2`, the file describes the
+cluster and the bump is a one-line edit. If it returns chart defaults, the whole of §0 needs
+rethinking before a line is written — the OpenSearch outputs in that file would never have run.
 
 ---
 
