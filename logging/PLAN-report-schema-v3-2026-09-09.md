@@ -643,3 +643,42 @@ does not exist at all.
 of denials is hitting the admin API or the data API. Two bounded keys, real diagnostic value. Left
 out because nobody has asked the question yet, and one bucket with a count is enough to notice that
 the question is worth asking.
+
+---
+
+# Confirmed: one `__errors__` bucket, and `__other__` stays — with one correction
+
+Kade, 2026-09-09: keep both surfaces in one `__errors__`, because the detail is discoverable in the
+log index; and keep `__other__` so a newly added API shows up somewhere and gets classified.
+
+**Agreed on the first, and it is the reason the bucket is acceptable at all**: rule 3 stores every
+errored record in full, so Discover answers "which resource" whenever the report cannot. The report
+bucket only has to say *how many*.
+
+## The correction — `__other__` is not where a new API lands
+
+**A path that no rule matches keeps its own row**, with its real path as the key,
+`resource_kind: other`, and the correct `api_kind`. `classify` returns `path, "other"` for an
+unknown path; `__other__` is reached only when the **cap** is hit.
+
+That is better for the stated purpose than the assumption behind it. A future endpoint appears as
+`/api/management/v1/quotas/{id}` with `api_kind: management` — **the exact path, ready to write a
+rule for** — rather than as an anonymous increment in a shared bucket.
+
+So `__other__` stays, but as a **capacity** signal, not a classification one: it means 500 distinct
+resources in one window, which is its own kind of problem. Both are worth keeping; they are just
+different alarms.
+
+The maintenance query is `resource_kind: other` **with `requests > 0`**, grouped by `api_kind` and
+`resource` — recorded in `SCHEMA-report.md`. On the current export it returns nothing, which is the
+point: every path in production traffic is now classified, so anything it returns later is genuinely
+new.
+
+## Pinned by a test, not left to intent
+
+Two hypothetical future endpoints — `/api/management/v1/quotas/q1` and
+`/api/catalog/v1/cat1/statistics` — are asserted to keep their own rows with the right `api_kind`
+and `resource_kind: other`. **A later refactor that quietly routed unknowns into `__other__` would
+fail the suite**, which is the only way this property survives contact with the next change.
+
+46 assertions, all passing.

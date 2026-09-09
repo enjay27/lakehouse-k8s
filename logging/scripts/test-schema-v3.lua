@@ -128,6 +128,12 @@ check("role_keys_forced counts it", sum.role_keys_forced, 1)
 -- a 404 on an unknown TABLE: not a role kind, so its attribution is lost -- but it
 -- must land in __errors__ (kind "error"), never in __other__, which is cap overflow.
 polaris_noise_filter("polaris.logs", 0, rec("GET", CAT.."/namespaces/ns1/tables/ghost", 404, 51))
+-- A HYPOTHETICAL FUTURE API, unmatched by every rule. It must get its OWN row with the
+-- real path and the correct api_kind -- NOT __other__ -- so that whoever adds the next
+-- endpoint can see exactly what needs classifying. This is the future-proofing property,
+-- pinned by a test so a later refactor cannot quietly route unknowns into a bucket.
+polaris_noise_filter("polaris.logs", 0, rec("POST", "/api/management/v1/quotas/q1", 200, 12))
+polaris_noise_filter("polaris.logs", 0, rec("GET",  "/api/catalog/v1/cat1/statistics", 200, 34))
 local _,_,out2 = polaris_noise_filter("polaris.report", 0, {tick="x", _now_override=T0+150})
 local res2 = {}
 for _, r in ipairs(out2 or {}) do local d=r[2] or r
@@ -137,6 +143,17 @@ check("unknown-resource 404 -> __errors__", res2["__errors__"] and res2["__error
 check("  kind is 'error'",                  res2["__errors__"] and res2["__errors__"].resource_kind, "error")
 check("  api_kind mixed",                   res2["__errors__"] and res2["__errors__"].api_kind, "mixed")
 check("  NOT in __other__ (cap overflow)",  res2["__other__"], "nil")
+print("== a future API gets its own row, not a bucket ==")
+check("unknown mgmt path keeps its path",
+      res2["/api/management/v1/quotas/q1"] ~= nil, true)
+check("  resource_kind",  res2["/api/management/v1/quotas/q1"] and
+      res2["/api/management/v1/quotas/q1"].resource_kind, "other")
+check("  api_kind still correct", res2["/api/management/v1/quotas/q1"] and
+      res2["/api/management/v1/quotas/q1"].api_kind, "management")
+check("unknown catalog path keeps its path",
+      res2["/api/catalog/v1/cat1/statistics"] ~= nil, true)
+check("  api_kind still correct", res2["/api/catalog/v1/cat1/statistics"] and
+      res2["/api/catalog/v1/cat1/statistics"].api_kind, "catalog")
 check("sum(resource) == seen-parse", sr, sum.access_seen - sum.parse_errors)
 check("sum(principal) == seen-parse", sp, sum.access_seen - sum.parse_errors)
 check("schema_version", sum.schema_version, 3)

@@ -124,6 +124,22 @@ shared the `__other__` name, and measurement showed the split was 38 errors to 0
 was named after the case that had never occurred. Both carry `api_kind: mixed`, because both
 aggregate across API surfaces. Both appear in `distinct_resources`.
 
+**A path no rule matches does NOT go to `__other__`.** It keeps its own row, with its real path as
+the key, `resource_kind: other`, and the correct `api_kind`. That is the maintenance signal for a
+newly added endpoint — the exact path is visible, not folded away:
+
+```bash
+# what needs a classification rule?
+curl -sk -u "$OS_USER:$OS_PASSWORD" -H 'Content-Type: application/json' \
+  "$OS_URL/polaris-report-*/_search?pretty" -d '{"size":0,"query":{"bool":{"filter":[
+     {"term":{"schema_version":3}},{"term":{"resource_kind":"other"}},
+     {"range":{"requests":{"gt":0}}}]}},
+   "aggs":{"by_api":{"terms":{"field":"api_kind.keyword"},
+     "aggs":{"paths":{"terms":{"field":"resource.keyword","size":50}}}}}}'
+```
+`__errors__` and `__other__` also carry `resource_kind: other`/`error`, so exclude them by name or
+read them as the two known synthetic keys.
+
 **7. `bytes_total` is summed over resources only** — by design, since summing both margins would
 double-count. It is equal to the principal-side sum by the invariant, so a mismatch there is a
 finding, not a rounding difference.
