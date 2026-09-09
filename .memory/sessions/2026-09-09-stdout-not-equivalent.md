@@ -804,3 +804,61 @@ and now a window that shrinks when traffic arrives.
 `fb-polaris-shipper` is installed, both report streams are live, and the notebook is repeatable.
 Re-run it and then `step4-report-readout.sh` **within a few minutes**, so the traffic windows fall
 inside both halves' ranges.
+
+---
+
+# §3 ANSWERED: stdout carries the same access-log set as the file. 265 == 265.
+
+Matched windows, one burst, both releases running:
+
+| window | stdout seen | file seen | diff | stdout kept | file kept | diff |
+|---|---|---|---|---|---|---|
+| 06:34:30Z | 2 | 0 | +2 | 0 | 0 | 0 |
+| 06:35:00Z | 242 | 227 | **+15** | 114 | 99 | **+15** |
+| 06:35:30Z | 21 | 38 | **-17** | 12 | 27 | **-15** |
+| **TOTAL** | **265** | **265** | **0** | **126** | **126** | **0** |
+
+**`access_seen` 265 == 265 and `access_kept` 126 == 126.** Not only does stdout carry the same
+number of access-log records the file does — **policy v3 reaches the same keep/drop decision on
+both**, which is the stronger claim and was never asked for.
+
+### Read the totals, not the per-window rows — and say why
+
+Per window the two disagree: +15, -17, +2. Those differences **sum to exactly zero**. Records are
+landing in adjacent 30s buckets on one side versus the other; none is missing. A partial source
+would show a one-directional deficit that does not cancel, not a redistribution that does.
+
+The handoff's criterion was "equal `access_seen` for one window". That criterion is slightly wrong
+and this run shows why: window assignment depends on each pipeline's own record timestamp, and the
+two derive it by different routes, so a record near a boundary can fall either side. **The burst
+total is the invariant; the per-window figure is not.** The cause of the skew is not established
+and is not worth chasing — it moves records between adjacent buckets and conserves the count.
+
+### What this overturns
+
+**`#17` is WRONG and is now resolved.** It recorded "the stdout/file equivalence assumption is
+DISPROVED — file 270, stdout 0". That measurement was taken while `multiline.parser cri` was
+silently refusing to parse, so the stdout side could not have counted anything. **The disproof was
+an artefact of the parse fault, not a property of stdout.** With the fault fixed the two are equal.
+
+This is the sharpest instance of the pattern in this whole sequence: a real, carefully-taken,
+correctly-computed measurement that was nevertheless answering a different question than it
+appeared to. It was recorded confidently as a finding about *stdout*. It was a finding about a
+*broken filter*.
+
+### Consequences
+
+- **Cutover step 7 is UNBLOCKED.** `fb-polaris-shipper` may be uninstalled — but that is a
+  `helm uninstall`, which CLAUDE.md requires be authorised at the moment of execution, and it
+  destroys the ability to repeat this measurement. Do it deliberately, not as cleanup.
+- The five probes have done their job and should come out. Probe 5 duplicates tier 2's tail
+  exactly.
+- Still open: `#18`, `#19`, and the 1800/30 revert as the cutover's final gate.
+
+### One number worth not over-reading
+
+`polaris-logs-*` holds ~4,400 post-fix documents for ~265 requests. Policy v3 filters access-log
+lines, and the roadmap already measured those at ~2.2% of Polaris's output — the rest is
+`jdbc.DatasourceOperations` and similar, which no retention rule touches. **Tier 2 working as
+designed is not the same as tier 2 being small.** That gap is a design question, already recorded,
+and it is not a regression.

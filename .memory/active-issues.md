@@ -545,7 +545,17 @@ Until `helm upgrade` runs and §A's gate passes, this issue is live exactly as d
 Evidence: `sessions/2026-09-09-stdout-not-equivalent.md`; change and gate:
 `logging/PLAN-tier2-parse-fault-2026-09-09.md`.
 
-**#17 — The stdout/file equivalence assumption is DISPROVED; the shipper is now load-bearing. OPEN.**
+**#17 — RESOLVED 2026-09-09, AND THE ORIGINAL FINDING WAS WRONG.** Re-measured after the
+`multiline.parser` fix, one burst, matched windows: **`access_seen` 265 (stdout) == 265 (file)**
+and **`access_kept` 126 == 126**. Per-window differences (+15, -17, +2) sum to zero — records fall
+in adjacent 30s buckets, none is lost. Stdout carries the same access-log set as the file AND
+policy v3 decides identically on both. The original "file 270, stdout 0" was taken while the CRI
+unwrap was silently not parsing, so the stdout side could not count anything: **the disproof was
+an artefact of `#16`, not a property of stdout.** Cutover step 7 is unblocked; `helm uninstall` of
+the shipper still needs authorisation at the moment of execution and destroys the ability to
+repeat this. Original entry follows.
+
+**#17 (original, SUPERSEDED) —**
 The cutover assumed Polaris stdout carries the same access-log set as the log file. Measured on
 matched windows 2026-09-09: file 226 + 44 = **270**, stdout **0**. Until #16 is resolved,
 `fb-polaris-shipper` and `polaris-shared-logs-pvc` are the ONLY path that recognises an access-log

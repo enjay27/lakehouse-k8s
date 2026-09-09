@@ -123,3 +123,13 @@ cluster it describes no longer exists.
   everything. ~17 stored documents per request on a tier whose purpose is >99% reduction.
 - **`polaris-report-*` 56 -> 74 docs across the run** — the report stream stayed healthy
   throughout, so the zero on the stdout side is a real count, not a missing one.
+- **Stdout and the log file carry the SAME access-log set: 265 == 265, and kept 126 == 126.**
+  2026-09-09, one burst, both releases running, after the `multiline.parser cri -> docker, cri`
+  fix. Per-window diffs (+15, -17, +2) sum to zero — boundary assignment, not loss. The earlier
+  "270 vs 0" was measured through a filter that was not parsing and is void.
+- **Root cause of the tier 2 fault: `multiline.parser cri` alone on the tail input.** With
+  `docker, cri` the same files, same parser filter and same parser produce parsed records —
+  4,314/4,314 on probe 5, and 4,403/4,403 post-fix documents in `polaris-logs-*`. Mechanism
+  unknown. Tier 1 always used `docker, cri`, which is why only tier 2 was affected.
+- **The `unwrap -> rename` byte delta is the tier 2 health check: 12.00 B/rec = failing
+  (`app` added, neither rename fires), 5.00-7.00 = working.** Measured 6.97 after the fix.
