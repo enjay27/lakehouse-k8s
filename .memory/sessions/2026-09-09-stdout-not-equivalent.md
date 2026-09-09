@@ -95,3 +95,73 @@ kubectl -n datahub-hynix logs ds/benchmarks-fluent-bit --tail=300 \
 NOT VERIFIED from this session: no cluster reach — no `kubectl`, `helm`, or sink access. Every
 cluster figure above is Kade's pasted output read back. The values-file checks ARE this session's
 own work, read from the repo at `45159f7`.
+
+---
+
+## RESOLVED to a single filter: `polaris_cri_unwrap` is inert. Its neighbours are not.
+
+A document out of `polaris-logs-*` (`_id 940EFA1E…`, `@timestamp 05:07:07.704Z`) settles which of
+the three readings applies. It is reading one: **the CRI envelope was never unwrapped.**
+
+```json
+{"@timestamp":"2026-09-09T05:07:07.704Z","flb_tag":"polaris.logs","stream":"stdout",
+ "app":"polaris",
+ "log":"{\"timestamp\":\"2026-09-09T05:07:07.697818537Z\",\"sequence\":49687,
+        \"loggerName\":\"org.apache.polaris.service.catalog.api.IcebergRestOAuth2Api\",
+        \"level\":\"DEBUG\",\"message\":\"operation=getToken …\", …}\n"}
+```
+
+**The Polaris JSON is intact — inside `log`, as a string.** `loggerName` exists in the payload and
+does not exist as a field. That is why `record["loggerName"]` is nil, why `access_seen` stayed 0
+against 270 real access-log lines, and why every record took the keep path.
+
+### The filters either side of it DID run — so this is one filter, not the chain
+
+- `app: "polaris"` is present -> filter 1 `polaris_key_rename` ran. Its `Rename message _msg` and
+  `Rename timestamp _time` no-opped, because those keys are inside the string, not on the record.
+- `logtag` and `time` are absent -> filter 4 `polaris_field_trim` ran (`Remove_key logtag`,
+  `Remove_key time`).
+- `stream: "stdout"` survives -> the CRI envelope is otherwise untouched.
+
+Filter 0 sits between two filters that demonstrably executed, matched the right tag
+(`flb_tag: polaris.logs` is exactly its `Match`), and did nothing.
+
+### What that rules out, and what it leaves
+
+The filter's own definition is correct — `Name parser`, `Match polaris.logs`, `Key_Name log`,
+`Parser polaris_stdout_json`, **`Reserve_Data On`**. And `Reserve_Data On` is the tell: on a
+SUCCESSFUL parse the merged keys appear and `log` is consumed; on a FAILED parse the record passes
+through untouched, exactly as observed. So the filter is installed and running, and its parse is
+failing (or its parser resolves to nothing) on every record.
+
+Note the trap 3.1 render evidence in `PLAN-opensearch-cutover` §3.1 was taken against the
+**`fb-polaris-shipper-fluent-bit`** ConfigMap — the SHIPPER's. It was never re-taken for
+`benchmarks-fluent-bit`. `fluent-bit/values.yaml:676` does declare the absolute
+`Parsers_File /fluent-bit/etc/conf/custom_parsers.conf`, but that is intent; the DaemonSet's
+deployed ConfigMap has not been read. **Verify against the running object.**
+
+### Next command — read the parser Fluent Bit actually loads, not the one we wrote
+
+```bash
+kubectl -n datahub-hynix exec ds/benchmarks-fluent-bit -- \
+  sh -c 'sed -n "/polaris_stdout_json/,/^$/p" /fluent-bit/etc/conf/custom_parsers.conf'
+kubectl -n datahub-hynix logs ds/benchmarks-fluent-bit --tail=400 \
+  | grep -iE 'parser|\[error\]|\[warn\]'
+```
+
+- parser block **absent or missing `Time_Keep On`** -> the ConfigMap does not carry what the values
+  file says. That is trap 3.1 recurring on the release it was never checked on.
+- parser block **present and correct** -> it is registered and the parse itself fails. The next
+  suspect is the time spec against this payload: `Time_Format %Y-%m-%dT%H:%M:%S.%L%z` against
+  `2026-09-09T05:07:07.697818537Z` — **nine** fractional digits and a literal `Z`. Tier 1's
+  `polaris_json` carries the identical spec, so whether tier 1's own records are parsed or equally
+  raw is then the discriminating question, and it is one query away.
+
+Do not change anything until one of those two is established. Both fixes are small and they are
+different fixes.
+
+### One more measured fact
+
+The index grew **4,718 -> 5,030 docs between two commands minutes apart, with no notebook
+traffic** — Polaris logs `DEBUG` to stdout continuously. #16 is not a burst that has passed; it
+accumulates.
