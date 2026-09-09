@@ -165,3 +165,47 @@ different fixes.
 The index grew **4,718 -> 5,030 docs between two commands minutes apart, with no notebook
 traffic** — Polaris logs `DEBUG` to stdout continuously. #16 is not a burst that has passed; it
 accumulates.
+
+### The image is distroless — `exec` is not a diagnostic here
+
+`kubectl exec ds/benchmarks-fluent-bit -- sh` returns exit 127, `"sh": executable file not
+found in $PATH`. `cr.fluentbit.io/fluent/fluent-bit` ships no shell and no coreutils, so `cat`
+and `ls` are equally unavailable. **Never reach for exec on this pod.** Everything needed is in
+the API objects and in OpenSearch.
+
+### The discriminator that needs neither exec nor a ConfigMap read
+
+`polaris_json` (tier 1) and `polaris_stdout_json` (tier 2/3) live in the **same**
+`custom_parsers.conf`. So tier 1's own stored records say whether that file is loaded at all:
+
+```bash
+curl -sk -u "$OS_USER:$OS_PASSWORD" -H 'Content-Type: application/json' \
+  "$OS_URL/k8s-logs-*/_search?pretty" -d '{"size":0,"aggs":{
+    "has_logger":{"filter":{"exists":{"field":"loggerName"}}},
+    "has_raw_log":{"filter":{"exists":{"field":"log"}}}}}'
+```
+
+- **`has_logger` > 0** -> `custom_parsers.conf` IS loaded and `polaris_json` works. The fault is
+  then specific to `polaris_stdout_json` — its block, or its time spec against nine fractional
+  digits and a literal `Z`.
+- **`has_logger` == 0 and `has_raw_log` == everything** -> the parsers file is not loaded for this
+  release, every `parser` filter in it is inert, and **tier 1 has never been parsed either** —
+  its ~23k docs/10m are raw CRI envelopes. That would make trap 3.1 a live fault on
+  `benchmarks-fluent-bit`, not a closed one, and it would predate the cutover entirely.
+
+The second outcome is the larger finding, and nothing measured so far excludes it: "`k8s-logs`
+still taking ~23k docs/10m" counts documents, and a raw envelope is a document.
+
+Direct reads of the deployed config, for after that:
+
+```bash
+kubectl -n datahub-hynix get cm benchmarks-fluent-bit -o json | jq -r '.data | keys'
+kubectl -n datahub-hynix get cm benchmarks-fluent-bit -o json \
+  | jq -r '.data["custom_parsers.conf"]'
+kubectl -n datahub-hynix get ds benchmarks-fluent-bit \
+  -o jsonpath='{.spec.template.spec.containers[0].volumeMounts}' | jq
+kubectl -n datahub-hynix logs ds/benchmarks-fluent-bit --tail=400 | grep -iE 'parser|error|warn'
+```
+
+The ConfigMap and the DaemonSet spec together answer both halves of trap 3.1 — whether the file
+carries the parser, and whether it is mounted where `[SERVICE]` looks for it.
