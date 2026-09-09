@@ -42,6 +42,25 @@ and `polaris_access_log.lua` are **byte-identical** — no Lua edit anywhere in 
     storage.backlog.mem_limit 32M
 ```
 
+**CONFIRMED FROM THE RENDER, 2026-09-09** — this path is no longer copied from the DaemonSet on
+faith, which §3.1 warned against:
+
+- the ConfigMap `fb-polaris-shipper-fluent-bit` already carries a **`custom_parsers.conf`** key
+  (it holds the chart's default `docker_no_time` parser);
+- that ConfigMap is mounted at **`/fluent-bit/etc/conf`** (`volumeMounts: name: config`);
+- so the file exists in the container at **`/fluent-bit/etc/conf/custom_parsers.conf`**;
+- and `[SERVICE]` declares only `Parsers_File parsers.conf`, which — with the container's
+  `--workdir=/fluent-bit/etc` — resolves to `/fluent-bit/etc/parsers.conf`, **the stock image
+  file, not the ConfigMap one**.
+
+**So `custom_parsers.conf` is rendered, mounted, and never read.** The chart even ships a default
+parser inside it that has never once been loaded. §3.1 is not a hypothesis; it is the current state
+of the deployed ConfigMap. The absolute path above is the fix.
+
+*A detail worth noticing:* that unread default parser is
+`Name docker_no_time … Time_Keep Off`. **The chart's own example carries the exact setting §3.2
+says is mandatory to invert** — a worked demonstration of the trap, sitting unloaded in the file.
+
 ### 2.2 `customParsers` — new
 
 ```ini
@@ -314,8 +333,17 @@ created at 1800s. Cheap now, permanent if skipped.
 
 ## 5. Open — Fluent Bit side only
 
-**Q1 — does chart 0.58.1 render `extraVolumes` hostPath in **Deployment** mode?** §2.3 rests on it.
-Settle in the step-2 render.
+**Q1 — CLOSED 2026-09-09 from the before-render.** Chart 0.58.1 passes `extraVolumes` /
+`extraVolumeMounts` straight through in Deployment mode: the rendered pod spec carries
+`polaris-logs` (a PVC) and `flb-storage` (an `emptyDir`) in `volumes:`, with their mounts in
+`volumeMounts:`. A `hostPath` is just another volume source and renders the same way. §2.3 stands
+without waiting for step 2.
+
+**One trap this exposed, which §2.3's snippet could walk into.** The chart has a **top-level
+`volumeMounts:` value** — defaulting to `[{mountPath: /fluent-bit/etc/conf, name: config}]` — that
+is *separate* from `extraVolumeMounts:`. The new hostPath mount goes in **`extraVolumeMounts`**.
+Putting it in `volumeMounts` overwrites that default, unmounts the config ConfigMap, and the pod
+comes up with no `fluent-bit.conf` at all.
 
 **Q2 — CLOSED 2026-09-08, and the question was built on a false premise.** Earlier revisions of
 this plan asserted that *"the DaemonSet reaches it from a host-network context, so the shipper's
