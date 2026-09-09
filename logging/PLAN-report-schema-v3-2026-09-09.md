@@ -372,3 +372,33 @@ including that window's only `auth_denied` — which is the attribution this fix
 the fold captures 5 role/grant requests as reads 2 / writes 3 / errors 1 / auth_denied 1; a plain
 `/principals/{p}` stays `management`; the denial does **not** appear in `__other__`; and both
 margin invariants are exact with no `excluded_requests` field present.
+
+## Reconstructed v3 rows from the real v2 export — and what the reconstruction cannot show
+
+Re-aggregating the 104 v2 resource rows under v3's keys, busiest window (seq 1876, 244 requests):
+
+| kind | resource | req | rd | wr | err | denied | bytes |
+|---|---|---|---|---|---|---|---|
+| **authorization** | `__authorization__` | **73** | 33 | 40 | 0* | 0* | 188,541 |
+| table | `…/namespaces/probe_ns/tables/probe_tbl` | 47 | 38 | 9 | 10 | 10 | 76,124 |
+| other | `__other__` | 37 | 24 | 13 | **37** | 1 | 5,715 |
+| collection | `…/namespaces/probe_ns/tables` | 25 | 21 | 4 | 1 | 0 | 4,913 |
+| management | `/api/management/v1/catalogs` | 8 | 3 | 5 | 0 | 0 | 1,181,599 |
+| auth | `/api/catalog/v1/oauth/tokens` | 7 | 0 | 7 | 1 | 1 | 4,796 |
+
+**Authorization is the single largest row — 73 of 244 requests, 30% of the traffic.** Worth knowing
+before anyone treats it as a minor category.
+
+Row counts fall: **38 -> 26** (seq 1876) and **46 -> 31** (seq 1877). Margin invariant **EXACT** on
+every window.
+
+### \* Two things this reconstruction cannot show, and both understate v3
+
+1. **`last_read_bytes` / `last_write_bytes` are absent.** The export carries per-window *sums*, not
+   individual records, so a "last" value cannot be derived from it. Those fields need a live run.
+2. **The authorization row's errors read 0, and that is an artefact of v2, not a prediction.** In
+   v2 an errored authz request fell into `__other__` under the `create=false` guard, and an
+   aggregate row cannot be split back out. `__other__` in this window holds **37 errors and 1
+   auth_denied** — some of which are authz. Under real v3 those move into `__authorization__`.
+   **So the live authz row will show more errors and denials than the table above** — which is
+   precisely the blind spot the forced-create change exists to close.
