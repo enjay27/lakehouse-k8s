@@ -385,17 +385,36 @@ line). Send `--debug` to `/dev/null` on stderr so the render is the file's only 
 
 **Render greps for step 2**, against `/tmp/render-after.txt`:
 
+**Render WITHOUT `--debug` when grepping.** `--debug` prints USER-SUPPLIED VALUES and COMPUTED
+VALUES *before* the manifest, so every config string appears **three times** and every count below
+triples. Use `--debug` only when you want the values dump.
+
+**Two of the guide's §4.7 gates are wrong and abort on a CORRECT config** — measured 2026-09-09
+against `logging/fb-values.yaml`, which is reconciled against the running release:
+
+| guide §4.7 says | actual | why |
+|---|---|---|
+| `type_int_key` == 2 | **5** | 2 filter lines + 3 mentions in Lua comments |
+| `DEDUP_MAX_KEYS` == 0 | **1** | a Lua comment saying it is gone: `-- buckets and DEDUP_MAX_KEYS are gone with it.` |
+
+Both are `grep -c` over the whole render, which includes the Lua ConfigMap. **A gate that fires on
+the correct state is as useless as one that cannot fire** — it teaches you to ignore it. Fix them
+in the guide when §4.7 is rewritten; until then use the counts below, which were measured rather
+than assumed.
+
 ```bash
 grep -c 'Parsers_File'              /tmp/render-after.txt   # 2   (3.1)
 grep -c 'Time_Keep   On'            /tmp/render-after.txt   # 1   (3.2)
 grep -c 'polaris\.vlogs'            /tmp/render-after.txt   # 0   (3.3)
 grep -c 'Time_Key'                  /tmp/render-after.txt   # 1   (parser only, NOT the outputs — 3.4)
-grep -c 'Name  *opensearch'         /tmp/render-after.txt   # 2
-grep -c 'Name  *http'               /tmp/render-after.txt   # 1   (0 after step 5)
-grep -c 'OS_PASSWORD'               /tmp/render-after.txt   # 2   (env + output — 3.6)
-grep -c 'Trace_Error'               /tmp/render-after.txt   # 2   (3.7)
-# and the UNCHANGED guide §4.7 greps: RESOURCE_PATTERNS, MGMT_PREFIX,
-# 'Name              dummy' == 1, type_int_key == 2, DEDUP_MAX_KEYS == 0
+grep -c 'Name  *opensearch'         /tmp/render-after.txt   # 4   (2 tier-1 + 2 new)
+grep -c 'Name  *http'               /tmp/render-after.txt   # 0   (the http output lives in the OTHER release now)
+grep -c 'DB  *\/var\/log\/flb_'      /tmp/render-after.txt   # 2   distinct paths (§0.2)
+grep -c 'OS_PASSWORD'               /tmp/render-after.txt   # 4   (env name + 2 outputs + 1 comment)
+grep -c 'Trace_Error'               /tmp/render-after.txt   # 3   (2 outputs + 1 comment)
+grep -c 'luascripts'                /tmp/render-after.txt   # >=1 CHART SUPPORT — §0.5. If 0, STOP.
+# and, corrected: RESOURCE_PATTERNS >= 1 (2), MGMT_PREFIX >= 1 (3),
+# 'Name              dummy' == 1, type_int_key == 5, DEDUP_MAX_KEYS == 1
 ```
 
 **Step 4's checks — the ones that can come back wrong rather than clean:**
