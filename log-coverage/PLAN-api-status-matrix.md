@@ -482,3 +482,53 @@ read, one table read, one commit, one 404, one 403; wait one window; then re-run
 fraction of the real run and it fails cheap. Driving 305 calls into a pipeline whose numeric
 mapping is unverified risks discovering it afterwards, at which point the whole run is a
 statement about text fields.
+
+---
+
+## 11. Amendment — two bugs the notebook wiring found, both in this harness
+
+Neither is a pipeline finding. Both would have wasted a run, and one of them is the same defect
+this plan wrote up as a finding *against the guide* three commits earlier.
+
+**11.1 The happy sweep would have destroyed its own run.** Bound naively from the spec,
+`deleteCatalog` takes `{catalogName}` from the fixture and deletes the run's catalog at roughly
+call 30 of 63; `dropTable`, `dropView` and `dropNamespace` finish the fixture off,
+`deletePrincipal` removes the run principal, and — the worst of them — `resetCredentials` and
+`rotateCredentials` replace the secret the runner's own token was minted from. Everything after
+that point answers 404 or 401, and the matrix reports **a pipeline with no coverage** when what
+actually happened is that the harness ate itself.
+
+The fix is `api_status_matrix.REBIND`: destructive operations are re-pointed at a **doomed**
+family of entities created for the purpose, mutations at the **new_** family the grid's own
+create cells make, and the fixture is only ever *read*. The `new_` / `doomed_` split is not
+cosmetic — phase D's 409 cells need a `new_` entity that phase B has **not** deleted.
+
+Three tests hold it: no destructive operation's final path segment is a fixture entity, credential
+rotation never names an identity the run authenticates as, and a rename moves the disposable table
+rather than the fixture (a rename is a destructive operation wearing a POST).
+
+**11.2 `mdc.requestId` was not in `os_report.STRING_FIELDS`.** So `kw()` left it bare, and the
+correlation query — the join the entire per-call half of the matrix rests on — would have run a
+`term`/`prefix` against the analysed field. A request id is `nb-<run>-<seq>-<label>`; the standard
+analyser splits it on every hyphen; the query matches **nothing**. Every call would have reported
+unrecovered and the run would have read as a total pipeline failure.
+
+That is the *identical* defect this plan documented in the guide's Gate 5 — written up, tested
+for, and then committed into the module that exists to prevent it. The general lesson is the one
+the repo keeps paying for: **a rule enforced only where you remembered to apply it is not
+enforced.** The test now asserts the correlation field specifically, by name.
+
+## 11.3 What is built, and what is left
+
+| piece | state |
+|---|---|
+| `src/os_report.py` + 52 tests | done, negative-tested |
+| `src/api_status_matrix.py` + 48 tests | done, negative-tested |
+| `log-coverage/polaris_log_coverage_v2.ipynb`, 43 cells | **written, never executed** |
+| `doc-api-status-matrix-results.md` | written by cell 16, on the first run |
+| `REPORT-for-local-k8s.md` | written by cell 16, on the first run |
+
+**The notebook has not been run.** Every code cell parses, pyflakes is clean over all 21 of them
+read as one linear program, and the 100 unit tests cover everything that does not need a cluster.
+None of that is evidence that it works end to end — the first execution is a test of the notebook
+as much as of the pipeline, and it should be read that way.

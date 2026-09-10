@@ -43,6 +43,60 @@ CATALOG_PARAMS = ("prefix", "catalogName")
 #: collide with a real fixture name, and it must be visible in a log line.
 MISSING = "definitely-not-here-404"
 
+#: WHICH ENTITY A CELL IS ALLOWED TO TOUCH.
+#:
+#: Found 2026-09-10, while wiring the notebook: bound naively, the happy sweep
+#: DESTROYS ITS OWN RUN. `deleteCatalog` binds `{catalogName}` to the fixture
+#: catalog and deletes it at call ~30 of 63; `dropTable`, `dropView` and
+#: `dropNamespace` do the same to the rest of the fixture; `deletePrincipal`
+#: deletes the run principal; and `resetCredentials` / `rotateCredentials`
+#: ROTATE THE RUNNER'S OWN SECRET, invalidating the token every later call
+#: carries. Everything after that point 404s or 401s, and the matrix reports a
+#: pipeline with no coverage instead of a harness eating itself.
+#:
+#: So mutating operations are re-pointed at entities that exist to be mutated:
+#:
+#:   new_*     created by the grid's own create cells, mutated and renamed
+#:             later, never deleted before phase I -- so phase D's 409 cells
+#:             still have something to conflict with.
+#:   doomed_*  created by the notebook before the sweep, for the deletes alone.
+#:
+#: The fixture (catalog / namespace / table / view) is READ by the happy cells
+#: and by every 401/403/404 cell, and is never destroyed by one.
+REBIND = {
+    # -- deletes: the doomed family, and nothing else ------------------
+    "deleteCatalog": {"catalogName": "doomed_catalog"},
+    "deleteCatalogRole": {"catalogRoleName": "doomed_catalog_role"},
+    "deletePrincipal": {"principalName": "doomed_principal"},
+    "deletePrincipalRole": {"principalRoleName": "doomed_principal_role"},
+    "revokePrincipalRole": {
+        "principalName": "doomed_principal",
+        "principalRoleName": "doomed_principal_role",
+    },
+    "revokeCatalogRoleFromPrincipal": {
+        "principalRoleName": "doomed_principal_role",
+        "catalogRoleName": "doomed_catalog_role",
+    },
+    "revokeCatalogRoleFromPrincipalRole": {
+        "principalRoleName": "doomed_principal_role",
+        "catalogRoleName": "doomed_catalog_role",
+    },
+    "dropNamespace": {"namespace": "doomed_namespace"},
+    "dropTable": {"table": "doomed_table"},
+    "dropView": {"view": "doomed_view"},
+    # -- mutations: the new_ family ------------------------------------
+    "updateCatalog": {"catalogName": "new_catalog"},
+    "updateCatalogRole": {"catalogRoleName": "new_catalog_role"},
+    "updatePrincipal": {"principalName": "new_principal"},
+    "updatePrincipalRole": {"principalRoleName": "new_principal_role"},
+    "assignPrincipalRole": {"principalName": "new_principal"},
+    "assignCatalogRoleToPrincipalRole": {"principalRoleName": "new_principal_role"},
+    # CREDENTIAL ROTATION. Pointed anywhere near the runner this ends the run:
+    # every later call carries a token minted from the secret it just replaced.
+    "resetCredentials": {"principalName": "new_principal"},
+    "rotateCredentials": {"principalName": "new_principal"},
+}
+
 #: Statuses this build cannot produce, with the reason each one is out of
 #: reach. An honest gap beats a fabricated pass -- but a reason written from a
 #: spec is an assumption, so anything marked `probe` gets ONE call whose result
@@ -219,14 +273,26 @@ def bind_path(op, binding, break_param=None):
     request path is a 404 that looks like a finding.
     """
     out = op.full_template
-    unknown = [p for p in op.params if p not in binding and p not in CATALOG_PARAMS]
+    _rebind = REBIND.get(op.op_id, {})
+    unknown = [
+        p
+        for p in op.params
+        if p not in binding
+        and p not in CATALOG_PARAMS
+        and _rebind.get(p) not in binding
+    ]
     if unknown:
         raise KeyError(f"{op.op_id}: no fixture value for {unknown}")
     target = break_param
     if target is True:
         target = op.params[-1] if op.params else None
+    rebind = REBIND.get(op.op_id, {})
     for p in op.params:
-        value = binding["catalog"] if p in CATALOG_PARAMS else binding[p]
+        key = rebind.get(p)
+        if key:
+            value = binding[key]
+        else:
+            value = binding["catalog"] if p in CATALOG_PARAMS else binding[p]
         if target is not None and p == target:
             value = MISSING
         out = out.replace("{" + p + "}", str(value))
@@ -303,7 +369,7 @@ PAYLOADS = {
         "properties": {"matrix.run": b["run"]},
     },
     "assignCatalogRoleToPrincipalRole": lambda b: {
-        "catalogRole": {"name": b["catalogRoleName"]}
+        "catalogRole": {"name": b["new_catalog_role"]}
     },
     "createPrincipal": lambda b: {"principal": {"name": b["new_principal"]}},
     "updatePrincipal": lambda b: {
@@ -311,9 +377,9 @@ PAYLOADS = {
         "properties": {"matrix.run": b["run"]},
     },
     "assignPrincipalRole": lambda b: {
-        "principalRole": {"name": b["principalRoleName"]}
+        "principalRole": {"name": b["new_principal_role"]}
     },
-    "resetCredentials": lambda b: {"principalName": b["principalName"]},
+    "resetCredentials": lambda b: {"principalName": b["new_principal"]},
     # -- catalog ------------------------------------------------------
     "getToken": lambda b: {
         "grant_type": "client_credentials",
@@ -362,11 +428,14 @@ PAYLOADS = {
         "updates": [{"action": "set-properties", "updates": {"matrix.run": b["run"]}}],
     },
     "renameTable": lambda b: {
-        "source": {"namespace": [b["namespace"]], "name": b["table"]},
+        # SOURCE IS THE DISPOSABLE TABLE, never the fixture: a rename is a
+        # destructive operation wearing a POST, and renaming the fixture table
+        # 404s every later cell that reads it.
+        "source": {"namespace": [b["namespace"]], "name": b["new_table"]},
         "destination": {"namespace": [b["namespace"]], "name": b["renamed_table"]},
     },
     "renameView": lambda b: {
-        "source": {"namespace": [b["namespace"]], "name": b["view"]},
+        "source": {"namespace": [b["namespace"]], "name": b["new_view"]},
         "destination": {"namespace": [b["namespace"]], "name": b["renamed_view"]},
     },
     "commitTransaction": lambda b: {

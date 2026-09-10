@@ -93,6 +93,15 @@ STRING_FIELDS = frozenset(
         "resource_kind",
         "api_kind",
         "user_principal_name",
+        # CORRELATION RESTS ON THIS ONE. A request id is
+        # `nb-<run>-<seq>-<label>` and the standard analyser splits it on
+        # every hyphen, so a term or prefix query against the analysed
+        # field matches NOTHING: every call reports unrecovered and the
+        # per-call half of the matrix reads as a total pipeline failure
+        # rather than as a query bug. Found 2026-09-10 while wiring the v2
+        # notebook -- the same defect this module was written to catch in
+        # the guide's Gate 5, sitting in this module.
+        "mdc.requestId",
         "partial_window",
         "min_record_time",
         "max_record_time",

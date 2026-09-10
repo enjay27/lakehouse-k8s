@@ -43,6 +43,13 @@ def binding():
         "new_catalog_role": "crole2",
         "renamed_table": "tbl_r",
         "renamed_view": "vw_r",
+        "doomed_catalog": "cat_doomed",
+        "doomed_namespace": "ns_doomed",
+        "doomed_table": "tbl_doomed",
+        "doomed_view": "vw_doomed",
+        "doomed_principal": "prin_doomed",
+        "doomed_principal_role": "prole_doomed",
+        "doomed_catalog_role": "crole_doomed",
         "entity_version": 1,
         "run": "1789000000",
         "base_location": "s3://bucket/cat2",
@@ -410,3 +417,76 @@ def test_the_request_id_format_matches_the_v1_harness_exactly(ops):
     would simply go unfound, and read as a correlation failure."""
     assert m.request_id("1789", 7, "loadTable@404") == "nb-1789-007-loadTable-404"
     assert m.request_id("1789", 7, "a.b[c]") == "nb-1789-007-a-b-c"
+
+
+# ----------------------------------------------------------------------
+# the harness must not eat itself
+# ----------------------------------------------------------------------
+FIXTURE_VALUES = {"cat", "ns", "tbl", "vw", "prin", "prole", "crole"}
+
+DESTRUCTIVE = {
+    "deleteCatalog",
+    "deleteCatalogRole",
+    "deletePrincipal",
+    "deletePrincipalRole",
+    "revokePrincipalRole",
+    "revokeCatalogRoleFromPrincipalRole",
+    "dropNamespace",
+    "dropTable",
+    "dropView",
+}
+
+
+def test_no_destructive_operation_is_pointed_at_the_fixture(ops, binding):
+    """FOUND 2026-09-10 WHILE WIRING THE NOTEBOOK, and it would have wasted a
+    whole run: bound naively, `deleteCatalog` takes `{catalogName}` from the
+    fixture and deletes the run's catalog at call ~30 of 63. `dropTable`,
+    `dropView` and `dropNamespace` finish the job, `deletePrincipal` removes
+    the run principal, and every later cell 404s -- a matrix reporting a
+    pipeline with no coverage, when what happened is the harness ate itself.
+    """
+    by_id = {o.op_id: o for o in ops}
+    for op_id in DESTRUCTIVE:
+        op = by_id.get(op_id)
+        if op is None:
+            continue
+        # Only the LAST segment is the thing being deleted. The catalog and the
+        # namespace appear earlier as containers, and a table dropped inside the
+        # fixture namespace does not harm the namespace.
+        target = m.bind_path(op, binding).rstrip("/").split("/")[-1]
+        assert (
+            target not in FIXTURE_VALUES
+        ), f"{op_id} would destroy the fixture entity `{target}`"
+
+
+def test_delete_catalog_is_pointed_at_the_doomed_catalog(ops, binding):
+    op = {o.op_id: o for o in ops}["deleteCatalog"]
+    assert m.bind_path(op, binding).endswith("/cat_doomed")
+
+
+def test_credential_rotation_never_touches_an_identity_the_run_authenticates_as(
+    ops, binding
+):
+    """resetCredentials / rotateCredentials on the run principal replace the
+    secret its token was minted from. Every later call then carries a token for
+    a credential that no longer exists, and the rest of the run reports 401 --
+    which the matrix would record as this build refusing every endpoint."""
+    for op_id in ("resetCredentials", "rotateCredentials"):
+        op = {o.op_id: o for o in ops}[op_id]
+        path = m.bind_path(op, binding)
+        assert "prin2" in path and "/prin/" not in path, f"{op_id} -> {path}"
+
+
+def test_a_rename_moves_the_disposable_table_not_the_fixture(ops, binding):
+    """A rename is a destructive operation wearing a POST."""
+    body = m.payload_for({o.op_id: o for o in ops}["renameTable"], binding)
+    assert body["source"]["name"] == "tbl2"
+    assert body["destination"]["name"] == "tbl_r"
+
+
+def test_the_409_family_still_has_something_to_conflict_with(ops, binding):
+    """The deletes target `doomed_*` and the creates target `new_*` precisely so
+    phase D can re-create a `new_*` entity that phase B has NOT deleted."""
+    for op_id in ("updateCatalog", "updateCatalogRole", "updatePrincipal"):
+        op = {o.op_id: o for o in ops}[op_id]
+        assert "doomed" not in m.bind_path(op, binding), op_id

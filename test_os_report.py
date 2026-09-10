@@ -443,3 +443,25 @@ def test_partial_window_is_a_string_and_the_constants_say_so():
     """Review #1: `counts.partial and "true" or "false"`. Every other flag-like
     value in the schema is an int, so this one reads as a boolean and is not."""
     assert osr.PARTIAL_TRUE == "true" and isinstance(osr.PARTIAL_TRUE, str)
+
+
+def test_the_correlation_field_is_matched_on_its_keyword_subfield():
+    """A request id is `nb-<run>-<seq>-<label>` and the standard analyser splits
+    it on every hyphen, so a term or prefix query against the analysed field
+    matches NOTHING -- every call reports unrecovered and the per-call half of
+    the matrix reads as a total pipeline failure rather than as a query bug.
+
+    Found on 2026-09-10 in THIS module, while wiring the v2 notebook, three
+    commits after the same defect was written up as a finding against the
+    guide's Gate 5."""
+    assert osr.kw("mdc.requestId") == "mdc.requestId.keyword"
+    body = {
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {osr.kw("mdc.requestId"): "nb-1789-007-loadTable-404"}}
+                ]
+            }
+        }
+    }
+    assert _terms_of(body) == ["mdc.requestId.keyword"]
