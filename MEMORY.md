@@ -6,39 +6,45 @@ handoff named in *Now* — it is standalone.
 
 ## Now — 2026-09-10 (session 11)
 
-**THE GRID DECISION IS LANDED: it malforms by WRONG TYPE where it cannot malform by omission,
-so the denominator stays 286.** `Operation.malform` is decided at parse time; omission is tried
-FIRST, so the **16** cells that could always be malformed send a byte-identical body to every
-previous run and stay comparable, and only the **11** that were driving *successful* calls change
-shape. Split **16 omit / 11 wrong-type / 0 unbreakable**; `unmalformable_cells()` is now empty.
+**PRISM IS REMOVED. NOTHING NOW CHECKS A REQUEST WITHOUT DRIVING IT.** `--spec-check`,
+`src/spec_check.py` and `test_spec_check.py` are gone: **65 of 286 cells (23%) were the mock
+talking about the document, not about a request**, and `planTableScan` could not be judged by it
+at all. Two tiers remain — `--dry-run` (builds 286, contacts nothing, prints the 400-cell split)
+and `--profile` (drives, MUTATES). **`log-coverage/spec/` STAYS: it is the denominator.** Gone
+with it: any request check without a cluster, and the per-API controls. `.memory/active-issues.md`.
 
-**But it is 10 verified, 1 UNVERIFIABLE — never quote 11.** `planTableScan`'s 400 cell cannot be
-seen: `{"case-sensitive":"not-a-boolean"}` and `{}` return byte-identical 53-entry violation lists
-with **no `request` entry at all**, because Prism's response generation for that operation fails
-first. **The instrument is blind on one of the cells the fix was for, and blind toward green** —
-the same blind spot that made the original count wrong. `.memory/active-issues.md`.
+**THE GRID MALFORMS BY WRONG TYPE where it cannot malform by omission** — **16 omit / 11
+wrong-type / 0 unbreakable**, denominator still 286, and the 16 send byte-identical bodies to
+every earlier run. **It is 10 verified, 1 UNVERIFIABLE — never quote 11:** `planTableScan`'s 400
+cell cannot be seen, because Prism returned identical violation lists for a malformed and a valid
+body, with no `request` entry at all.
 
-**`pytest` AND PRISM NOW RUN IN A COWORK SESSION.** The Linux VM has egress (pypi/npm/github all
-200) and `uv`/`node`/`npx`; `black` is **26.5.1**, the exact pin. Gate: **960 passed, 45 skipped**
-under real `pytest`, agreeing with Kade's macOS **1005 passed**. Build the venv OUTSIDE the mount
-(`UV_PROJECT_ENVIRONMENT=$HOME/venv-linux`) or `uv sync` destroys the macOS `.venv`. The stand-in
-is retired. **The cluster is still unreachable** — the OrbStack node IP is *Network is
-unreachable* from the VM — so handoff steps 0-1 stay Kade's. A 403 from a Polaris URL was the
-**egress allowlist**, not Polaris.
+**TWO THINGS COMMITTED IN `05616df` WERE WRONG AND ARE NOW FIXED.** `has_required_fields` had
+**six tests at `7cb12c2` and zero after** — a test file rewritten rather than extended, with the
+count stable at 58 both sides, so the suite stayed green. And `_typed_properties` crashes on a
+schema with one combinator key (`list + tuple`), found by chasing a mutant that SURVIVED. **Diff
+test NAMES, not counts, after any move. A surviving mutant is a finding.**
 
-**`index.lock`: the mount refuses `unlink` but allows `rename`.** `mv .git/index.lock .git/_stale/`
-works where `rm` does not, and every git write leaves a fresh lock, so clear before each command.
-**Never `GIT_INDEX_FILE`** — it commits against a stale index and records new files as deleted.
+**`pytest` AND `black` RUN IN A COWORK SESSION NOW** — the Linux VM has egress; `black` is
+**26.5.1**, the pin. Gate: **911 passed, 45 skipped** (960 − 62 + 13). Build the venv OUTSIDE the
+mount (`UV_PROJECT_ENVIRONMENT=$HOME/venv-linux`) or `uv sync` destroys the macOS `.venv`.
+**The cluster is NOT reachable** from the VM, so handoff steps 0-1 stay Kade's. A 403 from a
+Polaris URL was the **egress allowlist**, not Polaris.
 
-**THE WORK IS SPLIT IN TWO, AND THE NEXT SESSION STARTS FROM
+**FIRST EVER `drive()` RUN — `1789031469`, smoke, and it found a coverage figure that cannot
+fail.** `_row_from` stamps `verdict: "covered"` unconditionally, bypassing `adjudicate`: six of
+eight teardown rows contradicted their target (409/400/404) and all counted covered. **True
+coverage 12/20, reported 18/20** — and the same helper builds the gate2/gate4 rows. **UNFIXED.**
+Teardown also leaked: `apimatrix1789031469_cat` and `probe_ns` are still on the cluster.
+`echo_ok` was 20/20 and `claims` is correctly empty for smoke.
+
+**`index.lock`: `mv` works where `rm` does not** (delete permission was granted this session, so
+`rm` works too). **Never `GIT_INDEX_FILE`** — it commits against a stale index.
+
+**NEXT SESSION STARTS FROM
 [`log-coverage/HANDOFF-split-logging-test-2026-09-10.md`](log-coverage/HANDOFF-split-logging-test-2026-09-10.md)**
-— standalone; steps 3-4 need BOTH folders connected. Step 2 is DONE. Traffic runs from this repo
-alone: `log-coverage/run_traffic.py --dry-run` / `--spec-check` (Prism, **`--errors` is not
-optional** or the check is VOID) / `--profile smoke` (drives, and MUTATES).
-
-**Still true from session 9:** the matrix harness report schema **v3 is on the DaemonSet and v2 on
-the Deployment**, so the oracle must be told which pipeline it measures; `min_record_time` is
-mapped **text** and only an index template fixes it.
+— steps 3-4 need BOTH folders. Step 2 DONE. Report schema **v3 on the DaemonSet, v2 on the
+Deployment**; `min_record_time` is mapped **text** and only an index template fixes it.
 
 ## Then — 2026-09-07 (session 8)
 

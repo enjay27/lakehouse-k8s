@@ -16,13 +16,23 @@
     import graph, and `log_coverage` re-exports the moved names so v1's notebook
     keeps working. Verification lives here only until `local-k8s` reproduces run
     `1789008899`; see `log-coverage/SCENARIO-logging-test.md`.
-  - **Traffic runs from this repo alone**, three tiers, cheapest first:
+  - **Traffic runs from this repo alone**, two tiers, cheapest first:
     `log-coverage/run_traffic.py --dry-run` (builds all 286 requests, contacts
-    nothing), `--spec-check` (validates them against `log-coverage/spec/`
-    through Prism — `npx @stoplight/prism-cli mock --errors`, and **`--errors`
-    is not optional**: without it Prism answers 200 to a violation and the
-    check would pass without looking, so `spec_check` reports **VOID**),
-    `--profile smoke` (drives Polaris, and **mutates** — `local` only).
+    nothing, and prints how the 400 cells break their bodies -- 16 by omission,
+    11 by a wrong-typed value, 0 unbreakable; an operation listed as unbreakable
+    is a HARNESS gap, never a fact about Polaris) and `--profile smoke|gate2|
+    gate4|full` (drives Polaris, and **mutates** -- `local` only).
+    **There was a third tier and it was removed on 2026-09-10:** `--spec-check`
+    validated every request against `log-coverage/spec/` through a Prism mock,
+    with no cluster. **Nothing now checks a request without driving it.** The
+    trade was deliberate -- 65 of 286 cells were the mock talking about the
+    document rather than about a request, and `planTableScan` could not be
+    judged by it at all -- but it means a session that cannot reach the cluster
+    can no longer check anything about a request. `.memory/active-issues.md`
+    carries what was lost, before anyone restores it.
+    `log-coverage/spec/` STAYS: it is the run's denominator, and `load_spec`
+    reads it to build the 63 operations and 286 cells.
+
 - **`src/config/`** — environment config. `common.yaml` (shared non-secret defaults) + `<env>.yaml` (per-env: `local` / `dev` / `prod`) are merged by `init_env(env)`. Secrets may be overridden by env vars (`POLARIS_ROOT_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `OPENSEARCH_PASS`, `POSTGRES_PASSWORD`). `init_env` also exposes PostgreSQL globals (`PG_URL`, `PG_CONFIG`, `PG_HOST`…) for the diagnostics notebooks. `*.yaml` here is gitignored except `common.yaml` and `*.example.yaml`; each env ships a `*.example.yaml` template — copy e.g. `dev.example.yaml` → `dev.yaml` and fill in.
 - **Per-test directories** — each test domain has its own folder containing its notebook(s) plus a `README.md` (concept / purpose / how-to-run / result) and any `doc-*.md` reference reports:
   - `lifecycle/` — catalog→namespace→table/view→snapshot→drop lifecycle.

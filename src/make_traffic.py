@@ -520,7 +520,8 @@ def drive(
             the grid produce a request at all. A missing payload or an
             unbindable path is a harness bug, and finding it at call 200 of
             286 wastes the run's windows. **It does not say the requests are
-            VALID** -- `spec_check.check_requests` asks that, against Prism.
+            VALID** -- since Prism was removed (2026-09-10) nothing does,
+            short of driving them against Polaris.
         spec_dir: the vendored OpenAPI documents. Defaults to
             `log-coverage/spec` beside this checkout -- the run's denominator
             is a fact about the specs, not about the cluster.
@@ -884,7 +885,8 @@ def _dry_run(config, run, profile, window_seconds, spec_dir, runs_dir):
 
     Both were one mistake: a check that belongs before the work was placed
     after it. It is the floor now -- runnable with Polaris down, or absent --
-    and `spec_check.check_requests` is the tier above it.
+    and since the Prism tier was removed it is also the only tier below a real
+    drive.
     """
     import api_status_matrix as mx
 
@@ -907,7 +909,8 @@ def _dry_run(config, run, profile, window_seconds, spec_dir, runs_dir):
         "incomplete": (
             f"dry_run: {len(grid)} requests were built, none was issued, and "
             "nothing was created. This says every cell PRODUCES a request, not "
-            "that any of them is valid -- spec_check.check_requests asks that."
+            "that any of them is valid -- only a real drive against Polaris "
+            "answers that."
         ),
     }
     # No calls, so `_finish` writes no evidence file. A dry run has none to give.

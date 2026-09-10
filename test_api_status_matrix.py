@@ -506,3 +506,267 @@ def test_the_catalog_payload_matches_the_shape_that_works_on_this_build(ops, bin
     assert body["properties"]["default-base-location"].startswith("s3a://")
     assert body["storageConfigInfo"]["allowedLocations"] == ["s3a://bucket/"]
     assert body["properties"]["polaris.config.drop-with-purge.enabled"] == "true"
+
+
+# ----------------------------------------------------------------------
+# what the documents say about the 400 cells
+#
+# Ported from `test_spec_check.py` when Prism was removed (2026-09-10). These
+# six never needed Prism -- they read the vendored documents and nothing else --
+# and they are the ONLY coverage of the malform hybrid, so deleting that file
+# without moving them first would have left the hybrid untested.
+# ----------------------------------------------------------------------
+def _docs():
+    import yaml
+
+    return {
+        f.name: yaml.safe_load(f.read_text())
+        for f in list(SPEC_DIR.glob("*.yml")) + list(SPEC_DIR.glob("*.yaml"))
+    }
+
+
+def _json_type(value):
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    return "object"
+
+
+#: A body-carrying operation whose schema declares no `required` and no
+#: property whose type can be violated. Nothing the grid can build will be
+#: rejected by it, which is exactly what `unmalformable_cells` exists to name.
+_UNBREAKABLE_SPEC = """
+openapi: 3.0.3
+info: {title: Unbreakable, version: 0.0.1}
+servers: [{url: "http://localhost/api/management/v1"}]
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WidgetRequest'}
+      responses: {'201': {description: ok}, '400': {description: bad}}
+components:
+  schemas:
+    WidgetRequest:
+      description: no required, and no property with a violable type
+      properties:
+        anything: {}
+"""
+
+
+def test_every_400_cell_now_has_a_way_to_break_its_body():
+    """The eleven that could not are fixed, not suppressed.
+
+    On its own this assertion is worthless: a function that always returns
+    `[]` passes it, which a mutant proved. The test below is what gives it
+    meaning -- it feeds the finder a document it MUST report on."""
+    assert m.unmalformable_cells(SPEC_DIR) == []
+
+
+def test_the_finder_reports_a_cell_that_really_cannot_be_broken(tmp_path):
+    """The empty result above must be empty because the documents are clean,
+    not because the finder cannot find. Without this, `return []` passes."""
+    (tmp_path / "unbreakable-management.yml").write_text(_UNBREAKABLE_SPEC)
+    rows = m.unmalformable_cells(tmp_path)
+    assert [r["op_id"] for r in rows] == ["createWidget"]
+
+    counts = m.malform_strategies(tmp_path)
+    assert counts["none"] == 1 and counts["omit"] == 0 and counts["wrong_type"] == 0
+
+
+def test_the_finder_does_not_flag_an_operation_it_can_break(tmp_path):
+    """The other half: give the same document a violable property and the
+    finding disappears. A finder that reported everything would also pass the
+    test above."""
+    (tmp_path / "breakable-management.yml").write_text(
+        _UNBREAKABLE_SPEC.replace("anything: {}", "anything: {type: integer}")
+    )
+    assert m.unmalformable_cells(tmp_path) == []
+    assert m.malform_strategies(tmp_path)["wrong_type"] == 1
+
+
+def test_the_hybrid_splits_exactly_sixteen_and_eleven():
+    """16 keep omission, 11 switch to a wrong-typed value, none is left with
+    no way to break. A count that drifts means a document changed, and the
+    right response is to read the diff rather than to adjust the number."""
+    counts = m.malform_strategies(SPEC_DIR)
+    assert counts == {"omit": 16, "wrong_type": 11, "none": 0}
+    assert sum(counts.values()) == len(
+        [c for c in m.cells(m.load_spec(SPEC_DIR)) if c.target == 400 and c.op.has_body]
+    )
+
+
+def test_the_omission_cells_send_a_byte_identical_body_to_before_the_hybrid(binding):
+    """**This is the comparability guarantee, and it is the whole reason the
+    hybrid was chosen over one rule for all 27.** Sixteen 400 cells must send
+    exactly the body they have always sent, or every past run's 400 column
+    stops being comparable with every future one."""
+    checked = 0
+    for cell in m.cells(m.load_spec(SPEC_DIR)):
+        if cell.target != 400 or not cell.op.has_body:
+            continue
+        if cell.op.malform != m.MALFORM_OMIT:
+            continue
+        req = m.request_for(cell, binding, TOKENS, "nb-1-001-x", REALM)
+        body = req["json"] if req["json"] is not None else req["data"]
+        assert body == m.MALFORMED_BODY, cell.op.op_id
+        checked += 1
+    assert checked == 16
+
+
+def test_the_wrong_type_cells_send_something_their_schema_must_reject(binding):
+    """A value of a type the property does not declare. Not a guess: the
+    declared type is read from the document and the value is of another one."""
+    docs = _docs()
+    checked = 0
+    for cell in m.cells(m.load_spec(SPEC_DIR)):
+        if cell.target != 400 or not isinstance(cell.op.malform, dict):
+            continue
+        req = m.request_for(cell, binding, TOKENS, "nb-1-001-x", REALM)
+        body = req["json"] if req["json"] is not None else req["data"]
+        name = cell.op.malform["property"]
+        assert set(body) == {name}, cell.op.op_id
+        doc = docs[cell.op.source]
+        comps = (doc.get("components") or {}).get("schemas") or {}
+        prop = m.request_schema(doc, cell.op.op_id) or {}
+        declared = m._typed_properties(prop, comps).get(name)
+        assert declared == cell.op.malform["type"], cell.op.op_id
+        assert _json_type(body[name]) != declared, cell.op.op_id
+        checked += 1
+    assert checked == 11
+
+
+# ----------------------------------------------------------------------
+# the combinator walk
+#
+# RECOVERED FROM `7cb12c2` on 2026-09-10. These tests existed when
+# `has_required_fields` was fixed; the working copy that moved the walker into
+# this module replaced them with the hybrid tests above and left the walker
+# with NO coverage -- and because the file's test COUNT was 58 on both sides,
+# the suite stayed green and the deletion was committed unnoticed. The repo's
+# own rule, written after `_epoch_of`, is *diff the NAMES, not the line count*;
+# it had been applied to source and not to tests.
+# ----------------------------------------------------------------------
+def test_get_token_is_malformable_through_its_anyOf_and_was_once_counted_wrong():
+    """THE BUG THESE TESTS ONCE ENSHRINED. `getToken` `$ref`s
+    `OAuthTokenRequest`, which carries no `required` of its own -- only an
+    `anyOf` over two branches that each require three fields. A resolver that
+    stopped at the first `$ref` read "no required", called the operation
+    unmalformable, and **the count 12 was published in a commit message, two
+    memory files, and an assertion in a test. The real count is 11.**
+
+    Prism never contradicted it: `getToken` came back 401 on a security
+    scheme, so the one run that could have caught it was looking elsewhere.
+    """
+    doc = _docs()["rest-catalog-open-api.yaml"]
+    comps = (doc.get("components") or {}).get("schemas") or {}
+    sch = m.request_schema(doc, "getToken")
+    assert not sch.get("required"), "no top-level required -- that is the trap"
+    assert sch.get("anyOf"), "and the constraints live in an anyOf"
+    assert m.has_required_fields(sch, comps) is True
+
+
+def test_anyOf_is_malformable_only_when_EVERY_branch_is():
+    """The body need satisfy only ONE branch, so a single unconstrained branch
+    accepts `{"matrix": ...}` and the whole schema accepts it with it."""
+    comps = {
+        "Strict": {"required": ["a"], "properties": {"a": {"type": "string"}}},
+        "Loose": {"properties": {"b": {"type": "string"}}},
+    }
+    assert (
+        m.has_required_fields(
+            {"anyOf": [{"$ref": "#/c/Strict"}, {"$ref": "#/c/Strict"}]}, comps
+        )
+        is True
+    )
+    assert (
+        m.has_required_fields(
+            {"anyOf": [{"$ref": "#/c/Strict"}, {"$ref": "#/c/Loose"}]}, comps
+        )
+        is False
+    )
+
+
+def test_allOf_is_malformable_when_ANY_branch_is():
+    """The body must satisfy EVERY branch, so one constrained branch suffices.
+    The opposite rule to anyOf, and getting them the same way round would flip
+    roughly half the answers."""
+    comps = {"Strict": {"required": ["a"]}, "Loose": {"properties": {"b": {}}}}
+    assert (
+        m.has_required_fields(
+            {"allOf": [{"$ref": "#/c/Loose"}, {"$ref": "#/c/Strict"}]}, comps
+        )
+        is True
+    )
+    assert (
+        m.has_required_fields(
+            {"allOf": [{"$ref": "#/c/Loose"}, {"$ref": "#/c/Loose"}]}, comps
+        )
+        is False
+    )
+
+
+def test_a_cyclic_document_does_not_hang_the_walker():
+    """A document that refs itself is the document's problem; hanging on it
+    would be ours."""
+    assert (
+        m.has_required_fields({"$ref": "#/c/Loop"}, {"Loop": {"$ref": "#/c/Loop"}})
+        is False
+    )
+
+
+def test_the_combinator_blind_spot_was_never_going_to_stay_one_wrong_answer():
+    """Schemas across BOTH documents hide their constraints in a combinator."""
+    total = 0
+    for doc in _docs().values():
+        comps = (doc.get("components") or {}).get("schemas") or {}
+        total += sum(
+            1
+            for v in comps.values()
+            if isinstance(v, dict)
+            and not v.get("required")
+            and any(k in v for k in ("anyOf", "oneOf", "allOf"))
+        )
+    assert total > 20, f"only {total} -- the walker or the documents changed"
+
+
+def test_a_malformable_op_resolves_its_required_fields_through_the_ref():
+    """One `$ref` hop is all these documents use -- and a helper that failed to
+    follow it would call every operation unmalformable and the finding would
+    quietly become "all 27"."""
+    import yaml
+
+    doc = yaml.safe_load((SPEC_DIR / "polaris-management-service.yml").read_text())
+    sch = m.request_schema(doc, "createCatalog")
+    assert sch and sch.get("required") == ["catalog"]
+
+
+def test_typed_properties_reads_through_a_combinator_branch():
+    """**The wrong-type half needs the same walk the required-field half needed,
+    and nothing was testing it.** A mutant that dropped the combinator loop from
+    `_typed_properties` passed the entire suite, because no operation in today's
+    two documents happens to need it -- so the blind spot that produced the 12
+    was still open on the other side of the same function."""
+    comps = {
+        "Base": {"properties": {"count": {"type": "integer"}}},
+        "More": {"properties": {"flag": {"type": "boolean"}}},
+    }
+    got = m._typed_properties(
+        {"allOf": [{"$ref": "#/c/Base"}, {"$ref": "#/c/More"}]}, comps
+    )
+    assert got == {"count": "integer", "flag": "boolean"}
+    assert m.malform_strategy({"allOf": [{"$ref": "#/c/Base"}]}, comps) == {
+        "property": "count",
+        "value": "not-an-integer",
+        "type": "integer",
+    }

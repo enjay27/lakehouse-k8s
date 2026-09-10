@@ -567,9 +567,15 @@ def _typed_properties(sch, comps, depth=0):
     if depth > 10 or not sch:
         return {}
     out = {}
-    for branch in (
-        (sch.get("allOf") or ()) + (sch.get("anyOf") or ()) + (sch.get("oneOf") or ())
-    ):
+    # Accumulated rather than concatenated: `[] + ()` is a TypeError, so a
+    # schema carrying ONE combinator key and not the others used to crash here.
+    # It never fired against these documents because the eleven wrong-type
+    # operations declare plain properties -- a latent crash waiting on a
+    # document change, found by the test that was written to cover the walk.
+    branches = []
+    for key in ("allOf", "anyOf", "oneOf"):
+        branches.extend(sch.get(key) or ())
+    for branch in branches:
         out.update(_typed_properties(branch, comps, depth + 1))
     for name, spec in (sch.get("properties") or {}).items():
         resolved = _deref(spec if isinstance(spec, dict) else {}, comps, depth + 1)
@@ -987,3 +993,63 @@ def request_id(run, seq, label):
     """
     slug = "".join(c if c in _SLUG_OK else "-" for c in label).strip("-")
     return f"nb-{run}-{seq:03d}-{slug}"
+
+
+# ----------------------------------------------------------------------
+# what the documents say about the 400 cells
+# ----------------------------------------------------------------------
+# These three came back from `spec_check` when Prism was removed (2026-09-10).
+# They read the vendored documents and contact NOTHING -- no mock, no cluster --
+# which is why they outlived the module they were written in: they were the only
+# part of that check that did not depend on an instrument.
+def request_schema(doc, op_id):
+    """The resolved request-body schema for `op_id`, or None if it has no body."""
+    comps = (doc.get("components") or {}).get("schemas") or {}
+    for _path, item in (doc.get("paths") or {}).items():
+        for _m, op in (item or {}).items():
+            if not isinstance(op, dict) or op.get("operationId") != op_id:
+                continue
+            content = (op.get("requestBody") or {}).get("content") or {}
+            if not content:
+                return None
+            return _deref(list(content.values())[0].get("schema") or {}, comps)
+    return None
+
+
+def unmalformable_cells(spec_dir):
+    """400 cells the documents give **no** way to break.
+
+    An operation whose body carries a request schema that declares neither
+    `required` fields nor a property whose type can be violated. Against the
+    vendored 1.3.0 documents that set is **empty**, and an empty finding is the
+    right output for a fixed one -- eleven cells used to appear here and they
+    were fixed, not suppressed.
+
+    **Do not read an empty result as proof the finder works:** `return []`
+    satisfies it. The paired test feeds it a document it MUST report on.
+    """
+    return sorted(
+        (
+            {"op_id": c.op.op_id, "api": c.op.api}
+            for c in cells(load_spec(spec_dir))
+            if c.target == 400 and c.op.has_body and c.op.malform is None
+        ),
+        key=lambda r: (r["api"], r["op_id"]),
+    )
+
+
+def malform_strategies(spec_dir):
+    """`{omit: n, wrong_type: n, none: n}` over the 400 cells.
+
+    Reported so a reader can see WHICH cells changed shape and when. The 16
+    omission cells send a byte-identical body to every run before the hybrid,
+    so they stay comparable; the wrong-type cells do not, and were not
+    comparable before either because they were not testing anything.
+    """
+    counts = {"omit": 0, "wrong_type": 0, "none": 0}
+    for cell in cells(load_spec(spec_dir)):
+        if cell.target != 400 or not cell.op.has_body:
+            continue
+        m = cell.op.malform
+        counts["omit" if m == MALFORM_OMIT else "wrong_type" if m else "none"] += 1
+    return counts

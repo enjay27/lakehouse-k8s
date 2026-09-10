@@ -6,32 +6,22 @@ part of the logging test. This is the other caller: a person, here, who wants
 traffic made without standing up a verifier. It is deliberately thin. Anything
 it does that is not argument parsing belongs in the module instead.
 
-Three things it will do, cheapest first:
+Two things it will do, cheapest first:
 
     # 1. build all 286 requests and contact NOTHING. Safe with Polaris down.
     uv run python log-coverage/run_traffic.py --dry-run
 
-    # 2. validate every one of those requests against the vendored specs,
-    #    through Prism. Still no Polaris. See --spec-check below.
-    uv run python log-coverage/run_traffic.py --spec-check
-
-    # 3. actually drive Polaris. THIS MUTATES -- see the warning below.
+    # 2. actually drive Polaris. THIS MUTATES -- see the warning below.
     uv run python log-coverage/run_traffic.py --profile smoke
 
-## Running Prism for --spec-check
-
-Two documents, two servers, because they mount at different paths:
-
-    npx @stoplight/prism-cli mock -p 4010 --errors \\
-        log-coverage/spec/polaris-management-service.yml
-    npx @stoplight/prism-cli mock -p 4011 --errors \\
-        log-coverage/spec/rest-catalog-open-api.yaml
-
-**`--errors` is not optional.** Without it Prism logs violations and answers
-200 anyway, and the check would report every request valid without having
-looked. `spec_check` sends a deliberately invalid request first and reports
-VOID if it is not rejected, so a forgotten `--errors` is caught rather than
-believed -- but starting it right is cheaper than reading a VOID.
+There used to be a middle tier: `--spec-check`, which validated every request
+against the vendored documents through a Prism mock, without a cluster. It was
+removed on 2026-09-10. **Nothing now checks a request without driving it** --
+`--dry-run` proves every cell BUILDS a request, and only a real drive says
+whether Polaris accepts one. That is a deliberate trade: 65 of the 286 cells
+(62 `spec_example`, 3 `auth_required`) were the mock talking about the document
+rather than about a request, and one cell -- `planTableScan` -- could not be
+judged by it at all. See `.memory/active-issues.md` before restoring it.
 
 ## What --profile actually does to the cluster
 
@@ -87,24 +77,11 @@ def main(argv=None):
         help="Build every request, contact nothing, create nothing.",
     )
     ap.add_argument(
-        "--spec-check",
-        action="store_true",
-        help="Validate every request against the specs, through Prism.",
-    )
-    ap.add_argument("--prism-management", default="http://127.0.0.1:4010")
-    ap.add_argument("--prism-catalog", default="http://127.0.0.1:4011")
-    ap.add_argument(
-        "--report", default=None, help="Write the --spec-check report here as markdown."
-    )
-    ap.add_argument(
         "--runs-dir",
         default=None,
         help="Where traffic-<run>.json goes. Default runs/ in the repo.",
     )
     args = ap.parse_args(argv)
-
-    if args.spec_check:
-        return _spec_check(args)
 
     config = (
         {k: "dry-run-not-contacted" for k in mt._REQUIRED_CONFIG}
@@ -119,6 +96,9 @@ def main(argv=None):
         print("  THIS MUTATES: a catalog, principals, roles, a namespace, a table")
         print("  and a view are created and deleted.")
 
+    if args.dry_run:
+        _report_malform_strategies()
+
     traffic = mt.drive(
         config,
         window_seconds=args.window_seconds,
@@ -130,6 +110,26 @@ def main(argv=None):
         on_row=None if args.dry_run else _progress,
     )
     return _report_traffic(traffic)
+
+
+def _report_malform_strategies():
+    """How the 400 cells break their bodies, from the documents alone.
+
+    This is the ONE thing the removed Prism tier reported that needed no mock
+    and no cluster, so it moved here rather than going with it. An operation
+    appearing under `unbreakable` is a HARNESS gap -- the grid drives a 400
+    cell it cannot provoke -- and never a statement about Polaris.
+    """
+    import api_status_matrix as mx
+
+    counts = mx.malform_strategies(SPEC_DIR)
+    print(
+        f"  400 bodies {counts['omit']} by omission, "
+        f"{counts['wrong_type']} by a wrong-typed value, "
+        f"{counts['none']} unbreakable"
+    )
+    for row in mx.unmalformable_cells(SPEC_DIR):
+        print(f"  !! harness  {row['api']} {row['op_id']}: no way to break its body")
 
 
 def _progress(row):
@@ -169,30 +169,6 @@ def _report_traffic(traffic):
         print(f"  incomplete {traffic.incomplete}")
     # A drive that stopped early still drove something; the caller decides.
     return 0
-
-
-def _spec_check(args):
-    import spec_check as sc
-
-    prism = {"management": args.prism_management, "catalog": args.prism_catalog}
-    print(f"  prism      {prism}")
-    try:
-        report = sc.check_requests(SPEC_DIR, prism, run=args.run or "speccheck")
-    except sc.PrismUnavailable as exc:
-        print(f"  PRISM UNAVAILABLE -- nothing was measured.\n    {exc}")
-        print(
-            "    Start it:  npx @stoplight/prism-cli mock -p 4010 --errors "
-            "log-coverage/spec/polaris-management-service.yml"
-        )
-        return 2
-    text = sc.render_report(report)
-    print()
-    print(text)
-    if args.report:
-        pathlib.Path(args.report).write_text(text)
-        print(f"\n  written    {args.report}")
-    # VOID is not a pass and must not exit 0: nothing was measured.
-    return {sc.PASS: 0, sc.FAIL: 1, sc.VOID: 2}[report["verdict"]]
 
 
 if __name__ == "__main__":

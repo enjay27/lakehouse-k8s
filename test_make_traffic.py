@@ -621,7 +621,12 @@ def test_dry_run_writes_no_evidence_file(tmp_path):
 
 def test_dry_run_says_it_proves_shape_and_not_validity():
     """A reader who takes "286 requests were built" for "286 requests are
-    valid" would skip the only check that asks the second question."""
+    valid" would believe a claim nothing in this repo makes.
+
+    It used to point at `spec_check`; that tier was removed on 2026-09-10, so
+    the sentence must now say a real drive is the only answer -- an
+    `incomplete` that names a module which no longer exists is worse than one
+    that names nothing."""
     run = mt.drive(
         _unreachable_config(),
         window_seconds=30,
@@ -630,7 +635,8 @@ def test_dry_run_says_it_proves_shape_and_not_validity():
         spec_dir=SPEC,
         runs_dir=False,
     )
-    assert "spec_check" in run.incomplete
+    assert "only a real drive against Polaris" in run.incomplete
+    assert "spec_check" not in run.incomplete
 
 
 def test_drive_never_returns_from_inside_its_try_block():
