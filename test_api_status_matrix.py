@@ -294,3 +294,119 @@ def test_the_codes_that_must_still_be_probed_are_marked_as_such():
 def test_405_and_500_are_extras_the_spec_never_declares():
     """Both appear in polaris-logs-* -- measured 2026-09-10, 405 x7, 500 x21."""
     assert m.UNDECLARED_EXTRAS == (405, 500)
+
+
+# ----------------------------------------------------------------------
+# the executor -- every transform in the status axis, without a network
+# ----------------------------------------------------------------------
+TOKENS = {m.ADMIN: "root-token", m.RUNNER: "run-token", m.DENIED: "denied-token"}
+REALM = "POLARIS"
+
+
+def _req(ops, op_id, target, binding, driver="test", phase="B"):
+    op = {o.op_id: o for o in ops}[op_id]
+    cell = m.Cell(op, target, driver, phase)
+    return cell, m.request_for(cell, binding, TOKENS, "nb-1-001-x", REALM)
+
+
+def test_a_management_cell_goes_out_as_admin(ops, binding):
+    """Management endpoints refuse the run principal. A happy management cell
+    driven as the runner is a 403 recorded as a missed 2xx -- a harness gap
+    wearing a finding's clothes, which is exactly what run 1 produced."""
+    _, req = _req(ops, "listPrincipals", 2, binding)
+    assert req["identity"] == m.ADMIN
+    assert req["headers"]["Authorization"] == "Bearer root-token"
+
+
+def test_a_catalog_cell_goes_out_as_the_run_principal(ops, binding):
+    _, req = _req(ops, "loadTable", 2, binding)
+    assert req["identity"] == m.RUNNER
+
+
+def test_the_401_cell_carries_a_bad_token_not_a_missing_header(ops, binding):
+    """An absent Authorization header and a bad one are different code paths,
+    and only the second is what a client with a stale token looks like."""
+    _, req = _req(ops, "loadTable", 401, binding)
+    assert req["headers"]["Authorization"] == f"Bearer {m.GARBAGE_TOKEN}"
+    assert req["identity"] == m.NOBODY
+
+
+def test_the_403_cell_goes_out_as_the_denied_principal(ops, binding):
+    _, req = _req(ops, "loadTable", 403, binding)
+    assert req["headers"]["Authorization"] == "Bearer denied-token"
+
+
+def test_the_404_cell_breaks_the_path_and_nothing_else(ops, binding):
+    cell, req = _req(ops, "loadTable", 404, binding)
+    happy = m.request_for(m.Cell(cell.op, 2, "t", "B"), binding, TOKENS, "r", REALM)
+    assert m.MISSING in req["path"] and m.MISSING not in happy["path"]
+    assert req["headers"]["Authorization"] == happy["headers"]["Authorization"]
+
+
+def test_the_400_cell_sends_a_body_that_is_incomplete_not_absent(ops, binding):
+    _, req = _req(ops, "createNamespace", 400, binding)
+    assert req["json"] == m.MALFORMED_BODY
+    assert req["headers"]["Content-Type"] == "application/json"
+
+
+def test_the_409_cell_on_a_management_put_sends_a_stale_entity_version(ops, binding):
+    _, req = _req(ops, "updateCatalog", 409, binding)
+    assert req["json"]["currentEntityVersion"] == m.STALE_ENTITY_VERSION
+
+
+def test_the_409_cell_on_a_create_is_the_same_request_issued_again(ops, binding):
+    """The conflict comes from ORDER, not from the body: phase D re-creates
+    what phase B created. If the body differed, the cell would be testing
+    validation instead."""
+    cell, req = _req(ops, "createNamespace", 409, binding)
+    happy = m.request_for(m.Cell(cell.op, 2, "t", "B"), binding, TOKENS, "r", REALM)
+    assert req["json"] == happy["json"] and req["path"] == happy["path"]
+
+
+def test_getConfig_carries_a_warehouse_except_on_its_400_cell(ops, binding):
+    """Without a warehouse this build answers 400, so the bare call tests rule
+    3 and not the counted-2xx path -- run 1 recorded three 400s under a label
+    promising a successful GET."""
+    _, happy = _req(ops, "getConfig", 2, binding)
+    _, bad = _req(ops, "getConfig", 400, binding)
+    assert happy["params"] == {"warehouse": "cat"}
+    assert bad["params"] is None
+
+
+def test_the_token_endpoint_is_sent_as_a_form_with_no_bearer(ops, binding):
+    _, req = _req(ops, "getToken", 2, binding)
+    assert req["data"]["grant_type"] == "client_credentials" and req["json"] is None
+    assert "Authorization" not in req["headers"]
+    assert req["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+
+
+def test_the_token_endpoints_401_is_a_wrong_secret_not_a_bad_bearer(ops, binding):
+    """A real client id with the wrong secret. That is the case that makes
+    "who failed to authenticate" answerable while "who authenticated" is not."""
+    _, req = _req(ops, "getToken", 401, binding)
+    assert req["data"]["client_id"] == "id"
+    assert req["data"]["client_secret"] == "not-the-secret"
+
+
+def test_every_request_carries_the_realm_and_the_request_id(ops, binding):
+    """An untagged call cannot be found afterwards, and the matrix then reports
+    EXPECTED STORED, ABSENT for a record that was almost certainly there."""
+    for cell in m.cells(ops):
+        req = m.request_for(cell, binding, TOKENS, "nb-1-001-x", REALM)
+        assert req["headers"]["Polaris-Realm"] == REALM
+        assert req["headers"]["Polaris-Request-Id"] == "nb-1-001-x"
+
+
+def test_every_cell_in_the_whole_grid_builds_a_request(ops, binding):
+    """286 requests, none of them raising. This is the test that would have
+    caught a missing payload or an unbindable path before a run, not during."""
+    built = [m.request_for(c, binding, TOKENS, "r", REALM) for c in m.cells(ops)]
+    assert len(built) == len(m.cells(ops))
+    assert all(r["path"].startswith("/api/") for r in built)
+
+
+def test_the_request_id_format_matches_the_v1_harness_exactly(ops):
+    """The v1 pull filters on `"mdc.requestId":"nb-<run>-"*`. A second format
+    would simply go unfound, and read as a correlation failure."""
+    assert m.request_id("1789", 7, "loadTable@404") == "nb-1789-007-loadTable-404"
+    assert m.request_id("1789", 7, "a.b[c]") == "nb-1789-007-a-b-c"

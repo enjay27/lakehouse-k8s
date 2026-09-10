@@ -576,3 +576,191 @@ def ledger():
         {"status": k, "why": v[0], "state": v[1]}
         for k, v in sorted(NOT_REACHABLE.items(), key=lambda kv: str(kv[0]))
     ]
+
+
+# ----------------------------------------------------------------------
+# the executor
+# ----------------------------------------------------------------------
+#: A syntactically valid bearer token that no realm will accept. Not an empty
+#: Authorization header: an absent header and a bad one are different code
+#: paths in Quarkus, and only the second is what a client with a stale token
+#: actually looks like.
+GARBAGE_TOKEN = "not-a-real-token-401-cell"  # noqa: S105 - deliberately invalid
+
+#: A `currentEntityVersion` that cannot be current. 0 risks being read as
+#: unset; 999 is unambiguously stale and was measured returning 409 on this
+#: build (error-cases/18, and again in the 500 ladder on 2026-09-07).
+STALE_ENTITY_VERSION = 999
+
+#: Which identity issues which cell. Management endpoints refuse the run
+#: principal, so a happy management cell driven as the run principal would be a
+#: 403 recorded as a missed 2xx -- a harness gap wearing a finding's clothes.
+ADMIN, RUNNER, DENIED, NOBODY = "admin", "runner", "denied", "nobody"
+
+
+def identity_for(cell):
+    if cell.target == 401:
+        return NOBODY
+    if cell.target == 403:
+        return DENIED
+    return ADMIN if cell.op.api == "management" else RUNNER
+
+
+def request_for(cell, binding, tokens, request_id, realm):
+    """Everything needed to issue one cell, and nothing that needs a network.
+
+    Pure, so every transform in the status axis is unit-testable: the garbage
+    token, the broken path segment, the stale entity version, the malformed
+    body, the dropped query parameter.
+    """
+    op = cell.op
+    who = identity_for(cell)
+    token = GARBAGE_TOKEN if who is NOBODY else tokens[who]
+
+    path = bind_path(op, binding, break_param=True if cell.target == 404 else None)
+
+    body = payload_for(op, binding)
+    if cell.target == 400:
+        body = dict(MALFORMED_BODY) if op.has_body else body
+    elif cell.target == 409 and body and "currentEntityVersion" in body:
+        body["currentEntityVersion"] = STALE_ENTITY_VERSION
+
+    params = None
+    if op.op_id == "getConfig":
+        # WITHOUT a warehouse this build answers 400, so the bare call tests
+        # rule 3 and not the counted-2xx path. Run 1 recorded three 400s under
+        # a label promising a successful GET.
+        params = None if cell.target == 400 else {"warehouse": binding["catalog"]}
+
+    headers = {"Polaris-Realm": realm, "Polaris-Request-Id": request_id}
+    if op.op_id == "getToken":
+        # Form-encoded, and it carries its credentials in the body rather than
+        # in an Authorization header.
+        data = dict(body or {})
+        if cell.target == 401:
+            data["client_secret"] = "not-the-secret"
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        return {
+            "method": op.method,
+            "path": path,
+            "params": params,
+            "headers": headers,
+            "json": None,
+            "data": data,
+            "identity": who,
+        }
+
+    headers["Authorization"] = f"Bearer {token}"
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    return {
+        "method": op.method,
+        "path": path,
+        "params": params,
+        "headers": headers,
+        "json": body,
+        "data": None,
+        "identity": who,
+    }
+
+
+def execute(cell, req, base_url, session=None, timeout=20, seq=0):
+    """Issue one cell. Returns a row in `log_coverage.call_once`'s shape.
+
+    Same keys as the v1 harness's rows on purpose: `correlation_stats`,
+    `reconcile_volume` and the matrix printer already read that shape, and a
+    second row shape would mean a second set of statistics that agree with
+    nothing.
+    """
+    import time as _t
+
+    import requests as _rq
+
+    session = session or _rq.Session()
+    row = {
+        "seq": seq,
+        "label": cell.label,
+        "method": cell.op.method,
+        "path": req["path"],
+        "actual_path": None,
+        "issued_at": _t.time(),
+        "principal": req["identity"],
+        "api": cell.op.api,
+        "request_id": req["headers"].get("Polaris-Request-Id"),
+        "status": None,
+        "elapsed_ms": None,
+        "error": None,
+        "echoed_request_id": None,
+        # -- what makes it a matrix row rather than a call row
+        "op_id": cell.op.op_id,
+        "target": cell.target,
+        "driver": cell.driver,
+        "phase": cell.phase,
+        "verdict": None,
+        "why": "",
+    }
+    started = _t.perf_counter()
+    try:
+        resp = session.request(
+            cell.op.method,
+            f"{base_url.rstrip('/')}{req['path']}",
+            params=req["params"],
+            headers=req["headers"],
+            json=req["json"],
+            data=req["data"],
+            timeout=timeout,
+        )
+        row["status"] = resp.status_code
+        row["actual_path"] = getattr(getattr(resp, "request", None), "path_url", None)
+        row["echoed_request_id"] = resp.headers.get("Polaris-Request-Id")
+    except Exception as exc:  # noqa: BLE001
+        row["error"] = f"{type(exc).__name__}: {exc}"
+    row["elapsed_ms"] = round((_t.perf_counter() - started) * 1000, 1)
+
+    verdict = adjudicate(cell, row["status"], row["error"])
+    row["verdict"], row["why"] = verdict["verdict"], verdict["why"]
+    return row
+
+
+def drive(
+    cells_,
+    binding,
+    tokens,
+    base_url,
+    realm,
+    run,
+    seq_from=2000,
+    session=None,
+    on_row=None,
+):
+    """Issue a phase's cells in order, tagged, and return their rows.
+
+    Deliberately serial. The report attributes a request to a window by the
+    time it was served, and concurrent calls straddling a boundary would make
+    the per-window margins unprovable rather than wrong -- which is worse,
+    because it looks like a pass.
+    """
+    rows, seq = [], seq_from
+    for cell in cells_:
+        seq += 1
+        rid = request_id(run, seq, cell.label)
+        req = request_for(cell, binding, tokens, rid, realm)
+        row = execute(cell, req, base_url, session=session, seq=seq)
+        rows.append(row)
+        if on_row:
+            on_row(row)
+    return rows
+
+
+_SLUG_OK = set("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_")
+
+
+def request_id(run, seq, label):
+    """`nb-<run>-<seq>-<label>`, in `log_coverage.request_id`'s exact format.
+
+    Reimplemented rather than imported so this module has no dependency on
+    `log_coverage` -- but the FORMAT is not free to differ: the v1 pull filters
+    on `"mdc.requestId":"nb-<run>-"*` and a second format would go unfound.
+    """
+    slug = "".join(c if c in _SLUG_OK else "-" for c in label).strip("-")
+    return f"nb-{run}-{seq:03d}-{slug}"
