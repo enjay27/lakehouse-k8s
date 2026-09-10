@@ -1,6 +1,6 @@
-# API status matrix -- run 1789007773
+# API status matrix -- run 1789008333
 
-Driven 2026-09-10 02:40Z against `local`, schema v3, windows of 30s.
+Driven 2026-09-10 02:49Z against `local`, schema v3, windows of 30s.
 
 - **63 operations**, **286 cells**, 286 calls issued
 - covered: 212   missed: 74   transport errors: 0
@@ -16,7 +16,7 @@ Driven 2026-09-10 02:40Z against `local`, schema v3, windows of 30s.
 | Gate 2 last_write_bytes | VOID | no table row carried last_write_bytes in the commit's window -- the commit itself failed |
 | Gate 2 delete leaves it ABSENT | VOID | rows without the field=0  rows WITH it=0 (want 0) |
 | Gate 3 classification | VOID | {} |
-| Gate 4 privilege count | VOID | no catalog-role row for mx_1789007773_crole in 2026-09-10T02:39:30Z |
+| Gate 4 privilege count | VOID | no catalog-role row for mx_1789008333_crole in 2026-09-10T02:48:30Z |
 | Gate 4 grants fold into the role | PASS | no separate grants row |
 | Gate 5 __errors__ holds only errors | VOID | __errors__ has no rows in this scope -- unproven |
 | Gate 5 __other__ is overflow only | VOID | __other__ requests=<Metric requests ABSENT (0 docs carried it)> -- non-zero means a window really carried 500+ distinct resources, or the split regressed |
@@ -26,13 +26,13 @@ Driven 2026-09-10 02:40Z against `local`, schema v3, windows of 30s.
 
 | phase | start | seconds | cells | straddled |
 |---|---|---|---|---|
-| B | 2026-09-10T02:36:30Z | 1.0 | 63 | False |
-| C | 2026-09-10T02:37:00Z | 1.2 | 180 | False |
-| D | 2026-09-10T02:37:30Z | 0.3 | 43 | False |
-| E | 2026-09-10T02:38:00Z | 0.0 | 1 | False |
-| F | 2026-09-10T02:38:30Z | 0.0 | 1 | False |
-| G | 2026-09-10T02:39:30Z | 0.1 | 4 | False |
-| H | 2026-09-10T02:40:00Z | 0.5 | 12 | False |
+| B | 2026-09-10T02:46:00Z | 0.8 | 63 | False |
+| C | 2026-09-10T02:46:30Z | 1.1 | 180 | False |
+| D | 2026-09-10T02:47:00Z | 0.4 | 43 | False |
+| E | 2026-09-10T02:47:30Z | 0.0 | 1 | False |
+| F | 2026-09-10T02:48:00Z | 0.0 | 1 | False |
+| G | 2026-09-10T02:48:30Z | 0.1 | 4 | False |
+| H | 2026-09-10T02:49:00Z | 0.5 | 12 | False |
 
 ## Coverage by operation
 

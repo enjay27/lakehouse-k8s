@@ -1,6 +1,6 @@
 # For `local-k8s`: what this run says needs changing there
 
-Produced by `log-coverage/polaris_log_coverage_v2.ipynb`, run 1789007773, 2026-09-10 02:40Z.
+Produced by `log-coverage/polaris_log_coverage_v2.ipynb`, run 1789008333, 2026-09-10 02:49Z.
 Only items whose fix lives in the pipeline repo are here; everything else stays in
 `doc-api-status-matrix-results.md`.
 

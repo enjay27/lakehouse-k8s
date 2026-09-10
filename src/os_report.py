@@ -156,6 +156,66 @@ PARTIAL_TRUE = "true"
 PARTIAL_FALSE = "false"
 
 
+#: Field names learned from the LIVE mapping, populated by `use_mapping()`.
+#:
+#: WHY THIS EXISTS. `kw()` used to assume every string field was dynamic-mapped
+#: as text + `.keyword`. Run 1789007773 measured otherwise: `window_start` is an
+#: RFC3339 string, OpenSearch DATE-DETECTS it, and `window_start.keyword` does
+#: not exist. So every window-scoped report query matched nothing and eight
+#: gates went VOID on an empty result set -- while `min_record_time`, the same
+#: shape of value, IS text, because the Lua writes "" on idle windows and the
+#: index typed the field from the first one it saw.
+#:
+#: Two fields, same value shape, different mappings, in one index. Nothing can
+#: be assumed here; it has to be read. The builders stay pure functions, so the
+#: resolved names live in module state rather than being threaded through nine
+#: signatures -- and `use_mapping()` is the only thing that writes it.
+_RESOLVED = {}
+
+#: What a mapped type means for exact matching.
+_EXACT_AS_IS = frozenset(
+    {
+        "date",
+        "keyword",
+        "boolean",
+        "long",
+        "integer",
+        "short",
+        "byte",
+        "double",
+        "float",
+        "half_float",
+        "scaled_float",
+        "unsigned_long",
+        "ip",
+    }
+)
+
+
+def use_mapping(types):
+    """Teach `kw()` the real field names, from `{field: mapped_type}`.
+
+    A field mapped `text` needs `.keyword`; a `date` or a `keyword` is already
+    exact-matchable and appending the suffix would match NOTHING -- which is the
+    same defect in the opposite direction, and the one that voided run
+    1789007773's gates.
+
+    A field whose type is None (nothing has carried it yet) is left to the
+    STRING_FIELDS default: absence is not evidence.
+    """
+    _RESOLVED.clear()
+    for field, mapped in (types or {}).items():
+        if mapped is None:
+            continue
+        _RESOLVED[field] = field if mapped in _EXACT_AS_IS else f"{field}.keyword"
+    return dict(_RESOLVED)
+
+
+def resolved_names():
+    """What `kw()` will actually emit, for printing at preflight."""
+    return dict(_RESOLVED)
+
+
 class MappingFault(RuntimeError):
     """A field is typed in a way that makes the query it is used in a lie."""
 
@@ -169,6 +229,8 @@ def kw(field):
     """
     if field.endswith(".keyword"):
         return field
+    if field in _RESOLVED:
+        return _RESOLVED[field]
     return f"{field}.keyword" if field in STRING_FIELDS else field
 
 
@@ -853,6 +915,34 @@ class OSReports:
         r.raise_for_status()
         return _first_type(r.json())
 
+    def field_types(self, fields, index=None):
+        """{field: mapped type or None} for many fields, in ONE request."""
+        index = index or self.report_index
+        wanted = list(fields)
+        r = self.session.get(
+            f"{self.base_url}/{index}/_mapping/field/{','.join(wanted)}",
+            auth=self.auth,
+            verify=self.verify,
+            timeout=self.timeout,
+        )
+        if r.status_code == 404:
+            return {f: None for f in wanted}
+        r.raise_for_status()
+        found = _types_of(r.json())
+        return {f: found.get(f) for f in wanted}
+
+    def learn_field_names(self, index=None, fields=None):
+        """Read the live mapping and teach `kw()` the real names.
+
+        Call this at preflight, before any query is built. Returns
+        {field: name kw() will emit} so the notebook can print it -- the
+        resolution is a measurement and belongs in the record.
+        """
+        fields = list(fields or sorted(STRING_FIELDS))
+        types = self.field_types(fields, index)
+        use_mapping(types)
+        return {f: kw(f) for f in fields}, types
+
     # -- the checks a run must pass before it trusts its own numbers ----
     def assert_numeric(
         self, fields=("requests", "errors", "response_bytes"), index=None
@@ -894,11 +984,18 @@ class OSReports:
         Without it `{"term": {"resource": "__errors__"}}` matches nothing and
         Gate 5 passes without looking.
         """
-        missing = [f for f in fields if self.mapping_of(f"{f}.keyword", index) is None]
+        types = self.field_types(list(fields), index)
+        missing = []
+        for f, mapped in types.items():
+            if mapped in _EXACT_AS_IS or mapped is None:
+                continue  # date/keyword match exactly as they are; None = unmapped
+            if self.mapping_of(f"{f}.keyword", index) is None:
+                missing.append(f)
         if missing:
             raise MappingFault(
-                f"no .keyword subfield for {missing} in {index or self.report_index}: "
-                "exact-match term filters on these silently match nothing."
+                f"text field(s) {missing} in {index or self.report_index} have no "
+                ".keyword subfield: exact-match term filters on them silently match "
+                "nothing."
             )
         return True
 
@@ -980,6 +1077,24 @@ class OSReports:
                 last, stable_since = n, None
             _time.sleep(interval)
         return res
+
+
+def _types_of(mapping_response):
+    """{full_name: mapped type} from a `_mapping/field/a,b,c` response.
+
+    `_first_type` walks the whole document and returns the first `type` it
+    meets, which is correct for one field and silently wrong for many -- every
+    field would come back as whichever one OpenSearch serialised first.
+    """
+    out = {}
+    for index_body in (mapping_response or {}).values():
+        for name, body in ((index_body or {}).get("mappings") or {}).items():
+            leaf = (body or {}).get("mapping") or {}
+            for _, spec in leaf.items():
+                t = (spec or {}).get("type")
+                if isinstance(t, str):
+                    out.setdefault((body or {}).get("full_name", name), t)
+    return out
 
 
 def _first_type(mapping_response):

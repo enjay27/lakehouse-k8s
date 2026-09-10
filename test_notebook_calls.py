@@ -47,6 +47,9 @@ OWNERS = {
     "adm_ic": iceberg_rest.IcebergREST,
     "run_ic": iceberg_rest.IcebergREST,
     "run_adm_ic": iceberg_rest.IcebergREST,
+    # elect_drive_identity returns these two, by tuple unpacking
+    "run_pc": polaris_rest.PolarisREST,
+    "run_ic_elected": iceberg_rest.IcebergREST,
     "OS": osr.OSReports,
     "lc": lc,
     "mx": mx,
@@ -124,10 +127,16 @@ def test_the_notebook_never_reaches_for_a_client_this_check_does_not_know():
     )
     assigned = set()
     for node in ast.walk(ast.parse(src)):
-        if isinstance(node, ast.Assign):
-            for t in node.targets:
-                if isinstance(t, ast.Name):
-                    assigned.add(t.id)
+        if not isinstance(node, ast.Assign):
+            continue
+        for t in node.targets:
+            # TUPLE TARGETS COUNT. `a, pc, ic, name, notes = elect_drive_identity(...)`
+            # binds two clients and the first version of this walker saw neither,
+            # so the check passed by being unable to look -- the same shape of
+            # blind spot it exists to catch.
+            for leaf in ast.walk(t):
+                if isinstance(leaf, ast.Name):
+                    assigned.add(leaf.id)
     clients = {n for n in assigned if n.endswith(("_pc", "_ic")) or n in ("OS",)}
     unknown = clients - set(OWNERS)
     assert (

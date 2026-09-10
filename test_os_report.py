@@ -470,3 +470,97 @@ def test_the_correlation_field_is_matched_on_its_keyword_subfield():
         }
     }
     assert _terms_of(body) == ["mdc.requestId.keyword"]
+
+
+# ----------------------------------------------------------------------
+# field names are READ from the mapping, never assumed
+# ----------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _forget_the_mapping():
+    """Every test starts from the STRING_FIELDS default, not from whatever the
+    previous test taught the module."""
+    osr.use_mapping({})
+    yield
+    osr.use_mapping({})
+
+
+def test_a_date_mapped_field_is_matched_WITHOUT_the_keyword_suffix():
+    """MEASURED, run 1789007773: `window_start` is an RFC3339 string and
+    OpenSearch date-detects it, so `window_start.keyword` does not exist. Every
+    window-scoped report query matched nothing and eight gates went VOID on an
+    empty result -- the same defect as the guide's Gate 5, in the opposite
+    direction."""
+    osr.use_mapping({"window_start": "date"})
+    assert osr.kw("window_start") == "window_start"
+    assert osr.window_filter("A", "B") == {
+        "range": {"window_start": {"gte": "A", "lte": "B"}}
+    }
+
+
+def test_a_text_mapped_field_still_gets_the_suffix():
+    osr.use_mapping({"resource": "text", "min_record_time": "text"})
+    assert osr.kw("resource") == "resource.keyword"
+    assert osr.kw("min_record_time") == "min_record_time.keyword"
+
+
+def test_two_fields_of_the_same_shape_can_be_mapped_differently():
+    """`window_start` and `min_record_time` are both RFC3339 strings in the same
+    index, and are mapped date and text respectively -- because the Lua writes
+    "" on idle windows and the index typed min_record_time from the first one.
+    Nothing about a field's VALUES predicts its mapping."""
+    osr.use_mapping({"window_start": "date", "min_record_time": "text"})
+    assert osr.kw("window_start") == "window_start"
+    assert osr.kw("min_record_time") == "min_record_time.keyword"
+
+
+def test_an_unmapped_field_falls_back_rather_than_guessing():
+    """None means nothing has carried it yet. Absence is not evidence, so the
+    STRING_FIELDS default stands."""
+    osr.use_mapping({"resource": None})
+    assert osr.kw("resource") == "resource.keyword"
+
+
+def test_a_keyword_mapped_field_is_left_alone():
+    osr.use_mapping({"report_type": "keyword"})
+    assert osr.kw("report_type") == "report_type"
+
+
+def test_the_margins_query_follows_the_resolved_names():
+    """The whole point: the builders are pure, and they still pick up what the
+    mapping said."""
+    osr.use_mapping({"window_start": "date", "report_type": "text"})
+    body = osr.q_margins(("A", "B"))
+    assert body["aggs"]["by_win"]["terms"]["field"] == "window_start"
+    assert (
+        body["aggs"]["by_win"]["aggs"]["by_type"]["terms"]["field"]
+        == "report_type.keyword"
+    )
+
+
+def test_types_of_reads_every_field_not_just_the_first():
+    """`_first_type` walks the document and returns the first type it meets --
+    correct for one field, silently wrong for many, which would make every
+    field report as whichever OpenSearch serialised first."""
+    resp = {
+        "polaris-report-2026.09.10": {
+            "mappings": {
+                "window_start": {
+                    "full_name": "window_start",
+                    "mapping": {"window_start": {"type": "date"}},
+                },
+                "min_record_time": {
+                    "full_name": "min_record_time",
+                    "mapping": {"min_record_time": {"type": "text"}},
+                },
+                "requests": {
+                    "full_name": "requests",
+                    "mapping": {"requests": {"type": "long"}},
+                },
+            }
+        }
+    }
+    assert osr._types_of(resp) == {
+        "window_start": "date",
+        "min_record_time": "text",
+        "requests": "long",
+    }
