@@ -332,14 +332,22 @@ def _view_version(b):
 #: empty body and reported as covered.
 PAYLOADS = {
     # -- management ---------------------------------------------------
+    # SHAPE COPIED FROM PolarisREST.create_catalog, which is known to work on
+    # this build -- `s3a://` (not `s3://`), allowedLocations at the BUCKET root
+    # rather than the catalog prefix, and drop-with-purge enabled so the
+    # cleanup cell can actually remove it. Guessing this shape is how a create
+    # cell reports 400 and gets read as a validation finding.
     "createCatalog": lambda b: {
         "catalog": {
             "type": "INTERNAL",
             "name": b["new_catalog"],
-            "properties": {"default-base-location": b["base_location"]},
+            "properties": {
+                "default-base-location": b["base_location"],
+                "polaris.config.drop-with-purge.enabled": "true",
+            },
             "storageConfigInfo": {
                 "storageType": "S3",
-                "allowedLocations": [b["base_location"]],
+                "allowedLocations": [b["allowed_location"]],
                 "endpoint": b["s3_endpoint"],
                 "endpointInternal": b["s3_endpoint_internal"],
                 "pathStyleAccess": True,

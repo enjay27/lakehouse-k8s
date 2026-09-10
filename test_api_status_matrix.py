@@ -9,10 +9,13 @@ Nothing here touches the network.
 """
 
 import pathlib
+import sys
 
 import pytest
 
-import api_status_matrix as m
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "src"))
+
+import api_status_matrix as m  # noqa: E402
 
 SPEC_DIR = pathlib.Path(__file__).parent / "log-coverage" / "spec"
 
@@ -52,7 +55,8 @@ def binding():
         "doomed_catalog_role": "crole_doomed",
         "entity_version": 1,
         "run": "1789000000",
-        "base_location": "s3://bucket/cat2",
+        "base_location": "s3a://bucket/cat2/",
+        "allowed_location": "s3a://bucket/",
         "s3_endpoint": "http://minio:9000",
         "s3_endpoint_internal": "http://minio.svc:9000",
         "metadata_location": "s3://bucket/cat2/meta.json",
@@ -490,3 +494,15 @@ def test_the_409_family_still_has_something_to_conflict_with(ops, binding):
     for op_id in ("updateCatalog", "updateCatalogRole", "updatePrincipal"):
         op = {o.op_id: o for o in ops}[op_id]
         assert "doomed" not in m.bind_path(op, binding), op_id
+
+
+def test_the_catalog_payload_matches_the_shape_that_works_on_this_build(ops, binding):
+    """PolarisREST.create_catalog is the reference: s3a:// rather than s3://,
+    allowedLocations at the BUCKET root rather than at the catalog prefix, and
+    drop-with-purge on so the cleanup cell can remove what this creates.
+    Guessing the shape is how a create cell returns 400 and gets read as a
+    validation finding about Polaris."""
+    body = m.payload_for({o.op_id: o for o in ops}["createCatalog"], binding)["catalog"]
+    assert body["properties"]["default-base-location"].startswith("s3a://")
+    assert body["storageConfigInfo"]["allowedLocations"] == ["s3a://bucket/"]
+    assert body["properties"]["polaris.config.drop-with-purge.enabled"] == "true"

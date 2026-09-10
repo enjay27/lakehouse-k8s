@@ -18,9 +18,14 @@ is the point: the expensive checks need a cluster and these do not, so these
 are the ones that run on every commit.
 """
 
+import pathlib
+import sys
+
 import pytest
 
-import os_report as osr
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "src"))
+
+import os_report as osr  # noqa: E402
 
 
 # ----------------------------------------------------------------------
