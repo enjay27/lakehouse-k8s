@@ -15,6 +15,17 @@ classifier has never seen (`/credentials`, `/plan`, `/tasks`, `/register`,
 The run targets **OpenSearch** (`polaris-report-*` / `polaris-logs-*`), not VictoriaLogs, in a
 new `polaris_log_coverage_v2.ipynb`; v1 stays the run of record.
 
+**BUILT AND UNRUN: `polaris_log_coverage_v2.ipynb` (43 cells), `src/os_report.py` (the
+OpenSearch query layer, 52 tests) and `src/api_status_matrix.py` (the 286-cell grid + executor,
+48 tests).** 100 tests, no cluster needed, all negative-tested. **The notebook has never been
+executed** -- the first run tests the notebook as much as the pipeline. It writes two documents:
+`doc-api-status-matrix-results.md` (this repo) and `REPORT-for-local-k8s.md` (the work list for
+the pipeline repo). Wiring it found two harness bugs worth remembering: the happy sweep would
+have **deleted its own fixture and rotated the runner's secret** mid-run (fixed by
+`REBIND` + a `doomed_*` family), and `mdc.requestId` was missing from `STRING_FIELDS`, so the
+correlation join would have matched nothing -- the same `.keyword` defect this repo had just
+written up against the guide's Gate 5.
+
 **REPORT SCHEMA v3 IS LIVE, and the two shippers now disagree.** `benchmarks-fluent-bit`
 (DaemonSet → OpenSearch, helm rev 11, pod 00:55:24Z) runs `SCHEMA_VERSION 3`;
 `fb-polaris-shipper` (Deployment → VictoriaLogs, pod 2026-09-07) still runs **2**. So the
