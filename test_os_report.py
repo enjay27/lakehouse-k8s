@@ -564,3 +564,44 @@ def test_types_of_reads_every_field_not_just_the_first():
         "min_record_time": "text",
         "requests": "long",
     }
+
+
+# ----------------------------------------------------------------------
+# the shape at the boundary: OpenSearch nests, VictoriaLogs flattens
+# ----------------------------------------------------------------------
+def test_a_nested_source_is_flattened_to_dotted_keys():
+    """Run 1789008899 reported all eight 500s as `absent` -- no application
+    line, which rule 2 forbids and which would be a SERIOUS pipeline finding.
+    It is a dict access: lc.error_record_pair filters on
+    `r.get("mdc.requestId")`, and OpenSearch keeps that nested in _source while
+    VictoriaLogs flattens it on ingest. The QUERY works either way, which is
+    why correlation reported 286/286 and hid it."""
+    nested = {
+        "mdc": {"requestId": "nb-1-001-x", "principal": "runner"},
+        "exception": {"frames": [{"class": "X"}], "message": "boom"},
+        "level": "ERROR",
+    }
+    flat = osr.flatten(nested)
+    assert flat["mdc.requestId"] == "nb-1-001-x"
+    assert flat["exception.frames"] == [{"class": "X"}]
+    assert flat["level"] == "ERROR"
+
+
+def test_an_already_flat_record_is_unchanged():
+    flat = {"mdc.requestId": "nb-1-001-x", "http_status": 500}
+    assert osr.flatten(flat) == flat
+
+
+def test_a_list_value_is_left_alone_not_walked():
+    """`exception.frames` is a list of dicts and must stay one -- flattening it
+    into frames.0.class would break exception_fields, which looks for the
+    field NAME."""
+    out = osr.flatten({"exception": {"frames": [{"class": "A"}, {"class": "B"}]}})
+    assert out["exception.frames"] == [{"class": "A"}, {"class": "B"}]
+
+
+def test_sources_flattens_and_raw_sources_does_not():
+    body = {"hits": {"hits": [{"_source": {"mdc": {"requestId": "r1"}}}]}}
+    res = osr.Result(body, "polaris-logs-*")
+    assert res.sources == [{"mdc.requestId": "r1"}]
+    assert res.raw_sources == [{"mdc": {"requestId": "r1"}}]

@@ -216,6 +216,37 @@ def resolved_names():
     return dict(_RESOLVED)
 
 
+def flatten(record, prefix="", out=None):
+    """Nested `_source` -> dotted keys, the shape every `log_coverage` helper expects.
+
+    WHY THIS IS NOT COSMETIC. VictoriaLogs flattens nested JSON on ingest, so a
+    record arrives as `{"mdc.requestId": "nb-...", "exception.frames": [...]}`.
+    OpenSearch keeps the nesting in `_source`: the same record is
+    `{"mdc": {"requestId": "nb-..."}, "exception": {"frames": [...]}}`. QUERIES
+    are unaffected -- `mdc.requestId` addresses the nested field either way,
+    which is why correlation reported 286/286 -- but `record.get("mdc.requestId")`
+    returns None on the OpenSearch shape.
+
+    Run 1789008899 hit exactly that: `lc.error_record_pair` filters records by
+    `r.get("mdc.requestId")`, matched nothing, and every one of the eight 500s
+    came back `absent` -- which reads as "the pipeline dropped the application
+    line", a SERIOUS finding, and is a dict access. `lc.exception_fields` has
+    the same shape problem and says so in its own docstring: the payload is
+    stored FLATTENED as `exception.frames`, and that is true of VictoriaLogs and
+    false here.
+
+    So flattening happens once, at this boundary, and the helpers stay unchanged.
+    """
+    out = {} if out is None else out
+    for key, value in (record or {}).items():
+        name = f"{prefix}{key}"
+        if isinstance(value, dict):
+            flatten(value, f"{name}.", out)
+        else:
+            out[name] = value
+    return out
+
+
 class MappingFault(RuntimeError):
     """A field is typed in a way that makes the query it is used in a lie."""
 
@@ -298,6 +329,19 @@ class Result:
 
     @property
     def sources(self):
+        """Hits as FLATTENED dicts -- see `flatten`. Every consumer of these
+        records (log_coverage.error_record_pair, exception_fields,
+        check_invariants) was written against VictoriaLogs' flattened shape,
+        and a nested `_source` silently reads as an absent field."""
+        return [
+            flatten(h.get("_source", {}))
+            for h in (self.body.get("hits") or {}).get("hits", [])
+        ]
+
+    @property
+    def raw_sources(self):
+        """Hits exactly as OpenSearch returned them. For printing evidence about
+        the shape itself -- never for a lookup."""
         return [
             h.get("_source", {}) for h in (self.body.get("hits") or {}).get("hits", [])
         ]

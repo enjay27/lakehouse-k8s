@@ -6,6 +6,15 @@ handoff named in *Now* — it is standalone.
 
 ## Now — 2026-09-10 (session 9)
 
+**THE WORK IS SPLITTING IN TWO, AND THE NEXT SESSION STARTS FROM
+[`log-coverage/HANDOFF-split-logging-test-2026-09-10.md`](log-coverage/HANDOFF-split-logging-test-2026-09-10.md)
+— standalone, and it needs BOTH folders connected.** Decision: `local-k8s` runs the logging
+test and calls this repo's `make_traffic` module; this repo makes traffic and holds no logging
+concept at all. Design in
+[`SCENARIO-logging-test.md`](log-coverage/SCENARIO-logging-test.md); the boundary argument in
+[`PLAN-split-traffic-and-verification.md`](log-coverage/PLAN-split-traffic-and-verification.md).
+
+
 **EVERY API, EVERY REACHABLE STATUS — planned, not started.**
 [`log-coverage/PLAN-api-status-matrix.md`](log-coverage/PLAN-api-status-matrix.md) is the
 read; it needs sign-off before code. Measured: today's harness drives **40 of the 63**
