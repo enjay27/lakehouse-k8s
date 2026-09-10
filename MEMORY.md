@@ -24,8 +24,12 @@ this repo's `make_traffic`; this repo makes traffic and holds no logging concept
 **TRAFFIC RUNS FROM THIS REPO ALONE:** `log-coverage/run_traffic.py --dry-run` (286 requests
 built, nothing contacted) / `--spec-check` (validated against the specs through Prism, still no
 Polaris; needs `npx @stoplight/prism-cli mock --errors`, and **without `--errors` the check is
-VOID rather than green**) / `--profile smoke` (drives, and MUTATES). Prism itself has never run
-here — `npm` is 403 through the org policy — so that tier is UNRUN.
+VOID rather than green**) / `--profile smoke` (drives, and MUTATES). **Prism HAS now run**: the
+first run found that `updateProperties`'s 400 cell cannot provoke a 400 (its schema has no
+required fields), that the Iceberg document cannot describe its own responses, and — in the
+check itself — that the Prism mount must be **probed, not derived** (all 144 management cells
+404'd) and that controls need one pair **per API** (both landed on catalog and stayed green
+while half the run 404'd). All fixed; `.memory/roadmap.md` has the detail.
 
 **Step 2 is DONE and the boundary is a test, not a convention.** SCENARIO §3's import guard was
 unwritable while `log_coverage.py` held both halves, so **792 lines moved verbatim to

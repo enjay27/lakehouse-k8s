@@ -69,6 +69,13 @@ from urllib.parse import urlsplit
 ACCEPTED = "accepted"
 REJECTED = "rejected"
 NOT_ROUTED = "not_routed"
+#: Prism could not generate a spec-valid RESPONSE from the document. That is a
+#: statement about the document, and never about the request that provoked it.
+#: Measured on the first real run: 36 cells came back this way, with the SAME
+#: violation for targets 2, 401, 403, 404 and 409 of the same operation --
+#: identical regardless of what was sent, which is what proves it cannot be
+#: about the request. Counted as `REJECTED` they read as 36 invalid requests.
+SPEC_EXAMPLE = "spec_example"
 ERROR = "error"
 
 #: Outcomes for a whole pass.
@@ -83,13 +90,21 @@ class PrismUnavailable(RuntimeError):
     """Prism is not answering. Not a finding -- nothing was measured."""
 
 
-def prism_mounts(spec_dir):
-    """`{api: mount path}`, read from each document's own `servers` entry.
+def candidate_mounts(spec_dir):
+    """`{api: [mount, ...]}` -- the places Prism might be serving this document.
 
-    Server URLs are templated (`{scheme}://{host}/{basePath}`), so the
-    variables are resolved to their declared defaults before the path is taken.
-    A `basePath` defaulting to `""` yields `""`, which is correct and is
-    exactly the case that differs from `Operation.base`.
+    **This used to be `prism_mounts`, and it returned ONE answer derived from
+    the document's `servers` entry. It was wrong, and it was wrong in a way
+    that looked principled.** Measured on the first real run: Prism ignores a
+    templated server base path and mounts the document's paths at the ROOT. So
+    the derived `""` was right for the Iceberg document by luck and the derived
+    `/api/management/v1` was wrong for the management one -- and **all 144
+    management cells came back 404** while the catalog half worked.
+
+    The lesson is the one this repo keeps re-learning: a fact about a running
+    thing is measured, not derived. So the mount is now a LIST of candidates,
+    and `resolve_mounts` probes the live server to find out which one answers.
+    The empty mount is first because that is what Prism was measured doing.
     """
     import yaml
 
@@ -102,7 +117,9 @@ def prism_mounts(spec_dir):
         doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
         api = "management" if "management" in f.name else "catalog"
         servers = doc.get("servers") or []
-        mounts[api] = _server_path(servers[0]) if servers else ""
+        declared = _server_path(servers[0]) if servers else ""
+        # Order matters only as a first guess; `resolve_mounts` decides.
+        mounts[api] = [""] + ([declared] if declared else [])
     return mounts
 
 
@@ -114,8 +131,65 @@ def _server_path(server):
     return "/" + path.strip("/") if path.strip("/") else ""
 
 
-def prism_path(op, request_path, mounts):
-    """The Polaris request path, re-aimed at where Prism serves that spec.
+def resolve_mounts(
+    spec_dir, prism, binding, tokens, realm, session, timeout=DEFAULT_TIMEOUT
+):
+    """Ask the running Prism where it is actually serving each document.
+
+    For each API, one known-good request is sent at each candidate mount and
+    the first that does not 404 wins. Returns
+    `{api: {"mount", "resolved", "tried", "op_id"}}`.
+
+    An API where NOTHING routes is left `resolved: False` rather than falling
+    back to a guess. Every one of its cells would 404, and reporting 144
+    invalid requests when the answer is "Prism is not serving that document
+    here" is precisely the mistake this function exists to prevent.
+    """
+    import api_status_matrix as mx
+
+    grid = mx.cells(mx.load_spec(spec_dir))
+    candidates = candidate_mounts(spec_dir)
+    out = {}
+    for api in sorted({c.op.api for c in grid}):
+        # A GET with no path parameters and no body: the least that can go
+        # wrong other than the route itself.
+        probe = next(
+            (
+                c
+                for c in grid
+                if c.op.api == api
+                and c.target == 2
+                and not c.op.params
+                and c.op.method == "get"
+            ),
+            None,
+        ) or next(c for c in grid if c.op.api == api and c.target == 2)
+        req = mx.request_for(probe, binding, tokens, f"mount-probe-{api}", realm)
+        tried, found = [], None
+        for mount in candidates.get(api, [""]):
+            url = prism[api].rstrip("/") + _join(mount, probe.op, req["path"])
+            try:
+                status, body = _send(session, url, req, timeout)
+            except Exception as exc:  # noqa: BLE001
+                raise PrismUnavailable(
+                    f"probing the {api} mount could not reach Prism at {url}: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+            tried.append({"mount": mount, "url": url, "status": status})
+            if classify(status, body) != NOT_ROUTED:
+                found = mount
+                break
+        out[api] = {
+            "mount": found if found is not None else "",
+            "resolved": found is not None,
+            "tried": tried,
+            "op_id": probe.op.op_id,
+        }
+    return out
+
+
+def _join(mount, op, request_path):
+    """The Polaris request path, re-aimed at `mount`.
 
     Raises rather than guessing: a path that does not start with the base the
     spec loader recorded means the two disagree about the deployment prefix,
@@ -129,7 +203,21 @@ def prism_path(op, request_path, mounts):
             f"recorded base {base!r} -- the spec loader and the request "
             "builder disagree, and re-aiming it would 404 as a missing route"
         )
-    return (mounts.get(op.api, "") + request_path[len(base) :]) or "/"
+    return (mount + request_path[len(base) :]) or "/"
+
+
+def prism_path(op, request_path, mounts):
+    """The Polaris request path, re-aimed at where Prism serves that spec.
+
+    Raises rather than guessing: a path that does not start with the base the
+    spec loader recorded means the two disagree about the deployment prefix,
+    and quietly sending it anywhere would produce a 404 that reads like a
+    missing route.
+    """
+    mount = mounts.get(op.api, "")
+    if isinstance(mount, dict):
+        mount = mount.get("mount", "")
+    return _join(mount, op, request_path)
 
 
 def expectation(cell):
@@ -147,21 +235,58 @@ def expectation(cell):
 def classify(status, body):
     """What Prism said about one request.
 
-    `NOT_ROUTED` is kept apart from `REJECTED` deliberately. A 404 from Prism
-    means the mount is wrong or the document has no such path -- a fault in
-    THIS module or in the spec -- while a 422 with violations is a statement
-    about the request. Folding them together would report a mounting mistake
-    as 286 invalid requests.
+    THREE splits, each of which was a wrong answer before it was made:
+
+    `NOT_ROUTED` apart from `REJECTED`. A 404 means the mount is wrong or the
+    document has no such path -- a fault in THIS module -- while a 422 with
+    violations is about the request. Folded together, a mounting mistake reads
+    as 286 invalid requests, and on the first real run that would have been
+    144 of them.
+
+    `SPEC_EXAMPLE` apart from `REJECTED`. A violation whose location is in the
+    RESPONSE is Prism failing to build a spec-valid example out of the
+    document. The request was fine; there is nothing to fix in it.
+
+    A violation list carrying BOTH is a rejection: the request half decides,
+    because that is the half this check is asking about.
     """
     if status is None:
         return ERROR
-    if status == 404 and not _violations(body):
+    req_v, resp_v = _split_violations(body)
+    if status == 404 and not (req_v or resp_v):
         return NOT_ROUTED
+    if req_v:
+        return REJECTED
+    if resp_v:
+        return SPEC_EXAMPLE
     if 200 <= status < 400:
         return ACCEPTED
-    if _violations(body) or status in (400, 422):
+    if status in (400, 422):
         return REJECTED
     return ERROR
+
+
+#: A violation Prism raises about the response it generated, not the request it
+#: received. Prism spells the location either as a dotted string beginning
+#: `response` or as a list whose first element is `response`; the message text
+#: ("Response body property ...") is the fallback for a shape not seen yet.
+def _is_response_violation(v):
+    if not isinstance(v, dict):
+        return False
+    where = v.get("location") or v.get("path") or v.get("in") or ""
+    if isinstance(where, (list, tuple)):
+        where = ".".join(str(w) for w in where)
+    if str(where).lower().startswith("response"):
+        return True
+    return str(v.get("message") or "").lower().startswith("response ")
+
+
+def _split_violations(body):
+    """`(about the request, about the response)`."""
+    req, resp = [], []
+    for v in _violations(body):
+        (resp if _is_response_violation(v) else req).append(v)
+    return req, resp
 
 
 def _violations(body):
@@ -209,91 +334,118 @@ def _send(session, url, req, timeout):
     return resp.status_code, body
 
 
-def controls(spec_dir, prism, binding, tokens, realm, session, timeout=DEFAULT_TIMEOUT):
-    """Prove Prism is enforcing before believing anything it says.
+def controls(
+    spec_dir, prism, binding, tokens, realm, session, mounts, timeout=DEFAULT_TIMEOUT
+):
+    """Prove Prism is enforcing, FOR EVERY API, before believing anything.
 
-    Returns `{"negative": ..., "positive": ..., "ok": bool, "why": str}`.
-    Both controls come from the real grid rather than from a hand-written
-    request, so a control cannot pass while the thing it vouches for is built
-    differently.
+    **One control per API, and that is not tidiness.** The first version took
+    one negative and one positive from the whole grid; the grid's sort order
+    put both on CATALOG operations, so on the first real run both controls
+    reported green while **all 144 management cells 404'd**. A control that
+    cannot fail for the thing it vouches for is the failure mode this module
+    exists to avoid, and it was inside the module.
+
+    Returns `{api: {"negative": ..., "positive": ...}, "ok": bool, "why": str}`.
     """
     import api_status_matrix as mx
 
-    mounts = prism_mounts(spec_dir)
     grid = mx.cells(mx.load_spec(spec_dir))
+    out, problems = {}, []
 
-    # NOT `getToken`. It is the only form-encoded operation in the grid, and
-    # the grid's sort order lands on it first -- so the naive pick made the
-    # least representative cell vouch for all 286. Whether Prism validates a
-    # form body against the spec's schema is an open question; whether it
-    # validates a JSON body is not, and the control must rest on the settled
-    # one. The form-encoded cell is still CHECKED, it just does not vouch.
-    neg = next(
-        (
-            c
-            for c in grid
-            if c.target == 400 and c.op.has_body and c.op.op_id not in mx.FORM_ENCODED
-        ),
-        None,
-    )
-    pos = next((c for c in grid if c.target == 2 and not c.op.params), None)
-    if neg is None or pos is None:
-        return {
-            "ok": False,
-            "why": "the grid has no cell to build a control from",
-            "negative": None,
-            "positive": None,
-        }
+    for api in sorted({c.op.api for c in grid}):
+        rows = [c for c in grid if c.op.api == api]
+        # NOT `getToken`: it is the only form-encoded operation, the grid's
+        # sort order reaches it first, and whether Prism validates a form body
+        # against a schema is unsettled -- so it must not vouch for anything.
+        neg = next(
+            (
+                c
+                for c in rows
+                if c.target == 400
+                and c.op.has_body
+                and c.op.op_id not in mx.FORM_ENCODED
+            ),
+            None,
+        )
+        pos = next(
+            (c for c in rows if c.target == 2 and not c.op.params),
+            None,
+        ) or next((c for c in rows if c.target == 2), None)
 
-    out = {}
-    for name, cell, want in (("negative", neg, REJECTED), ("positive", pos, ACCEPTED)):
-        req = mx.request_for(cell, binding, tokens, f"speccheck-{name}", realm)
-        url = prism[cell.op.api].rstrip("/") + prism_path(cell.op, req["path"], mounts)
-        try:
-            status, body = _send(session, url, req, timeout)
-        except Exception as exc:  # noqa: BLE001
-            raise PrismUnavailable(
-                f"the {name} control could not reach Prism at {url}: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
-        got = classify(status, body)
-        out[name] = {
-            "op_id": cell.op.op_id,
-            "url": url,
-            "status": status,
-            "verdict": got,
-            "expected": want,
-            "ok": got == want,
-            "detail": violation_summary(body),
-        }
+        api_out = {}
+        for name, cell, want in (
+            ("negative", neg, REJECTED),
+            ("positive", pos, ACCEPTED),
+        ):
+            if cell is None:
+                api_out[name] = None
+                continue
+            req = mx.request_for(cell, binding, tokens, f"speccheck-{name}", realm)
+            url = prism[api].rstrip("/") + prism_path(cell.op, req["path"], mounts)
+            try:
+                status, body = _send(session, url, req, timeout)
+            except Exception as exc:  # noqa: BLE001
+                raise PrismUnavailable(
+                    f"the {api} {name} control could not reach Prism at {url}: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+            got = classify(status, body)
+            api_out[name] = {
+                "api": api,
+                "op_id": cell.op.op_id,
+                "url": url,
+                "status": status,
+                "verdict": got,
+                "expected": want,
+                "ok": got == want,
+                "detail": violation_summary(body),
+            }
+        out[api] = api_out
 
-    why = ""
-    unrouted = [n for n in ("negative", "positive") if out[n]["verdict"] == NOT_ROUTED]
-    if unrouted:
-        why = (
-            f"the {' and '.join(unrouted)} control(s) were NOT ROUTED: Prism "
-            "answered 404 to a path the document declares, so the mount is "
-            "wrong or the document did not load. Every request below would "
-            "404 for the same reason, and NONE of it would be about the "
-            f"requests. Mounts in use: {mounts}."
-        )
-    elif not out["negative"]["ok"]:
-        why = (
-            "the negative control was NOT rejected: Prism is serving the spec "
-            "but not enforcing it. `prism mock` without `--errors` logs "
-            "violations and answers 200 anyway, and every request below would "
-            "then read as valid. Restart it with --errors."
-        )
-    elif not out["positive"]["ok"]:
-        why = (
-            "the positive control was not accepted "
-            f"({out['positive']['verdict']}): a request known to be valid did "
-            "not get through, so the mount or the document is wrong and every "
-            "rejection below would be this fault, not the request's."
-        )
-    out["ok"] = out["negative"]["ok"] and out["positive"]["ok"]
-    out["why"] = why
+        mount = mounts.get(api) or {}
+        if isinstance(mount, dict) and not mount.get("resolved", True):
+            problems.append(
+                f"{api}: NOT ROUTED at any candidate mount "
+                f"({[t['mount'] for t in mount.get('tried', [])]}). Prism is not "
+                f"serving that document at {prism.get(api)}, so every {api} "
+                "cell would 404 and none of it would be about the requests."
+            )
+            continue
+        for name in ("negative", "positive"):
+            c = api_out.get(name)
+            if c is None:
+                problems.append(
+                    f"{api}: the grid has no cell to build a {name} control from"
+                )
+            elif c["verdict"] == NOT_ROUTED:
+                problems.append(
+                    f"{api}: the {name} control was NOT ROUTED -- Prism answered "
+                    f"404 to a path the document declares, at mount "
+                    f"{_mount_of(mounts, api)!r}."
+                )
+            elif not c["ok"] and name == "negative":
+                problems.append(
+                    f"{api}: the negative control was NOT rejected (got "
+                    f"{c['verdict']}). `prism mock` without `--errors` logs "
+                    "violations and answers 200 anyway, and every request would "
+                    "then read as valid. Restart it with --errors."
+                )
+            elif not c["ok"]:
+                problems.append(
+                    f"{api}: the positive control was not accepted (got "
+                    f"{c['verdict']}) -- a request known to be valid did not get "
+                    "through, so every rejection would be this fault."
+                )
+
+    out["ok"] = not problems
+    out["why"] = " | ".join(problems)
     return out
+
+
+def _mount_of(mounts, api):
+    m = mounts.get(api, "")
+    return m.get("mount", "") if isinstance(m, dict) else m
 
 
 def check_requests(
@@ -336,8 +488,10 @@ def check_requests(
         mx.DENIED: mt.DRY_TOKEN,
     }
 
-    ctl = controls(spec_dir, prism, binding, tokens, realm, session, timeout)
-    mounts = prism_mounts(spec_dir)
+    # WHERE Prism is serving each document is measured, not derived. The
+    # derived answer was wrong for the management spec and cost 144 cells.
+    mounts = resolve_mounts(spec_dir, prism, binding, tokens, realm, session, timeout)
+    ctl = controls(spec_dir, prism, binding, tokens, realm, session, mounts, timeout)
     grid = mx.cells(mx.load_spec(spec_dir))
 
     rows = []
@@ -364,8 +518,11 @@ def check_requests(
         if on_row:
             on_row(row)
 
-    unexpected = [r for r in rows if not r["ok"]]
+    # A SPEC_EXAMPLE row is not a verdict on the request, so it is not an
+    # unexpected cell. It is a finding about the document, reported apart.
+    unexpected = [r for r in rows if not r["ok"] and r["verdict"] != SPEC_EXAMPLE]
     not_routed = [r for r in rows if r["verdict"] == NOT_ROUTED]
+    spec_examples = [r for r in rows if r["verdict"] == SPEC_EXAMPLE]
     if not ctl["ok"]:
         verdict = VOID
     elif unexpected:
@@ -384,10 +541,12 @@ def check_requests(
         "accepted": sum(1 for r in rows if r["verdict"] == ACCEPTED),
         "rejected": sum(1 for r in rows if r["verdict"] == REJECTED),
         "not_routed": len(not_routed),
+        "spec_examples": len(spec_examples),
         "errors": sum(1 for r in rows if r["verdict"] == ERROR),
         "unexpected": unexpected,
         "rows": rows,
         "build_findings": build_findings(rows),
+        "spec_findings": spec_findings(spec_examples),
     }
 
 
@@ -442,6 +601,40 @@ def build_findings(rows):
     return out
 
 
+def spec_findings(spec_example_rows):
+    """Places the DOCUMENT cannot describe its own responses.
+
+    Grouped by the violating property rather than listed per cell: on the
+    first real run one property accounted for 23 rows across six operations,
+    and 36 rows of the same sentence is not six findings' worth of reading.
+
+    These are neither this check's failures nor Polaris's: Prism built an
+    example response from the document and it did not satisfy the document.
+    Whoever maintains the spec is the audience.
+    """
+    by_property = {}
+    for r in spec_example_rows:
+        prop = (r.get("detail") or "").split(":")[0].strip() or "(unnamed property)"
+        entry = by_property.setdefault(prop, {"ops": set(), "cells": 0})
+        entry["ops"].add(r["op_id"])
+        entry["cells"] += 1
+    out = []
+    for prop, e in sorted(by_property.items()):
+        out.append(
+            {
+                "about": "spec",
+                "title": f"`{prop}` -- Prism cannot generate a spec-valid response",
+                "measured": f"{e['cells']} cell(s) across {len(e['ops'])} "
+                f"operation(s): {', '.join(sorted(e['ops']))}. The SAME violation "
+                "appears for every target of each operation, which is what shows "
+                "it is about the document and not about the request.",
+                "operations": sorted(e["ops"]),
+                "cells": e["cells"],
+            }
+        )
+    return out
+
+
 def render_report(report):
     """Markdown, with the verdict and its reason first."""
     v = report["verdict"]
@@ -450,7 +643,7 @@ def render_report(report):
         "",
         f"{report['cells']} cells: {report['accepted']} accepted, "
         f"{report['rejected']} rejected, {report['not_routed']} not routed, "
-        f"{report['errors']} error.",
+        f"{report.get('spec_examples', 0)} spec-example, {report['errors']} error.",
         "",
     ]
     if v == VOID:
@@ -460,33 +653,72 @@ def render_report(report):
             "A VOID pass is not a pass. Do not read the counts above as a result.",
             "",
         ]
-    ctl = report.get("controls") or {}
+
     lines += [
-        "## Controls",
+        "## Where Prism is serving each document",
         "",
-        "| control | operation | expected | got | ok |",
+        "| api | mount | resolved | probed with | tried |",
         "| --- | --- | --- | --- | --- |",
     ]
-    for name in ("negative", "positive"):
-        c = ctl.get(name)
-        if c:
-            lines.append(
-                f"| {name} | `{c['op_id']}` | {c['expected']} | {c['verdict']} | "
-                f"{'yes' if c['ok'] else 'NO'} |"
-            )
+    for api, m in sorted((report.get("mounts") or {}).items()):
+        if not isinstance(m, dict):
+            m = {"mount": m, "resolved": True, "tried": [], "op_id": ""}
+        tried = ", ".join(
+            f"{t['mount'] or '(root)'}->{t['status']}" for t in m.get("tried", [])
+        )
+        lines.append(
+            f"| {api} | `{m.get('mount') or '(root)'}` | "
+            f"{'yes' if m.get('resolved') else 'NO'} | `{m.get('op_id', '')}` | "
+            f"{tried} |"
+        )
+
+    ctl = report.get("controls") or {}
+    lines += [
+        "",
+        "## Controls -- one pair per api",
+        "",
+        "| api | control | operation | expected | got | status | ok |",
+        "| --- | --- | --- | --- | --- | ---: | --- |",
+    ]
+    for api, pair in sorted(ctl.items()):
+        if not isinstance(pair, dict):
+            continue
+        for name in ("negative", "positive"):
+            c = pair.get(name)
+            if isinstance(c, dict):
+                lines.append(
+                    f"| {api} | {name} | `{c['op_id']}` | {c['expected']} | "
+                    f"{c['verdict']} | {c['status']} | "
+                    f"{'yes' if c['ok'] else 'NO'} |"
+                )
+
     if report["unexpected"]:
         lines += [
             "",
             "## Cells that did not do what the spec says they should",
             "",
-            "| operation | target | expected | got | detail |",
-            "| --- | ---: | --- | --- | --- |",
+            "| operation | target | expected | got | status | detail |",
+            "| --- | ---: | --- | --- | ---: | --- |",
         ]
         for r in report["unexpected"][:40]:
             lines.append(
                 f"| `{r['op_id']}` | {r['target']} | {r['expected']} | "
-                f"{r['verdict']} | {r['detail'][:110]} |"
+                f"{r['verdict']} | {r['status']} | {r['detail'][:110]} |"
             )
+
+    if report.get("spec_findings"):
+        lines += [
+            "",
+            "## Spec findings -- about the DOCUMENT, not the requests",
+            "",
+            "Prism built an example response out of the document and it "
+            "did not satisfy the document. Nothing here is a statement "
+            "about a request, and nothing here is this repo's to fix.",
+            "",
+        ]
+        for f in report["spec_findings"]:
+            lines.append(f"- **{f['title']}** -- {f['measured']}")
+
     if report["build_findings"]:
         lines += ["", "## Build findings -- about Polaris, not about this check", ""]
         for f in report["build_findings"]:

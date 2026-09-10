@@ -276,3 +276,100 @@ right; they do not establish that Prism agrees with the stub about what is
 invalid, and **the first real run is the one that confirms the mount points.**
 
 Gate: **289 passed** under the stand-in, 11 deliberate mutants, 11 caught.
+
+---
+
+## Third postscript — the first real Prism run, and it was worth every bit of the design
+
+Kade ran it. **FAIL: 82 accepted, 57 rejected, 144 not routed, 3 error.** Three
+real findings and two bugs in the check, and the two bugs are why most of the
+table was noise.
+
+### What was real
+
+1. **`updateProperties`'s 400 cell cannot do what it claims.**
+   `UpdateNamespacePropertiesRequest` has **no required fields** and does not
+   forbid extra ones, so `MALFORMED_BODY` is a SPEC-VALID body. Prism accepted
+   it. That cell is not testing malformation; it is a 400 the harness cannot
+   provoke this way. **This is the finding the whole module exists to produce**,
+   and it arrived on the first run.
+2. **The Iceberg document cannot describe its own responses.** ~36 rows carried
+   `response.body.metadata.schemas.0.fields.0.type` and
+   `response.body.delete-files.0.content`. Those are RESPONSE violations: Prism
+   generated an example response from the document and it failed the document's
+   own schema. Nothing to do with any request.
+3. **`getConfig`**, reported correctly under build findings, as designed.
+
+### Bug one: the mount was DERIVED, and derivation is not measurement
+
+**144 not routed was exactly the 144 management cells.** All 142 catalog cells
+routed; every management cell 404'd. Prism ignores a templated server base path
+and mounts the document's paths at the ROOT — so the derived `""` was right for
+Iceberg **by luck** and the derived `/api/management/v1` was wrong for
+management.
+
+Reading the mount out of the `servers` block looked principled. It was a guess
+about a running program dressed as a fact about a document, and this repo has a
+rule for that. `candidate_mounts` now returns a LIST and `resolve_mounts` probes
+the live server with one known-good request per candidate, takes the first that
+does not 404, and **prints what it tried** — the report's mount table now reads
+`(root)->404, /api/management/v1->200`, which is the diagnosis rather than the
+symptom. An API that routes at NO candidate is VOID, not 144 bad requests.
+
+### Bug two: the controls could not see it, and that is the worse one
+
+Both controls came from the whole grid, and the grid's sort order put both on
+**catalog** operations. So `createNamespace` and `getConfig` reported green
+while half the run 404'd. **A control that cannot fail for the thing it vouches
+for** — the exact failure this module was written to prevent, sitting inside the
+module, one file away from the docstring describing it.
+
+There is one control pair **per API** now. The same mistake had already been
+caught once in this file, when the negative control picked the only
+form-encoded operation; it recurred in a different dimension because the fix
+was specific and the lesson was general. Both are now tests.
+
+### The verdict split that was missing
+
+`classify` had two ways to say "the request is bad" and needed three. A
+violation whose location is in the RESPONSE gets `SPEC_EXAMPLE`, is excluded
+from `unexpected`, and is reported in its own section grouped by property —
+101 cells across 21 operations collapse to one finding rather than 101 rows of
+the same sentence. **A body carrying both kinds is a rejection**, because the
+request half is the half being asked about.
+
+**How to tell a response violation from a request one, without trusting a
+label:** the same violation appeared for targets 2, 401, 403, 404 AND 409 of
+one operation — identical regardless of what was sent. A verdict that does not
+vary with the request is not about the request.
+
+### The report also hid its own evidence
+
+Three `getToken` rows came back `error` with an empty detail and **no status
+column**, so they could not be read at all. `getToken` is the only
+form-encoded operation and is `deprecated: true` in the document. The status is
+in the row and was simply not printed; it is now, for controls and for odd
+cells alike.
+
+### And the bridge lied about a write
+
+`device_commit_files` reported `written` for both files and the device still
+held the old content — 18370 bytes, with neither `resolve_mounts` nor
+`SPEC_EXAMPLE` in it. The handoff's trap list already says *"the Cowork file
+bridge can report a write it did not land"*; this is the second sighting, and
+`git status` would NOT have caught it here because the file was already tracked
+and modified either way. **`md5sum` against the container copy is the check
+after every commit.** A second identical call landed it.
+
+### Still not verified
+
+Gate: **304 passed** under the stand-in, 9 deliberate mutants, 9 caught. But
+every one of these fixes was tested against the stub, and **the stub is now
+modelled on one observed Prism run** rather than on nothing — better evidence
+than before, still not Prism. The next real run is what says whether the probe
+finds the management mount.
+
+**Open, and deliberately not fixed here:** `updateProperties`'s 400 cell. The
+grid should either drop that cell or malform it in a way the schema actually
+forbids, and choosing between those is a decision about `api_status_matrix`,
+not about this check.

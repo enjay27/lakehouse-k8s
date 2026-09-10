@@ -56,14 +56,43 @@ class FakePrism:
     `enforcing=False` reproduces `prism mock` WITHOUT `--errors`: it sees the
     violation and answers 200 anyway. That mode is the reason the controls
     exist, so the stub has to be able to be in it.
+
+    `mounts` says WHERE this stub serves each document; anything else 404s.
+    The default reproduces what the first real run measured -- Prism mounts at
+    the document's path ROOT and ignores a templated server base path -- so a
+    module that goes back to deriving the mount fails here rather than in a
+    report.
+
+    `bad_response` holds URL FRAGMENTS whose generated example does not satisfy
+    the document -- fragments rather than operation ids because that is all a
+    server can see. It produces a violation about the RESPONSE, raised
+    identically whatever the request was: the `SPEC_EXAMPLE` case, and 36 rows
+    of it were read as invalid requests on the first real run.
     """
 
-    def __init__(self, enforcing=True, routed=True, invalid=None):
+    def __init__(
+        self, enforcing=True, routed=True, invalid=None, mounts=None, bad_response=()
+    ):
         self.enforcing = enforcing
         self.routed = routed
+        self.mounts = {"management": "", "catalog": ""} if mounts is None else mounts
+        self.bad_response = set(bad_response)
         #: predicate(url, req) -> True when the request violates the spec.
         self.invalid = invalid or (lambda url, req: _looks_malformed(req))
         self.seen = []
+
+    def _path_of(self, url):
+        return url.split(".invalid", 1)[-1] or "/"
+
+    def _routed(self, url):
+        if not self.routed:
+            return False
+        api = "management" if "prism-mgmt" in url else "catalog"
+        mount = self.mounts.get(api)
+        if mount is None:
+            return False
+        path = self._path_of(url)
+        return path.startswith(mount) if mount else not path.startswith("/api/")
 
     def request(
         self, method, url, params=None, headers=None, json=None, data=None, timeout=None
@@ -76,9 +105,30 @@ class FakePrism:
             "data": data,
         }
         self.seen.append((url, req))
-        if not self.routed:
+        if not self._routed(url):
             return FakeResponse(
                 404, {"type": "NOT_FOUND", "title": "Route not resolved"}
+            )
+        if any(marker in url for marker in self.bad_response):
+            return FakeResponse(
+                500,
+                {
+                    "type": "https://stoplight.io/prism/errors#VIOLATIONS",
+                    "validation": [
+                        {
+                            "location": [
+                                "response",
+                                "body",
+                                "metadata",
+                                "schemas",
+                                "0",
+                            ],
+                            "severity": "Error",
+                            "message": "Response body property "
+                            "metadata.schemas.0.fields.0.type must be equal to constant",
+                        }
+                    ],
+                },
             )
         if self.invalid(url, req):
             if not self.enforcing:
@@ -91,7 +141,7 @@ class FakePrism:
                     "status": 422,
                     "validation": [
                         {
-                            "location": ["body", "name"],
+                            "location": ["request", "body", "name"],
                             "severity": "Error",
                             "code": "required",
                             "message": "must have required property 'name'",
@@ -123,13 +173,45 @@ def _run(**kw):
 # ----------------------------------------------------------------------
 # mounting, derived from the documents themselves
 # ----------------------------------------------------------------------
-def test_the_two_specs_mount_at_different_paths():
-    """The difference is invisible until every catalog request 404s: the
-    management document carries its prefix in `servers`, the Iceberg one
-    defaults `basePath` to empty and gets `/api/catalog` from POLARIS."""
-    mounts = sc.prism_mounts(SPEC)
-    assert mounts["management"] == "/api/management/v1"
-    assert mounts["catalog"] == ""
+def test_the_declared_server_path_is_a_candidate_and_not_the_answer():
+    """It USED to be the answer, derived from `servers`, and it was wrong for
+    the management document: Prism mounts at the path root and ignores a
+    templated base path, so all 144 management cells 404'd on the first real
+    run. The empty mount is first because that is what was measured."""
+    cands = sc.candidate_mounts(SPEC)
+    assert cands["management"][0] == ""
+    assert "/api/management/v1" in cands["management"]
+    assert cands["catalog"] == [""]
+
+
+def test_the_mount_is_probed_against_the_running_prism():
+    """Measured, not derived -- and the report says which candidate won, or
+    the next reader re-derives it and gets the same wrong answer."""
+    report, _ = _run()
+    for api in ("management", "catalog"):
+        assert report["mounts"][api]["resolved"] is True
+        assert report["mounts"][api]["mount"] == ""
+        assert report["mounts"][api]["tried"]
+
+
+def test_a_prism_serving_the_declared_path_is_found_there_too():
+    """The probe must not hardcode the answer that happens to be right today:
+    a server that DOES mount at the declared path resolves to it."""
+    report, _ = _run(mounts={"management": "/api/management/v1", "catalog": ""})
+    assert report["mounts"]["management"]["mount"] == "/api/management/v1"
+    assert report["mounts"]["catalog"]["mount"] == ""
+    assert report["verdict"] == sc.PASS
+
+
+def test_an_api_that_routes_nowhere_is_void_not_144_bad_requests():
+    """The first real run's shape exactly: every management cell 404. Reported
+    as 144 invalid requests it points at the harness; the true answer is that
+    Prism is not serving that document there."""
+    report, _ = _run(mounts={"management": "/nowhere", "catalog": ""})
+    assert report["verdict"] == sc.VOID
+    assert report["mounts"]["management"]["resolved"] is False
+    assert "NOT ROUTED at any candidate mount" in report["why"]
+    assert report["mounts"]["catalog"]["resolved"] is True
 
 
 def test_a_templated_server_url_resolves_to_its_defaults():
@@ -157,14 +239,18 @@ def test_a_templated_server_url_resolves_to_its_defaults():
     )
 
 
-def test_the_polaris_base_is_stripped_and_the_spec_mount_prepended():
+def test_the_polaris_base_is_stripped_and_the_resolved_mount_prepended():
     ops = {o.api: o for o in mx.load_spec(SPEC)}
-    mounts = sc.prism_mounts(SPEC)
     m, c = ops["management"], ops["catalog"]
+    declared = {"management": {"mount": "/api/management/v1"}, "catalog": {"mount": ""}}
     assert (
-        sc.prism_path(m, m.base + "/catalogs", mounts) == "/api/management/v1/catalogs"
+        sc.prism_path(m, m.base + "/catalogs", declared)
+        == "/api/management/v1/catalogs"
     )
-    assert sc.prism_path(c, c.base + "/v1/config", mounts) == "/v1/config"
+    assert sc.prism_path(c, c.base + "/v1/config", declared) == "/v1/config"
+    # and at the root mount, which is where Prism was measured serving both
+    root = {"management": {"mount": ""}, "catalog": {"mount": ""}}
+    assert sc.prism_path(m, m.base + "/catalogs", root) == "/catalogs"
 
 
 def test_a_path_that_does_not_carry_its_recorded_base_raises():
@@ -172,7 +258,7 @@ def test_a_path_that_does_not_carry_its_recorded_base_raises():
     route, which is a different finding with a different remedy."""
     op = next(o for o in mx.load_spec(SPEC) if o.api == "catalog")
     with pytest.raises(ValueError, match="does not start with its recorded base"):
-        sc.prism_path(op, "/somewhere/else", sc.prism_mounts(SPEC))
+        sc.prism_path(op, "/somewhere/else", {"catalog": {"mount": ""}})
 
 
 # ----------------------------------------------------------------------
@@ -261,22 +347,17 @@ def test_a_wrong_mount_makes_the_pass_void_rather_than_286_failures():
     assert "--errors" not in report["why"]
 
 
-def test_the_negative_control_is_never_the_form_encoded_operation():
-    """`getToken` is the only one, the grid's sort order reaches it first, and
-    whether Prism validates a form body against a schema is unsettled. Letting
-    it vouch for the other 285 makes the least representative cell the
-    control -- which is how this check first reported VOID on a healthy stub."""
-    report, _ = _run()
-    assert report["controls"]["negative"]["op_id"] not in mx.FORM_ENCODED
-
-
 def test_the_controls_are_built_from_the_real_grid():
     """A control written by hand can pass while the thing it vouches for is
     built differently."""
     report, _ = _run()
     ops = {c.op.op_id for c in mx.cells(mx.load_spec(SPEC))}
-    assert report["controls"]["negative"]["op_id"] in ops
-    assert report["controls"]["positive"]["op_id"] in ops
+    for api, pair in report["controls"].items():
+        if not isinstance(pair, dict):
+            continue
+        for name in ("negative", "positive"):
+            if pair.get(name):
+                assert pair[name]["op_id"] in ops
 
 
 def test_a_clean_run_passes_and_reports_both_controls_ok():
@@ -284,6 +365,7 @@ def test_a_clean_run_passes_and_reports_both_controls_ok():
     assert report["verdict"] == sc.PASS
     assert report["controls"]["ok"] is True
     assert report["cells"] == len(mx.cells(mx.load_spec(SPEC)))
+    assert report["not_routed"] == 0
 
 
 # ----------------------------------------------------------------------
@@ -361,7 +443,7 @@ def test_prism_being_down_is_raised_not_reported_as_invalid_requests():
         def request(self, *a, **k):
             raise ConnectionError("connection refused")
 
-    with pytest.raises(sc.PrismUnavailable, match="control could not reach Prism"):
+    with pytest.raises(sc.PrismUnavailable, match="could not reach Prism"):
         sc.check_requests(SPEC, PRISM, session=Dead(), run="t")
 
 
@@ -419,6 +501,133 @@ def _graph_from(start):
         if path.exists():
             queue.extend(_imports_of(path))
     return seen
+
+
+# ----------------------------------------------------------------------
+# request violations are not response violations
+# ----------------------------------------------------------------------
+def test_a_response_violation_is_not_a_verdict_on_the_request():
+    """The first real run returned 36 of these and every one was counted as an
+    invalid request. The giveaway that they cannot be: the SAME violation
+    appears for targets 2, 401, 403, 404 and 409 of one operation -- identical
+    whatever was sent."""
+    body = {
+        "validation": [
+            {
+                "location": ["response", "body", "metadata"],
+                "message": "Response body property x must be equal to constant",
+            }
+        ]
+    }
+    assert sc.classify(500, body) == sc.SPEC_EXAMPLE
+    assert sc.classify(500, body) != sc.REJECTED
+
+
+@pytest.mark.parametrize(
+    "violation",
+    [
+        {"location": ["response", "body"], "message": "bad"},
+        {"location": "response.body.x", "message": "bad"},
+        {"location": [], "message": "Response body property x must be a string"},
+    ],
+)
+def test_a_response_violation_is_recognised_in_every_shape_prism_writes_it(violation):
+    assert sc.classify(500, {"validation": [violation]}) == sc.SPEC_EXAMPLE
+
+
+def test_a_request_violation_still_rejects():
+    body = {
+        "validation": [
+            {
+                "location": ["request", "body", "name"],
+                "message": "must have required property 'name'",
+            }
+        ]
+    }
+    assert sc.classify(422, body) == sc.REJECTED
+
+
+def test_a_body_carrying_both_kinds_is_a_rejection():
+    """The request half decides, because that is the half being asked about."""
+    body = {
+        "validation": [
+            {"location": ["response", "body"], "message": "Response body property x"},
+            {"location": ["request", "body"], "message": "must have required property"},
+        ]
+    }
+    assert sc.classify(422, body) == sc.REJECTED
+
+
+def test_spec_example_rows_are_not_counted_as_failures():
+    """They are not this repo's to fix and not Polaris's either. Counted as
+    unexpected cells they would fail a run whose requests were all correct."""
+    report, _ = _run(bad_response=["/tables", "/register"])
+    assert report["spec_examples"] > 0
+    assert not [r for r in report["unexpected"] if r["verdict"] == sc.SPEC_EXAMPLE]
+    assert report["verdict"] == sc.PASS
+
+
+def test_spec_findings_group_by_property_rather_than_listing_every_cell():
+    """One property accounted for 23 rows across six operations on the first
+    real run. Thirty-six repetitions of one sentence is not six findings."""
+    report, _ = _run(bad_response=["/tables", "/register"])
+    findings = report["spec_findings"]
+    assert findings and all(f["about"] == "spec" for f in findings)
+    assert len(findings) < report["spec_examples"]
+    assert sum(f["cells"] for f in findings) == report["spec_examples"]
+
+
+def test_the_report_keeps_spec_build_and_request_findings_in_three_sections():
+    report, _ = _run(bad_response=["/register"])
+    text = sc.render_report(report)
+    assert "Spec findings -- about the DOCUMENT" in text
+    assert "Build findings -- about Polaris" in text
+    # and the spec section says, in words, that it is not about any request --
+    # a reader who takes these for harness failures fixes the wrong thing.
+    assert "Nothing here is a statement about a request" in text
+    assert "Where Prism is serving each document" in text
+
+
+# ----------------------------------------------------------------------
+# one control per api
+# ----------------------------------------------------------------------
+def test_there_is_a_control_pair_for_every_api_the_grid_drives():
+    """Both controls landed on CATALOG operations on the first real run, so
+    they reported green while all 144 management cells 404'd. A control that
+    cannot fail for the thing it vouches for is the failure this module exists
+    to prevent, and it was inside the module."""
+    report, _ = _run()
+    apis = {c.op.api for c in mx.cells(mx.load_spec(SPEC))}
+    for api in apis:
+        pair = report["controls"][api]
+        assert pair["negative"] and pair["positive"], api
+        assert pair["negative"]["api"] == api
+        assert pair["positive"]["api"] == api
+
+
+def test_a_management_only_failure_is_caught_by_the_management_control():
+    """The exact first-run shape: catalog healthy, management not."""
+    report, _ = _run(mounts={"management": "/nowhere", "catalog": ""})
+    assert report["verdict"] == sc.VOID
+    assert "management" in report["why"]
+
+
+def test_neither_apis_negative_control_is_the_form_encoded_operation():
+    report, _ = _run()
+    for api, pair in report["controls"].items():
+        if isinstance(pair, dict) and pair.get("negative"):
+            assert pair["negative"]["op_id"] not in mx.FORM_ENCODED
+
+
+def test_the_report_prints_a_status_for_every_control_and_odd_cell():
+    """An ERROR row with no status is undiagnosable -- three `getToken` rows
+    came back that way on the first real run and could not be read at all."""
+    report, _ = _run()
+    text = sc.render_report(report)
+    assert "| status |" in text or "status |" in text
+    for api, pair in report["controls"].items():
+        if isinstance(pair, dict) and pair.get("negative"):
+            assert pair["negative"]["status"] is not None
 
 
 def test_spec_check_imports_no_logging_module():
