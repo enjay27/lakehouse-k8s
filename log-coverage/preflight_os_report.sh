@@ -165,4 +165,29 @@ else
   unkn "polaris-logs-* absent, or http_status not mapped as a number (type_int_key)"
 fi
 
+# ------------------------------------------ which index actually holds the rows
+head_ "0.5 -- WHERE the report rows live (_cat and the aggregation disagreed once)"
+BY="$(os "/polaris-report-*/_search" '{"size":0,"aggs":{"i":{"terms":{"field":"_index","size":20},"aggs":{"v":{"terms":{"field":"schema_version","size":5}}}}}}' || true)"
+if echo "$BY" | jq -e '.aggregations.i.buckets' >/dev/null 2>&1; then
+  echo "$BY" | jq -r '.aggregations.i.buckets[] | "         \(.key)  total=\(.doc_count)  " + (.v.buckets|map("v\(.key)=\(.doc_count)")|join("  "))'
+  TOTAL="$(echo "$BY" | jq -r '[.aggregations.i.buckets[].doc_count]|add')"
+  echo "         aggregation total = $TOTAL"
+  echo "       Compare with the docs= figures in 0.1. If they disagree, the daily index"
+  echo "       suffix is NOT tracking the window date -- and every per-index conclusion"
+  echo "       above (the mapping check especially) was taken on the wrong index."
+  # the mapping that actually matters: the index holding the v3 rows
+  V3IDX="$(echo "$BY" | jq -r '[.aggregations.i.buckets[]|select(.v.buckets|map(.key)|index(3))]|sort_by(.doc_count)|last|.key // empty')"
+  if [ -n "$V3IDX" ]; then
+    T2="$(os "/$V3IDX/_mapping/field/min_record_time" | jq -r '..|.type? // empty' | head -1)"
+    case "$T2" in
+      date) pass "$V3IDX (holds the v3 rows): min_record_time mapped as date" ;;
+      "")   unkn "$V3IDX (holds the v3 rows): min_record_time not mapped yet" ;;
+      *)    fail "$V3IDX (holds the v3 rows): min_record_time mapped as $T2 -- permanent for this index" ;;
+    esac
+  fi
+else
+  unkn "cannot aggregate by _index"
+fi
+
+
 printf '\n== done. Paste this whole output back into the session.\n'

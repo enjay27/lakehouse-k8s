@@ -306,3 +306,106 @@ fine, because the report is synthesised by the filter rather than tailed. Check 
 The tier-2 health check printing `0 B over 0 rec` right after the roll is **expected, not a
 finding**: Polaris logs only on request. It has to be re-read after traffic, and the matrix run
 is the traffic.
+
+---
+
+## 9. Preflight result, 2026-09-10 — three of §0's four predictions were wrong
+
+Run against `https://192.168.194.1:9200` (OpenSearch 3.5.0) after Kade's helm rev 11.
+
+### What the run settles, in its favour
+
+**§0.1 is answered YES, on both halves.** `polaris-report-*` and `polaris-logs-*` both exist,
+and — the one that mattered — **the access log DOES reach OpenSearch**: 884 records carrying
+`http_status`, mapped as a number. §8's stdout risk is **closed**: the DaemonSet sees the
+access-log lines, so the per-call half of the matrix has a source. The status mix is also free
+evidence for §2's reachability ledger, from traffic that already happened:
+
+```
+201 x335   404 x196   204 x119   403 x77   400 x48   422 x39
+409 x28    500 x21    200 x7     401 x7    405 x7
+```
+
+**500, 422 and 405 are all reachable on this build** — 500 twenty-one times. And **304, 406,
+419, 429, 502, 503, 504 appear zero times across 884 records**, which is the first independent
+support for the probe-then-adjudicate ledger. Not proof (nothing drove them), but the ledger is
+no longer only an inference from the spec.
+
+**§0.2 was WRONG, and this is the correction that matters.** I predicted Gate 0 would fail
+because `SCHEMA-report.md` says v3 is "written, not yet deployed". **v3 is deployed and
+flowing**: 53 rows, `SCHEMA_VERSION = 3` in the running DaemonSet, newest `report_seq 53` at
+`2026-09-10T01:21:00Z`. The doc was accurate when written on 2026-09-09 and Kade deployed it on
+2026-09-10. **Gate 0 PASSES. Gates 2, 4-denial and 5 are AVAILABLE**, and sign-off question (1)
+is closed: no v2 fallback is needed.
+
+### What it opens
+
+**9.1 The two shippers now run different schema versions, and the oracle has to be told which.**
+
+| | `benchmarks-fluent-bit` (DaemonSet) | `fb-polaris-shipper` (Deployment) |
+|---|---|---|
+| `SCHEMA_VERSION` | **3** | **2** |
+| pod started | 2026-09-10T00:55:24Z | 2026-09-07T04:21:51Z |
+| ships to | OpenSearch | VictoriaLogs |
+| `polaris_cri_unwrap` | present | absent (it tails a file, not a CRI stream) |
+| `REPORT_MAX_ROLE_KEYS` | 100 | absent — a v3 constant |
+
+`WINDOW_SECONDS = 30` on both, so the phase schedule in §3 holds.
+
+This confirms the `policy_from_cluster(selector)` design in §4 and adds a requirement:
+**the selector is an argument, not a default.** `lc.load_policy(ptu.FB_VALUES_PATH)` reads the
+Deployment's values file and would hand the v2 oracle to a run measuring the v3 pipeline —
+producing exactly the "eight unexpected fields per row" output that cost a round trip on
+2026-09-04, with nothing naming the cause. v2's cell 0b must print **both** shippers' versions
+and assert on the one it is measuring.
+
+Consequence for v1: `polaris_log_coverage.ipynb` still measures the v2 Deployment and is
+unaffected — **until** someone upgrades that one too. When that happens, v1's oracle
+(`lc.SCHEMA_VERSION`) needs the same migration, and its gate will say so in one line.
+
+**9.2 `min_record_time` is already mapped as `text` in `polaris-report-2026.09.10`.** Review #2's
+trap, live. The Lua writes `""` on idle windows and OpenSearch typed the field from the first
+one — permanently, for that index. At 30-second windows with sparse traffic, **the first window
+of every new day is almost certainly idle**, so a fresh index gets poisoned on its first row and
+"a new index will map correctly" is not a remedy that survives contact.
+
+Two things follow, and they are separable:
+- **The invariant is still checkable.** `max_record_time - min_record_time <= window_seconds`
+  parses two RFC3339 strings client-side and does not care how OpenSearch typed them. It stays
+  in §4's Gate-15 cell. What is dead is *date maths inside OpenSearch* on those two fields in
+  that index — no `range` query, no date histogram.
+- **The cheap fix is an index template, not a Lua change.** An index template for
+  `polaris-report-*` mapping `min_record_time` / `max_record_time` as `date` fixes every future
+  daily index without touching the filter, and survives the `""` bug rather than depending on it
+  being fixed. (Empty string then *fails* to index that field, which is the correct outcome:
+  absence, not a text-typed lie.) **Recommended before the run of record; not a blocker.**
+
+**9.3 An arithmetic discrepancy — 55 rows unaccounted for, and it must be settled before the run.**
+`_cat/indices` reported `polaris-report-2026.09.09` 1461 + `polaris-report-2026.09.10` 2 =
+**1463 docs**. The `schema_version` aggregation over `polaris-report-*` reported 1465 + 53 =
+**1518 rows**, seconds apart. Worse: **53 v3 rows exist but today's index holds 2 docs**, so
+~51 v3 rows are landing somewhere other than the index named for their window date.
+
+That is not cosmetic. If the daily suffix does not track the window date, then every per-index
+conclusion above was taken on the wrong index — **including 9.2's mapping check, which read an
+index holding two documents.** A matrix run reconciles counts for a living; it cannot start on
+an index set whose totals disagree with themselves.
+
+`preflight_os_report.sh` §0.5 now settles it: a terms aggregation on `_index` × `schema_version`,
+plus the mapping of whichever index actually holds the v3 rows. **Re-run it — that check did not
+exist when you ran the script.**
+
+### Where this leaves sign-off
+
+| question | status |
+|---|---|
+| (1) deploy report v3 first? | **CLOSED** — v3 is live on the OpenSearch shipper |
+| (2) does the polaris shipper write to OpenSearch? | **CLOSED** — both indices exist, access log included |
+| (3) 305 calls against `local` | **still open** |
+| (4) *new* — settle §9.3 before driving | re-run the preflight |
+
+One correction to carry: §0.2 of this plan predicted a failure that did not happen. The
+prediction was made from a document rather than from the cluster, which is the mistake this
+repo keeps a rule against — *reading `schema_version` out of the values file proves nothing*.
+It is left in place rather than edited away, because a plan that quietly deletes its wrong
+predictions cannot be checked.

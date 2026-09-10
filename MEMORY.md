@@ -4,56 +4,51 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-07 (session 8)
+## Now — 2026-09-10 (session 9)
+
+**EVERY API, EVERY REACHABLE STATUS — planned, not started.**
+[`log-coverage/PLAN-api-status-matrix.md`](log-coverage/PLAN-api-status-matrix.md) is the
+read; it needs sign-off before code. Measured: today's harness drives **40 of the 63**
+operations the vendored specs name, and the 24 with no driver include every endpoint the
+classifier has never seen (`/credentials`, `/plan`, `/tasks`, `/register`,
+`/transactions/commit`) — so **Gate 6 of the schema-v3 guide has never had anything to find**.
+The run targets **OpenSearch** (`polaris-report-*` / `polaris-logs-*`), not VictoriaLogs, in a
+new `polaris_log_coverage_v2.ipynb`; v1 stays the run of record.
+
+**REPORT SCHEMA v3 IS LIVE, and the two shippers now disagree.** `benchmarks-fluent-bit`
+(DaemonSet → OpenSearch, helm rev 11, pod 00:55:24Z) runs `SCHEMA_VERSION 3`;
+`fb-polaris-shipper` (Deployment → VictoriaLogs, pod 2026-09-07) still runs **2**. So the
+oracle must be told WHICH pipeline it is measuring — `load_policy(FB_VALUES_PATH)` would hand
+a v2 oracle to a v3 run. Preflight (`log-coverage/preflight_os_report.sh`, read-only) also
+found: the access log DOES reach OpenSearch (884 records with `http_status`; 500/422/405 all
+reachable, 304/406/419/429/502/503/504 absent across all 884), `min_record_time` is **already
+mapped as text** in today's report index, and **55 report rows are unaccounted for** between
+`_cat/indices` and the aggregation — settle that before driving anything.
+
+## Then — 2026-09-07 (session 8)
 
 **Read [`log-coverage/HANDOFF-500-coverage-2026-09-07.md`](log-coverage/HANDOFF-500-coverage-2026-09-07.md)
-first — standalone, written for a session starting cold.** Then
-[`PLAN-log-coverage-schema-v2.md`](log-coverage/PLAN-log-coverage-schema-v2.md) and
-[`PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md).
+first if you are picking that up cold** — standalone. In one paragraph: the oracle reads schema
+v2 and the drift that caused the gate abort cannot recur silently (`Policy.schema_version`
+reads the deployed script; `merge_windows` derives summable fields from the row). **Every route
+to a 500 is a closed one** — run `1788759324`, 157 calls: a broken storage endpoint is **422**,
+a missing bucket **400**, a stale `entityVersion` **409**, all mapped by
+`IcebergExceptionMapper`, so storage misconfiguration is a CLIENT error on this build. The only
+500 seen here remains the PG-HA read-after-write signature, which cannot be provoked on demand;
+§5c printed NOT PROVOKED, which is the contract working. Stack traces survive, 7 of 7, under
+four `exception.*` names. **Still open:** nothing provokes an UNHANDLED exception — best
+candidate is inducing PG replica lag (`pg_wal_replay_pause()`, a `local-k8s` action); if that is
+not feasible, close it as *opportunistic and not repeatable*. Detail:
+[`PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md), `.memory/roadmap.md`.
 
-**THE ORACLE READS SCHEMA v2, and the drift that caused the gate abort cannot recur silently.**
-The filter shipped v2 while `SCHEMA_VERSION` stayed 1, and cell 0b printed eight "unexpected
-fields" per stored row — correct rows rendered as pipeline drift, with nothing naming the cause.
-`Policy.schema_version` now reads the deployed script and the gate compares the two.
-**`merge_windows` no longer sums a hardcoded list**: it derives the summable fields from the row,
-because the old list added `errors` and silently not `errors_4xx` **in the same row** — the third
-instance of that shape here. `check_invariants` carries v2's cardinality rule, the error-split
-inequalities and all six reconciled margins.
+**Fast-run settings are live and TEMPORARY** (`WINDOW_SECONDS` 30, `Interval_Sec` 5). **Revert
+together** when the run of record is done — the api-status-matrix phase schedule depends on 30s
+windows, so revert AFTER it, not before.
 
-**COVERAGE: 500 ERROR RAN, AND EVERY ROUTE TO A 500 IS NOW A CLOSED ONE.** Run `1788759324`,
-157 calls, clean linear run. All four rungs answered by a **4xx**: a broken storage endpoint is
-**422** whether it is refused (`127.0.0.1:1`) or unresolvable (`.svc.invalid`), a missing bucket
-is **400**, a stale `entityVersion` is **409**. `IcebergExceptionMapper` (50 records) catches and
-maps them, so **storage misconfiguration is a CLIENT error on this build and never reaches
-`errors_5xx`** — measured, not assumed. §5c printed NOT PROVOKED, which is the contract working.
-**The only 500 anyone has seen here is still the PG-HA read-after-write signature**, which
-cannot be provoked on demand. **Stack traces survive and are richer than recorded: 7 of 7, under
-FOUR names** — `exception.exceptionType`, `.frames`, `.message`, `.refId` — and 48 records in the
-run carried one, so traces accompany handled 4xx too.
-
-**Fast-run settings still live and TEMPORARY** (sha `d58b9203a8304030`): `WINDOW_SECONDS` 30,
-`Interval_Sec` 5. **Revert together** when the run of record is done.
-
-**Next:** the blocker is that **nothing provokes an UNHANDLED exception**. Best candidate is
-inducing PG replica lag on purpose (`pg_wal_replay_pause()` on a standby, then
-`create_namespace`) — a `local-k8s` action, since it needs psql. If that is not feasible, close
-the question honestly as *opportunistic and not repeatable* rather than leaving it open. Then the
-run of record, then revert the fast-run settings.
-
-**Gate: the oracle tests RUN FROM COWORK now — 115 passed, 0 skipped**, against the deployed
-filter (`lua5.4` in the cloud container + `FB_VALUES_PATH` at a staged `fb-values.yaml`). 37 tests
-that had never executed from this side found three real bugs on their first run. Device suite:
-708 passed / 1 pre-existing `test_privilege_scan` drift.
-
-**Side task 2026-09-08 — the api-sql-profile workbooks now have a Korean reading
-guide.** [`diagnostics/api-sql-profile/doc-api-sql-profile-guide-ko.md`](diagnostics/api-sql-profile/doc-api-sql-profile-guide-ko.md)
-(method, cases, 8 sheets, trap columns) +
-[`doc-api-sql-profile-results-ko.md`](diagnostics/api-sql-profile/doc-api-sql-profile-results-ko.md)
-(the 2026-09-03 run; replace it, not the guide, after the next sweep).
-Hand-written prose, so `_check_guide_figures.py` recomputes all 22 quoted
-figures from the workbooks and run files — negative-tested. **`pytest` could not
-be run at all that session** (macOS `.venv` unusable in the VM; PyPI 403 from
-both the device and Cowork) — see `.memory/active-issues.md`.
+**Side task 2026-09-08 — the api-sql-profile workbooks have a Korean reading guide**
+(`diagnostics/api-sql-profile/doc-api-sql-profile-guide-ko.md` + `-results-ko.md`;
+figures recomputed by `_check_guide_figures.py`). `pytest` could not be run at all
+that session — see `.memory/active-issues.md`.
 
 ## Where the detail is
 
