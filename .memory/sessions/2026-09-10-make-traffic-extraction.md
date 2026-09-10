@@ -373,3 +373,96 @@ finds the management mount.
 grid should either drop that cell or malform it in a way the schema actually
 forbids, and choosing between those is a decision about `api_status_matrix`,
 not about this check.
+
+---
+
+## Fourth postscript — the second Prism run: the mount held, and the VOID was mine
+
+`VOID: 205 accepted, 15 rejected, **0 not routed**, 63 spec-example, 3 error.`
+The probe worked — both documents resolved at the root, and the mount table
+shows `management (root)->500`, which is a 500 rather than a 404 and therefore
+routed. 144 not-routed became 0.
+
+### The finding that matters, and it is now computed rather than observed
+
+**12 of the grid's 27 malformed-body 400 cells CANNOT be provoked by omitting a
+required field**, because their request schemas declare **no `required` at
+all**. `MALFORMED_BODY` is then a *valid* body: the cell drives a successful
+call and reports a 400 it never provoked. Prism returned 200/201 for nine of
+them.
+
+```
+management  addGrantToCatalogRole, assignCatalogRoleToPrincipalRole,
+            assignPrincipalRole, createCatalogRole, createPrincipal,
+            createPrincipalRole, resetCredentials,
+            revokeGrantFromCatalogRole, updateCatalog
+catalog     getToken, planTableScan, updateProperties
+```
+
+`createCatalog` requires `catalog`, which is exactly why it works as the
+management negative control — the one operation in that half whose body the
+document can reject.
+
+**The run surfaced 9; the true number is 12.** The other three were masked
+behind other verdicts (`getToken` by a 401, `planTableScan` and `updateCatalog`
+by response violations). That gap is the argument for `unmalformable_cells`,
+which computes the whole set **from the documents alone — no Prism, no
+cluster** — and is asserted in the suite that already runs. A finding that
+needs a running server to be seen is a finding that stays partly hidden.
+
+Reported as **one harness finding**, in its own section. Four audiences now,
+four sections, and the discipline is the same one SCENARIO §6 asks for:
+
+| section | whose |
+|---|---|
+| cells that did not do what the spec says | the request, and a real failure |
+| **harness findings** | **THIS repo's** |
+| spec findings | the document's |
+| build findings | Polaris's |
+
+**Deliberately not fixed.** The grid should either stop emitting a 400 cell
+where the schema cannot be violated by omission, or malform by wrong TYPE on a
+declared property. One shrinks the denominator to 274 and one changes every
+400 cell's request; both change `api_status_matrix`, and choosing is a decision
+rather than a patch. Filed in `.memory/active-issues.md`.
+
+### Two more of mine, both the same shape as before
+
+**The VOID was wrong.** `listCatalogs` came back 500 with a *response*
+violation — the request got through and Prism failed to build its own example.
+I was requiring the positive control to be literally `ACCEPTED`, so a run that
+was measuring perfectly reported VOID. The positive control asks one question,
+*did a valid request get through*, and `SPEC_EXAMPLE` answers yes.
+
+**The negative control is NOT loosened the same way, and that asymmetry is
+load-bearing:** a request Prism rejects never reaches response generation, so a
+negative control cannot legitimately come back `SPEC_EXAMPLE`. Loosening it
+would let a non-enforcing Prism through, which is the single thing the controls
+exist to catch. Writing the test for it exposed that **the stub had the order
+backwards** — it generated the response before validating the request, so a
+rejected request could come back as a document problem and the reasoning could
+not have been tested at all. The stub validates first now, as Prism does.
+
+**The three `getToken` rows were a security refusal, not a shape verdict.**
+Status 401, no violations. `getToken` declares no `security` of its own and
+inherits the document's global `security: [OAuth2, BearerAuth]`, so **Prism
+demands a bearer token in order to obtain a bearer token**. The request is
+correct — an OAuth token endpoint carries its credentials in the form body.
+`AUTH_REQUIRED` is its own verdict now, excluded from failures and reported as
+a spec finding. It is checked before the 400/422 rule so a security refusal can
+never read as a malformed request, and after the violation check so a genuinely
+malformed request cannot hide behind a 401.
+
+### The pattern across all three runs, stated once
+
+Every bug in this module has been the same one: **a check that could not fail
+for the thing it was vouching for.** The negative control that was the only
+form-encoded operation. Both controls on one API while the other 404'd. A
+positive control that failed on a verdict meaning success. Each fix was
+specific; the class kept recurring. What finally generalises it is the
+`NOT_ABOUT_THE_REQUEST` set — a single named place saying which verdicts are
+statements about the document rather than the request — plus a static computation
+that does not need a server to be right.
+
+Gate: **317 passed** under the stand-in, 9 mutants, 9 caught. `device_commit_files`
+landed first time and was md5-checked, per the rule added an hour ago.

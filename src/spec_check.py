@@ -76,7 +76,21 @@ NOT_ROUTED = "not_routed"
 #: identical regardless of what was sent, which is what proves it cannot be
 #: about the request. Counted as `REJECTED` they read as 36 invalid requests.
 SPEC_EXAMPLE = "spec_example"
+#: Prism refused on a SECURITY SCHEME rather than on the request's shape.
+#: Measured on the second real run: `getToken` came back 401 with no
+#: violations. It declares no operation-level `security`, so it inherits the
+#: Iceberg document's global `security: [OAuth2, BearerAuth]` -- and Prism then
+#: demands a bearer token in order to OBTAIN a bearer token. The request is
+#: correct: an OAuth token endpoint carries its credentials in the form body,
+#: not in an Authorization header. So this says nothing about the request, and
+#: counting it as one left three unreadable `error` rows.
+AUTH_REQUIRED = "auth_required"
 ERROR = "error"
+
+#: Verdicts that are NOT a judgement on the request that provoked them. Each
+#: is about the DOCUMENT: one about the response it describes, one about the
+#: security it declares.
+NOT_ABOUT_THE_REQUEST = frozenset({SPEC_EXAMPLE, AUTH_REQUIRED})
 
 #: Outcomes for a whole pass.
 PASS = "PASS"
@@ -261,6 +275,11 @@ def classify(status, body):
         return SPEC_EXAMPLE
     if 200 <= status < 400:
         return ACCEPTED
+    # A bare 401 is Prism enforcing a security scheme. It is not a shape
+    # verdict, and it is checked BEFORE the 400/422 rejection rule so that a
+    # security refusal can never be read as a malformed request.
+    if status == 401:
+        return AUTH_REQUIRED
     if status in (400, 422):
         return REJECTED
     return ERROR
@@ -391,6 +410,18 @@ def controls(
                     f"{type(exc).__name__}: {exc}"
                 ) from exc
             got = classify(status, body)
+            # THE POSITIVE CONTROL ASKS ONE QUESTION: did a request known to be
+            # valid GET THROUGH? A `SPEC_EXAMPLE` means it did -- Prism accepted
+            # it and then failed to build its own example response, which is
+            # about the document. Requiring a literal ACCEPTED here VOIDed the
+            # second real run over `listCatalogs`, whose response the document
+            # cannot describe, while the check was working perfectly.
+            #
+            # The NEGATIVE control stays strict: a request Prism rejects never
+            # reaches response generation, so it can never legitimately come
+            # back as SPEC_EXAMPLE, and loosening it would let a non-enforcing
+            # Prism through -- which is the one thing the controls exist for.
+            ok = got in (ACCEPTED, SPEC_EXAMPLE) if name == "positive" else got == want
             api_out[name] = {
                 "api": api,
                 "op_id": cell.op.op_id,
@@ -398,7 +429,7 @@ def controls(
                 "status": status,
                 "verdict": got,
                 "expected": want,
-                "ok": got == want,
+                "ok": ok,
                 "detail": violation_summary(body),
             }
         out[api] = api_out
@@ -520,9 +551,12 @@ def check_requests(
 
     # A SPEC_EXAMPLE row is not a verdict on the request, so it is not an
     # unexpected cell. It is a finding about the document, reported apart.
-    unexpected = [r for r in rows if not r["ok"] and r["verdict"] != SPEC_EXAMPLE]
+    unexpected = [
+        r for r in rows if not r["ok"] and r["verdict"] not in NOT_ABOUT_THE_REQUEST
+    ]
     not_routed = [r for r in rows if r["verdict"] == NOT_ROUTED]
     spec_examples = [r for r in rows if r["verdict"] == SPEC_EXAMPLE]
+    auth_required = [r for r in rows if r["verdict"] == AUTH_REQUIRED]
     if not ctl["ok"]:
         verdict = VOID
     elif unexpected:
@@ -542,11 +576,14 @@ def check_requests(
         "rejected": sum(1 for r in rows if r["verdict"] == REJECTED),
         "not_routed": len(not_routed),
         "spec_examples": len(spec_examples),
+        "auth_required": len(auth_required),
         "errors": sum(1 for r in rows if r["verdict"] == ERROR),
         "unexpected": unexpected,
         "rows": rows,
         "build_findings": build_findings(rows),
-        "spec_findings": spec_findings(spec_examples),
+        "spec_findings": spec_findings(spec_examples)
+        + auth_findings(auth_required, spec_dir),
+        "harness_findings": harness_findings(spec_dir),
     }
 
 
@@ -635,6 +672,121 @@ def spec_findings(spec_example_rows):
     return out
 
 
+def request_schema(doc, op_id):
+    """The resolved request-body schema for `op_id`, or None if it has no body.
+
+    One `$ref` hop, which is all these two documents use. A deeper chain would
+    return the wrapper, and `required_fields` would then read None and call the
+    operation unmalformable -- so if a document ever nests further, this is the
+    function to extend rather than the caller to work around.
+    """
+    comps = (doc.get("components") or {}).get("schemas") or {}
+    for _path, item in (doc.get("paths") or {}).items():
+        for _m, op in (item or {}).items():
+            if not isinstance(op, dict) or op.get("operationId") != op_id:
+                continue
+            content = (op.get("requestBody") or {}).get("content") or {}
+            if not content:
+                return None
+            sch = list(content.values())[0].get("schema") or {}
+            if "$ref" in sch:
+                sch = comps.get(sch["$ref"].split("/")[-1], {})
+            return sch
+    return None
+
+
+def unmalformable_cells(spec_dir):
+    """Operations whose 400 cell CANNOT be provoked by omitting a field.
+
+    **Computed from the documents alone -- no Prism, no cluster.** The grid's
+    400 rule is *"a body missing its required fields"*, and where a schema
+    declares no `required` there is nothing to miss: `MALFORMED_BODY` is then a
+    VALID body, the cell drives a successful call, and it reports a 400 it can
+    never have provoked.
+
+    Measured 2026-09-10 against the vendored 1.3.0 documents: **12 of the 27
+    malformed-body cells**. Prism's second run surfaced 9 of them; the other
+    three were masked behind other verdicts, which is the argument for
+    computing this statically instead of waiting for a run to reveal it.
+    """
+    import api_status_matrix as mx
+    import yaml
+
+    d = pathlib.Path(spec_dir)
+    docs = {}
+    for f in sorted(d.glob("*.yml")) + sorted(d.glob("*.yaml")):
+        docs[f.name] = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+
+    out = []
+    for cell in mx.cells(mx.load_spec(spec_dir)):
+        if cell.target != 400 or not cell.op.has_body:
+            continue
+        sch = request_schema(docs.get(cell.op.source) or {}, cell.op.op_id)
+        if not (sch or {}).get("required"):
+            out.append(
+                {
+                    "op_id": cell.op.op_id,
+                    "api": cell.op.api,
+                    "properties": sorted((sch or {}).get("properties") or {}),
+                }
+            )
+    return sorted(out, key=lambda r: (r["api"], r["op_id"]))
+
+
+def harness_findings(spec_dir):
+    """Cells this repo drives that the document says cannot do what they claim.
+
+    Not Polaris's, not the pipeline's, not the document's: **ours.** Kept in
+    its own section so it is neither mistaken for a Polaris fact nor sent to
+    `local-k8s` as work.
+    """
+    rows = unmalformable_cells(spec_dir)
+    if not rows:
+        return []
+    return [
+        {
+            "about": "harness",
+            "title": f"{len(rows)} of the grid's 400 cells cannot be provoked by "
+            "omitting a required field",
+            "measured": "their request schemas declare no `required`, so "
+            "`MALFORMED_BODY` is a VALID body: the cell drives a successful call "
+            "and reports a 400 it never provoked. "
+            + "; ".join(f"{r['api']}/{r['op_id']}" for r in rows),
+            "remedy": "either stop emitting a 400 cell where the schema cannot be "
+            "violated by omission, or malform by wrong TYPE on a declared "
+            "property, which any schema rejects. Both change `api_status_matrix` "
+            "and one of them changes the denominator, so it is a decision and "
+            "not a patch.",
+            "operations": [r["op_id"] for r in rows],
+        }
+    ]
+
+
+def auth_findings(auth_rows, spec_dir):
+    """Operations Prism refused on a SECURITY scheme rather than on shape.
+
+    `getToken` is the measured one: it declares no operation-level `security`,
+    inherits the document's global `security: [OAuth2, BearerAuth]`, and Prism
+    therefore demands a bearer token in order to obtain a bearer token. The
+    request is right -- an OAuth token endpoint carries credentials in the form
+    body -- so this is a fact about the document.
+    """
+    if not auth_rows:
+        return []
+    ops = sorted({r["op_id"] for r in auth_rows})
+    return [
+        {
+            "about": "spec",
+            "title": f"{', '.join(ops)} -- refused on a security scheme, not on "
+            "the request",
+            "measured": f"{len(auth_rows)} cell(s) came back 401 with no "
+            "violations. These operations declare no `security` of their own and "
+            "inherit the document's global requirement, so Prism demands a bearer "
+            "token to obtain one. Nothing here is a statement about the request.",
+        }
+    ]
+
+
 def render_report(report):
     """Markdown, with the verdict and its reason first."""
     v = report["verdict"]
@@ -643,7 +795,13 @@ def render_report(report):
         "",
         f"{report['cells']} cells: {report['accepted']} accepted, "
         f"{report['rejected']} rejected, {report['not_routed']} not routed, "
-        f"{report.get('spec_examples', 0)} spec-example, {report['errors']} error.",
+        f"{report.get('spec_examples', 0)} spec-example, "
+        f"{report.get('auth_required', 0)} auth-required, {report['errors']} error.",
+        "",
+        "**spec-example** and **auth-required** are not verdicts on a request: "
+        "the first is Prism failing to build a valid response out of the "
+        "document, the second is Prism enforcing a security scheme the document "
+        "declares. Neither counts as a failure below.",
         "",
     ]
     if v == VOID:
@@ -718,6 +876,13 @@ def render_report(report):
         ]
         for f in report["spec_findings"]:
             lines.append(f"- **{f['title']}** -- {f['measured']}")
+
+    if report.get("harness_findings"):
+        lines += ["", "## Harness findings -- THIS repo's, and nobody else's", ""]
+        for f in report["harness_findings"]:
+            lines.append(f"- **{f['title']}** -- {f['measured']}")
+            if f.get("remedy"):
+                lines.append(f"  - *Remedy:* {f['remedy']}")
 
     if report["build_findings"]:
         lines += ["", "## Build findings -- about Polaris, not about this check", ""]

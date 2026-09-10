@@ -71,12 +71,20 @@ class FakePrism:
     """
 
     def __init__(
-        self, enforcing=True, routed=True, invalid=None, mounts=None, bad_response=()
+        self,
+        enforcing=True,
+        routed=True,
+        invalid=None,
+        mounts=None,
+        bad_response=(),
+        auth_required=(),
     ):
         self.enforcing = enforcing
         self.routed = routed
         self.mounts = {"management": "", "catalog": ""} if mounts is None else mounts
         self.bad_response = set(bad_response)
+        #: URL fragments Prism refuses on a SECURITY scheme -- a bare 401.
+        self.auth_required = set(auth_required)
         #: predicate(url, req) -> True when the request violates the spec.
         self.invalid = invalid or (lambda url, req: _looks_malformed(req))
         self.seen = []
@@ -109,6 +117,36 @@ class FakePrism:
             return FakeResponse(
                 404, {"type": "NOT_FOUND", "title": "Route not resolved"}
             )
+        if self.auth_required and any(m in url for m in self.auth_required):
+            # Prism enforcing a security scheme: no violations, just a 401.
+            return FakeResponse(
+                401, {"type": "UNAUTHORIZED", "title": "Invalid security"}
+            )
+        # VALIDATE THE REQUEST FIRST, THEN GENERATE THE RESPONSE. That is the
+        # real ordering, and the whole reason a negative control can never
+        # legitimately come back SPEC_EXAMPLE: a request Prism rejects never
+        # reaches response generation. Written the other way round, this stub
+        # let a rejected request come back as a document problem, and the
+        # reasoning in `controls` could not have been tested at all.
+        if self.invalid(url, req):
+            if not self.enforcing:
+                return FakeResponse(200, {"ok": True})
+            return FakeResponse(
+                422,
+                {
+                    "type": "https://stoplight.io/prism/errors#UNPROCESSABLE_ENTITY",
+                    "title": "Invalid request",
+                    "status": 422,
+                    "validation": [
+                        {
+                            "location": ["request", "body", "name"],
+                            "severity": "Error",
+                            "code": "required",
+                            "message": "must have required property 'name'",
+                        }
+                    ],
+                },
+            )
         if any(marker in url for marker in self.bad_response):
             return FakeResponse(
                 500,
@@ -126,25 +164,6 @@ class FakePrism:
                             "severity": "Error",
                             "message": "Response body property "
                             "metadata.schemas.0.fields.0.type must be equal to constant",
-                        }
-                    ],
-                },
-            )
-        if self.invalid(url, req):
-            if not self.enforcing:
-                return FakeResponse(200, {"ok": True})
-            return FakeResponse(
-                422,
-                {
-                    "type": "https://stoplight.io/prism/errors#UNPROCESSABLE_ENTITY",
-                    "title": "Invalid request",
-                    "status": 422,
-                    "validation": [
-                        {
-                            "location": ["request", "body", "name"],
-                            "severity": "Error",
-                            "code": "required",
-                            "message": "must have required property 'name'",
                         }
                     ],
                 },
@@ -628,6 +647,147 @@ def test_the_report_prints_a_status_for_every_control_and_odd_cell():
     for api, pair in report["controls"].items():
         if isinstance(pair, dict) and pair.get("negative"):
             assert pair["negative"]["status"] is not None
+
+
+# ----------------------------------------------------------------------
+# a security 401 is not a verdict on the request
+# ----------------------------------------------------------------------
+def test_a_bare_401_is_a_security_refusal_not_a_malformed_request():
+    """`getToken` declares no `security` of its own, inherits the document's
+    global requirement, and Prism then demands a bearer token in order to
+    obtain a bearer token. The request is right: an OAuth token endpoint
+    carries credentials in the form body. Three unreadable `error` rows on the
+    second real run."""
+    assert sc.classify(401, {}) == sc.AUTH_REQUIRED
+    assert sc.classify(401, {"title": "Unauthorized"}) == sc.AUTH_REQUIRED
+
+
+def test_a_401_that_carries_request_violations_is_still_a_rejection():
+    """Security is checked before the 400/422 rule, but never before the
+    violations themselves -- a malformed request must not hide behind a 401."""
+    body = {"validation": [{"location": ["request", "body"], "message": "required"}]}
+    assert sc.classify(401, body) == sc.REJECTED
+
+
+def test_neither_kind_of_document_verdict_counts_as_a_failure():
+    assert sc.SPEC_EXAMPLE in sc.NOT_ABOUT_THE_REQUEST
+    assert sc.AUTH_REQUIRED in sc.NOT_ABOUT_THE_REQUEST
+    assert sc.REJECTED not in sc.NOT_ABOUT_THE_REQUEST
+    assert sc.ERROR not in sc.NOT_ABOUT_THE_REQUEST
+
+
+def test_auth_required_rows_are_reported_as_a_spec_finding():
+    findings = sc.auth_findings(
+        [{"op_id": "getToken", "target": 2}, {"op_id": "getToken", "target": 401}],
+        SPEC,
+    )
+    assert findings and findings[0]["about"] == "spec"
+    assert "getToken" in findings[0]["title"]
+    assert findings == [] or "security scheme" in findings[0]["title"]
+
+
+def test_a_security_401_reaches_the_report_without_failing_the_run():
+    """Three `getToken` rows came back `error` on the second real run and could
+    not be read. They must be visible, explained, and not counted against the
+    requests."""
+    report, _ = _run(auth_required=["/oauth/tokens"])
+    assert report["auth_required"] > 0
+    assert not [r for r in report["unexpected"] if r["verdict"] == sc.AUTH_REQUIRED]
+    assert report["verdict"] != sc.VOID
+    assert any("security scheme" in f["title"] for f in report["spec_findings"])
+
+
+def test_no_auth_rows_means_no_auth_finding():
+    assert sc.auth_findings([], SPEC) == []
+
+
+# ----------------------------------------------------------------------
+# the positive control asks whether a valid request GOT THROUGH
+# ----------------------------------------------------------------------
+def test_the_positive_control_passes_when_only_the_response_was_invalid():
+    """The second real run VOIDed over `listCatalogs`, whose response the
+    document cannot describe, while the check was working perfectly. The
+    request got through; Prism failed to build its own example."""
+    report, _ = _run(bad_response=["/catalogs"])
+    assert report["verdict"] != sc.VOID, report["why"]
+    mgmt = report["controls"]["management"]["positive"]
+    assert mgmt["verdict"] == sc.SPEC_EXAMPLE and mgmt["ok"] is True
+
+
+def test_the_negative_control_is_not_loosened_the_same_way():
+    """A request Prism REJECTS never reaches response generation, so a
+    negative control can never legitimately come back SPEC_EXAMPLE. Loosening
+    it would let a non-enforcing Prism through, which is the one thing the
+    controls exist for."""
+    import inspect
+
+    src = inspect.getsource(sc.controls)
+    assert 'if name == "positive"' in src
+    report, _ = _run(enforcing=False)
+    assert report["verdict"] == sc.VOID
+
+
+# ----------------------------------------------------------------------
+# the 400 cells the documents say cannot be malformed by omission
+# ----------------------------------------------------------------------
+def test_the_unmalformable_cells_are_computed_from_the_documents_alone():
+    """No Prism and no cluster. Prism's second run surfaced 9 of them; the
+    other three were masked behind other verdicts, which is the whole argument
+    for computing this statically rather than waiting for a run."""
+    rows = sc.unmalformable_cells(SPEC)
+    ops = {r["op_id"] for r in rows}
+    assert {"updateProperties", "createPrincipal", "getToken", "updateCatalog"} <= ops
+    assert (
+        "createCatalog" not in ops
+    ), "createCatalog requires `catalog` and IS malformable"
+    assert "createTable" not in ops, "createTable requires name and schema"
+
+
+def test_every_unmalformable_op_really_has_no_required_fields():
+    """The claim is checkable against the document, so check it rather than
+    trusting the helper that made it."""
+    import yaml
+
+    docs = {
+        f.name: yaml.safe_load(f.read_text())
+        for f in list(SPEC.glob("*.yml")) + list(SPEC.glob("*.yaml"))
+    }
+    ops = {o.op_id: o for o in mx.load_spec(SPEC)}
+    for row in sc.unmalformable_cells(SPEC):
+        op = ops[row["op_id"]]
+        sch = sc.request_schema(docs[op.source], op.op_id)
+        assert not (sch or {}).get("required"), row["op_id"]
+
+
+def test_a_malformable_op_resolves_its_required_fields_through_the_ref():
+    """One `$ref` hop is all these documents use -- and a helper that failed to
+    follow it would call every operation unmalformable and the finding would
+    quietly become "all 27"."""
+    import yaml
+
+    doc = yaml.safe_load((SPEC / "polaris-management-service.yml").read_text())
+    sch = sc.request_schema(doc, "createCatalog")
+    assert sch and sch.get("required") == ["catalog"]
+
+
+def test_the_unmalformable_cells_are_one_harness_finding_not_twelve():
+    findings = sc.harness_findings(SPEC)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f["about"] == "harness"
+    assert len(f["operations"]) == len(sc.unmalformable_cells(SPEC))
+    assert f["remedy"]
+
+
+def test_a_harness_finding_is_not_a_polaris_or_pipeline_finding():
+    """Four audiences, four sections. A cell this repo drives wrongly must not
+    be sent to `local-k8s` as work or read as a fact about Polaris."""
+    report, _ = _run()
+    assert all(f["about"] == "harness" for f in report["harness_findings"])
+    assert all(f["about"] == "polaris" for f in report["build_findings"])
+    assert all(f["about"] == "spec" for f in report["spec_findings"])
+    text = sc.render_report(report)
+    assert "Harness findings -- THIS repo's" in text
 
 
 def test_spec_check_imports_no_logging_module():
