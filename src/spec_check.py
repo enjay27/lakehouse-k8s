@@ -675,10 +675,10 @@ def spec_findings(spec_example_rows):
 def request_schema(doc, op_id):
     """The resolved request-body schema for `op_id`, or None if it has no body.
 
-    One `$ref` hop, which is all these two documents use. A deeper chain would
-    return the wrapper, and `required_fields` would then read None and call the
-    operation unmalformable -- so if a document ever nests further, this is the
-    function to extend rather than the caller to work around.
+    Follows `$ref` (bounded, so a cyclic document cannot hang this). It does
+    NOT flatten combinators -- `has_required_fields` walks those, because
+    whether a body can be malformed by omission depends on how the branches
+    combine and that cannot be answered by flattening.
     """
     comps = (doc.get("components") or {}).get("schemas") or {}
     for _path, item in (doc.get("paths") or {}).items():
@@ -688,11 +688,55 @@ def request_schema(doc, op_id):
             content = (op.get("requestBody") or {}).get("content") or {}
             if not content:
                 return None
-            sch = list(content.values())[0].get("schema") or {}
-            if "$ref" in sch:
-                sch = comps.get(sch["$ref"].split("/")[-1], {})
-            return sch
+            return _deref(list(content.values())[0].get("schema") or {}, comps)
     return None
+
+
+def _deref(sch, comps, depth=0):
+    """Resolve `$ref` chains, with a depth bound rather than a cycle set.
+
+    A document that refs itself is a document problem; hanging on it here
+    would be ours.
+    """
+    while isinstance(sch, dict) and "$ref" in sch and depth < 10:
+        sch = comps.get(sch["$ref"].split("/")[-1], {})
+        depth += 1
+    return sch if isinstance(sch, dict) else {}
+
+
+def has_required_fields(sch, comps, depth=0):
+    """Can this body be malformed by OMITTING a field?
+
+    **`getToken` is why this exists.** Its schema `$ref`s `OAuthTokenRequest`,
+    which carries no `required` of its own -- only an `anyOf` over
+    `OAuthClientCredentialsRequest` (requires `grant_type`, `client_id`,
+    `client_secret`) and `OAuthTokenExchangeRequest` (requires `grant_type`,
+    `subject_token`, `subject_token_type`). A resolver that stopped at the
+    first `$ref` read "no required" and called the operation unmalformable.
+    **It published a wrong count, and the test asserting that count enshrined
+    it.** 35 schemas across the two documents hide their constraints in a
+    combinator this way, so it was never going to stay a single mistake.
+
+    The combinator rules, and each is the one that makes the answer true:
+
+    - `allOf`: the body must satisfy EVERY branch, so ONE branch with
+      `required` is enough to make it malformable.
+    - `anyOf` / `oneOf`: the body need satisfy only ONE branch, so it is
+      malformable only if EVERY branch is. A single unconstrained branch
+      accepts `{"matrix": ...}` and the whole schema accepts it with it.
+    """
+    sch = _deref(sch, comps, depth)
+    if depth > 10 or not sch:
+        return False
+    if sch.get("required"):
+        return True
+    if any(has_required_fields(b, comps, depth + 1) for b in sch.get("allOf") or ()):
+        return True
+    for key in ("anyOf", "oneOf"):
+        branches = sch.get(key) or ()
+        if branches and all(has_required_fields(b, comps, depth + 1) for b in branches):
+            return True
+    return False
 
 
 def unmalformable_cells(spec_dir):
@@ -721,8 +765,10 @@ def unmalformable_cells(spec_dir):
     for cell in mx.cells(mx.load_spec(spec_dir)):
         if cell.target != 400 or not cell.op.has_body:
             continue
-        sch = request_schema(docs.get(cell.op.source) or {}, cell.op.op_id)
-        if not (sch or {}).get("required"):
+        doc = docs.get(cell.op.source) or {}
+        sch = request_schema(doc, cell.op.op_id)
+        comps = (doc.get("components") or {}).get("schemas") or {}
+        if not has_required_fields(sch or {}, comps):
             out.append(
                 {
                     "op_id": cell.op.op_id,

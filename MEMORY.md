@@ -25,10 +25,11 @@ this repo's `make_traffic`; this repo makes traffic and holds no logging concept
 built, nothing contacted) / `--spec-check` (validated against the specs through Prism, still no
 Polaris; needs `npx @stoplight/prism-cli mock --errors`, and **without `--errors` the check is
 VOID rather than green**) / `--profile smoke` (drives, and MUTATES). **Prism has run twice**, and
-its finding is now computed rather than observed: **12 of the grid's 27 malformed-body 400 cells
+its finding is now computed rather than observed: **11 of the grid's 27 malformed-body 400 cells
 cannot provoke a 400** — their schemas declare no `required`, so the "malformed" body is valid
 and the cell drives a *successful* call. `spec_check.unmalformable_cells()` gets the whole set
-from the documents alone; **the runs only ever surfaced 9.** Fixing the grid is OPEN and changes
+from the documents alone; **the runs only ever surfaced 9**, and **the first count published was
+12 — wrong, because the resolver did not walk `anyOf`.** Fixing the grid is OPEN and changes
 the denominator — see `.memory/active-issues.md`. Everything the runs found in the CHECK is
 fixed; `.memory/roadmap.md` has the detail.
 

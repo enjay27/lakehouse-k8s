@@ -466,3 +466,65 @@ that does not need a server to be right.
 
 Gate: **317 passed** under the stand-in, 9 mutants, 9 caught. `device_commit_files`
 landed first time and was md5-checked, per the rule added an hour ago.
+
+---
+
+## Fifth postscript — the count I published was wrong, and nothing could have caught it
+
+Kade approved fixing the grid. Before touching it I re-derived the set, and the
+number was wrong: **11, not 12.**
+
+`spec_check.request_schema` followed **one `$ref`** and read `required` off
+whatever it landed on. `getToken` `$ref`s `OAuthTokenRequest`, which carries no
+`required` of its own — its constraints live entirely in an `anyOf` over
+`OAuthClientCredentialsRequest` (`grant_type`, `client_id`, `client_secret`) and
+`OAuthTokenExchangeRequest` (`grant_type`, `subject_token`,
+`subject_token_type`). Both branches require three fields, so
+`{"matrix": ...}` satisfies neither and `getToken` **is** malformable. Read as
+"no required", it was filed as unmalformable.
+
+**That number went into a commit message, `MEMORY.md`, `roadmap.md`,
+`active-issues.md`, and an assertion in `test_spec_check.py`.** The test
+asserted `getToken` was in the set, so the suite defended the bug.
+
+**And no run could have contradicted it.** `getToken` comes back **401 on a
+security scheme** — Prism never evaluated its body at all. The one instrument
+that might have disagreed was structurally unable to. I had even written that
+`getToken` was "masked by a 401" as an argument for computing the set
+statically, without noticing the mask was hiding my own error rather than a
+Polaris one.
+
+The fix is `has_required_fields`, and the two combinator rules are **opposites**:
+
+- `allOf` — the body must satisfy EVERY branch, so **one** branch with
+  `required` makes it malformable.
+- `anyOf` / `oneOf` — the body need satisfy only ONE branch, so it is
+  malformable only if **every** branch is. A single unconstrained branch
+  accepts `{"matrix": ...}` and the whole schema accepts it with it.
+
+Getting them the same way round would flip roughly half the answers, so both
+directions are separate tests, and `$ref` resolution is depth-bounded — a
+document that refs itself is the document's problem, hanging on it would be
+ours. **35 schemas across the two documents hide their constraints in a
+combinator**, so this was never going to stay one wrong answer.
+
+### What this actually teaches, beyond the fix
+
+The pattern I named in the fourth postscript was *a check that could not fail
+for the thing it was vouching for*. This is that pattern one level up: **a
+number derived by walking a document, corroborated by a run that could not have
+disagreed with it.** Agreement between a static walk and an observation is only
+evidence when the observation was capable of dissent — and here it was not, for
+a reason I had already written down and read as support.
+
+`unmalformable_cells` is still the right shape. It was just wrong, and it was
+wrong in the direction that reads as more thorough: **one extra operation in a
+list of things to fix looks like diligence, not like an error.**
+
+Gate: **62 passed** in `test_spec_check` (was 57), 4 mutants on the combinator
+walk, 4 caught — including `anyOf` using ANY instead of ALL, and the depth bound
+removed, which hangs rather than fails, and the cyclic test is what makes the
+hang visible.
+
+**The grid decision is still open and now rests on a number that has been
+checked**: 11 cells, and `getToken` is not one of them.

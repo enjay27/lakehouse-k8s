@@ -736,27 +736,118 @@ def test_the_unmalformable_cells_are_computed_from_the_documents_alone():
     for computing this statically rather than waiting for a run."""
     rows = sc.unmalformable_cells(SPEC)
     ops = {r["op_id"] for r in rows}
-    assert {"updateProperties", "createPrincipal", "getToken", "updateCatalog"} <= ops
+    assert {"updateProperties", "createPrincipal", "updateCatalog"} <= ops
+    # getToken WAS asserted here and should never have been -- see below.
+    assert "getToken" not in ops
     assert (
         "createCatalog" not in ops
     ), "createCatalog requires `catalog` and IS malformable"
     assert "createTable" not in ops, "createTable requires name and schema"
 
 
-def test_every_unmalformable_op_really_has_no_required_fields():
-    """The claim is checkable against the document, so check it rather than
-    trusting the helper that made it."""
+def _docs():
     import yaml
 
-    docs = {
+    return {
         f.name: yaml.safe_load(f.read_text())
         for f in list(SPEC.glob("*.yml")) + list(SPEC.glob("*.yaml"))
     }
-    ops = {o.op_id: o for o in mx.load_spec(SPEC)}
+
+
+def test_every_unmalformable_op_really_cannot_be_malformed_by_omission():
+    """The claim is checkable against the document, so check it rather than
+    trusting the helper that made it."""
+    docs, ops = _docs(), {o.op_id: o for o in mx.load_spec(SPEC)}
     for row in sc.unmalformable_cells(SPEC):
         op = ops[row["op_id"]]
-        sch = sc.request_schema(docs[op.source], op.op_id)
-        assert not (sch or {}).get("required"), row["op_id"]
+        doc = docs[op.source]
+        comps = (doc.get("components") or {}).get("schemas") or {}
+        assert not sc.has_required_fields(
+            sc.request_schema(doc, op.op_id) or {}, comps
+        ), row["op_id"]
+
+
+def test_get_token_is_malformable_through_its_anyOf_and_was_once_counted_wrong():
+    """THE BUG THESE TESTS ONCE ENSHRINED. `getToken` `$ref`s
+    `OAuthTokenRequest`, which carries no `required` of its own -- only an
+    `anyOf` over two branches that each require three fields. A resolver that
+    stopped at the first `$ref` read "no required", called the operation
+    unmalformable, and **the count 12 was published in a commit message, two
+    memory files, and an assertion in this file. The real count is 11.**
+
+    Prism never contradicted it: `getToken` comes back 401 on a security
+    scheme, so the one run that could have caught it was looking elsewhere.
+    """
+    doc = _docs()["rest-catalog-open-api.yaml"]
+    comps = (doc.get("components") or {}).get("schemas") or {}
+    sch = sc.request_schema(doc, "getToken")
+    assert not sch.get("required"), "no top-level required -- that is the trap"
+    assert sch.get("anyOf"), "and the constraints live in an anyOf"
+    assert sc.has_required_fields(sch, comps) is True
+
+
+def test_anyOf_is_malformable_only_when_EVERY_branch_is():
+    """The body need satisfy only ONE branch, so a single unconstrained branch
+    accepts `{"matrix": ...}` and the whole schema accepts it with it."""
+    comps = {
+        "Strict": {"required": ["a"], "properties": {"a": {"type": "string"}}},
+        "Loose": {"properties": {"b": {"type": "string"}}},
+    }
+    assert (
+        sc.has_required_fields(
+            {"anyOf": [{"$ref": "#/c/Strict"}, {"$ref": "#/c/Strict"}]}, comps
+        )
+        is True
+    )
+    assert (
+        sc.has_required_fields(
+            {"anyOf": [{"$ref": "#/c/Strict"}, {"$ref": "#/c/Loose"}]}, comps
+        )
+        is False
+    )
+
+
+def test_allOf_is_malformable_when_ANY_branch_is():
+    """The body must satisfy EVERY branch, so one constrained branch suffices.
+    The opposite rule to anyOf, and getting them the same way round would flip
+    roughly half the answers."""
+    comps = {"Strict": {"required": ["a"]}, "Loose": {"properties": {"b": {}}}}
+    assert (
+        sc.has_required_fields(
+            {"allOf": [{"$ref": "#/c/Loose"}, {"$ref": "#/c/Strict"}]}, comps
+        )
+        is True
+    )
+    assert (
+        sc.has_required_fields(
+            {"allOf": [{"$ref": "#/c/Loose"}, {"$ref": "#/c/Loose"}]}, comps
+        )
+        is False
+    )
+
+
+def test_a_cyclic_document_does_not_hang_the_walker():
+    """A document that refs itself is the document's problem; hanging on it
+    would be ours."""
+    assert (
+        sc.has_required_fields({"$ref": "#/c/Loop"}, {"Loop": {"$ref": "#/c/Loop"}})
+        is False
+    )
+
+
+def test_the_combinator_blind_spot_was_never_going_to_stay_one_wrong_answer():
+    """Schemas across BOTH documents hide their constraints in a combinator."""
+    total = 0
+    for doc in _docs().values():
+        comps = (doc.get("components") or {}).get("schemas") or {}
+        total += sum(
+            1
+            for v in comps.values()
+            if isinstance(v, dict)
+            and not v.get("required")
+            and any(k in v for k in ("anyOf", "oneOf", "allOf"))
+        )
+    assert total > 20, f"only {total} -- the walker or the documents changed"
 
 
 def test_a_malformable_op_resolves_its_required_fields_through_the_ref():
