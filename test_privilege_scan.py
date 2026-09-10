@@ -326,10 +326,48 @@ def test_probe_survives_a_raising_client(ident):
 
 
 def test_probe_table_names_the_refusals():
+    """The 403 is the measurement, so it has to be legible in the rendered row.
+
+    THIS TEST WAS RED FOR TEN DAYS and the reason is worth keeping. It asserted
+    `| NO |` and "1 of 2 GET operations are authorized" -- the vocabulary
+    `render_probe_table` used before 2026-08-31, when `e20fb22` replaced a
+    YES/NO column with `OpStatus.verdict` because YES/NO could not tell a
+    refusal from a harness fault. The renderer was improved and its test was
+    not, so the assertion went on describing a document nobody prints.
+    """
     table = render_probe_table(
         [OpStatus("GET  /catalogs", "mgmt", 403), OpStatus("GET  /x", "mgmt", 200)]
     )
-    assert "| NO |" in table and "1 of 2 GET operations are authorized" in table
+    assert "| refused |" in table
+    assert "1 of 2 operations authorized, 1 refused." in table
+
+
+def test_the_probe_table_summary_counts_every_verdict_it_rendered():
+    """The summary line is the only place a reader sees the whole shape, and
+    `e20fb22`'s point was that a refusal and a harness fault are DIFFERENT
+    outcomes. A summary that folded them together would undo that while every
+    row still looked right, so the counts are asserted apart from the rows.
+
+    400 is `malformed`, not `refused`: measured 2026-08-31, `GET /v1/config`
+    answered 400 because the harness sent no `warehouse` parameter. Filed as a
+    refusal it read as "ordinary principals may not read the catalog config",
+    which is a claim about Polaris drawn from a mistake of ours.
+    """
+    table = render_probe_table(
+        [
+            OpStatus("GET  /a", "mgmt", 200),
+            OpStatus("GET  /b", "mgmt", 403),
+            OpStatus("GET  /c", "cat", 400),
+            OpStatus("GET  /d", "cat", OpStatus.UNDRIVEABLE),
+        ]
+    )
+    assert "1 of 4 operations authorized" in table
+    for verdict in ("refused", "malformed", "undriveable"):
+        assert f", 1 {verdict}" in table, f"{verdict} is missing from the summary"
+    # and the two that are NOT authorization outcomes explain themselves,
+    # because a reader who treats them as refusals draws a false conclusion
+    # about Polaris from a fault in the harness or the fixture.
+    assert "**malformed**" in table and "**undriveable**" in table
 
 
 # ----------------------------------------------------------------------
