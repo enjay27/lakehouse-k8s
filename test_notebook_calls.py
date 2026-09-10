@@ -33,6 +33,7 @@ import iceberg_rest  # noqa: E402
 import log_coverage as lc  # noqa: E402
 import os_report as osr  # noqa: E402
 import polaris_rest  # noqa: E402
+import traffic_helpers as th  # noqa: E402
 
 NOTEBOOK = (
     pathlib.Path(__file__).resolve().parent
@@ -54,14 +55,17 @@ OWNERS = {
     "lc": lc,
     "mx": mx,
     "osr": osr,
+    "th": th,
 }
 
+#: `src/make_traffic.py` is checked by the same walker for the same reason.
+#: It IS the notebook's traffic cells, lifted -- so every signature the
+#: notebook was checked for is a signature it now makes, and a module gets no
+#: exemption a notebook does not.
+MODULE = pathlib.Path(__file__).resolve().parent / "src" / "make_traffic.py"
 
-def _calls():
-    nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
-    src = "\n".join(
-        "".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"
-    )
+
+def _calls_in(src):
     for node in ast.walk(ast.parse(src)):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
@@ -70,10 +74,17 @@ def _calls():
             yield owner.id, node.func.attr, node
 
 
-@pytest.mark.skipif(not NOTEBOOK.exists(), reason="the v2 notebook is not in this tree")
-def test_every_client_call_in_the_notebook_binds_to_its_real_signature():
+def _notebook_source():
+    nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    return "\n".join(
+        "".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"
+    )
+
+
+def _bind_all(src, floor):
+    """Bind every known client call in `src`. Returns the problems found."""
     checked, problems = 0, []
-    for who, name, node in _calls():
+    for who, name, node in _calls_in(src):
         target = OWNERS[who]
         fn = getattr(target, name, None)
         if fn is None:
@@ -100,10 +111,28 @@ def test_every_client_call_in_the_notebook_binds_to_its_real_signature():
             checked += 1
         except TypeError as exc:
             problems.append(f"{who}.{name}(): {exc}   [real signature {sig}]")
-
     assert (
-        checked > 50
+        checked > floor
     ), f"only {checked} calls checked -- the walker stopped finding them"
+    return problems
+
+
+@pytest.mark.skipif(not MODULE.exists(), reason="make_traffic is not in this tree")
+def test_every_client_call_in_make_traffic_binds_to_its_real_signature():
+    """The module is the notebook's traffic cells, so it inherits the check.
+
+    `make_traffic` calls `create_catalog`, `grant_privilege` and
+    `assign_catalog_role_to_principal_role` -- the three signatures that were
+    written from memory and wrong. Being a `.py` file rather than a cell does
+    not make them right.
+    """
+    problems = _bind_all(MODULE.read_text(encoding="utf-8"), floor=15)
+    assert not problems, "\n  ".join([""] + sorted(set(problems)))
+
+
+@pytest.mark.skipif(not NOTEBOOK.exists(), reason="the v2 notebook is not in this tree")
+def test_every_client_call_in_the_notebook_binds_to_its_real_signature():
+    problems = _bind_all(_notebook_source(), floor=50)
     assert not problems, "\n  ".join([""] + sorted(set(problems)))
 
 

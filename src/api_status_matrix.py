@@ -768,6 +768,11 @@ def execute(cell, req, base_url, session=None, timeout=20, seq=0):
         "elapsed_ms": None,
         "error": None,
         "echoed_request_id": None,
+        #: BYTES POLARIS SENT BACK. The report's `last_write_bytes` claim is a
+        #: comparison against a size, so a row without one cannot carry the
+        #: claim -- and `make_traffic`'s contract lists `response_bytes` per
+        #: call. Measured off the response, never off the request.
+        "response_bytes": None,
         # -- what makes it a matrix row rather than a call row
         "op_id": cell.op.op_id,
         "target": cell.target,
@@ -790,6 +795,7 @@ def execute(cell, req, base_url, session=None, timeout=20, seq=0):
         row["status"] = resp.status_code
         row["actual_path"] = getattr(getattr(resp, "request", None), "path_url", None)
         row["echoed_request_id"] = resp.headers.get("Polaris-Request-Id")
+        row["response_bytes"] = len(resp.content or b"")
     except Exception as exc:  # noqa: BLE001
         row["error"] = f"{type(exc).__name__}: {exc}"
     row["elapsed_ms"] = round((_t.perf_counter() - started) * 1000, 1)

@@ -8,6 +8,14 @@
 
 ## Repository Layout
 - **`src/`** — all reusable Python modules imported by notebooks (`polaris_test_utils.py`, `minio_rest.py`). No test logic lives in notebooks that belongs in a module.
+  - **The logging test is split across two repos, and `src/` carries the line.**
+    `local-k8s` runs the test and verifies; this repo only makes traffic. So
+    `make_traffic.py` (the module `local-k8s` imports) and `traffic_helpers.py`
+    (the traffic half of what used to be `log_coverage.py`) must **never** import
+    `log_coverage`, `os_report` or `vlogs` — `test_make_traffic.py` asserts the
+    import graph, and `log_coverage` re-exports the moved names so v1's notebook
+    keeps working. Verification lives here only until `local-k8s` reproduces run
+    `1789008899`; see `log-coverage/SCENARIO-logging-test.md`.
 - **`src/config/`** — environment config. `common.yaml` (shared non-secret defaults) + `<env>.yaml` (per-env: `local` / `dev` / `prod`) are merged by `init_env(env)`. Secrets may be overridden by env vars (`POLARIS_ROOT_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `OPENSEARCH_PASS`, `POSTGRES_PASSWORD`). `init_env` also exposes PostgreSQL globals (`PG_URL`, `PG_CONFIG`, `PG_HOST`…) for the diagnostics notebooks. `*.yaml` here is gitignored except `common.yaml` and `*.example.yaml`; each env ships a `*.example.yaml` template — copy e.g. `dev.example.yaml` → `dev.yaml` and fill in.
 - **Per-test directories** — each test domain has its own folder containing its notebook(s) plus a `README.md` (concept / purpose / how-to-run / result) and any `doc-*.md` reference reports:
   - `lifecycle/` — catalog→namespace→table/view→snapshot→drop lifecycle.

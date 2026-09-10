@@ -4,15 +4,22 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-10 (session 9)
+## Now — 2026-09-10 (session 10)
 
 **THE WORK IS SPLITTING IN TWO, AND THE NEXT SESSION STARTS FROM
 [`log-coverage/HANDOFF-split-logging-test-2026-09-10.md`](log-coverage/HANDOFF-split-logging-test-2026-09-10.md)
-— standalone, and it needs BOTH folders connected.** Decision: `local-k8s` runs the logging
-test and calls this repo's `make_traffic` module; this repo makes traffic and holds no logging
-concept at all. Design in
-[`SCENARIO-logging-test.md`](log-coverage/SCENARIO-logging-test.md); the boundary argument in
-[`PLAN-split-traffic-and-verification.md`](log-coverage/PLAN-split-traffic-and-verification.md).
+— standalone, and steps 3-4 need BOTH folders connected.** `local-k8s` runs the logging test and
+calls this repo's `make_traffic`; this repo makes traffic and holds no logging concept at all.
+Design in [`SCENARIO-logging-test.md`](log-coverage/SCENARIO-logging-test.md).
+
+**STEP 2 IS DONE: `src/make_traffic.py` exists, and the boundary is a test rather than a
+convention.** Writing SCENARIO §3's import guard was impossible while `log_coverage.py` held
+both halves, so **792 lines moved verbatim to `src/traffic_helpers.py`** and `log_coverage`
+re-exports them — v1's notebook is unedited and stays the run of record. **222 tests pass, 12
+of 12 deliberate mutants caught.** But **`pytest` itself never ran** (macOS venv in a Linux VM;
+no egress on either machine; `pypi.org` 403s through the org policy), so the suite ran under a
+stand-in and **Kade running `uv run pytest` is the real gate**. `black` ran at 26.3.1 against a
+`>=26.5.1` pin. **`drive()` has never touched Polaris.** Next: handoff steps 0-1, then 3.
 
 
 **EVERY API, EVERY REACHABLE STATUS — planned, not started.**
