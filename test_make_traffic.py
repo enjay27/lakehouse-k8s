@@ -33,6 +33,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "src"))
 import make_traffic as mt  # noqa: E402
 
 SRC = pathlib.Path(__file__).resolve().parent / "src"
+SPEC = pathlib.Path(__file__).resolve().parent / "log-coverage" / "spec"
 
 #: Modules that hold a concept of what a log pipeline did with a request. The
 #: traffic side may not reach any of them, at module scope or inside a
@@ -550,6 +551,114 @@ def test_cleanup_skips_what_setup_never_built():
     )
     assert "delete_catalog" not in adm.tried
     assert "drop_table" not in adm.tried
+
+
+# ----------------------------------------------------------------------
+# dry_run: it must contact NOTHING, and it must not return from inside the try
+# ----------------------------------------------------------------------
+def _unreachable_config():
+    """A config whose URL cannot be dialled at all.
+
+    `"x"` is not a URL -- `requests` raises MissingSchema on it before any
+    socket is opened. So a dry run that completes against this config proves
+    it made no request, without needing to intercept anything.
+    """
+    cfg = {k: "x" for k in mt._REQUIRED_CONFIG}
+    cfg["realm"] = "POLARIS"
+    return cfg
+
+
+def test_dry_run_contacts_nothing(tmp_path):
+    """The first version of this ran AFTER the fixture was built, so a "dry
+    run" created a catalog, a namespace, a table, a view, two principals, two
+    roles and the whole doomed family -- dozens of mutating calls against a
+    docstring promising none. Nothing caught it, because there was no test."""
+    run = mt.drive(
+        _unreachable_config(),
+        window_seconds=30,
+        profile="full",
+        run="dry1",
+        dry_run=True,
+        spec_dir=SPEC,
+        runs_dir=tmp_path,
+    )
+    assert run.incomplete.startswith("dry_run:")
+    assert run.calls == [] and run.claims == [] and run.phases == []
+    assert run.identities == {}
+
+
+def test_dry_run_still_builds_every_cell_in_the_grid():
+    """Contacting nothing must not become checking nothing: the count is the
+    evidence that all 286 requests were actually built."""
+    import api_status_matrix as mx
+
+    expected = len(mx.cells(mx.load_spec(SPEC)))
+    run = mt.drive(
+        _unreachable_config(),
+        window_seconds=30,
+        run="dry2",
+        dry_run=True,
+        spec_dir=SPEC,
+        runs_dir=False,
+    )
+    assert f"{expected} requests were built" in run.incomplete
+    assert expected > 200
+
+
+def test_dry_run_writes_no_evidence_file(tmp_path):
+    """It drove nothing, so it has no evidence to give. A `traffic-<run>.json`
+    with no calls in it is a file a verifier could still be handed."""
+    mt.drive(
+        _unreachable_config(),
+        window_seconds=30,
+        run="dry3",
+        dry_run=True,
+        spec_dir=SPEC,
+        runs_dir=tmp_path,
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_dry_run_says_it_proves_shape_and_not_validity():
+    """A reader who takes "286 requests were built" for "286 requests are
+    valid" would skip the only check that asks the second question."""
+    run = mt.drive(
+        _unreachable_config(),
+        window_seconds=30,
+        run="dry4",
+        dry_run=True,
+        spec_dir=SPEC,
+        runs_dir=False,
+    )
+    assert "spec_check" in run.incomplete
+
+
+def test_drive_never_returns_from_inside_its_try_block():
+    """The record must be assembled AFTER cleanup, not before it.
+
+    The removed dry_run path returned from inside the `try`, so `_finish` ran
+    while `finally` had not yet driven the phase-I deletes -- the returned
+    TrafficRun was missing its own cleanup rows, and the evidence file was
+    written before they happened. Asserted structurally because the shape is
+    the bug: any `return` inside that `try` reintroduces it, whatever it
+    returns.
+    """
+    import ast
+
+    src = (pathlib.Path(mt.__file__)).read_text()
+    fn = next(
+        n
+        for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.FunctionDef) and n.name == "drive"
+    )
+    tries = [n for n in fn.body if isinstance(n, ast.Try)]
+    assert tries, "drive no longer has a try/finally -- cleanup is not guaranteed"
+    for t in tries:
+        for node in ast.walk(ast.Module(body=t.body, type_ignores=[])):
+            assert not isinstance(node, ast.Return), (
+                "a `return` inside drive()'s try block builds the record before "
+                "`finally` runs cleanup -- the phase-I rows would be missing"
+            )
 
 
 def test_finish_carries_incomplete_through_to_the_record(tmp_path):

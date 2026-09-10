@@ -514,9 +514,13 @@ def drive(
         run: the run id. Defaults to the epoch second, which is what every
             document in this repo has called a run since v1.
         on_row: called with each contract row as it is driven, for progress.
-        dry_run: build every request and issue none. A missing payload or an
+        dry_run: build every request and CONTACT NOTHING. No token, no
+            fixture, no mutation -- so it is safe against a cluster that is
+            down, or absent. It answers one question only: does every cell in
+            the grid produce a request at all. A missing payload or an
             unbindable path is a harness bug, and finding it at call 200 of
-            286 wastes the run's windows.
+            286 wastes the run's windows. **It does not say the requests are
+            VALID** -- `spec_check.check_requests` asks that, against Prism.
         spec_dir: the vendored OpenAPI documents. Defaults to
             `log-coverage/spec` beside this checkout -- the run's denominator
             is a fact about the specs, not about the cluster.
@@ -550,6 +554,9 @@ def drive(
         spec_dir
         or pathlib.Path(__file__).resolve().parent.parent / "log-coverage" / "spec"
     )
+
+    if dry_run:
+        return _dry_run(config, run, profile, window_seconds, spec_dir, runs_dir)
 
     state = {
         "calls": [],
@@ -663,14 +670,11 @@ def drive(
 
         ops = mx.load_spec(spec_dir)
         grid = mx.cells(ops)
-        # Every cell builds a request before ANY of them is issued.
+        # Every cell builds a request before ANY of them is issued. A missing
+        # payload or an unbindable path is a harness bug, and finding it at
+        # call 200 of 286 wastes the run's windows.
         for cell in grid:
             mx.request_for(cell, binding, tokens, "dry-run", realm)
-        if dry_run:
-            state["incomplete"] = (
-                f"dry_run: {len(grid)} requests were built and none was issued"
-            )
-            return _finish(state, run, profile, config, window_seconds, runs_dir)
 
         wanted = _PHASES[profile]
         if "B" in wanted:
@@ -847,6 +851,67 @@ def _binding(config, fx, run, runner_name, runner_role):
         "client_id": config["root_client"],
         "client_secret": config["root_secret"],
     }
+
+
+def dry_binding(config, run):
+    """The binding a dry run shapes its requests against.
+
+    The names are the ones a real run WOULD use -- `ProbeFixture` derives them
+    from the prefix and touches nothing -- so an unbindable path fails here
+    exactly as it would there. What is synthetic is only the credentials.
+    """
+    import api_surface as surf
+
+    fx = surf.ProbeFixture(prefix=f"apimatrix{run}")
+    return fx, _binding(config, fx, run, f"mx_{run}_runner", f"mx_{run}_runner_role")
+
+
+#: What a dry run puts in the Authorization header. Not a token, and shaped so
+#: that a request built with it could never be mistaken for one that was sent.
+DRY_TOKEN = "dry-run-no-token-was-minted"  # noqa: S105
+
+
+def _dry_run(config, run, profile, window_seconds, spec_dir, runs_dir):
+    """Build every request in the grid and CONTACT NOTHING.
+
+    WHY THIS TOUCHES NO CLUSTER, when the first version of it did. The check
+    used to sit after the fixture was built, so a "dry run" created a catalog,
+    a namespace, a table, a view, two principals, two roles and the whole
+    `doomed_*` family before declining to issue the grid -- dozens of mutating
+    calls, against a docstring that said it issued none. It also returned from
+    inside the `try`, so the record was assembled and written to `runs/` BEFORE
+    `finally` ran cleanup, and came back missing its own phase-I rows.
+
+    Both were one mistake: a check that belongs before the work was placed
+    after it. It is the floor now -- runnable with Polaris down, or absent --
+    and `spec_check.check_requests` is the tier above it.
+    """
+    import api_status_matrix as mx
+
+    fx, binding = dry_binding(config, run)
+    tokens = {mx.ADMIN: DRY_TOKEN, mx.RUNNER: DRY_TOKEN, mx.DENIED: DRY_TOKEN}
+    grid = mx.cells(mx.load_spec(spec_dir))
+    for cell in grid:
+        mx.request_for(cell, binding, tokens, "dry-run", config["realm"])
+    state = {
+        "calls": [],
+        "claims": [],
+        "phases": [],
+        "fixture": {
+            "catalog": fx.cat,
+            "namespace": fx.ns,
+            "table": fx.tbl,
+            "view": fx.view,
+        },
+        "identities": {},
+        "incomplete": (
+            f"dry_run: {len(grid)} requests were built, none was issued, and "
+            "nothing was created. This says every cell PRODUCES a request, not "
+            "that any of them is valid -- spec_check.check_requests asks that."
+        ),
+    }
+    # No calls, so `_finish` writes no evidence file. A dry run has none to give.
+    return _finish(state, run, profile, config, window_seconds, runs_dir)
 
 
 def _setup_doomed(adm_pc, adm_ic, fx, binding, config, schema, table_payload):

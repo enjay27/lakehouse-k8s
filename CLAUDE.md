@@ -16,6 +16,13 @@
     import graph, and `log_coverage` re-exports the moved names so v1's notebook
     keeps working. Verification lives here only until `local-k8s` reproduces run
     `1789008899`; see `log-coverage/SCENARIO-logging-test.md`.
+  - **Traffic runs from this repo alone**, three tiers, cheapest first:
+    `log-coverage/run_traffic.py --dry-run` (builds all 286 requests, contacts
+    nothing), `--spec-check` (validates them against `log-coverage/spec/`
+    through Prism — `npx @stoplight/prism-cli mock --errors`, and **`--errors`
+    is not optional**: without it Prism answers 200 to a violation and the
+    check would pass without looking, so `spec_check` reports **VOID**),
+    `--profile smoke` (drives Polaris, and **mutates** — `local` only).
 - **`src/config/`** — environment config. `common.yaml` (shared non-secret defaults) + `<env>.yaml` (per-env: `local` / `dev` / `prod`) are merged by `init_env(env)`. Secrets may be overridden by env vars (`POLARIS_ROOT_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `OPENSEARCH_PASS`, `POSTGRES_PASSWORD`). `init_env` also exposes PostgreSQL globals (`PG_URL`, `PG_CONFIG`, `PG_HOST`…) for the diagnostics notebooks. `*.yaml` here is gitignored except `common.yaml` and `*.example.yaml`; each env ships a `*.example.yaml` template — copy e.g. `dev.example.yaml` → `dev.yaml` and fill in.
 - **Per-test directories** — each test domain has its own folder containing its notebook(s) plus a `README.md` (concept / purpose / how-to-run / result) and any `doc-*.md` reference reports:
   - `lifecycle/` — catalog→namespace→table/view→snapshot→drop lifecycle.

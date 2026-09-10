@@ -184,3 +184,95 @@ dangerous than the blocker it works around, because its failure mode is a *succe
 commit with the wrong contents. Prefer the fix that keeps git in its normal path. And
 after any commit made through a workaround, read `git log --stat` and `git status`
 rather than trusting the exit code — the deletion commit exited 0.
+
+---
+
+## Second postscript — "can I run traffic in this repo?", and what answering it found
+
+Yes, and that is what the boundary bought: `drive()` needs Polaris and MinIO,
+not OpenSearch, not kubectl, not `local-k8s`. But there was no entry point (step
+4 is not done and the v2 notebook still carries its gates), so checking the
+answer meant reading `drive()` closely — and it had **two defects, in the one
+path nothing tested.**
+
+**`dry_run` was not dry.** The check sat AFTER the fixture was built, so a "dry
+run" created a catalog, a namespace, a table, a view, two principals, two roles
+and the whole `doomed_*` family — dozens of mutating calls — and only then
+declined to issue the grid. The docstring said it issued none.
+
+**And it returned from inside the `try`,** so `_finish` assembled the record and
+wrote `runs/traffic-<run>.json` BEFORE `finally` ran cleanup. A dry run returned,
+and persisted, a record missing its own phase-I rows.
+
+Both were one mistake — a check placed after the work it was meant to precede —
+and the reason neither was caught is worth more than the fix: **there was a test
+for `_cleanup`, a test for `_finish`, and no test for the order they run in.**
+Unit tests for each piece, none for the control flow. The replacement is
+structural and cannot rot: `test_drive_never_returns_from_inside_its_try_block`
+walks `drive`'s AST and fails on any `return` in that block, whatever it returns.
+
+### Prism, which was Kade's idea and is a better answer than the one proposed
+
+The plan on the table was to make `dry_run` genuinely dry and stop. Kade asked
+for **Prism** against the vendored specs instead, and it is a different class of
+check: `dry_run` proves each cell PRODUCES a request, by nothing raising. Prism
+proves each request is **valid against the document the run already uses as its
+denominator.** `src/spec_check.py`.
+
+**It is two-sided, and it has to be.** The grid contains deliberately broken
+cells, so *"every request must validate"* would flag them and read as a harness
+bug. A cell targeting 400 on an operation **with a body** substitutes
+`MALFORMED_BODY` and MUST be rejected; every other cell MUST be accepted.
+
+**And it found a Polaris/spec divergence before ever running.** `getConfig`'s
+400 cell drops `warehouse` — which the Iceberg document marks
+`required: false`. So the request is SPEC-VALID and Prism will accept it, while
+this build answers 400 (measured 2026-08-31, and the reason that cell exists).
+That is a fact about Polaris, and it is reported under `build_findings`, not as
+a failure of the check — SCENARIO §6's two sections that must never merge.
+
+### Two controls, because the obvious way to run Prism cannot fail
+
+`prism mock` **without `--errors`** logs violations and answers 200 anyway. Run
+against that, this module reports 286 valid requests and a green verdict — the
+most convincing wrong answer it could give, and the same shape as Gate 5's term
+filter matching nothing and the two gates that reported PASS on zero rows. So a
+**negative control** (a request known to be invalid) must be rejected and a
+**positive control** (one known to be valid) must be accepted, or the pass is
+**VOID**. VOID is not PASS and not FAIL: nothing was measured, and the CLI exits
+2 for it.
+
+Three things that cost a cycle each and are the reusable part:
+
+- **The naive negative control was `getToken`** — the grid's sort order reaches
+  it first, it is the ONLY form-encoded operation, and whether Prism validates a
+  form body against a schema is unsettled. The least representative cell in the
+  grid was vouching for the other 285. It is excluded from control selection now
+  and still checked.
+- **"Not routed" must not be diagnosed as "not enforcing".** With every path
+  404ing, the first version blamed the missing `--errors` — sending the reader
+  to a fix that is not the fix and leaving the mount wrong. `classify` already
+  split `NOT_ROUTED` from `REJECTED` for rows; the control diagnosis now does too.
+- **A globally broken Prism VOIDs rather than producing 286 findings**, in both
+  directions: one that accepts everything is indistinguishable from one that is
+  not enforcing, and one that rejects everything means the mount or the document
+  is wrong. Two of my own tests asserted FAIL for these and were wrong; the code
+  was right. To see a FAIL you have to break something the controls do not vouch
+  for, which is also the only realistic shape.
+
+**The mount is derived, not assumed.** The two documents differ and the
+difference is invisible until every catalog request 404s: management carries
+`/api/management/v1` in its `servers` entry, Iceberg defaults `basePath` to `""`
+and gets `/api/catalog` from POLARIS, not from the spec. `prism_mounts` resolves
+each document's own `servers` block rather than hardcoding the two cases.
+
+### What is NOT verified
+
+**Prism has never run against any of this.** `npm` answers **403** through the
+org egress policy on every machine a Cowork session can reach — the same wall as
+`pypi.org` — so it could not be installed. The 29 tests run against a stub that
+speaks Prism's response shape. They establish that the logic AROUND Prism is
+right; they do not establish that Prism agrees with the stub about what is
+invalid, and **the first real run is the one that confirms the mount points.**
+
+Gate: **289 passed** under the stand-in, 11 deliberate mutants, 11 caught.

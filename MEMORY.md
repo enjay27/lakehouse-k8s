@@ -21,6 +21,12 @@ against a stale index and silently recorded the session's new files as deleted.*
 this repo's `make_traffic`; this repo makes traffic and holds no logging concept at all. Design in
 [`SCENARIO-logging-test.md`](log-coverage/SCENARIO-logging-test.md).
 
+**TRAFFIC RUNS FROM THIS REPO ALONE:** `log-coverage/run_traffic.py --dry-run` (286 requests
+built, nothing contacted) / `--spec-check` (validated against the specs through Prism, still no
+Polaris; needs `npx @stoplight/prism-cli mock --errors`, and **without `--errors` the check is
+VOID rather than green**) / `--profile smoke` (drives, and MUTATES). Prism itself has never run
+here — `npm` is 403 through the org policy — so that tier is UNRUN.
+
 **Step 2 is DONE and the boundary is a test, not a convention.** SCENARIO §3's import guard was
 unwritable while `log_coverage.py` held both halves, so **792 lines moved verbatim to
 `src/traffic_helpers.py`**; `log_coverage` re-exports them and v1's notebook is unedited. Gate:
