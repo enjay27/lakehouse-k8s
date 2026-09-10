@@ -57,7 +57,7 @@ fi
 pass "$OS_URL  $(echo "$ROOT" | jq -r '.version.distribution + " " + .version.number')"
 
 # ---------------------------------------------------------------- 0.1 indices
-head_ "0.1 -- do the guide's indices exist"
+head_ "0.1 -- do the guide's indices exist   [$(date -u +%H:%M:%SZ)]"
 IDX="$(os "/_cat/indices/polaris-*?h=index,docs.count,store.size&format=json" || true)"
 if [ -z "$IDX" ] || [ "$(echo "$IDX" | jq -r 'type')" != "array" ] || [ "$(echo "$IDX" | jq 'length')" = "0" ]; then
   fail "NO polaris-* index exists. GUIDE-schema-v3-testing gates 0-6 have no source."
@@ -166,15 +166,16 @@ else
 fi
 
 # ------------------------------------------ which index actually holds the rows
-head_ "0.5 -- WHERE the report rows live (_cat and the aggregation disagreed once)"
+head_ "0.5 -- WHERE the report rows live   [$(date -u +%H:%M:%SZ)]"
 BY="$(os "/polaris-report-*/_search" '{"size":0,"aggs":{"i":{"terms":{"field":"_index","size":20},"aggs":{"v":{"terms":{"field":"schema_version","size":5}}}}}}' || true)"
 if echo "$BY" | jq -e '.aggregations.i.buckets' >/dev/null 2>&1; then
   echo "$BY" | jq -r '.aggregations.i.buckets[] | "         \(.key)  total=\(.doc_count)  " + (.v.buckets|map("v\(.key)=\(.doc_count)")|join("  "))'
   TOTAL="$(echo "$BY" | jq -r '[.aggregations.i.buckets[].doc_count]|add')"
   echo "         aggregation total = $TOTAL"
-  echo "       Compare with the docs= figures in 0.1. If they disagree, the daily index"
-  echo "       suffix is NOT tracking the window date -- and every per-index conclusion"
-  echo "       above (the mapping check especially) was taken on the wrong index."
+  echo "       Compare with 0.1 AND with the two timestamps. The index is written"
+  echo "       continuously (1 report row per window, 2/min at WINDOW_SECONDS=30), so a"
+  echo "       higher total here is elapsed time, not missing rows. Only a per-index"
+  echo "       split that puts rows under the WRONG DATE is a finding."
   # the mapping that actually matters: the index holding the v3 rows
   V3IDX="$(echo "$BY" | jq -r '[.aggregations.i.buckets[]|select(.v.buckets|map(.key)|index(3))]|sort_by(.doc_count)|last|.key // empty')"
   if [ -n "$V3IDX" ]; then

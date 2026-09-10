@@ -409,3 +409,67 @@ prediction was made from a document rather than from the cluster, which is the m
 repo keeps a rule against — *reading `schema_version` out of the values file proves nothing*.
 It is left in place rather than edited away, because a plan that quietly deletes its wrong
 predictions cannot be checked.
+
+---
+
+## 10. §9.3 resolved — it was elapsed time, and it produces a rule the run must follow
+
+Second preflight, same cluster:
+
+```
+0.1  _cat   polaris-report-2026.09.09  1461      polaris-report-2026.09.10   58
+0.5  aggs   polaris-report-2026.09.09  1461      polaris-report-2026.09.10   67   (v3=63, v2=4)
+```
+
+**Nothing is lost and the daily suffix is correct.** The report stream writes **one row per
+window, two a minute** at `WINDOW_SECONDS = 30`; `_cat` in §0.1 and the aggregation in §0.5 are
+taken minutes apart, with a `kubectl get cm -o yaml` for two releases in between. Nine rows is
+that gap. The first run's larger gap (2 vs 53) is the same effect over a longer interval.
+
+The `v2 = 4` rows in today's index are the windows between midnight UTC and the 00:55:24Z roll,
+written by the same DaemonSet before the upgrade. Yesterday's index is 1461 rows, all v2. Both
+are exactly what a correctly-suffixed daily index should contain.
+
+**The rule this produces, and it is not optional.** A live index grows underneath any
+measurement taken across two queries. So in `polaris_log_coverage_v2.ipynb`:
+
+- **every count is scoped to the run's own window set** — a `range` on `window_start` between
+  the first and last phase boundary — never "everything matching `polaris-report-*`";
+- **two figures that must reconcile are read in ONE query**, not two. Where that is impossible,
+  both carry their timestamp and the difference is checked against elapsed windows before it is
+  called a discrepancy.
+
+This is the same failure shape as `access_kept + access_counted == access_seen` being
+tautological: a number that reconciles with nothing borrows the credibility of the ones that do.
+Here it nearly produced a phantom finding about lost rows.
+
+## 10.1 The mapping FAIL stands, now on the right index
+
+`polaris-report-2026.09.10` **is** the index holding the v3 rows, and `min_record_time` is
+mapped `text` there. §9.2's caveat is discharged — the check was on the correct index after all,
+and the remedy is unchanged: **an index template for `polaris-report-*` typing
+`min_record_time` / `max_record_time` as `date`.** Recommended before the run of record so the
+next daily index is clean; the invariant itself stays checkable client-side either way.
+
+## 10.2 What is still UNPROVEN, and the cheap way to close it
+
+**Gate 0b — the array split — has never been observed on the OpenSearch side.** Every window so
+far carries `access_seen: 0`, so there are no `resource` or `principal` rows to split into. The
+split was verified end-to-end on 2026-09-04 for the **VictoriaLogs** shipper; that is a
+different Fluent Bit, a different output plugin and a different index. Nothing carries over.
+
+Three things are unproven together, and one small drive settles all three:
+
+1. does Fluent Bit's array return split into `summary` / `resource` / `principal` **into
+   OpenSearch**;
+2. does OpenSearch index `requests`, `errors`, `response_bytes`, `last_write_bytes` as
+   **numbers** (`type_int_key`), or as text — a text-typed `requests` makes every `sum` in
+   gates 1–5 silently wrong;
+3. do `resource_kind` / `api_kind` arrive at all on a `resource` row.
+
+**Proposed Phase 0 — a ~10-call smoke test, two minutes.** One catalog read, one namespace
+read, one table read, one commit, one 404, one 403; wait one window; then re-run preflight
+§0.2b plus a numeric-filter probe (`{"range":{"requests":{"gt":0}}}` must match). It is a
+fraction of the real run and it fails cheap. Driving 305 calls into a pipeline whose numeric
+mapping is unverified risks discovering it afterwards, at which point the whole run is a
+statement about text fields.
