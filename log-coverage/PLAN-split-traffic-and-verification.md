@@ -113,6 +113,74 @@ that because it did it. A verifier reconstructing it from `polaris-logs-*` would
 re-implementing Polaris semantics in the pipeline repo — a second seam, and the one most likely
 to rot.
 
+### 3.1 The request id is the join key, and it is measured to round-trip
+
+Kade, 2026-09-10: *"Can each API's response get a Request-ID? Writing request-ids in the
+manifest should be helpful."* Both halves are yes, and the second half changes the design.
+
+**Polaris echoes `Polaris-Request-Id` back in the response, unchanged.** Measured 2026-09-09 by
+v1's correlation probe — sent and echoed matched, correlation mode EXACT — and confirmed by run
+1789008899 recovering **286 of 286** calls from `polaris-logs-*` by `mdc.requestId`. So the id
+is not merely something the client made up: it round-trips through the response AND lands in
+the MDC of every record the request emits.
+
+`execute()` now records `echo_ok` per call and `echo_failures()` lists any that did not come
+back. That check belongs on the traffic side and nowhere else, because it is the difference
+between two accusations of different repos:
+
+- an id that **did not echo** never reached the server as sent — a tagging fault, here;
+- an id that **echoed and then finds nothing** in the index — a pipeline fault, there.
+
+Without the echo check, both look identical afterwards: an empty search result.
+
+**So the claims are keyed by request id, not by resource name.** This replaces the
+`resource_hint` sketch above and is a strictly better contract:
+
+```jsonc
+{"claim": "last_write_bytes", "window": "...Z",
+ "request_id": "nb-1789008899-3001-gate2-the-commit", "equals": 1733,
+ "because": "the only 2xx POST to a table in that window"}
+
+{"claim": "role_writes", "window": "...Z", "equals": 3,
+ "request_ids": ["nb-...-3100-gate4-grant-TABLE_READ_DATA",
+                 "nb-...-3101-gate4-grant-TABLE_WRITE_DATA",
+                 "nb-...-3102-gate4-grant-NAMESPACE_LIST"],
+ "because": "three privileges granted on one role, all 201"}
+
+{"claim": "auth_denied", "window": "...Z", "at_least": 1,
+ "request_id": "nb-...-3199-gate4-denied-role-read",
+ "because": "a 403 on that role in that window, with no prior success from that identity"}
+```
+
+The verifier resolves a claim by looking the id up in `polaris-logs-*`, reading `api_path`,
+`http_method`, `http_status` and `response_size` off the record Polaris itself wrote, and
+comparing the report row against that. It never has to guess which row, which is precisely what
+made **Gate 4 unreadable in run 1789008899** — `writes=1 granted=3` with no way to tell whether
+the filter undercounted or the gate read the wrong row. With the ids, that ambiguity cannot
+arise.
+
+It also **shrinks the verifier's Polaris knowledge to zero**: it no longer needs to know that a
+commit is a POST under `/tables/`, only that these three ids exist and what the access log says
+about them.
+
+### 3.2 One thing the ids cannot do, and the manifest must say so
+
+**A counted call leaves no individual record, by design.** Under rule 6 a successful read is
+summarised and not stored, so its request id is in the manifest and finds nothing — correctly.
+A verifier that treats every id as findable would report the retention policy working as a
+pipeline fault, which is the mistake v1 made before `correlation_by_disposition` split the
+ratio.
+
+But **which calls are counted is a fact about the deployed Lua**, not about Polaris — so the
+manifest must NOT carry keep/drop expectations. It records what was driven; the verifier runs
+the deployed filter over those calls and computes the disposition itself. Keeping that on the
+verifier's side is what stops the two repos from drifting into two answers about the same
+policy — the drift this whole plan exists to prevent.
+
+The manifest therefore carries, per call: `request_id`, `echoed` (the value that came back),
+`echo_ok`, `method`, `path`, `status`, `response_bytes`, `principal`, `window`, `phase`,
+`target`, `verdict` — and **no expectation about storage**.
+
 **Validation on read is not optional.** `manifest_version` mismatched, `windows.first` after
 `windows.last`, a claim naming a window outside the run's range, an empty `calls` — each is a
 loud refusal, not a warning. A verifier that runs against a half-written manifest reports
