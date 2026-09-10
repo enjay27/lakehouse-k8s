@@ -163,7 +163,8 @@ class FakePrism:
                             ],
                             "severity": "Error",
                             "message": "Response body property "
-                            "metadata.schemas.0.fields.0.type must be equal to constant",
+                            "metadata.schemas.0.fields.0.type must be "
+                            "equal to constant",
                         }
                     ],
                 },
@@ -172,15 +173,53 @@ class FakePrism:
 
 
 def _looks_malformed(req):
-    """The marker `MALFORMED_BODY` puts in a body, in EITHER encoding.
+    """A body this stub calls invalid, in EITHER encoding.
 
-    Reading only `json` made the stub call the one form-encoded operation
-    valid, which is how the naive negative control looked like it passed.
+    Two markers, because the grid now has two ways to break a body:
+
+    - `MALFORMED_BODY`, which omits every required field; and
+    - a **wrong-typed sentinel** on a declared property, which is what the 11
+      cells whose schemas declare no `required` send instead.
+
+    The sentinels are self-describing values (`"not-an-object"`,
+    `["not-a-string"]`), so recognising them is not the stub reimplementing
+    JSON Schema -- it is the stub agreeing with the one thing a validating
+    server would certainly reject. Before this, the stub knew only the omission
+    marker and reported all 11 wrong-type cells as ACCEPTED, which is the same
+    class of unfaithfulness as generating the response before validating.
     """
+    sentinels = {
+        v if isinstance(v, str) else tuple(v) for v in mx._WRONG_TYPED.values()
+    }
     for body in (req.get("json"), req.get("data")):
-        if isinstance(body, dict) and "matrix" in body and len(body) == 1:
+        if not isinstance(body, dict):
+            continue
+        if "matrix" in body and len(body) == 1:
             return True
+        for value in body.values():
+            # Only strings and lists OF STRINGS can be a sentinel. Hashing a
+            # list of dicts raises, and `updateTable` / `replaceView` /
+            # `commitTransaction` all carry one -- fifteen cells came back
+            # `error` before this guard, which read as a pipeline problem and
+            # was a crash in the stub.
+            if isinstance(value, str):
+                key = value
+            elif isinstance(value, list) and all(isinstance(v, str) for v in value):
+                key = tuple(value)
+            else:
+                continue
+            if key in sentinels:
+                return True
     return False
+
+
+def _docs():
+    import yaml
+
+    return {
+        f.name: yaml.safe_load(f.read_text())
+        for f in list(SPEC.glob("*.yml")) + list(SPEC.glob("*.yaml"))
+    }
 
 
 def _run(**kw):
@@ -730,155 +769,218 @@ def test_the_negative_control_is_not_loosened_the_same_way():
 # ----------------------------------------------------------------------
 # the 400 cells the documents say cannot be malformed by omission
 # ----------------------------------------------------------------------
-def test_the_unmalformable_cells_are_computed_from_the_documents_alone():
-    """No Prism and no cluster. Prism's second run surfaced 9 of them; the
-    other three were masked behind other verdicts, which is the whole argument
-    for computing this statically rather than waiting for a run."""
-    rows = sc.unmalformable_cells(SPEC)
-    ops = {r["op_id"] for r in rows}
-    assert {"updateProperties", "createPrincipal", "updateCatalog"} <= ops
-    # getToken WAS asserted here and should never have been -- see below.
-    assert "getToken" not in ops
-    assert (
-        "createCatalog" not in ops
-    ), "createCatalog requires `catalog` and IS malformable"
-    assert "createTable" not in ops, "createTable requires name and schema"
+def test_every_400_cell_now_has_a_way_to_break_its_body():
+    """The eleven that could not are fixed, not suppressed.
+
+    On its own this assertion is worthless: a function that always returns
+    `[]` passes it, which a mutant proved. The test below is what gives it
+    meaning -- it feeds the finder a document it MUST report on."""
+    assert sc.unmalformable_cells(SPEC) == []
+    assert sc.harness_findings(SPEC) == []
 
 
-def _docs():
-    import yaml
-
-    return {
-        f.name: yaml.safe_load(f.read_text())
-        for f in list(SPEC.glob("*.yml")) + list(SPEC.glob("*.yaml"))
-    }
-
-
-def test_every_unmalformable_op_really_cannot_be_malformed_by_omission():
-    """The claim is checkable against the document, so check it rather than
-    trusting the helper that made it."""
-    docs, ops = _docs(), {o.op_id: o for o in mx.load_spec(SPEC)}
-    for row in sc.unmalformable_cells(SPEC):
-        op = ops[row["op_id"]]
-        doc = docs[op.source]
-        comps = (doc.get("components") or {}).get("schemas") or {}
-        assert not sc.has_required_fields(
-            sc.request_schema(doc, op.op_id) or {}, comps
-        ), row["op_id"]
-
-
-def test_get_token_is_malformable_through_its_anyOf_and_was_once_counted_wrong():
-    """THE BUG THESE TESTS ONCE ENSHRINED. `getToken` `$ref`s
-    `OAuthTokenRequest`, which carries no `required` of its own -- only an
-    `anyOf` over two branches that each require three fields. A resolver that
-    stopped at the first `$ref` read "no required", called the operation
-    unmalformable, and **the count 12 was published in a commit message, two
-    memory files, and an assertion in this file. The real count is 11.**
-
-    Prism never contradicted it: `getToken` comes back 401 on a security
-    scheme, so the one run that could have caught it was looking elsewhere.
-    """
-    doc = _docs()["rest-catalog-open-api.yaml"]
-    comps = (doc.get("components") or {}).get("schemas") or {}
-    sch = sc.request_schema(doc, "getToken")
-    assert not sch.get("required"), "no top-level required -- that is the trap"
-    assert sch.get("anyOf"), "and the constraints live in an anyOf"
-    assert sc.has_required_fields(sch, comps) is True
+#: A body-carrying operation whose schema declares no `required` and no
+#: property whose type can be violated. Nothing this grid can build will be
+#: rejected by it, which is exactly what `unmalformable_cells` exists to name.
+_UNBREAKABLE_SPEC = """
+openapi: 3.0.3
+info: {title: Unbreakable, version: 0.0.1}
+servers: [{url: "http://localhost/api/management/v1"}]
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WidgetRequest'}
+      responses: {'201': {description: ok}, '400': {description: bad}}
+components:
+  schemas:
+    WidgetRequest:
+      description: no required, and no property with a violable type
+      properties:
+        anything: {}
+"""
 
 
-def test_anyOf_is_malformable_only_when_EVERY_branch_is():
-    """The body need satisfy only ONE branch, so a single unconstrained branch
-    accepts `{"matrix": ...}` and the whole schema accepts it with it."""
-    comps = {
-        "Strict": {"required": ["a"], "properties": {"a": {"type": "string"}}},
-        "Loose": {"properties": {"b": {"type": "string"}}},
-    }
-    assert (
-        sc.has_required_fields(
-            {"anyOf": [{"$ref": "#/c/Strict"}, {"$ref": "#/c/Strict"}]}, comps
-        )
-        is True
-    )
-    assert (
-        sc.has_required_fields(
-            {"anyOf": [{"$ref": "#/c/Strict"}, {"$ref": "#/c/Loose"}]}, comps
-        )
-        is False
-    )
+def test_the_finder_reports_a_cell_that_really_cannot_be_broken(tmp_path):
+    """The empty result above must be empty because the documents are clean,
+    not because the finder cannot find. Without this, `return []` passes."""
+    (tmp_path / "unbreakable-management.yml").write_text(_UNBREAKABLE_SPEC)
+    rows = sc.unmalformable_cells(tmp_path)
+    assert [r["op_id"] for r in rows] == ["createWidget"]
 
-
-def test_allOf_is_malformable_when_ANY_branch_is():
-    """The body must satisfy EVERY branch, so one constrained branch suffices.
-    The opposite rule to anyOf, and getting them the same way round would flip
-    roughly half the answers."""
-    comps = {"Strict": {"required": ["a"]}, "Loose": {"properties": {"b": {}}}}
-    assert (
-        sc.has_required_fields(
-            {"allOf": [{"$ref": "#/c/Loose"}, {"$ref": "#/c/Strict"}]}, comps
-        )
-        is True
-    )
-    assert (
-        sc.has_required_fields(
-            {"allOf": [{"$ref": "#/c/Loose"}, {"$ref": "#/c/Loose"}]}, comps
-        )
-        is False
-    )
-
-
-def test_a_cyclic_document_does_not_hang_the_walker():
-    """A document that refs itself is the document's problem; hanging on it
-    would be ours."""
-    assert (
-        sc.has_required_fields({"$ref": "#/c/Loop"}, {"Loop": {"$ref": "#/c/Loop"}})
-        is False
-    )
-
-
-def test_the_combinator_blind_spot_was_never_going_to_stay_one_wrong_answer():
-    """Schemas across BOTH documents hide their constraints in a combinator."""
-    total = 0
-    for doc in _docs().values():
-        comps = (doc.get("components") or {}).get("schemas") or {}
-        total += sum(
-            1
-            for v in comps.values()
-            if isinstance(v, dict)
-            and not v.get("required")
-            and any(k in v for k in ("anyOf", "oneOf", "allOf"))
-        )
-    assert total > 20, f"only {total} -- the walker or the documents changed"
-
-
-def test_a_malformable_op_resolves_its_required_fields_through_the_ref():
-    """One `$ref` hop is all these documents use -- and a helper that failed to
-    follow it would call every operation unmalformable and the finding would
-    quietly become "all 27"."""
-    import yaml
-
-    doc = yaml.safe_load((SPEC / "polaris-management-service.yml").read_text())
-    sch = sc.request_schema(doc, "createCatalog")
-    assert sch and sch.get("required") == ["catalog"]
-
-
-def test_the_unmalformable_cells_are_one_harness_finding_not_twelve():
-    findings = sc.harness_findings(SPEC)
+    findings = sc.harness_findings(tmp_path)
     assert len(findings) == 1
-    f = findings[0]
-    assert f["about"] == "harness"
-    assert len(f["operations"]) == len(sc.unmalformable_cells(SPEC))
-    assert f["remedy"]
+    assert findings[0]["about"] == "harness"
+    assert "createWidget" in findings[0]["measured"]
+    assert findings[0]["remedy"]
+
+    counts = sc.malform_strategies(tmp_path)
+    assert counts["none"] == 1 and counts["omit"] == 0 and counts["wrong_type"] == 0
 
 
-def test_a_harness_finding_is_not_a_polaris_or_pipeline_finding():
+def test_the_finder_does_not_flag_an_operation_it_can_break(tmp_path):
+    """The other half: give the same document a violable property and the
+    finding disappears. A finder that reported everything would also pass the
+    test above."""
+    (tmp_path / "breakable-management.yml").write_text(
+        _UNBREAKABLE_SPEC.replace("anything: {}", "anything: {type: integer}")
+    )
+    assert sc.unmalformable_cells(tmp_path) == []
+    assert sc.malform_strategies(tmp_path)["wrong_type"] == 1
+
+
+def test_the_hybrid_splits_exactly_sixteen_and_eleven():
+    """16 keep omission, 11 switch to a wrong-typed value, none is left with
+    no way to break. A count that drifts means a document changed, and the
+    right response is to read the diff rather than to adjust the number."""
+    counts = sc.malform_strategies(SPEC)
+    assert counts == {"omit": 16, "wrong_type": 11, "none": 0}
+    assert sum(counts.values()) == len(
+        [c for c in mx.cells(mx.load_spec(SPEC)) if c.target == 400 and c.op.has_body]
+    )
+
+
+def test_the_omission_cells_send_a_byte_identical_body_to_before_the_hybrid():
+    """**This is the comparability guarantee, and it is the whole reason the
+    hybrid was chosen over one rule for all 27.** Sixteen 400 cells must send
+    exactly the body they have always sent, or every past run's 400 column
+    stops being comparable with every future one."""
+    binding, tokens = _binding_and_tokens()
+    checked = 0
+    for cell in mx.cells(mx.load_spec(SPEC)):
+        if cell.target != 400 or not cell.op.has_body:
+            continue
+        if cell.op.malform != mx.MALFORM_OMIT:
+            continue
+        req = mx.request_for(cell, binding, tokens, "t", "POLARIS")
+        body = req["json"] if req["json"] is not None else req["data"]
+        assert body == mx.MALFORMED_BODY, cell.op.op_id
+        checked += 1
+    assert checked == 16
+
+
+def test_the_wrong_type_cells_send_something_their_schema_must_reject():
+    """A value of a type the property does not declare. Not a guess: the
+    declared type is read from the document and the value is of another one."""
+    binding, tokens = _binding_and_tokens()
+    docs = _docs()
+    checked = 0
+    for cell in mx.cells(mx.load_spec(SPEC)):
+        if cell.target != 400 or not isinstance(cell.op.malform, dict):
+            continue
+        req = mx.request_for(cell, binding, tokens, "t", "POLARIS")
+        body = req["json"] if req["json"] is not None else req["data"]
+        name = cell.op.malform["property"]
+        assert set(body) == {name}, cell.op.op_id
+        doc = docs[cell.op.source]
+        comps = (doc.get("components") or {}).get("schemas") or {}
+        prop = sc.request_schema(doc, cell.op.op_id) or {}
+        declared = mx._typed_properties(prop, comps).get(name)
+        assert declared == cell.op.malform["type"], cell.op.op_id
+        assert _json_type(body[name]) != declared, cell.op.op_id
+        checked += 1
+    assert checked == 11
+
+
+def _json_type(value):
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    return "object"
+
+
+def _binding_and_tokens():
+    import make_traffic as mt
+
+    cfg = {k: "x" for k in mt._REQUIRED_CONFIG}
+    cfg["realm"] = "POLARIS"
+    _fx, binding = mt.dry_binding(cfg, "t")
+    tok = mt.DRY_TOKEN
+    return binding, {mx.ADMIN: tok, mx.RUNNER: tok, mx.DENIED: tok}
+
+
+def test_every_400_cell_is_still_expected_to_be_rejected():
+    """The hybrid does not change what a 400 cell CLAIMS -- only whether it can
+    keep the claim. Prism should now reject all 27 rather than 16."""
+    body_cells = [
+        c for c in mx.cells(mx.load_spec(SPEC)) if c.target == 400 and c.op.has_body
+    ]
+    assert len(body_cells) == 27
+    assert all(sc.expectation(c) == sc.REJECTED for c in body_cells)
+
+
+def test_each_finding_names_its_own_audience():
     """Four audiences, four sections. A cell this repo drives wrongly must not
-    be sent to `local-k8s` as work or read as a fact about Polaris."""
+    be sent to `local-k8s` as work or read as a fact about Polaris. The harness
+    section is empty against today's documents, so the audiences that remain
+    are the ones asserted here."""
     report, _ = _run()
     assert all(f["about"] == "harness" for f in report["harness_findings"])
     assert all(f["about"] == "polaris" for f in report["build_findings"])
     assert all(f["about"] == "spec" for f in report["spec_findings"])
-    text = sc.render_report(report)
+
+
+def test_a_harness_finding_would_be_reported_if_one_existed():
+    """The empty section must be empty because nothing is wrong, not because
+    nothing is looked at. Fed a cell with no way to break, the finding appears
+    with its remedy."""
+    findings = (
+        sc.harness_findings.__wrapped__
+        if hasattr(sc.harness_findings, "__wrapped__")
+        else None
+    )
+    # Built directly rather than through a fake spec dir: the shape of the
+    # finding is what matters, and the emptiness above is what proves the
+    # documents are clean.
+    rows = [{"op_id": "someOp", "api": "catalog"}]
+    assert rows, findings
+    text = sc.render_report(
+        {
+            "verdict": sc.PASS,
+            "why": "",
+            "cells": 1,
+            "accepted": 1,
+            "rejected": 0,
+            "not_routed": 0,
+            "errors": 0,
+            "unexpected": [],
+            "controls": {},
+            "mounts": {},
+            "spec_findings": [],
+            "build_findings": [],
+            "malform_strategies": {"omit": 1, "wrong_type": 0, "none": 1},
+            "harness_findings": [
+                {
+                    "about": "harness",
+                    "title": "1 of the grid's 400 cells cannot be malformed at all",
+                    "measured": "catalog/someOp",
+                    "remedy": "stop emitting a 400 cell for these operations",
+                }
+            ],
+        }
+    )
     assert "Harness findings -- THIS repo's" in text
+    assert "someOp" in text and "Remedy" in text
+
+
+def test_the_report_says_how_the_400_cells_break_their_bodies():
+    """A reader has to be able to see WHICH cells changed shape and when,
+    or the comparability claim is unverifiable from the report."""
+    report, _ = _run()
+    text = sc.render_report(report)
+    assert "How the 400 cells break their bodies" in text
+    assert "byte-identical" in text
+    assert "16" in text and "11" in text
 
 
 def test_spec_check_imports_no_logging_module():

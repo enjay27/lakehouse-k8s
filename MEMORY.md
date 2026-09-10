@@ -4,45 +4,41 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-10 (session 10)
+## Now — 2026-09-10 (session 11)
 
-**THE `index.lock` BLOCKER HAS A FIX THAT NEEDS NO PERMISSION: the mount refuses `unlink` but
-allows `rename`.** `mv .git/index.lock .git/_stale/` works where `rm` returns *Operation not
-permitted*, so a session without delete permission can still commit normally. Every git write
-leaves a fresh lock, so clear them before each git command, not once. `CLAUDE.md`'s claim that
-the blocker was resolved holds only where delete permission was granted — this is the fallback
-when it was not, and it is better than the `GIT_INDEX_FILE` workaround, which **committed
-against a stale index and silently recorded the session's new files as deleted.** See
-`.memory/active-issues.md`.
+**THE GRID DECISION IS LANDED: it malforms by WRONG TYPE where it cannot malform by omission,
+so the denominator stays 286.** `Operation.malform` is decided at parse time; omission is tried
+FIRST, so the **16** cells that could always be malformed send a byte-identical body to every
+previous run and stay comparable, and only the **11** that were driving *successful* calls change
+shape. Split **16 omit / 11 wrong-type / 0 unbreakable**; `unmalformable_cells()` is now empty.
+
+**But it is 10 verified, 1 UNVERIFIABLE — never quote 11.** `planTableScan`'s 400 cell cannot be
+seen: `{"case-sensitive":"not-a-boolean"}` and `{}` return byte-identical 53-entry violation lists
+with **no `request` entry at all**, because Prism's response generation for that operation fails
+first. **The instrument is blind on one of the cells the fix was for, and blind toward green** —
+the same blind spot that made the original count wrong. `.memory/active-issues.md`.
+
+**`pytest` AND PRISM NOW RUN IN A COWORK SESSION.** The Linux VM has egress (pypi/npm/github all
+200) and `uv`/`node`/`npx`; `black` is **26.5.1**, the exact pin. Gate: **960 passed, 45 skipped**
+under real `pytest`, agreeing with Kade's macOS **1005 passed**. Build the venv OUTSIDE the mount
+(`UV_PROJECT_ENVIRONMENT=$HOME/venv-linux`) or `uv sync` destroys the macOS `.venv`. The stand-in
+is retired. **The cluster is still unreachable** — the OrbStack node IP is *Network is
+unreachable* from the VM — so handoff steps 0-1 stay Kade's. A 403 from a Polaris URL was the
+**egress allowlist**, not Polaris.
+
+**`index.lock`: the mount refuses `unlink` but allows `rename`.** `mv .git/index.lock .git/_stale/`
+works where `rm` does not, and every git write leaves a fresh lock, so clear before each command.
+**Never `GIT_INDEX_FILE`** — it commits against a stale index and records new files as deleted.
 
 **THE WORK IS SPLIT IN TWO, AND THE NEXT SESSION STARTS FROM
 [`log-coverage/HANDOFF-split-logging-test-2026-09-10.md`](log-coverage/HANDOFF-split-logging-test-2026-09-10.md)**
-— standalone; steps 3-4 need BOTH folders connected. `local-k8s` runs the logging test and calls
-this repo's `make_traffic`; this repo makes traffic and holds no logging concept at all. Design in
-[`SCENARIO-logging-test.md`](log-coverage/SCENARIO-logging-test.md).
+— standalone; steps 3-4 need BOTH folders connected. Step 2 is DONE. Traffic runs from this repo
+alone: `log-coverage/run_traffic.py --dry-run` / `--spec-check` (Prism, **`--errors` is not
+optional** or the check is VOID) / `--profile smoke` (drives, and MUTATES).
 
-**TRAFFIC RUNS FROM THIS REPO ALONE:** `log-coverage/run_traffic.py --dry-run` (286 requests
-built, nothing contacted) / `--spec-check` (validated against the specs through Prism, still no
-Polaris; needs `npx @stoplight/prism-cli mock --errors`, and **without `--errors` the check is
-VOID rather than green**) / `--profile smoke` (drives, and MUTATES). **Prism has run twice**, and
-its finding is now computed rather than observed: **11 of the grid's 27 malformed-body 400 cells
-cannot provoke a 400** — their schemas declare no `required`, so the "malformed" body is valid
-and the cell drives a *successful* call. `spec_check.unmalformable_cells()` gets the whole set
-from the documents alone; **the runs only ever surfaced 9**, and **the first count published was
-12 — wrong, because the resolver did not walk `anyOf`.** Fixing the grid is OPEN and changes
-the denominator — see `.memory/active-issues.md`. Everything the runs found in the CHECK is
-fixed; `.memory/roadmap.md` has the detail.
-
-**Step 2 is DONE and the boundary is a test, not a convention.** SCENARIO §3's import guard was
-unwritable while `log_coverage.py` held both halves, so **792 lines moved verbatim to
-`src/traffic_helpers.py`**; `log_coverage` re-exports them and v1's notebook is unedited. Gate:
-**936 passed** under real `pytest`. **`drive()` has never touched Polaris** — the first run tests
-the module as much as the pipeline. Next: handoff steps 0-1, then 3.
-
-**Still true from session 9, detail in [`.memory/roadmap.md`](.memory/roadmap.md):** the matrix
-harness is built and UNRUN; report schema **v3 is live on the DaemonSet and v2 on the
-Deployment**, so the oracle must be told which pipeline it measures; `min_record_time` is mapped
-**text** in the report index and only an index template fixes it.
+**Still true from session 9:** the matrix harness report schema **v3 is on the DaemonSet and v2 on
+the Deployment**, so the oracle must be told which pipeline it measures; `min_record_time` is
+mapped **text** and only an index template fixes it.
 
 ## Then — 2026-09-07 (session 8)
 

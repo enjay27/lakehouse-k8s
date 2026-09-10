@@ -584,6 +584,7 @@ def check_requests(
         "spec_findings": spec_findings(spec_examples)
         + auth_findings(auth_required, spec_dir),
         "harness_findings": harness_findings(spec_dir),
+        "malform_strategies": malform_strategies(spec_dir),
     }
 
 
@@ -672,14 +673,21 @@ def spec_findings(spec_example_rows):
     return out
 
 
-def request_schema(doc, op_id):
-    """The resolved request-body schema for `op_id`, or None if it has no body.
+#: THE SPEC WALKER LIVES IN `api_status_matrix`, NOT HERE.
+#: It is spec parsing, and the grid now needs it too -- `Operation.malform` is
+#: decided with it at parse time. Two copies would drift, and the drift would
+#: be invisible until a 400 cell sent a body the grid thought was broken and
+#: this module thought was fine. Same reasoning as the `window_bounds` twins,
+#: with the opposite conclusion, because here there is no import to avoid.
+from api_status_matrix import (  # noqa: E402,F401
+    _deref,
+    has_required_fields,
+    malform_strategy,
+)
 
-    Follows `$ref` (bounded, so a cyclic document cannot hang this). It does
-    NOT flatten combinators -- `has_required_fields` walks those, because
-    whether a body can be malformed by omission depends on how the branches
-    combine and that cannot be answered by flattening.
-    """
+
+def request_schema(doc, op_id):
+    """The resolved request-body schema for `op_id`, or None if it has no body."""
     comps = (doc.get("components") or {}).get("schemas") or {}
     for _path, item in (doc.get("paths") or {}).items():
         for _m, op in (item or {}).items():
@@ -692,99 +700,57 @@ def request_schema(doc, op_id):
     return None
 
 
-def _deref(sch, comps, depth=0):
-    """Resolve `$ref` chains, with a depth bound rather than a cycle set.
-
-    A document that refs itself is a document problem; hanging on it here
-    would be ours.
-    """
-    while isinstance(sch, dict) and "$ref" in sch and depth < 10:
-        sch = comps.get(sch["$ref"].split("/")[-1], {})
-        depth += 1
-    return sch if isinstance(sch, dict) else {}
-
-
-def has_required_fields(sch, comps, depth=0):
-    """Can this body be malformed by OMITTING a field?
-
-    **`getToken` is why this exists.** Its schema `$ref`s `OAuthTokenRequest`,
-    which carries no `required` of its own -- only an `anyOf` over
-    `OAuthClientCredentialsRequest` (requires `grant_type`, `client_id`,
-    `client_secret`) and `OAuthTokenExchangeRequest` (requires `grant_type`,
-    `subject_token`, `subject_token_type`). A resolver that stopped at the
-    first `$ref` read "no required" and called the operation unmalformable.
-    **It published a wrong count, and the test asserting that count enshrined
-    it.** 35 schemas across the two documents hide their constraints in a
-    combinator this way, so it was never going to stay a single mistake.
-
-    The combinator rules, and each is the one that makes the answer true:
-
-    - `allOf`: the body must satisfy EVERY branch, so ONE branch with
-      `required` is enough to make it malformable.
-    - `anyOf` / `oneOf`: the body need satisfy only ONE branch, so it is
-      malformable only if EVERY branch is. A single unconstrained branch
-      accepts `{"matrix": ...}` and the whole schema accepts it with it.
-    """
-    sch = _deref(sch, comps, depth)
-    if depth > 10 or not sch:
-        return False
-    if sch.get("required"):
-        return True
-    if any(has_required_fields(b, comps, depth + 1) for b in sch.get("allOf") or ()):
-        return True
-    for key in ("anyOf", "oneOf"):
-        branches = sch.get(key) or ()
-        if branches and all(has_required_fields(b, comps, depth + 1) for b in branches):
-            return True
-    return False
-
-
 def unmalformable_cells(spec_dir):
-    """Operations whose 400 cell CANNOT be provoked by omitting a field.
+    """400 cells the documents give **no** way to break.
 
-    **Computed from the documents alone -- no Prism, no cluster.** The grid's
-    400 rule is *"a body missing its required fields"*, and where a schema
-    declares no `required` there is nothing to miss: `MALFORMED_BODY` is then a
-    VALID body, the cell drives a successful call, and it reports a 400 it can
-    never have provoked.
+    **This used to mean something weaker and worse: cells whose schema has no
+    `required`.** There were 11, and they were driving successful calls while
+    reporting a 400 they never provoked. `api_status_matrix` now malforms those
+    by sending a WRONG-TYPED value on a declared property instead of by
+    omission, so they provoke a real rejection and are no longer a gap.
 
-    Measured 2026-09-10 against the vendored 1.3.0 documents: **12 of the 27
-    malformed-body cells**. Prism's second run surfaced 9 of them; the other
-    three were masked behind other verdicts, which is the argument for
-    computing this statically instead of waiting for a run to reveal it.
+    What is left is the genuine residue: an operation whose body carries a
+    request schema that declares neither `required` fields nor a property whose
+    type can be violated. Against the vendored 1.3.0 documents that set is
+    **empty**, and the right thing for an empty finding to do is disappear.
     """
     import api_status_matrix as mx
-    import yaml
 
-    d = pathlib.Path(spec_dir)
-    docs = {}
-    for f in sorted(d.glob("*.yml")) + sorted(d.glob("*.yaml")):
-        docs[f.name] = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    return sorted(
+        (
+            {"op_id": c.op.op_id, "api": c.op.api}
+            for c in mx.cells(mx.load_spec(spec_dir))
+            if c.target == 400 and c.op.has_body and c.op.malform is None
+        ),
+        key=lambda r: (r["api"], r["op_id"]),
+    )
 
-    out = []
+
+def malform_strategies(spec_dir):
+    """`{omit: n, wrong_type: n, none: n}` over the 400 cells.
+
+    Reported so a reader can see WHICH cells changed shape and when. The 16
+    omission cells send a byte-identical body to every run before the hybrid,
+    so they stay comparable; the wrong-type cells do not, and were not
+    comparable before either because they were not testing anything.
+    """
+    import api_status_matrix as mx
+
+    counts = {"omit": 0, "wrong_type": 0, "none": 0}
     for cell in mx.cells(mx.load_spec(spec_dir)):
         if cell.target != 400 or not cell.op.has_body:
             continue
-        doc = docs.get(cell.op.source) or {}
-        sch = request_schema(doc, cell.op.op_id)
-        comps = (doc.get("components") or {}).get("schemas") or {}
-        if not has_required_fields(sch or {}, comps):
-            out.append(
-                {
-                    "op_id": cell.op.op_id,
-                    "api": cell.op.api,
-                    "properties": sorted((sch or {}).get("properties") or {}),
-                }
-            )
-    return sorted(out, key=lambda r: (r["api"], r["op_id"]))
+        m = cell.op.malform
+        counts["omit" if m == mx.MALFORM_OMIT else "wrong_type" if m else "none"] += 1
+    return counts
 
 
 def harness_findings(spec_dir):
     """Cells this repo drives that the document says cannot do what they claim.
 
-    Not Polaris's, not the pipeline's, not the document's: **ours.** Kept in
-    its own section so it is neither mistaken for a Polaris fact nor sent to
-    `local-k8s` as work.
+    Not Polaris's, not the pipeline's, not the document's: **ours.** Empty
+    against the current documents, and an empty section is the correct output
+    -- the 11 cells that used to appear here are fixed, not suppressed.
     """
     rows = unmalformable_cells(spec_dir)
     if not rows:
@@ -792,17 +758,15 @@ def harness_findings(spec_dir):
     return [
         {
             "about": "harness",
-            "title": f"{len(rows)} of the grid's 400 cells cannot be provoked by "
-            "omitting a required field",
-            "measured": "their request schemas declare no `required`, so "
-            "`MALFORMED_BODY` is a VALID body: the cell drives a successful call "
-            "and reports a 400 it never provoked. "
+            "title": f"{len(rows)} of the grid's 400 cells cannot be malformed at all",
+            "measured": "their request schemas declare no `required` AND no "
+            "property whose type can be violated, so no body this grid can build "
+            "will be rejected: the cell drives a successful call and reports a "
+            "400 it never provoked. "
             + "; ".join(f"{r['api']}/{r['op_id']}" for r in rows),
-            "remedy": "either stop emitting a 400 cell where the schema cannot be "
-            "violated by omission, or malform by wrong TYPE on a declared "
-            "property, which any schema rejects. Both change `api_status_matrix` "
-            "and one of them changes the denominator, so it is a decision and "
-            "not a patch.",
+            "remedy": "stop emitting a 400 cell for these operations -- there is "
+            "nothing in the document to violate, so the cell is a claim the "
+            "grid cannot keep.",
             "operations": [r["op_id"] for r in rows],
         }
     ]
@@ -833,6 +797,21 @@ def auth_findings(auth_rows, spec_dir):
     ]
 
 
+def _malform_line(report):
+    m = report.get("malform_strategies") or {}
+    if not m:
+        return "(not computed)"
+    return (
+        f"{m.get('omit', 0)} by **omitting a required field** -- byte-identical "
+        "to every run before the hybrid, so those cells stay comparable. "
+        f"{m.get('wrong_type', 0)} by a **wrong-typed value** on a declared "
+        "property, because their schemas declare no `required` and omission "
+        "provoked nothing. "
+        f"{m.get('none', 0)} with **no way to break at all** -- any of those "
+        "appear under harness findings below."
+    )
+
+
 def render_report(report):
     """Markdown, with the verdict and its reason first."""
     v = report["verdict"]
@@ -859,6 +838,10 @@ def render_report(report):
         ]
 
     lines += [
+        "## How the 400 cells break their bodies",
+        "",
+        _malform_line(report),
+        "",
         "## Where Prism is serving each document",
         "",
         "| api | mount | resolved | probed with | tried |",

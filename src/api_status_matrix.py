@@ -148,10 +148,21 @@ class Operation:
         "params",
         "has_body",
         "source",
+        "malform",
     )
 
     def __init__(
-        self, op_id, method, template, api, base, declared, params, has_body, source
+        self,
+        op_id,
+        method,
+        template,
+        api,
+        base,
+        declared,
+        params,
+        has_body,
+        source,
+        malform=None,
     ):
         self.op_id = op_id
         self.method = method.upper()
@@ -162,6 +173,11 @@ class Operation:
         self.params = tuple(params)
         self.has_body = has_body
         self.source = source
+        #: HOW a 400 cell breaks this body, decided from the document at parse
+        #: time. `None` for an operation with no body; `MALFORM_OMIT` where the
+        #: schema declares `required` and dropping it is enough; otherwise
+        #: `{"property": name, "value": <wrong-typed>}` -- see `malformed_body`.
+        self.malform = malform
 
     @property
     def full_template(self):
@@ -232,6 +248,7 @@ def load_spec(spec_dir):
         management = "management" in f.name
         api = "management" if management else "catalog"
         base = "/api/management/v1" if management else "/api/catalog"
+        comps = (doc.get("components") or {}).get("schemas") or {}
         for template, item in (doc.get("paths") or {}).items():
             for method, spec in (item or {}).items():
                 if method not in HTTP_METHODS:
@@ -253,6 +270,7 @@ def load_spec(spec_dir):
                         params=params,
                         has_body=bool((spec or {}).get("requestBody")),
                         source=f.name,
+                        malform=_malform_for(spec, comps),
                     )
                 )
     return sorted(ops, key=lambda o: (o.api, o.template, o.method))
@@ -261,6 +279,14 @@ def load_spec(spec_dir):
 # ----------------------------------------------------------------------
 # binding a template to the fixture
 # ----------------------------------------------------------------------
+def _malform_for(spec, comps):
+    """The malformation strategy for one operation's request body, or None."""
+    content = ((spec or {}).get("requestBody") or {}).get("content") or {}
+    if not content:
+        return None
+    return malform_strategy(list(content.values())[0].get("schema") or {}, comps)
+
+
 def bind_path(op, binding, break_param=None):
     """Substitute the fixture's names into the template.
 
@@ -466,6 +492,120 @@ FORM_ENCODED = frozenset({"getToken"})
 #: A body that is syntactically fine and semantically incomplete. Not `{}`:
 #: several Polaris endpoints accept an empty object and answer 2xx, which would
 #: make the 400 cell a miss for a reason that has nothing to do with validation.
+#: `Operation.malform` when dropping the required fields is enough.
+MALFORM_OMIT = "omit"
+
+#: A value of the wrong JSON type for each declared type. The point is only
+#: that it CANNOT satisfy the schema, so the value is also self-describing in a
+#: log: a reader who finds `"not-an-integer"` in a request body knows the cell
+#: put it there on purpose.
+_WRONG_TYPED = {
+    "integer": "not-an-integer",
+    "number": "not-a-number",
+    "string": ["not-a-string"],
+    "boolean": "not-a-boolean",
+    "array": "not-an-array",
+    "object": "not-an-object",
+}
+
+
+def _deref(sch, comps, depth=0):
+    """Resolve `$ref` chains, with a depth bound rather than a cycle set.
+
+    A document that refs itself is a document problem; hanging on it would be
+    ours.
+    """
+    while isinstance(sch, dict) and "$ref" in sch and depth < 10:
+        sch = comps.get(sch["$ref"].split("/")[-1], {})
+        depth += 1
+    return sch if isinstance(sch, dict) else {}
+
+
+def has_required_fields(sch, comps, depth=0):
+    """Can this body be malformed by OMITTING a field?
+
+    **`getToken` is why this walks combinators.** Its schema `$ref`s
+    `OAuthTokenRequest`, which carries no `required` of its own -- only an
+    `anyOf` over `OAuthClientCredentialsRequest` (requires `grant_type`,
+    `client_id`, `client_secret`) and `OAuthTokenExchangeRequest` (requires
+    `grant_type`, `subject_token`, `subject_token_type`). A resolver that
+    stopped at the first `$ref` read "no required", called the operation
+    unmalformable, and published a wrong count that a test then enshrined.
+    35 schemas across the two vendored documents hide constraints this way.
+
+    The two rules are OPPOSITES, and getting them the same way round would
+    flip roughly half the answers:
+
+    - `allOf`: the body must satisfy EVERY branch, so ONE branch with
+      `required` is enough.
+    - `anyOf` / `oneOf`: the body need satisfy only ONE branch, so it is
+      malformable only if EVERY branch is. A single unconstrained branch
+      accepts an arbitrary object, and the whole schema accepts it with it.
+    """
+    sch = _deref(sch, comps, depth)
+    if depth > 10 or not sch:
+        return False
+    if sch.get("required"):
+        return True
+    if any(has_required_fields(b, comps, depth + 1) for b in sch.get("allOf") or ()):
+        return True
+    for key in ("anyOf", "oneOf"):
+        branches = sch.get(key) or ()
+        if branches and all(has_required_fields(b, comps, depth + 1) for b in branches):
+            return True
+    return False
+
+
+def _typed_properties(sch, comps, depth=0):
+    """`{name: json type}` for the declared properties, through combinators.
+
+    A property whose type cannot be determined is left out: a "wrong" value
+    for an unknown type is a guess, and a 400 cell resting on a guess is the
+    thing this whole change exists to remove.
+    """
+    sch = _deref(sch, comps, depth)
+    if depth > 10 or not sch:
+        return {}
+    out = {}
+    for branch in (
+        (sch.get("allOf") or ()) + (sch.get("anyOf") or ()) + (sch.get("oneOf") or ())
+    ):
+        out.update(_typed_properties(branch, comps, depth + 1))
+    for name, spec in (sch.get("properties") or {}).items():
+        resolved = _deref(spec if isinstance(spec, dict) else {}, comps, depth + 1)
+        declared = resolved.get("type")
+        if declared in _WRONG_TYPED:
+            out[name] = declared
+        elif resolved.get("properties") or resolved.get("allOf"):
+            # An object by structure even where `type` is not spelled out.
+            out[name] = "object"
+    return out
+
+
+def malform_strategy(schema, comps):
+    """How to break this body, or None if the document gives no way to.
+
+    Omission first, because it leaves the request BYTE-IDENTICAL to every run
+    before this one: 16 of the 27 body-carrying 400 cells keep exactly the
+    body they have always sent, so those cells stay comparable across runs.
+    Only where the schema declares no `required` does the cell switch to a
+    wrong-typed value, and those cells were driving a SUCCESSFUL call while
+    reporting a 400 they never provoked -- there is nothing there to lose.
+    """
+    if has_required_fields(schema or {}, comps):
+        return MALFORM_OMIT
+    for name, declared in sorted(_typed_properties(schema or {}, comps).items()):
+        return {"property": name, "value": _WRONG_TYPED[declared], "type": declared}
+    return None
+
+
+def malformed_body(op):
+    """The body a 400 cell sends, from the strategy decided at parse time."""
+    if op.malform == MALFORM_OMIT or op.malform is None:
+        return dict(MALFORMED_BODY)
+    return {op.malform["property"]: op.malform["value"]}
+
+
 MALFORMED_BODY = {"matrix": "deliberately-missing-required-fields"}
 
 
@@ -698,7 +838,7 @@ def request_for(cell, binding, tokens, request_id, realm):
 
     body = payload_for(op, binding)
     if cell.target == 400:
-        body = dict(MALFORMED_BODY) if op.has_body else body
+        body = malformed_body(op) if op.has_body else body
     elif cell.target == 409 and body and "currentEntityVersion" in body:
         body["currentEntityVersion"] = STALE_ENTITY_VERSION
 
