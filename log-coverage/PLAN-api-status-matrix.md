@@ -122,14 +122,23 @@ measured reason** — the `NOT_CALLABLE` pattern v1 already uses for 429.
 | **2xx** (200/201/204) | the happy path, in dependency order, against the run fixture | 63 |
 | **401** | the same call with a garbage bearer token (and, for `getToken`, a real client id + wrong secret) | 63 |
 | **403** | the same call issued by `nb_<run>_denied` — a principal with a role and no grants | 62 (all but `getToken`) |
-| **404** | a name that does not exist substituted into the last path parameter | 50 (ops with a non-`{prefix}` param) |
+| **404** | a name that does not exist substituted into the last path parameter | **55** (ops with ANY path param) |
 | **409** | create-twice, or a stale `entityVersion` on the management PUTs | 15 (ops declaring 409) |
 | **400** | a request body missing a required field; `GET /v1/config` with no `warehouse` | 28 (27 with a body + config) |
 | **422** | measured 2026-09-07: a broken storage endpoint (`127.0.0.1:1` or `.svc.invalid`) — a **client** error on this build | 2 |
 | **405** | *extra, undeclared*: `DELETE /v1/config` and two siblings | 3 |
 | **500** | `lc.provokers_500` — the four-rung ladder, in its own pure window | 1 (≤12 calls) |
 
-**≈293 cells, ≈305 calls.** Comparable to v1's 157 and well inside one sitting.
+**286 cells** (built, counted, not estimated: `2`=63, `401`=63, `403`=62, `404`=55, `400`=28,
+`409`=15), plus the extras and probes. **≈300 calls.** Comparable to v1's 157 and well inside
+one sitting.
+
+⚠ **The 404 count was wrong in this plan and the characterization test caught it.** §2 first
+said 50, excluding operations whose only path parameter is `{prefix}`. Breaking `{prefix}` is
+a real 404 — a request against a catalog that does not exist — so `GET /v1/{prefix}/namespaces`
+earns a 404 cell exactly as `.../tables/{table}` does. The five it left out were real coverage.
+The correction is recorded rather than silently applied, because a plan whose numbers move
+without explanation is a plan nobody can check.
 
 ### Probe-then-adjudicate — assumed unreachable, *measured* anyway
 
