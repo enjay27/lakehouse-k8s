@@ -275,3 +275,34 @@ re-run `fetch_specs.sh` and read the diff).
 3. **305 calls against `local`** — creates and deletes a catalog, several principals, roles, a
    namespace, a table and a view, and deliberately provokes 500s. Confirm `local` is the target
    and nothing else is using that realm.
+
+---
+
+## 8. Amendment 2026-09-10 — the DaemonSet now carries the polaris filters
+
+Kade deployed `benchmarks-fluent-bit` (DaemonSet, `datahub-hynix`, helm revision 11) with
+`polaris_cri_unwrap`, `polaris_key_rename` and `polaris_noise_filter` confirmed **in the
+ConfigMap and in the running process**, and rolled the DaemonSet afterwards — the step that
+distinguishes "the file is deployed" from "the policy is running", and the one this repo has
+been burned by before.
+
+That changes §0.1: the OpenSearch side is no longer *unrelated*. There are now **two Fluent
+Bits carrying the same Lua**, and they do not read the same thing:
+
+| | `fb-polaris-shipper` (Deployment) | `benchmarks-fluent-bit` (DaemonSet) |
+|---|---|---|
+| reads | `/deployments/logs/polaris.log` on the PVC | **container stdout**, via CRI (hence `polaris_cri_unwrap`) |
+| ships to | VictoriaLogs | OpenSearch |
+| covered by | `polaris_log_coverage.ipynb` (v1) | this plan |
+
+**The new risk, and it is load-bearing.** The access log is written to the PVC file. If Polaris
+does not *also* echo those lines to stdout, the DaemonSet never sees them — and then
+`polaris-logs-*` carries application lines but **no access-log records**, so the per-call half
+of the matrix (rule 3's "every 4xx stored in full", correlation by `mdc.requestId`) has no
+source in OpenSearch even if the report half works perfectly. The report half would still be
+fine, because the report is synthesised by the filter rather than tailed. Check 0.4 of
+`preflight_os_report.sh` is exactly this question and nothing else.
+
+The tier-2 health check printing `0 B over 0 rec` right after the roll is **expected, not a
+finding**: Polaris logs only on request. It has to be re-read after traffic, and the matrix run
+is the traffic.
