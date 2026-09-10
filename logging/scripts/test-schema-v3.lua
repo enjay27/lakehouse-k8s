@@ -38,6 +38,11 @@ polaris_noise_filter("polaris.logs", 0, rec("HEAD",  T, 200, 0))     -- no body-
 polaris_noise_filter("polaris.logs", 0, rec("POST", CAT.."/tables/rename", 200, 36))
 polaris_noise_filter("polaris.logs", 0, rec("POST", CAT.."/views/rename", 200, 12))
 polaris_noise_filter("polaris.logs", 0, rec("POST", CAT.."/namespaces/ns1/properties", 200, 43))
+-- commitTransaction: a MULTI-table commit, no /namespaces/ segment and no single table
+-- identity. It was the one real path the 63-operation API matrix found with no rule
+-- (run 1789026666, Gate 6). Its own kind -- folding it into `table` would blur every
+-- per-table trend, and the row key is the whole path either way.
+polaris_noise_filter("polaris.logs", 0, rec("POST", CAT.."/transactions/commit", 200, 77))
 polaris_noise_filter("polaris.logs", 0, rec("POST", "/api/catalog/v1/oauth/tokens", 200, 685))
 polaris_noise_filter("polaris.logs", 0, rec("GET",  "/api/catalog/v1/config", 200, 1757))
 -- ROLES. Everything under a role folds into that role's row, so the grant count is
@@ -83,6 +88,13 @@ check("v1/config -> config",         res["/api/catalog/v1/config"].resource_kind
 check("tables/rename -> table",      res[CAT.."/tables/rename"].resource_kind, "table")
 check("views/rename -> view",        res[CAT.."/views/rename"].resource_kind, "view")
 check("ns/properties -> namespace",  res[CAT.."/namespaces/ns1/properties"].resource_kind, "namespace")
+check("transactions/commit -> transaction",
+      res[CAT.."/transactions/commit"] and res[CAT.."/transactions/commit"].resource_kind, "transaction")
+check("  key is the whole path, unchanged",
+      res[CAT.."/transactions/commit"] ~= nil, true)
+check("  POST commit is a WRITE",    res[CAT.."/transactions/commit"].writes, 1)
+check("  api_kind catalog",          res[CAT.."/transactions/commit"].api_kind, "catalog")
+check("  NOT folded into a table row", res[CAT.."/transactions"], "nil")
 check("POST properties is a WRITE",  res[CAT.."/namespaces/ns1/properties"].writes, 1)
 check("POST properties is not a read", res[CAT.."/namespaces/ns1/properties"].reads, 0)
 
@@ -154,6 +166,22 @@ check("unknown catalog path keeps its path",
       res2["/api/catalog/v1/cat1/statistics"] ~= nil, true)
 check("  api_kind still correct", res2["/api/catalog/v1/cat1/statistics"] and
       res2["/api/catalog/v1/cat1/statistics"].api_kind, "catalog")
+-- min/max_record_time: PRESENT with traffic, ABSENT (not "") on an idle window. The `or ""`
+-- this replaced was a mapping fault, not a cosmetic one: OpenSearch dynamic-maps the field
+-- from the first document and keeps it for the life of the index, and at 30s windows a fresh
+-- daily index almost always opens idle. Measured text-mapped in polaris-report-2026.09.10.
+print("== min/max_record_time: absent on an idle window, never an empty string ==")
+check("traffic window HAS min_record_time", sum.min_record_time, "2026-09-09T08:00:05.000Z")
+check("traffic window HAS max_record_time", sum.max_record_time, "2026-09-09T08:00:05.000Z")
+local _,_,out3 = polaris_noise_filter("polaris.report", 0, {tick="x", _now_override=T0+210})
+local sum3
+for _, r in ipairs(out3 or {}) do local d=r[2] or r
+  if d.report_type=="summary" then sum3=d end end
+check("idle window emitted a summary",   sum3 ~= nil, true)
+check("  access_seen 0",                 sum3 and sum3.access_seen, 0)
+check("  min_record_time ABSENT",        sum3 and sum3.min_record_time, "nil")
+check("  max_record_time ABSENT",        sum3 and sum3.max_record_time, "nil")
+
 check("sum(resource) == seen-parse", sr, sum.access_seen - sum.parse_errors)
 check("sum(principal) == seen-parse", sp, sum.access_seen - sum.parse_errors)
 check("schema_version", sum.schema_version, 3)

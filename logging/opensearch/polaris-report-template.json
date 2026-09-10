@@ -1,0 +1,66 @@
+{
+  "index_patterns": ["polaris-report-*"],
+  "priority": 100,
+  "_meta": {
+    "source": "local-k8s: logging/opensearch/polaris-report-template.json",
+    "written": "2026-09-10",
+    "why": "polaris-report-2026.09.10 dynamic-mapped min_record_time as TEXT: the Lua wrote \"\" on idle windows and a fresh daily index almost always opens on one at 30s windows. Dynamic mapping types a field from the FIRST document it sees and keeps it for the life of that index, so no range query or date histogram works there again. A template survives an idle first window; waiting for a fresh index does not. Measured by the API matrix run 1789026666, and predicted before it in SCHEMA-report.md review #2.",
+    "pairs_with": "the Lua now OMITS min/max_record_time when nil (fluent-bit/values.yaml). BOTH OR NEITHER: with these fields typed as date, a document carrying \"\" is rejected per-item inside a bulk that still returns HTTP 200.",
+    "not_retroactive": "applies only to indices CREATED after it is applied. polaris-report-2026.09.10 and earlier stay text for their life.",
+    "strings_left_dynamic": "resource, resource_kind, api_kind, report_type, window_start, window_end, hostname, partial_window are deliberately NOT declared: dynamic mapping already gives text + a .keyword subfield, which every existing query, readout script and gate in GUIDE-schema-v3-testing.md depends on."
+  },
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0,
+        "refresh_interval": "5s"
+      }
+    },
+    "mappings": {
+      "properties": {
+        "min_record_time": {
+          "type": "date",
+          "format": "strict_date_optional_time_nanos||strict_date_optional_time||epoch_millis",
+          "ignore_malformed": true
+        },
+        "max_record_time": {
+          "type": "date",
+          "format": "strict_date_optional_time_nanos||strict_date_optional_time||epoch_millis",
+          "ignore_malformed": true
+        },
+
+        "schema_version": { "type": "long" },
+        "report_seq": { "type": "long" },
+        "window_seconds": { "type": "long" },
+        "access_seen": { "type": "long" },
+        "access_kept": { "type": "long" },
+        "access_counted": { "type": "long" },
+        "role_keys_forced": { "type": "long" },
+        "counted_read": { "type": "long" },
+        "counted_post": { "type": "long" },
+        "errors_kept": { "type": "long" },
+        "parse_errors": { "type": "long" },
+        "errors_4xx": { "type": "long" },
+        "errors_5xx": { "type": "long" },
+        "auth_denied": { "type": "long" },
+        "bytes_total": { "type": "long" },
+        "distinct_resources": { "type": "long" },
+        "distinct_principals": { "type": "long" },
+        "carried_rows": { "type": "long" },
+        "resources_other": { "type": "long" },
+        "resources_other_distinct": { "type": "long" },
+        "principals_other": { "type": "long" },
+        "windows_skipped": { "type": "long" },
+
+        "requests": { "type": "long" },
+        "reads": { "type": "long" },
+        "writes": { "type": "long" },
+        "errors": { "type": "long" },
+        "response_bytes": { "type": "long" },
+        "last_read_bytes": { "type": "long" },
+        "last_write_bytes": { "type": "long" }
+      }
+    }
+  }
+}

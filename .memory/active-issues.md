@@ -738,3 +738,38 @@ If it postdates the roll, its `log` value says immediately whether it is a non-J
 would be `polaris_stdout_json` correctly declining, and right behaviour.
 Worth knowing because if they are NOT stray non-JSON lines, the tier 2 parse has a rare failure
 mode and the 0.04% is the only place it shows.
+**#24 — Four Polaris operations answer 500 to a malformed request. OPEN, and it makes `errors_5xx`
+drivable on demand.** API matrix run `1789026666`, 2026-09-10: `getToken`, `createNamespace`,
+`renameTable` and `renameView` each returned **500 where the matrix targeted 400**, trace verdict
+`unhandled` on all four — a throwable survived to the transport. 4 five-hundreds in 286 cells, 0
+transport errors.
+
+Two consequences, and the second is the useful one:
+
+- **It widens `#15`.** That issue says Polaris 500s on the create path and reads as an NPE on
+  create-then-resolve. Three of these four are not creates and one (`getToken`) is not even a
+  catalog operation, so "the create path" is not the shape of the fault. What the four share is
+  **malformed input on an operation whose 400 handler does not cover it**.
+- **`errors_5xx` can now be exercised without cluster surgery**, which is the standing question in
+  `roadmap.md` — no scaling, no HPA movement, no `503` route that invalidates the run. Four named
+  operations, reachable through the API alone.
+
+Not chased, deliberately: the run's job was coverage, and Polaris is not to be changed (`MEMORY.md`
+standing). What is missing before anyone files this upstream is the **stack trace per operation**,
+which `polaris-logs-*` holds in full by rule 3 (`http_status >= 400` over the run's windows, field
+`exception.frames` — not `exception`).
+
+**#25 — The report index template is WRITTEN AND NOT APPLIED, and the Lua change is written and not
+rolled. OPEN, LIVE.** 2026-09-10. `logging/opensearch/polaris-report-template.json` exists in the
+repo; nothing has PUT it to OpenSearch. `fluent-bit/values.yaml` no longer writes `""` for
+`min/max_record_time`; the running pod still does. Until both land:
+
+- `polaris-report-2026.09.10` and every earlier index keep `min_record_time` as **`text`** — no
+  range query, no date histogram, for the life of those indices. The invariant
+  `max - min <= window_seconds` is still checkable client-side, because RFC3339 parses.
+- **Order is load-bearing.** The Lua must be rolled *before or with* the template. With the fields
+  typed `date`, a document carrying `""` is rejected **per item inside a `_bulk` that returns HTTP
+  200** — the silent failure mode this pipeline has already produced twice. `ignore_malformed: true`
+  is set on both fields as the backstop; it costs the field, never the document.
+- Applying the template is `bash logging/scripts/step9-report-index-template.sh`, and it is **not
+  retroactive** — the first correctly-mapped index is the next day's.

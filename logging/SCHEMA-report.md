@@ -36,7 +36,7 @@ agg on `window_start` — groups one window.
 | `resources_other_distinct` | int | distinct keys behind the overflow. |
 | `role_keys_forced` | int | **v3.** Role rows created by an **errored** request. Equal to `REPORT_MAX_ROLE_KEYS` (100) means the cap was hit and further denied roles fell to `__other__` unattributed. |
 | `windows_skipped` | int | windows that closed with no tick. |
-| `min_record_time` / `max_record_time` | string | ⚠ default `""`, not absent — see review #2. |
+| `min_record_time` / `max_record_time` | string (RFC3339) | **OMITTED when there was no traffic** (2026-09-10) — review #2 fixed. Before that date the Lua wrote `""`, which OpenSearch dynamic-mapped as `text`; indices up to and including `polaris-report-2026.09.10` keep that mapping for their life. New indices are typed `date` by `logging/opensearch/polaris-report-template.json`. |
 | `partial_window` | **string** | ⚠ `"true"` / `"false"`, **not a boolean** — see review #1. |
 | `_msg` | string | human sentence. |
 
@@ -45,7 +45,7 @@ agg on `window_start` — groups one window.
 | field | type | meaning |
 |---|---|---|
 | `resource` | string | the matched path span, or `__other__` beyond the cap. |
-| `resource_kind` | string | `table` \| `view` \| `collection` \| `namespace` \| `auth` \| `config` \| `management` \| `other`. **v3** added `catalog-role`, `principal-role`, `auth` (`/oauth/tokens`), `config` (`/v1/config`), and rules routing `tables/rename` -> table, `views/rename` -> view, `namespaces/{ns}/properties` -> namespace. These set the **kind only** — `reads`/`writes` still come from the HTTP method, so `POST /properties` is a write. |
+| `resource_kind` | string | `table` \| `view` \| `collection` \| `namespace` \| `auth` \| `config` \| `transaction` \| `error` \| `other`. **`management` is GONE in v3** — it was an API surface answering a different question and now lives in `api_kind`; `transaction` was added 2026-09-10 for `.../transactions/commit`, the one real path the 63-operation API matrix found unclassified. **v3** added `catalog-role`, `principal-role`, `auth` (`/oauth/tokens`), `config` (`/v1/config`), and rules routing `tables/rename` -> table, `views/rename` -> view, `namespaces/{ns}/properties` -> namespace. These set the **kind only** — `reads`/`writes` still come from the HTTP method, so `POST /properties` is a write. |
 | `requests` `reads` `writes` `errors` | int | reads = GET\|HEAD, writes = POST\|PUT\|DELETE\|PATCH, errors = status ≥ 400. ⚠ `errors` **overlaps** reads/writes and the 4xx/5xx split — never sum them together. |
 | `errors_4xx` `errors_5xx` `auth_denied` | int | as above; `auth_denied` overlaps `errors_4xx`. |
 | `response_bytes` | int | **SUM over the window.** |
@@ -75,7 +75,9 @@ max_record_time - min_record_time  <=  window_seconds
 `{"term":{"partial_window":true}}` will not match; it must be `"true"`. Every other flag-like
 value in the schema is an int, so this one reads as a boolean and is not.
 
-**2. `min_record_time` / `max_record_time` default to `""`.** If the **first** document written to a
+**2. `min_record_time` / `max_record_time` default to `""`. FIXED 2026-09-10 — the Lua now omits
+the key, and the fault it predicted was measured first: `polaris-report-2026.09.10` mapped
+`min_record_time` as `text`, exactly as written below.** If the **first** document written to a
 new `polaris-report-*` index carries an empty string, OpenSearch dynamic-maps the field as
 **text, permanently for that index** — and no date maths ever works on it. Idle windows produce
 exactly that empty string, and a fresh daily index very often opens on an idle window.

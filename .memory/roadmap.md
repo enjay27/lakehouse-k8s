@@ -158,3 +158,35 @@ cluster it describes no longer exists.
   `access_seen 265 − access_kept 126 = 139`, against a 144 gap in a different window: right
   magnitude, **not yet compared on one window**. `step8` now reads `access_counted` and does that
   comparison itself.
+
+**Measured 2026-09-10 — the API status matrix, run `1789026666`** (`log-coverage/polaris_log_coverage_v2.ipynb`,
+63 operations from the vendored OpenAPI documents, **286 (operation × status) cells**, boundary-aligned
+30s phases). The first run that drives the WHOLE API surface rather than a hand-picked path set:
+
+- **228 cells covered, 58 missed, 0 transport errors**, and correlation on error cells **235/235**.
+  Eight statuses are unreachable by construction and are recorded as such — `429` (the rate limiter
+  is a no-op on this build), `502`/`504` (nothing proxies Polaris; a port-forward is not a gateway),
+  `503` (the only route is scaling Polaris, and HPA movement invalidates the run, `#8`), `5XX` (a
+  spec placeholder, not a status), plus `304`/`406`/`419` needing client features this build lacks.
+- **Gate 6 found exactly ONE real path with no `RESOURCE_PATTERNS` rule** across all 63 operations:
+  `/api/catalog/v1/{cat}/transactions/commit`. Now classified `transaction` (2026-09-10). This gate
+  had never had traffic on that endpoint before — **the coverage of the driver is part of the gate**.
+- **`min_record_time` is `text` in `polaris-report-2026.09.10`**, the fault `SCHEMA-report.md`
+  review #2 predicted, now measured. Fixed on both sides: the Lua omits the key when nil, and
+  `logging/opensearch/polaris-report-template.json` types it `date`. Neither is retroactive. `#25`.
+- **Four operations answer 500 to a malformed request** — `getToken`, `createNamespace`,
+  `renameTable`, `renameView`, all `unhandled`. So `errors_5xx` is drivable through the API alone,
+  which answers the standing "how do we provoke one" question above without cluster surgery. `#24`.
+- **Gate 2 — the v3 feature — is VOID, not passing.** `last_write_bytes` did not appear on any table
+  row in the window read, though the matrix drove `createTable`, `updateTable` and `commitTransaction`
+  to 2xx. The gate read a window of zero-carry rows. **58/58 in `logging/scripts/test-schema-v3.lua`
+  says the Lua does set the field** (2xx, size > 0, last-wins), so the next step is to re-drive one
+  commit and query THAT window, not to change the filter. Until then v3 is unproven: every other
+  gate tests plumbing that already worked in v2.
+- **The guide's gate queries were the fault in at least one FAIL, and could not have passed in
+  three.** `{"term": {"<text field>": ...}}` matches the analyser's output, so `__errors__` looked
+  for `errors`, `catalog-role` for `catalog`+`role`, and `POST` for `post` — none can ever match. A
+  gate that matches nothing reports zero and **passes**. Fixed in `GUIDE-schema-v3-testing.md`
+  2026-09-10, with `.keyword` throughout and a rule that row-level gates pin `window_start` instead
+  of sorting by time. The notebook had already diverged from the guide, which is how Gate 5 returned
+  63 requests over 4 docs while the guide's own query for it returns nothing.

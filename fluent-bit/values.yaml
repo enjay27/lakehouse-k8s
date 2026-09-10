@@ -269,6 +269,15 @@ luaScripts:
         { kind = "config",     pattern = "^.-/v1/config$" },
         { kind = "table",      pattern = "^.-/tables/rename$" },
         { kind = "view",       pattern = "^.-/views/rename$" },
+        -- v3, 2026-09-10: the ONLY real path the 63-operation API matrix found with no
+        -- rule (run 1789026666, Gate 6). commitTransaction is a MULTI-table commit and
+        -- has no single table identity, so it gets its own kind rather than folding
+        -- into `table` -- which would blur every per-table trend -- or into the catalog.
+        -- The span is the whole path either way (`.-` is lazy and the anchor is at the
+        -- end), so the ROW KEY does not change: this moves resource_kind off "other"
+        -- and nothing else. `transaction` is a new VALUE in an existing field, additive,
+        -- so SCHEMA_VERSION stays 3.
+        { kind = "transaction", pattern = "^.-/transactions/commit$" },
         { kind = "namespace",  pattern = "^.-/namespaces/[^/]+/properties$" },
         { kind = "table",      pattern = "^.-/namespaces/[^/]+/tables/[^/]+" },
         { kind = "view",       pattern = "^.-/namespaces/[^/]+/views/[^/]+" },
@@ -659,8 +668,18 @@ luaScripts:
         s.resources_other_distinct = counts.n_other_keys
         s.principals_other    = counts.principals_over
         s.windows_skipped     = windows_skipped or 0
-        s.min_record_time     = counts.min_time or ""
-        s.max_record_time     = counts.max_time or ""
+        -- OMITTED when nil, not "" (2026-09-10). Assigning nil is a no-op in Lua, so an
+        -- idle window simply has no key -- the same "absent, never a placeholder" rule
+        -- last_write_bytes follows. The `or ""` this replaces was a MAPPING FAULT, not
+        -- a cosmetic one: OpenSearch stores the empty string and dynamic-maps the field
+        -- as TEXT for the life of that index, and a fresh daily index almost always
+        -- opens on an idle window at 30s. Measured in polaris-report-2026.09.10 (run
+        -- 1789026666) and predicted before it: SCHEMA-report.md review #2.
+        -- This is a PREREQUISITE for logging/opensearch/polaris-report-template.json,
+        -- which types both fields as `date`: with the template applied, a document
+        -- carrying "" is rejected per-item inside a bulk that still returns HTTP 200.
+        s.min_record_time     = counts.min_time
+        s.max_record_time     = counts.max_time
         s.partial_window      = counts.partial and "true" or "false"
         s._msg = string.format(
             "polaris shipper report seq=%d@%s %s..%s: %d access lines, %d kept, "
