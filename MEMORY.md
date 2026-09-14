@@ -19,12 +19,16 @@ is registered at fixture creation (idempotent, `atexit`) so an abort between §2
 leaking catalogs. **An abort claims everything downstream depends on what just failed — check that
 claim before raising.**
 
-**THE FILTER EMITS `""` FOR `min/max_record_time` ON AN IDLE WINDOW** where the schema requires the
-field ABSENT. Measured; a `local-k8s` fix, now a cell-40 finding. **HYPOTHESIS, UNSETTLED:** it is
-also why `min_record_time` is mapped `text` — OpenSearch types from the first document it indexes,
-the day's first window is almost always idle at 30s, and `""` is not a parseable date. If it holds,
-**the template is a workaround and the Lua is the fix**. Check: oldest `polaris-report-*`, oldest
-doc, read the field. Do not quote the causal claim before that.
+**THE DEPLOYED FILTER SAYS v3 AND IS NOT v3.** Gate 7 fails three assertions and they are ONE
+cause: no `transaction` resource kind (v3 added it 2026-09-10 for `transactions/commit` — the path
+this grid found unclassified), and an empty string where an idle window requires
+`min/max_record_time` ABSENT. `grep -c transaction` on the deployed text is **0**; the only
+`transaction` in `local-k8s/logging/` is in the two documents and the test, which went ahead of the
+filter as one undelivered change. **Cell 6 compares a CONSTANT and passes; Gate 0 passes; only Gate
+7 can see this.** This repo is a third version — `RESOURCE_KINDS` is six values and still carries
+`management`, which v3 removed. **Do not update it ahead of the filter.** All three are scoped, the
+run continues, and `GATE7_PROVENANCE` is stamped into both generated documents so no figure from
+such a run reads as a figure about v3.
 
 **NOT VERIFIED END TO END.** No Cowork session can run this notebook — no `kubectl`, no `lua5.4`, no
 cluster, `local-k8s` not mounted. Gate: **911 passed, 45 skipped** in the Linux VM
