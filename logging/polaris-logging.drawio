@@ -1,0 +1,137 @@
+<mxfile host="Electron">
+  <diagram name="Page-1" id="MJGaDb9ItEAjohNqMi1R">
+    <mxGraphModel dx="1222" dy="884" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="k8s" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=none;arcSize=7;" value="K8s Cluster" vertex="1">
+          <mxGeometry height="720" width="410" x="30" y="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pol" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Polaris" vertex="1">
+          <mxGeometry height="60" width="120" x="170" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="clog" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="노드 컨테이너 로그&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;/var/log/containers/*.log&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="180" x="140" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="fb" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Fluent Bit&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;(DaemonSet)&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="180" x="140" y="380" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_pol_clog" edge="1" parent="1" source="pol" target="clog" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="stdout / stderr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_clog_fb" edge="1" parent="1" source="clog" target="fb" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="tail&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;INPUT 2개, 오프셋 DB 분리&lt;/font&gt;&lt;/div&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="os" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=none;" value="OpenSearch" vertex="1">
+          <mxGeometry height="180" width="320" x="70" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="idx1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Index&lt;div&gt;kube-fb-log*&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="90" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="idx2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Index&lt;div&gt;polaris-audit-*&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="250" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="ret1" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="5일간 보존" vertex="1">
+          <mxGeometry height="30" width="80" x="110" y="625" as="geometry" />
+        </mxCell>
+        <mxCell id="ret2" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="30일간 보존" vertex="1">
+          <mxGeometry height="30" width="80" x="270" y="625" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_fb_idx1" edge="1" parent="1" source="fb" target="idx1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="전체 로그 (현행 유지)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="230" y="480" />
+              <mxPoint x="150" y="480" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_fb_idx2" edge="1" parent="1" source="fb" target="idx2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="Polaris 상세 + 요약 (신규)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="230" y="480" />
+              <mxPoint x="310" y="480" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="note_left" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=top;rounded=0;fontSize=10;" value="※ 교체가 아니라 &lt;b&gt;추가&lt;/b&gt;다. Polaris 로그는 kube-fb-log* 에도 계속 적재된다 —&lt;br/&gt;필터 이전 원본이 남아야 &quot;요약이 원본의 부분집합인가&quot;를 검증할 수 있다.&lt;br/&gt;중복을 없애려면 Polaris 전용 OUTPUT 을 제거해야 하고, 그때 검증 수단도 사라진다.&lt;br/&gt;※ 네임스페이스에는 Fluent Bit 릴리스가 둘 있다. 여기 그려진 것은 DaemonSet(→OpenSearch)이며,&lt;br/&gt;fb-polaris-shipper(→VictoriaLogs)는 이 설계의 범위 밖이다." vertex="1">
+          <mxGeometry height="70" width="360" x="55" y="685" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fbp" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=none;arcSize=7;" value="Fluent Bit 내부 — Polaris 경로 상세" vertex="1">
+          <mxGeometry height="720" width="450" x="470" y="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="in1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="① INPUT tail · Tag polaris.logs&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;*benchmarks-polaris*.log&lt;br/&gt;DB flb_polaris.db&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="200" x="560" y="95" as="geometry" />
+        </mxCell>
+        <mxCell id="f1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="② FILTER parser + modify&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;CRI unwrap · key rename&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="55" width="200" x="560" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="f2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="③ FILTER lua · polaris_access_log&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;액세스 라인 → 필드 추출&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="55" width="200" x="560" y="290" as="geometry" />
+        </mxCell>
+        <mxCell id="f3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;" value="④ FILTER lua · polaris_noise_filter&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;Match &lt;b&gt;polaris.*&lt;/b&gt;&lt;br/&gt;규칙 1~7 적재 판정 + 윈도우 집계&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="200" x="560" y="385" as="geometry" />
+        </mxCell>
+        <mxCell id="f4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="⑤ FILTER record_modifier&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;field trim&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="55" width="200" x="560" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="out" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="⑥ OUTPUT opensearch&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;→ polaris-audit-*&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="200" x="560" y="620" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tick" parent="1" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;" value="INPUT dummy&lt;div&gt;Tag polaris.report&lt;/div&gt;&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;5초 틱 · 로그 데이터 없음&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="130" x="780" y="385" as="geometry" />
+        </mxCell>
+        <mxCell id="drop" parent="1" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fontStyle=2" value="drop&lt;div&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;개별 문서 없음&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="110" x="790" y="522" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_in1_f1" edge="1" parent="1" source="in1" target="f1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_f1_f2" edge="1" parent="1" source="f1" target="f2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_f2_f3" edge="1" parent="1" source="f2" target="f3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_tick_f3" edge="1" parent="1" source="tick" target="f3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_f3_f4" edge="1" parent="1" source="f3" target="f4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="적재 대상">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_f3_drop" edge="1" parent="1" source="f3" target="drop" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="집계만">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="845" y="445" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_f4_out" edge="1" parent="1" source="f4" target="out" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_f3_out" edge="1" parent="1" source="f3" target="out" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="윈도우 종료 시&lt;div&gt;요약 3종&lt;/div&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="510" y="425" />
+              <mxPoint x="510" y="650" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="note_right" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=top;rounded=0;fontSize=10;" value="※ ③④ 는 &lt;b&gt;같은 Lua 파일&lt;/b&gt;(polaris_access_log.lua)의 서로 다른 함수이며 FILTER 로는 2단계다.&lt;br/&gt;※ &lt;b&gt;요약은 로그가 아니라 틱이 만든다.&lt;/b&gt; ④ 가 polaris.* 를 매치하므로 틱도 같은 필터를 지나고,&lt;br/&gt;윈도우가 바뀌는 순간의 틱만 요약 문서로 치환된다. 나머지 틱은 버려진다.&lt;br/&gt;→ 요약 문서의 시각은 로그가 아니라 틱이 결정한다 (3.673초 윈도우 밀림의 출처).&lt;br/&gt;※ 요약 3종 = summary / resource / principal, 모두 같은 window_start 를 공유한다." vertex="1">
+          <mxGeometry height="70" width="420" x="485" y="685" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -36,6 +36,8 @@ OpenSearch 에서는 다른 모든 서비스의 로그를 `kube-fb` Index 에 �
 
 ## 2. 설계 요약
 
+> 편집 가능한 원본: [`logging/polaris-logging.drawio`](polaris-logging.drawio) (draw.io)
+
 ```mermaid
 flowchart TB
   POL["Polaris Pod"]
