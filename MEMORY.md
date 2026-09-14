@@ -6,43 +6,38 @@ handoff named in *Now* — it is standalone.
 
 ## Now — 2026-09-14 (session 12)
 
-**`polaris_log_coverage_v2.ipynb` HAS NEVER RUN PAST CELL 4, AND THE GATE THAT STOPPED IT WAS
-HIDING ITS OWN FAILURE.** Cell 4 raised on ANY Gate 7 failure; run `1789029836` hit two idle-window
-assertions and stopped, so **cells 5-42 carry `execution_count: None`** — 38 cells never executed in
-that file, every defect behind them unmeasured. It also stored `detail[-2500:]` and printed
-`[-20:]` of that, so **`3 FAILURE(S)` showed two and it raised about the third it had just
-truncated**; `assertions` matched a word the harness never prints (always `None`); and `GATE7` was
-read by no cell. **Fixed:** `[FAIL]` lines selected by CONTENT, assertions counted, failures
-classified against `GATE7_SCOPED` — scoped-only records **FAIL (scoped)** and CONTINUES; anything
-unrecognised, or a count that will not reconcile with the visible lines, still raises. `teardown_all`
-is registered at fixture creation (idempotent, `atexit`) so an abort between §2 and §11 stops
-leaking catalogs. **An abort claims everything downstream depends on what just failed — check that
-claim before raising.**
+**THE NOTEBOOK RAN END TO END FOR THE FIRST TIME — run `1789365275`, and the pipeline HELD.** 286
+calls, **286/286 correlated**, **235/235 error cells recovered: rule 3 is an assertion now.** Margins
+6/6, `report_seq` contiguous, Gate 6 clean over 129 rows. **Four 500s, all `unhandled`, from malformed
+bodies alone** (`getToken`, `createNamespace`, `renameTable`, `renameView`) with exception fields
+intact — **the roadmap's standing question is answered: an unhandled exception is provokable on demand,
+no cluster surgery.** Kade rolled the filter first, so **Gate 7 PASSES 58/58** and `GATE7_SCOPED` is
+back to empty; the assertion count is **58**, neither the 16 nor the 46 the two documents claim.
 
-**THE DEPLOYED FILTER SAYS v3 AND IS NOT v3.** Gate 7 fails three assertions and they are ONE
-cause: no `transaction` resource kind (v3 added it 2026-09-10 for `transactions/commit` — the path
-this grid found unclassified), and an empty string where an idle window requires
-`min/max_record_time` ABSENT. `grep -c transaction` on the deployed text is **0**; the only
-`transaction` in `local-k8s/logging/` is in the two documents and the test, which went ahead of the
-filter as one undelivered change. **Cell 6 compares a CONSTANT and passes; Gate 0 passes; only Gate
-7 can see this.** This repo is a third version — `RESOURCE_KINDS` is six values and still carries
-`management`, which v3 removed. **Do not update it ahead of the filter.** All three are scoped, the
-run continues, and `GATE7_PROVENANCE` is stamped into both generated documents so no figure from
-such a run reads as a figure about v3.
+**THE REPORT ASSIGNS WINDOWS BY PROCESSING TIME, NOT RECORD TIME.** Window `05:57:30..05:58:00` carries
+`min_record_time 05:58:00.607` and `max 05:58:01.475` — **both past `window_end`** — and §15 passed,
+because it only asked `max - min <= window_seconds` (0.87s). Fourth instance of a check that passes
+while its subject is wrong. New invariant added; the offset is a local-k8s question, and it is the
+mechanism behind Gate 2 going VOID.
 
-**NOT VERIFIED END TO END.** No Cowork session can run this notebook — no `kubectl`, no `lua5.4`, no
-cluster, `local-k8s` not mounted. Gate: **911 passed, 45 skipped** in the Linux VM
-(`UV_PROJECT_ENVIRONMENT=$HOME/venv-linux`), Kade's macOS **956 passed**; `black` 26.5.1 leaves
-`src/` unchanged and skips `.ipynb`. **The third Gate 7 failure is still unseen** — the fix makes it
-visible, and whether the run then proceeds depends on what it turns out to be.
+**FIXED THIS SESSION:** the commit is now created a window clear of phase F's fixture (that CREATE was
+sharing phase E's window, which is the one premise Gate 2 has); Gate 4 selects its role by **exact**
+match (`mx_<run>_crole` is a prefix of `_crole2` and `_crole_doomed`, so it reported `writes=1
+granted=3` against a role that received **no grants**, and that sentence shipped to local-k8s);
+`teardown_all` drops the rename DESTINATIONS (leaving them is why `probe_ns` answered 409 and the
+catalog delete 400); gate findings now carry real remedies.
 
-**STILL OPEN FROM SESSION 11.** Prism is gone: nothing checks a request without driving it. `_row_from`
-stamps `verdict: "covered"` unconditionally (true coverage 12/20, reported 18/20) — **UNFIXED**, and
-it lives in `src/make_traffic.py`, **NOT** in this notebook's path: v2 drives `mx.drive` ->
-`adjudicate`, which handles MISSED correctly. Grid is **16 omit / 11 wrong-type / 0 unbreakable**,
-denominator 286, and **10 verified, 1 UNVERIFIABLE — never quote 11**. Report schema **v3 on the
-DaemonSet, v2 on the Deployment**. Session 8's 500 result — every route to a 500 is a closed one, run
-`1788759324` — is in [`log-coverage/HANDOFF-500-coverage-2026-09-07.md`](log-coverage/HANDOFF-500-coverage-2026-09-07.md).
+**STILL OPEN FOR local-k8s:** Gate 4 `auth_denied=0` — a 403 on a catalog role falls to `__errors__`
+instead of forcing the role row, so the `ROLE_KINDS` exemption is not firing. And the window offset.
+
+**DO NOT "FIX" `RESOURCE_KINDS`.** It is six values with `management`; v3 emits twelve without it. But
+`_policy()` resolves the **Deployment's** `fb-values.yaml` — the oracle and the whole suite test **v2**,
+so the constant is right for what it tests and the predicted test failure did not happen (956 passed).
+Nothing in this repo has a v3 oracle; that is the real gap.
+
+**`min_record_time` is still `text` — and the empty-string hypothesis is now DOUBTFUL.** Same index maps
+`window_start` as `date`. The difference is nine fractional digits, not emptiness. Next day's index
+decides it for free.
 
 **NEXT SESSION STARTS FROM
 [`log-coverage/HANDOFF-split-logging-test-2026-09-10.md`](log-coverage/HANDOFF-split-logging-test-2026-09-10.md)**

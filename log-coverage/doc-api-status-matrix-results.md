@@ -1,39 +1,41 @@
-# API status matrix -- run 1789008899
+# API status matrix -- run 1789365275
 
-Driven 2026-09-10 02:58Z against `local`, schema v3, windows of 30s.
+Driven 2026-09-14 05:58Z against `local`, schema v3, windows of 30s.
+
+
 
 - **63 operations**, **286 cells**, 286 calls issued
-- covered: 227   missed: 59   transport errors: 0
-- correlation on error cells (rule 3, an assertion): 237/237
-- 500 ladder: NOT PROVOKED (expected on this build)   |   500s anywhere in the run: 8 (createNamespace, createView, getToken, renameTable, renameView, updateCatalog)
+- covered: 228   missed: 58   transport errors: 0
+- correlation on error cells (rule 3, an assertion): 235/235
+- 500 ladder: NOT PROVOKED (expected on this build)   |   500s anywhere in the run: 4 (createNamespace, getToken, renameTable, renameView)
 
 ## Gates
 
 | gate | verdict | detail |
 |---|---|---|
 | Gate 1 margins | PASS | 6/6 windows answered |
-| Gate 0b array split | PASS | {'resource': 116, 'principal': 18, 'summary': 6} |
-| Gate 2 last_write_bytes | VOID | no table row carried last_write_bytes in the commit's window -- UNPROVEN |
+| Gate 0b array split | PASS | {'resource': 129, 'principal': 18, 'summary': 6} |
+| Gate 2 last_write_bytes | VOID | 2 table row(s) in the window and NONE carries last_write_bytes -- the field is the v3 feature and it did not fire |
 | Gate 2 delete leaves it ABSENT | VOID | rows without the field=0  rows WITH it=0 (want 0) |
-| Gate 3 classification | PASS | {'management': ['collection', 'principal-role', 'catalog-role', 'principal', 'catalog'], 'catalog': ['table', 'collection', 'namespace', 'view', 'auth', 'config', 'other'], 'mixed': ['error']} |
-| Gate 4 privilege count | FAIL | writes=1 granted=3 on /api/management/v1/catalogs/apimatrix1789008899_cat/catalog-roles/mx_1789008899_crole |
+| Gate 3 classification | PASS | {'management': ['collection', 'principal-role', 'catalog-role', 'principal', 'catalog'], 'catalog': ['table', 'collection', 'namespace', 'view', 'auth', 'config', 'transaction'], 'mixed': ['error']} |
+| Gate 4 privilege count | FAIL | writes=1 granted=3 on /api/management/v1/catalogs/apimatrix1789365275_cat/catalog-roles/mx_1789365275_crole_doomed |
 | Gate 4 denial forces the row | FAIL | auth_denied=0 (the ROLE_KINDS exemption; 0 means the 403 fell to __errors__) |
 | Gate 4 grants fold into the role | PASS | no separate grants row |
-| Gate 5 __errors__ holds only errors | PASS | requests=<Metric requests=66 over 4 doc(s)> |
+| Gate 5 __errors__ holds only errors | PASS | requests=<Metric requests=69 over 4 doc(s)> |
 | Gate 5 __other__ is overflow only | VOID | __other__ requests=<Metric requests ABSENT (0 docs carried it)> -- non-zero means a window really carried 500+ distinct resources, or the split regressed |
-| Gate 6 every path has a rule | FAIL | 1 real path(s) with no RESOURCE_PATTERNS entry |
+| Gate 6 every path has a rule | PASS | only the synthetic keys came back, over 129 resource row(s) |
 
 ## Windows
 
 | phase | start | seconds | cells | straddled |
 |---|---|---|---|---|
-| B | 2026-09-10T02:55:30Z | 1.3 | 63 | False |
-| C | 2026-09-10T02:56:00Z | 1.0 | 180 | False |
-| D | 2026-09-10T02:56:30Z | 0.4 | 43 | False |
-| E | 2026-09-10T02:57:00Z | 0.1 | 1 | False |
-| F | 2026-09-10T02:57:30Z | 0.0 | 1 | False |
-| G | 2026-09-10T02:58:00Z | 0.1 | 4 | False |
-| H | 2026-09-10T02:58:30Z | 0.5 | 9 | False |
+| B | 2026-09-14T05:55:00Z | 1.3 | 63 | False |
+| C | 2026-09-14T05:55:30Z | 1.1 | 180 | False |
+| D | 2026-09-14T05:56:00Z | 0.5 | 43 | False |
+| E | 2026-09-14T05:56:30Z | 0.1 | 1 | False |
+| F | 2026-09-14T05:57:00Z | 0.1 | 1 | False |
+| G | 2026-09-14T05:57:30Z | 0.2 | 4 | False |
+| H | 2026-09-14T05:58:00Z | 0.6 | 12 | False |
 
 ## Coverage by operation
 
@@ -42,11 +44,11 @@ Driven 2026-09-10 02:58Z against `local`, schema v3, windows of 30s.
 | getConfig | GET | catalog | [2, 400, 401] | [403] | [] | ('200', '400', '401', '403', '419', '503', '5XX') |
 | getToken | POST | catalog | [2, 401] | [400] | [] | ('200', '400', '401', '5XX') |
 | listNamespaces | GET | catalog | [2, 401, 403, 404] | [] | [] | ('200', '400', '401', '403', '404', '419', '503', '5XX') |
-| createNamespace | POST | catalog | [401, 403, 404, 409] | [2, 400] | [] | ('200', '400', '401', '403', '406', '409', '419', '503', '5XX') |
+| createNamespace | POST | catalog | [2, 401, 403, 404, 409] | [400] | [] | ('200', '400', '401', '403', '406', '409', '419', '503', '5XX') |
 | dropNamespace | DELETE | catalog | [2, 401, 404] | [403, 409] | [] | ('204', '400', '401', '403', '404', '409', '419', '503', '5XX') |
 | loadNamespaceMetadata | GET | catalog | [2, 401, 403, 404] | [] | [] | ('200', '400', '401', '403', '404', '419', '503', '5XX') |
 | namespaceExists | HEAD | catalog | [2, 401, 403, 404] | [] | [] | ('204', '400', '401', '403', '404', '419', '503', '5XX') |
-| updateProperties | POST | catalog | [2, 401, 403, 404] | [400] | [] | ('200', '400', '401', '403', '404', '406', '419', '422', '503', '5XX') |
+| updateProperties | POST | catalog | [2, 400, 401, 403, 404] | [] | [] | ('200', '400', '401', '403', '404', '406', '419', '422', '503', '5XX') |
 | registerTable | POST | catalog | [400, 401, 403, 404] | [2, 409] | [] | ('200', '400', '401', '403', '404', '409', '419', '503', '5XX') |
 | listTables | GET | catalog | [2, 401, 403, 404] | [] | [] | ('200', '400', '401', '403', '404', '419', '503', '5XX') |
 | createTable | POST | catalog | [2, 400, 401, 403, 404] | [409] | [] | ('200', '400', '401', '403', '404', '409', '419', '503', '5XX') |
@@ -61,7 +63,7 @@ Driven 2026-09-10 02:58Z against `local`, schema v3, windows of 30s.
 | fetchPlanningResult | GET | catalog | [404] | [2, 401, 403] | [] | ('200', '400', '401', '403', '404', '419', '503', '5XX') |
 | fetchScanTasks | POST | catalog | [404] | [2, 400, 401, 403] | [] | ('200', '400', '401', '403', '404', '419', '503', '5XX') |
 | listViews | GET | catalog | [2, 401, 403, 404] | [] | [] | ('200', '400', '401', '403', '404', '419', '503', '5XX') |
-| createView | POST | catalog | [400, 401, 403, 404] | [2, 409] | [] | ('200', '400', '401', '403', '404', '409', '419', '503', '5XX') |
+| createView | POST | catalog | [2, 400, 401, 403, 404] | [409] | [] | ('200', '400', '401', '403', '404', '409', '419', '503', '5XX') |
 | dropView | DELETE | catalog | [2, 401, 404] | [403] | [] | ('204', '400', '401', '403', '404', '419', '503', '5XX') |
 | loadView | GET | catalog | [401, 404] | [2, 403] | [] | ('200', '400', '401', '403', '404', '419', '503', '5XX') |
 | viewExists | HEAD | catalog | [401, 404] | [2, 403] | [] | ('204', '400', '401', '404', '419', '503', '5XX') |
@@ -73,9 +75,9 @@ Driven 2026-09-10 02:58Z against `local`, schema v3, windows of 30s.
 | createCatalog | POST | management | [2, 400, 401, 403, 409] | [] | [] | ('201', '403', '404', '409') |
 | deleteCatalog | DELETE | management | [2, 401, 404] | [403] | [] | ('204', '403', '404') |
 | getCatalog | GET | management | [2, 401, 403, 404] | [] | [] | ('200', '403', '404') |
-| updateCatalog | PUT | management | [2, 401, 403, 404, 409] | [400] | [] | ('200', '403', '404', '409') |
+| updateCatalog | PUT | management | [2, 400, 401, 403, 404, 409] | [] | [] | ('200', '403', '404', '409') |
 | listCatalogRoles | GET | management | [2, 401, 403, 404] | [] | [] | ('200',) |
-| createCatalogRole | POST | management | [2, 400, 401, 403, 404] | [] | [] | ('201', '403', '404') |
+| createCatalogRole | POST | management | [2, 401, 403, 404] | [400] | [] | ('201', '403', '404') |
 | deleteCatalogRole | DELETE | management | [2, 401, 404] | [403] | [] | ('204', '403', '404') |
 | getCatalogRole | GET | management | [2, 401, 403, 404] | [] | [] | ('200', '403', '404') |
 | updateCatalogRole | PUT | management | [2, 400, 401, 403, 404, 409] | [] | [] | ('200', '403', '404', '409') |
@@ -84,12 +86,12 @@ Driven 2026-09-10 02:58Z against `local`, schema v3, windows of 30s.
 | addGrantToCatalogRole | PUT | management | [2, 400, 401, 403, 404] | [] | [] | ('201', '403', '404') |
 | listAssigneePrincipalRolesForCatalogRole | GET | management | [2, 401, 403, 404] | [] | [] | ('200', '403', '404') |
 | listPrincipalRoles | GET | management | [2, 401, 403] | [] | [] | ('200', '403', '404') |
-| createPrincipalRole | POST | management | [2, 400, 401, 403] | [] | [] | ('201', '403') |
+| createPrincipalRole | POST | management | [2, 401, 403] | [400] | [] | ('201', '403') |
 | deletePrincipalRole | DELETE | management | [2, 401, 404] | [403] | [] | ('204', '403', '404') |
 | getPrincipalRole | GET | management | [2, 401, 403, 404] | [] | [] | ('200', '403', '404') |
 | updatePrincipalRole | PUT | management | [2, 400, 401, 403, 404, 409] | [] | [] | ('200', '403', '404', '409') |
 | listCatalogRolesForPrincipalRole | GET | management | [2, 401, 403, 404] | [] | [] | ('200', '403', '404') |
-| assignCatalogRoleToPrincipalRole | PUT | management | [2, 400, 401, 403, 404] | [] | [] | ('201', '403') |
+| assignCatalogRoleToPrincipalRole | PUT | management | [2, 401, 403, 404] | [400] | [] | ('201', '403') |
 | revokeCatalogRoleFromPrincipalRole | DELETE | management | [401, 404] | [2, 403] | [] | ('204', '403', '404') |
 | listAssigneePrincipalsForPrincipalRole | GET | management | [2, 401, 403, 404] | [] | [] | ('200', '403', '404') |
 | listPrincipals | GET | management | [2, 401, 403] | [] | [] | ('200', '403', '404') |
@@ -98,9 +100,9 @@ Driven 2026-09-10 02:58Z against `local`, schema v3, windows of 30s.
 | getPrincipal | GET | management | [2, 401, 403, 404] | [] | [] | ('200', '403', '404') |
 | updatePrincipal | PUT | management | [2, 400, 401, 403, 404, 409] | [] | [] | ('200', '403', '404', '409') |
 | listPrincipalRolesAssigned | GET | management | [2, 401, 403, 404] | [] | [] | ('200', '403', '404') |
-| assignPrincipalRole | PUT | management | [2, 400, 401, 403, 404] | [] | [] | ('201', '403', '404') |
+| assignPrincipalRole | PUT | management | [2, 401, 403, 404] | [400] | [] | ('201', '403', '404') |
 | revokePrincipalRole | DELETE | management | [401, 404] | [2, 403] | [] | ('204', '403', '404') |
-| resetCredentials | POST | management | [2, 401, 403, 404] | [400] | [] | ('200', '403', '404') |
+| resetCredentials | POST | management | [2, 400, 401, 403, 404] | [] | [] | ('200', '403', '404') |
 | rotateCredentials | POST | management | [401, 403, 404] | [2] | [] | ('200', '403', '404') |
 
 ## Not reachable
