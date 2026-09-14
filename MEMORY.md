@@ -4,72 +4,48 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-10 (session 11)
+## Now — 2026-09-14 (session 12)
 
-**PRISM IS REMOVED. NOTHING NOW CHECKS A REQUEST WITHOUT DRIVING IT.** `--spec-check`,
-`src/spec_check.py` and `test_spec_check.py` are gone: **65 of 286 cells (23%) were the mock
-talking about the document, not about a request**, and `planTableScan` could not be judged by it
-at all. Two tiers remain — `--dry-run` (builds 286, contacts nothing, prints the 400-cell split)
-and `--profile` (drives, MUTATES). **`log-coverage/spec/` STAYS: it is the denominator.** Gone
-with it: any request check without a cluster, and the per-API controls. `.memory/active-issues.md`.
+**`polaris_log_coverage_v2.ipynb` HAS NEVER RUN PAST CELL 4, AND THE GATE THAT STOPPED IT WAS
+HIDING ITS OWN FAILURE.** Cell 4 raised on ANY Gate 7 failure; run `1789029836` hit two idle-window
+assertions and stopped, so **cells 5-42 carry `execution_count: None`** — 38 cells never executed in
+that file, every defect behind them unmeasured. It also stored `detail[-2500:]` and printed
+`[-20:]` of that, so **`3 FAILURE(S)` showed two and it raised about the third it had just
+truncated**; `assertions` matched a word the harness never prints (always `None`); and `GATE7` was
+read by no cell. **Fixed:** `[FAIL]` lines selected by CONTENT, assertions counted, failures
+classified against `GATE7_SCOPED` — scoped-only records **FAIL (scoped)** and CONTINUES; anything
+unrecognised, or a count that will not reconcile with the visible lines, still raises. `teardown_all`
+is registered at fixture creation (idempotent, `atexit`) so an abort between §2 and §11 stops
+leaking catalogs. **An abort claims everything downstream depends on what just failed — check that
+claim before raising.**
 
-**THE GRID MALFORMS BY WRONG TYPE where it cannot malform by omission** — **16 omit / 11
-wrong-type / 0 unbreakable**, denominator still 286, and the 16 send byte-identical bodies to
-every earlier run. **It is 10 verified, 1 UNVERIFIABLE — never quote 11:** `planTableScan`'s 400
-cell cannot be seen, because Prism returned identical violation lists for a malformed and a valid
-body, with no `request` entry at all.
+**THE FILTER EMITS `""` FOR `min/max_record_time` ON AN IDLE WINDOW** where the schema requires the
+field ABSENT. Measured; a `local-k8s` fix, now a cell-40 finding. **HYPOTHESIS, UNSETTLED:** it is
+also why `min_record_time` is mapped `text` — OpenSearch types from the first document it indexes,
+the day's first window is almost always idle at 30s, and `""` is not a parseable date. If it holds,
+**the template is a workaround and the Lua is the fix**. Check: oldest `polaris-report-*`, oldest
+doc, read the field. Do not quote the causal claim before that.
 
-**TWO THINGS COMMITTED IN `05616df` WERE WRONG AND ARE NOW FIXED.** `has_required_fields` had
-**six tests at `7cb12c2` and zero after** — a test file rewritten rather than extended, with the
-count stable at 58 both sides, so the suite stayed green. And `_typed_properties` crashes on a
-schema with one combinator key (`list + tuple`), found by chasing a mutant that SURVIVED. **Diff
-test NAMES, not counts, after any move. A surviving mutant is a finding.**
+**NOT VERIFIED END TO END.** No Cowork session can run this notebook — no `kubectl`, no `lua5.4`, no
+cluster, `local-k8s` not mounted. Gate: **911 passed, 45 skipped** in the Linux VM
+(`UV_PROJECT_ENVIRONMENT=$HOME/venv-linux`), Kade's macOS **956 passed**; `black` 26.5.1 leaves
+`src/` unchanged and skips `.ipynb`. **The third Gate 7 failure is still unseen** — the fix makes it
+visible, and whether the run then proceeds depends on what it turns out to be.
 
-**`pytest` AND `black` RUN IN A COWORK SESSION NOW** — the Linux VM has egress; `black` is
-**26.5.1**, the pin. Gate: **911 passed, 45 skipped** (960 − 62 + 13). Build the venv OUTSIDE the
-mount (`UV_PROJECT_ENVIRONMENT=$HOME/venv-linux`) or `uv sync` destroys the macOS `.venv`.
-**The cluster is NOT reachable** from the VM, so handoff steps 0-1 stay Kade's. A 403 from a
-Polaris URL was the **egress allowlist**, not Polaris.
-
-**FIRST EVER `drive()` RUN — `1789031469`, smoke, and it found a coverage figure that cannot
-fail.** `_row_from` stamps `verdict: "covered"` unconditionally, bypassing `adjudicate`: six of
-eight teardown rows contradicted their target (409/400/404) and all counted covered. **True
-coverage 12/20, reported 18/20** — and the same helper builds the gate2/gate4 rows. **UNFIXED.**
-Teardown also leaked: `apimatrix1789031469_cat` and `probe_ns` are still on the cluster.
-`echo_ok` was 20/20 and `claims` is correctly empty for smoke.
-
-**`index.lock`: `mv` works where `rm` does not** (delete permission was granted this session, so
-`rm` works too). **Never `GIT_INDEX_FILE`** — it commits against a stale index.
+**STILL OPEN FROM SESSION 11.** Prism is gone: nothing checks a request without driving it. `_row_from`
+stamps `verdict: "covered"` unconditionally (true coverage 12/20, reported 18/20) — **UNFIXED**, and
+it lives in `src/make_traffic.py`, **NOT** in this notebook's path: v2 drives `mx.drive` ->
+`adjudicate`, which handles MISSED correctly. Grid is **16 omit / 11 wrong-type / 0 unbreakable**,
+denominator 286, and **10 verified, 1 UNVERIFIABLE — never quote 11**. Report schema **v3 on the
+DaemonSet, v2 on the Deployment**. Session 8's 500 result — every route to a 500 is a closed one, run
+`1788759324` — is in [`log-coverage/HANDOFF-500-coverage-2026-09-07.md`](log-coverage/HANDOFF-500-coverage-2026-09-07.md).
 
 **NEXT SESSION STARTS FROM
 [`log-coverage/HANDOFF-split-logging-test-2026-09-10.md`](log-coverage/HANDOFF-split-logging-test-2026-09-10.md)**
-— steps 3-4 need BOTH folders. Step 2 DONE. Report schema **v3 on the DaemonSet, v2 on the
-Deployment**; `min_record_time` is mapped **text** and only an index template fixes it.
+— steps 3-4 need BOTH folders. Step 2 DONE.
 
-## Then — 2026-09-07 (session 8)
-
-**Read [`log-coverage/HANDOFF-500-coverage-2026-09-07.md`](log-coverage/HANDOFF-500-coverage-2026-09-07.md)
-first if you are picking that up cold** — standalone. In one paragraph: the oracle reads schema
-v2 and the drift that caused the gate abort cannot recur silently (`Policy.schema_version`
-reads the deployed script; `merge_windows` derives summable fields from the row). **Every route
-to a 500 is a closed one** — run `1788759324`, 157 calls: a broken storage endpoint is **422**,
-a missing bucket **400**, a stale `entityVersion` **409**, all mapped by
-`IcebergExceptionMapper`, so storage misconfiguration is a CLIENT error on this build. The only
-500 seen here remains the PG-HA read-after-write signature, which cannot be provoked on demand;
-§5c printed NOT PROVOKED, which is the contract working. Stack traces survive, 7 of 7, under
-four `exception.*` names. **Still open:** nothing provokes an UNHANDLED exception — best
-candidate is inducing PG replica lag (`pg_wal_replay_pause()`, a `local-k8s` action); if that is
-not feasible, close it as *opportunistic and not repeatable*. Detail:
-[`PLAN-log-coverage-v3.md`](log-coverage/PLAN-log-coverage-v3.md), `.memory/roadmap.md`.
-
-**Fast-run settings are live and TEMPORARY** (`WINDOW_SECONDS` 30, `Interval_Sec` 5). **Revert
-together** when the run of record is done — the api-status-matrix phase schedule depends on 30s
-windows, so revert AFTER it, not before.
-
-**Side task 2026-09-08 — the api-sql-profile workbooks have a Korean reading guide**
-(`diagnostics/api-sql-profile/doc-api-sql-profile-guide-ko.md` + `-results-ko.md`;
-figures recomputed by `_check_guide_figures.py`). `pytest` could not be run at all
-that session — see `.memory/active-issues.md`.
+**Fast-run settings are live and TEMPORARY** (`WINDOW_SECONDS` 30, `Interval_Sec` 5). Revert
+together, AFTER the api-status-matrix phase schedule, not before.
 
 ## Where the detail is
 
