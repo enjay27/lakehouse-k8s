@@ -1,6 +1,8 @@
-# API status matrix -- run 1789365275
+# API status matrix -- run 1789368559
 
-Driven 2026-09-14 05:58Z against `local`, schema v3, windows of 30s.
+Driven 2026-09-14 06:52Z against `local`, schema v3, windows of 30s.
+
+> **WINDOWS.** Window attribution is INCONSISTENT across rows ({-30: 5, 0: 1}); no single offset can correct it, so window-scoped gates were read unshifted and must not be quoted.
 
 
 
@@ -14,28 +16,28 @@ Driven 2026-09-14 05:58Z against `local`, schema v3, windows of 30s.
 | gate | verdict | detail |
 |---|---|---|
 | Gate 1 margins | PASS | 6/6 windows answered |
-| Gate 0b array split | PASS | {'resource': 129, 'principal': 18, 'summary': 6} |
+| Gate 0b array split | PASS | {'resource': 135, 'principal': 18, 'summary': 6} |
 | Gate 2 last_write_bytes | VOID | 2 table row(s) in the window and NONE carries last_write_bytes -- the field is the v3 feature and it did not fire |
 | Gate 2 delete leaves it ABSENT | VOID | rows without the field=0  rows WITH it=0 (want 0) |
-| Gate 3 classification | PASS | {'management': ['collection', 'principal-role', 'catalog-role', 'principal', 'catalog'], 'catalog': ['table', 'collection', 'namespace', 'view', 'auth', 'config', 'transaction'], 'mixed': ['error']} |
-| Gate 4 privilege count | FAIL | writes=1 granted=3 on /api/management/v1/catalogs/apimatrix1789365275_cat/catalog-roles/mx_1789365275_crole_doomed |
+| Gate 3 classification | PASS | {'management': ['collection', 'principal-role', 'catalog-role', 'principal', 'catalog'], 'catalog': ['collection', 'table', 'namespace', 'view', 'auth', 'config', 'transaction'], 'mixed': ['error']} |
+| Gate 4 privilege count | FAIL | writes=1 granted=3 on /api/management/v1/catalogs/apimatrix1789368559_cat/catalog-roles/mx_1789368559_crole |
 | Gate 4 denial forces the row | FAIL | auth_denied=0 (the ROLE_KINDS exemption; 0 means the 403 fell to __errors__) |
 | Gate 4 grants fold into the role | PASS | no separate grants row |
-| Gate 5 __errors__ holds only errors | PASS | requests=<Metric requests=69 over 4 doc(s)> |
+| Gate 5 __errors__ holds only errors | PASS | requests=<Metric requests=68 over 4 doc(s)> |
 | Gate 5 __other__ is overflow only | VOID | __other__ requests=<Metric requests ABSENT (0 docs carried it)> -- non-zero means a window really carried 500+ distinct resources, or the split regressed |
-| Gate 6 every path has a rule | PASS | only the synthetic keys came back, over 129 resource row(s) |
+| Gate 6 every path has a rule | PASS | only the synthetic keys came back, over 135 resource row(s) |
 
 ## Windows
 
 | phase | start | seconds | cells | straddled |
 |---|---|---|---|---|
-| B | 2026-09-14T05:55:00Z | 1.3 | 63 | False |
-| C | 2026-09-14T05:55:30Z | 1.1 | 180 | False |
-| D | 2026-09-14T05:56:00Z | 0.5 | 43 | False |
-| E | 2026-09-14T05:56:30Z | 0.1 | 1 | False |
-| F | 2026-09-14T05:57:00Z | 0.1 | 1 | False |
-| G | 2026-09-14T05:57:30Z | 0.2 | 4 | False |
-| H | 2026-09-14T05:58:00Z | 0.6 | 12 | False |
+| B | 2026-09-14T06:49:30Z | 1.2 | 63 | False |
+| C | 2026-09-14T06:50:00Z | 1.0 | 180 | False |
+| D | 2026-09-14T06:50:30Z | 0.7 | 43 | False |
+| E | 2026-09-14T06:51:00Z | 0.1 | 1 | False |
+| F | 2026-09-14T06:51:30Z | 0.0 | 1 | False |
+| G | 2026-09-14T06:52:00Z | 0.2 | 4 | False |
+| H | 2026-09-14T06:52:30Z | 0.5 | 12 | False |
 
 ## Coverage by operation
 

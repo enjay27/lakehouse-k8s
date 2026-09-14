@@ -1,8 +1,10 @@
 # For `local-k8s`: what this run says needs changing there
 
-Produced by `log-coverage/polaris_log_coverage_v2.ipynb`, run 1789365275, 2026-09-14 05:58Z.
+Produced by `log-coverage/polaris_log_coverage_v2.ipynb`, run 1789368559, 2026-09-14 06:52Z.
 Only items whose fix lives in the pipeline repo are here; everything else stays in
 `doc-api-status-matrix-results.md`.
+
+> **WINDOWS.** Window attribution is INCONSISTENT across rows ({-30: 5, 0: 1}); no single offset can correct it, so window-scoped gates were read unshifted and must not be quoted.
 
 
 
@@ -16,15 +18,15 @@ Only items whose fix lives in the pipeline repo are here; everything else stays 
 
 ## 2. Gate 4 privilege count FAILED
 
-**Measured:** writes=1 granted=3 on /api/management/v1/catalogs/apimatrix1789365275_cat/catalog-roles/mx_1789365275_crole_doomed
+**Measured:** writes=1 granted=3 on /api/management/v1/catalogs/apimatrix1789368559_cat/catalog-roles/mx_1789368559_crole
 
-**Change:** see the gate's stated failure mode in GUIDE-schema-v3-testing.md
+**Change:** a grant PUT on .../catalog-roles/<role>/grants must fold into the <role> row and increment `writes` once per grant. Measured N grants -> writes=1 means the fold is keeping the LAST grant rather than summing them, or the role span is being rematched per request. Check `classify`'s returned span for the /grants suffix.
 
 ## 3. Gate 4 denial forces the row FAILED
 
 **Measured:** auth_denied=0 (the ROLE_KINDS exemption; 0 means the 403 fell to __errors__)
 
-**Change:** see the gate's stated failure mode in GUIDE-schema-v3-testing.md
+**Change:** a 403 on a catalog-role with no successful request to that role in the same window must STILL create the role's row with auth_denied=1 and increment role_keys_forced on the summary. auth_denied=0 with the 403 in __errors__ means the ROLE_KINDS exemption to the `create=false` guard is not firing for catalog-role.
 
 ## 4. 4 response(s) of 500 in this run
 
