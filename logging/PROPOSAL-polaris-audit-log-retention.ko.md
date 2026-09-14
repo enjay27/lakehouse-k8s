@@ -36,20 +36,63 @@ OpenSearch 에서는 다른 모든 서비스의 로그를 `kube-fb` Index 에 �
 
 ## 2. 설계 요약
 
+```mermaid
+flowchart TB
+  POL["Polaris Pod"]
+  CL["노드 컨테이너 로그<br/>/var/log/containers/*.log"]
+  POL -->|"stdout / stderr"| CL
+
+  subgraph FB["Fluent Bit DaemonSet"]
+    I1["INPUT tail · Tag kube.*<br/>전체 컨테이너 · DB flb_kube.db"]
+    I2["INPUT tail · Tag polaris.logs<br/>*benchmarks-polaris*.log · DB flb_polaris.db"]
+    I3["INPUT dummy · Tag polaris.report<br/>5초 틱 · 로그 데이터 없음"]
+    F1["FILTER parser + modify<br/>CRI unwrap · key rename"]
+    F2["FILTER lua · polaris_access_log<br/>액세스 라인 필드 추출"]
+    F3["FILTER lua · polaris_noise_filter<br/>Match polaris.*<br/>규칙 1~7 판정 + 윈도우 집계"]
+    F4["FILTER record_modifier<br/>field trim"]
+  end
+
+  CL --> I1
+  CL --> I2
+  I2 --> F1 --> F2 --> F3
+  I3 --> F3
+
+  F3 -->|"적재 대상"| F4
+  F3 -->|"집계만 · 개별 문서 없음"| DROP(["drop"])
+  F3 -->|"윈도우 종료 시 요약 3종"| RPT["Tag polaris.report"]
+
+  subgraph OS["OpenSearch"]
+    IDX1["k8s-logs<br/>5일 · 현행 유지"]
+    IDX2["polaris-audit-*<br/>30일 · 신규"]
+  end
+
+  I1 -->|"kube.* 필터 체인 경유"| IDX1
+  F4 --> IDX2
+  RPT --> IDX2
 ```
-Polaris Pod (stdout)
-   └─ Fluent Bit DaemonSet  ──▶ [Lua 필터: polaris_noise_filter]
-                                   ├─ 적재 판정 (규칙 1~7, §4.5)  ──▶ 상세 문서
-                                   └─ 30분 윈도우 집계             ──▶ 요약 문서
-                                                                       │
-                                                          OpenSearch  polaris-audit-*  (30일)
-```
+
+읽을 때 놓치기 쉬운 세 가지를 짚어둔다.
+
+**① 같은 파일을 두 개의 INPUT 이 각자 읽는다.** `kube.*` 는 전체 컨테이너를, `polaris.logs` 는 Polaris
+컨테이너만 tail 한다. 오프셋 DB 는 반드시 분리되어야 하며(`flb_kube.db` / `flb_polaris.db`), 공유하면 양쪽
+오프셋이 모두 깨진다. 따라서 이 설계는 기존 파이프라인의 **교체가 아니라 추가**다 — Polaris 로그는
+`k8s-logs` 에도 계속 적재된다. 필터를 거치지 않은 원본이 남아 있어야 "요약이 원본의 부분집합인가"를
+검증할 수 있기 때문이다. 중복 적재를 원치 않으면 `kube.*benchmarks-polaris*` 전용 OUTPUT 을 제거해야
+하며, 그 순간 위 검증 수단도 함께 사라진다. **별도 결정 사항이다.**
+
+**② 요약은 로그 스트림에서 나오지 않는다.** 요약 문서를 만드는 것은 로그가 아니라 **5초마다 도는 빈 틱
+(`dummy` INPUT, Tag `polaris.report`)** 이다. 필터가 `polaris.*` 를 매치하므로 이 틱도 같은 Lua 를 통과하고,
+윈도우가 바뀌는 순간의 틱만 요약 문서로 치환되며 그 외의 틱은 버려진다. 즉 **요약 문서의 시각은 로그가
+아니라 틱이 결정한다** — 2026-09-14 에 확인된 3.673초 윈도우 밀림(§9-2)이 정확히 여기서 나온다. 틱이
+빠진 구조도로는 그 현상을 설명할 수 없다.
+
+**③ Lua 는 한 파일, 두 단계다.** `polaris_access_log.lua` 하나에 함수가 둘 있고 FILTER 도 둘로 걸린다 —
+`polaris_access_log`(액세스 라인 → 필드 추출)와 `polaris_noise_filter`(적재 판정 + 집계 + 요약 생성).
+전자는 `polaris.logs` 만, 후자는 `polaris.*` 를 매치한다.
 
 핵심은 **버리는 것이 아니라 세는 것**이다. 적재하지 않기로 판정된 요청도 요약 문서의 카운터에는 반드시
 반영되므로, "기록이 없다 = 요청이 없었다" 가 아니라 "기록이 없다 = 요약에서 집계되었다" 가 된다.
 총량은 언제나 보존된다.
-
----
 
 ## 3. 적재 로그
 
