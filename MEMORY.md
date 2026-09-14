@@ -3,36 +3,36 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-10
+## Now — 2026-09-14
 
-**v3 IS DEPLOYED AND STILL UNPROVEN.** The API matrix (run `1789026666`: 63 operations, 286 cells,
-0 transport errors) drove the whole API surface for the first time, and **Gate 2 —
-`last_write_bytes`, which IS the feature — came back VOID**, on a window of zero-carry rows. The Lua
-sets the field: **58/58** in `logging/scripts/test-schema-v3.lua` under a real `lua5.4` against
-today's values file. Next step is to drive ONE commit and query THAT window, not to touch the filter.
+**THREE OF RUN `1789370776`'s GATES WERE READ ONE ROW OFF, AND THE RUN SAID SO WRONG (`#26`).**
+Report rows are stamped by a tick that fires **3.673s late**, constant (σ<2ms, 11 rows) and
+undriftable because `Interval_Sec 5` **divides** `WINDOW_SECONDS 30`; the matrix fires every phase
+**0.5s after the boundary**, so each burst lands in the previous row. The run called this an
+inconsistent offset that *"no single offset can correct"* — **withdrawn**: `{-30: 5, 0: 1}` is one
+skew measured against the label twice, the `0` being the only burst that did not start on a
+boundary. Verified against the log index: `access_kept` == real-window access docs, **7/7**,
+343==343. **Cheapest fix is in the notebook — start each phase ~5s past the boundary.**
 
-**Written and NOT running (`#25`).** `fluent-bit/values.yaml` omits `min/max_record_time` when nil;
-`logging/opensearch/polaris-report-template.json` types them `date`. **Both or neither, Lua first** —
-with the template applied a `""` is rejected per item inside a `_bulk` that returns HTTP 200. Apply
-with `logging/scripts/step9-report-index-template.sh`; not retroactive, so `polaris-report-2026.09.10`
-and earlier stay `text` and take no date maths. Also unrolled: the heartbeat-probe removal.
+**Gate 2 — `last_write_bytes`, which IS the feature — is STILL unanswered**, second run running.
+Gate 4's two FAILs and Gate 2's VOID are all `#26`: the 403 did **not** fall to `__errors__`.
 
-**A gate that matches nothing PASSES.** Three of the guide's gates used `{"term": {"<text field>":
-…}}` — matched against the analyser's output, so `POST` looks for `post` and can never match. Fixed
-with `.keyword` throughout, plus: **row-level gates pin `window_start`**, because zero-carry rows
-make the newest documents for a key its zeros. Third instrument this fortnight that read correctly
-while idle and lied under load. `errors_5xx` is meanwhile **drivable through the API alone** (`#24`).
+**Written and NOT running (`#25`), unchanged.** `fluent-bit/values.yaml` omits `min/max_record_time`
+when nil; `logging/opensearch/polaris-report-template.json` types them `date`. **Both or neither,
+Lua first** — with the template applied a `""` is rejected per item inside a `_bulk` that returns
+HTTP 200. Apply with `logging/scripts/step9-report-index-template.sh`; not retroactive. The run's
+"index mapping" item is this issue, not new work, and its nine-digits cause is still **asserted** —
+a 3-call `_analyze`/probe-index test settles it without waiting a day.
 
-**Next, in order.** (1) Roll the Lua, then apply the template — that order. (2) Re-drive Gate 2 in a
-named window. (3) `#18` `Id_Key sequence` indexes nothing, so tier 1 has no dedup at all — a design
-call, not a bug to fix blind. (4) `#23`, two raw `log` docs in 4,576, low. (5) The
-`fb-polaris-shipper` uninstall needs authorisation at the moment of execution and destroys the
-ability to repeat the 265==265 measurement. (6) The **30s revert to 1800/30** is the cutover's last
-step and final gate (§4.1); tier 3's long ISM policy is blocked on it.
+**Next, in order.** (1) Offset the notebook's phase starts past `Interval_Sec`. (2) Re-drive Gate 2
+in a named window. (3) Roll the Lua, then the template. (4) `#24` reproduced across two runs;
+`exception.frames` is what is missing before it goes upstream. (5) `#18` `Id_Key sequence` indexes
+nothing. (6) The **30s revert to 1800/30** is the cutover's last step — it also changes `#26`'s
+arithmetic, so re-check the tick divides the window.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent
-artifact** — and deploying is three facts, not one (`#20`): use
-`logging/scripts/step5-probe-apply-verify.sh --apply`.
+artifact** — and a model that fits every count can still be wrong by an order of magnitude
+(`sessions/2026-09-14-window-skew-review.md` §6).
 
 ## Where the detail is
 

@@ -488,6 +488,34 @@ endpoint onto the Mac, since VictoriaLogs single has no auth. **`persistence.siz
 now-or-never** — if the PVC is already bound at 50Gi, that is what this cluster has.
 
 
+**#26 — Report rows are stamped by a tick that fires 3.673s late, and the matrix fires every phase
+on the boundary. OPEN, LIVE, and it is the reason three gates in run `1789370776` did not mean what
+they said.** 2026-09-14. Measured from the OpenSearch report + log exports, not from config:
+
+- **The skew is constant, not erratic.** All 11 rows (`seq` 184..194) emitted at
+  `window_end + 3.673s`, σ < 2ms. It cannot drift: `Interval_Sec 5` **divides** `WINDOW_SECONDS 30`,
+  so the tick phase against the window grid is fixed for the life of the process. Row `[W, W+30)`
+  really covers about `[W+3.7, W+33.7)`. Bounded independently to **+1.55s..+3.67s** for `seq=186`
+  by its own emit timestamp — a 30s shift is arithmetically excluded.
+- **The notebook lands every burst inside that dead zone.** Traffic starts 0.52–0.61s after each
+  boundary and finishes within ~1s, so 100% of a phase is attributed to the previous row.
+- **`{-30: 5, 0: 1}` is one rule, not two.** `lead_s` measures distance to the *label*, so it reads
+  −30 for a boundary-aligned burst and ≈0 for a mid-window one. The single `0` row is `seq=185`,
+  the setup burst at 07:26:16.9 — the only traffic in the run that did not start on a boundary.
+  **The report's "no single offset can correct it, do not quote window-scoped gates" is withdrawn.**
+- **Confirmed against the other pipeline:** `access_kept` equals the access docs in the real window
+  in **7 of 7** windows, 343 == 343 total.
+- **Consequences already visible:** Gate 4 `writes=1 granted=3` is two adjacent rows (3 grants at
+  07:29:00.55–.61; the teardown DELETE at 07:29:31.35). Gate 4 `auth_denied=0` is **not** the
+  ROLE_KINDS exemption and the 403 did **not** fall to `__errors__` — it is on the role row in the
+  neighbouring report row (`auth_denied=1`). Gate 2's VOID is the same class.
+- **Cheapest fix is in the notebook, not the pipeline:** start each phase ~5s past the boundary
+  (> `Interval_Sec`). Re-typing the window from record times is a *design change* — the Lua refuses
+  it deliberately, so a replayed record is not re-dated — and must be argued as one.
+
+Full derivation, including the wrong turn that nearly filed this as a constant 30s shift, in
+[`sessions/2026-09-14-window-skew-review.md`](sessions/2026-09-14-window-skew-review.md).
+
 ## Resolved, kept because they recur
 
 **#13 — RESOLVED. `polaris_noise_filter` was written and not running; it runs now.**
