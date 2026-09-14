@@ -83,9 +83,9 @@ the report's margins exact regardless of retention.
 - **KEPT and NOT COUNTED** — every non-access-log record (rule 2). These appear in **no
   report field at all**.
 
-### The part that matters: this test is one-sided
+### What the NOTEBOOK proves, and what it does not
 
-The notebook asserts **presence**:
+The notebook asserts **presence** only:
 
 ```
 correlation: 286/286 calls recovered by request id
@@ -93,18 +93,51 @@ of those, errors (rule 3 keeps ALL of them -- an ASSERTION): 235/235
 ```
 
 It never asserts **absence**. There is no check that a COUNTED call left no individual
-record. And `286/286` does not mean 286 access-log lines were kept — `FOUND` searches
-`polaris-logs-*` for the request id, and the application DEBUG lines carry that same id.
-A counted-only call is findable *incidentally*, through whatever SQL its handler logged.
+record, and `286/286` is not evidence about the access-log line at all — `FOUND` searches
+`polaris-logs-*` by request id, and the application lines carry that same id, so a
+counted-only call is findable *incidentally*. **On the notebook's evidence alone, a filter
+that kept every single line would pass every retention check it makes.** The complementary
+test is specified and unimplemented: `SCENARIO-logging-test.md` T5, *"every counted call is
+absent (rule 6)"*, with its own warning that *"testing only the first reports a policy that
+keeps everything as a pass."*
 
-**Consequence: a filter that kept every single line would pass every retention check this
-notebook makes.** The complementary test is specified — `SCENARIO-logging-test.md` T5,
-"every counted call is absent (rule 6)" — and is not implemented here. Its own text says
-it: *"T4 and T5 are the pair that matters and neither means anything alone: testing only
-the first reports a policy that keeps everything as a pass."*
+### What the OpenSearch export DOES prove — rule 6 holds
 
-So the honest summary of this section is: **the run proves what is logged. It proves
-nothing about what is not logged.**
+Run `1789368559`, exported from OpenSearch and checked by hand. **343 kept access-log
+records** spanning the whole run (`06:49:20` → `06:52:31`):
+
+| method | statuses present among KEPT records |
+|---|---|
+| GET | 400 ×1, 401 ×21, 403 ×20, 404 ×25 |
+| HEAD | 401 ×3, 403 ×2, 404 ×5 |
+| POST | 200 ×1, 201 ×20, 400 ×16, 401 ×19, 403 ×16, 404 ×31, 409 ×4, 422 ×6, 500 ×4 |
+| PUT | 200 ×4, 201 ×40, 400 ×5, 401 ×7, 403 ×7, 404 ×7, 409 ×7 |
+| DELETE | 204 ×25, 400 ×4, 401 ×9, 404 ×34 |
+
+**Successful `GET` / `HEAD`: zero.** Not one read that succeeded survived into
+`polaris-logs-*`, while 66 failing GETs did — so this is not an export artifact, since a
+filter on the export would have to drop 2xx GETs and keep 4xx GETs.
+
+And it pairs exactly with the report side. `seq=117` states *"7 counted (4 read, 3 POST)"*,
+and those four reads are visible as `last read 53 / 41 / 41 / 548` on four resource rows —
+with **no corresponding access-log record anywhere in the export**. Counted, not kept,
+demonstrated on both sides of the same window.
+
+**So rule 6 is proven for the access-log stream** — by the export, not by the notebook. T5
+is still worth implementing, because this was a hand check of one run.
+
+### Also confirmed by the export
+
+- **`last_write_bytes` / `last_read_bytes` work.** `last write 536` and `117`, `last read
+  53`, and the field **absent** exactly where the response was 0 bytes — the `> 0` guard.
+  A Gate 2 VOID means the gate read a window with no sized table write in it, not that the
+  feature failed.
+- **The margins hold, hand-checked.** `seq=117`: 53 access lines; principals 26+27+0 =
+  **53**; the 27 resource rows sum to **53**.
+- **Zero-carry works.** `seq=118` is fully carried: 29 rows all zero, `carried 29` = 27
+  resources + 2 principals.
+- **The window offset is visible in OpenSearch, independently of the notebook.** `seq=117`
+  is labelled `06:52:00Z..06:52:30Z` and its kept access lines are stamped `06:52:31`.
 
 ### Volume, for scale
 

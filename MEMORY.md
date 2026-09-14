@@ -22,6 +22,21 @@ printed. Compensated by `WINDOW_OFFSET_S`, **derived at collection**, zero when 
 refusing to guess if rows disagree. **The invariant still FAILS on purpose.** **RETRACTED: the two
 Gate 4 items already sent to local-k8s were measured in a window with no grants in it.**
 
+**RULE 6 IS PROVEN — by the OpenSearch export, not by the notebook.** 343 kept access-log records
+across the whole run contain **zero successful GET/HEAD**, while 66 failing GETs are present; and
+`seq=117`'s "7 counted (4 read, 3 POST)" pairs with four `last read` values that have no access-log
+record at all. **`last_write_bytes` works too** (536 / 117 / read 53, absent at 0 bytes — the `> 0`
+guard), so Gate 2's "the field did not fire" was wrong and is corrected. Margins hand-checked at
+53=53=53; zero-carry confirmed (`seq=118`, 29 carried).
+
+**THE REPORT IS NOW SAFE TO SEND, and it is much shorter.** The findings cell read `GATES` and never
+`INVARIANTS`, so the window attribution — proven three runs running — reached no document while two
+unreproduced Gate 4 items went to local-k8s. Invariants are findings now and the window one leads.
+The guard meant to hold those items back had **inverted** (it tested `WINDOW_OFFSET_S`, which is 0
+both when there is no offset and when none could be determined); it gates on `WINDOWS_TRUSTED` now,
+derived from the invariant, failing closed. The four 500s moved to a **Build findings** section:
+Polaris facts, not pipeline work.
+
 **FIXED THIS SESSION:** the commit is now created a window clear of phase F's fixture (that CREATE was
 sharing phase E's window, which is the one premise Gate 2 has); Gate 4 selects its role by **exact**
 match (`mx_<run>_crole` is a prefix of `_crole2` and `_crole_doomed`, so it reported `writes=1
