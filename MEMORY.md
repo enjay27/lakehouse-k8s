@@ -14,11 +14,13 @@ intact — **the roadmap's standing question is answered: an unhandled exception
 no cluster surgery.** Kade rolled the filter first, so **Gate 7 PASSES 58/58** and `GATE7_SCOPED` is
 back to empty; the assertion count is **58**, neither the 16 nor the 46 the two documents claim.
 
-**THE REPORT ASSIGNS WINDOWS BY PROCESSING TIME, NOT RECORD TIME.** Window `05:57:30..05:58:00` carries
-`min_record_time 05:58:00.607` and `max 05:58:01.475` — **both past `window_end`** — and §15 passed,
-because it only asked `max - min <= window_seconds` (0.87s). Fourth instance of a check that passes
-while its subject is wrong. New invariant added; the offset is a local-k8s question, and it is the
-mechanism behind Gate 2 going VOID.
+**A ROW LABELLED W HOLDS THE TRAFFIC OF W+1 — a constant −30s, measured, agreed by every summary
+row.** The containment invariant failed **6/6 windows**: `06:19:00..06:19:30` carries records from
+`06:19:30.587..06:19:31.494`. **This explains Gate 2 and Gate 4 completely** — phase E's commit is
+labelled 06:17:30, so Gate 2 asking 06:18:00 was handed phase F's DELETE, exactly what its scope
+printed. Compensated by `WINDOW_OFFSET_S`, **derived at collection**, zero when local-k8s fixes it,
+refusing to guess if rows disagree. **The invariant still FAILS on purpose.** **RETRACTED: the two
+Gate 4 items already sent to local-k8s were measured in a window with no grants in it.**
 
 **FIXED THIS SESSION:** the commit is now created a window clear of phase F's fixture (that CREATE was
 sharing phase E's window, which is the one premise Gate 2 has); Gate 4 selects its role by **exact**
