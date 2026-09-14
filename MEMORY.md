@@ -22,12 +22,17 @@ printed. Compensated by `WINDOW_OFFSET_S`, **derived at collection**, zero when 
 refusing to guess if rows disagree. **The invariant still FAILS on purpose.** **RETRACTED: the two
 Gate 4 items already sent to local-k8s were measured in a window with no grants in it.**
 
-**RULE 6 IS PROVEN — by the OpenSearch export, not by the notebook.** 343 kept access-log records
-across the whole run contain **zero successful GET/HEAD**, while 66 failing GETs are present; and
-`seq=117`'s "7 counted (4 read, 3 POST)" pairs with four `last read` values that have no access-log
-record at all. **`last_write_bytes` works too** (536 / 117 / read 53, absent at 0 bytes — the `> 0`
-guard), so Gate 2's "the field did not fire" was wrong and is corrected. Margins hand-checked at
-53=53=53; zero-carry confirmed (`seq=118`, 29 carried).
+**RULE 6 IS PROVEN BY QUANTITY.** Run `1789370776`, 11 report windows: filter says seen **433**,
+kept **343**, counted **90**; the index holds **exactly 343**. **Delta 0** — so the 90 counted records
+are demonstrably absent, and nothing was lost in transit. Margin holds **11/11 rows**. Zero successful
+GET/HEAD among the kept, on a second run. **`last_write_bytes` works** (536 / 117 / read 53, absent at
+0 bytes); Gate 2's "the field did not fire" was wrong and is corrected.
+
+**THE OFFSET'S MECHANISM IS VISIBLE AND NO SHIFT CAN WORK.** Every phase lands one window early
+(label 07:26:30 = phase C driven at 07:27:00, and so on down the run), and the single offset-0 row is
+the FIXTURE-SETUP window, whose traffic is spread rather than a post-boundary burst. The window a row
+gets depends on WHEN INSIDE IT the traffic landed. `{-30: 5, 0: 1}` is signal, not noise — the fix is
+a **`report_seq` join** via the summary row's own record bounds.
 
 **THE REPORT IS NOW SAFE TO SEND, and it is much shorter.** The findings cell read `GATES` and never
 `INVARIANTS`, so the window attribution — proven three runs running — reached no document while two

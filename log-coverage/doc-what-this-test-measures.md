@@ -126,6 +126,47 @@ demonstrated on both sides of the same window.
 **So rule 6 is proven for the access-log stream** — by the export, not by the notebook. T5
 is still worth implementing, because this was a hand check of one run.
 
+### The reconciliation that settles it — run `1789370776`
+
+The second export is complete enough to check the filter's own arithmetic against the index,
+across **11 consecutive report windows** (`seq` 184–194):
+
+| | |
+|---|---|
+| access lines the filter says it **saw** | **433** |
+| it says it **kept** | **343** |
+| it says it **counted only** | **90** |
+| access-log records actually in `polaris-logs-*` | **343** |
+| **delta** | **0** |
+
+**Every record the filter claims to have kept is in the index, and not one more.** So the 90
+counted-only records are demonstrably absent — this is rule 6 verified by quantity, not just by
+the shape of what survived. It also rules out transit loss over the same window.
+
+And the margin holds on **11 of 11 rows**, not merely the six the notebook checks:
+`sum(resource.requests) == sum(principal.requests) == access_seen` on every window in the
+export.
+
+Successful `GET`/`HEAD` among the 343: **zero**, on a second independent run.
+
+### Where the offset comes from, visible in the same table
+
+Mapping the report's per-window counts onto the phases the notebook drove:
+
+| report label | access lines | the phase that actually ran |
+|---|---|---|
+| 07:26:30Z | 180 | phase C, driven at **07:27:00** |
+| 07:27:00Z | 44 | phase D, driven at **07:27:30** |
+| 07:27:30Z | 1 | phase E, driven at **07:28:00** |
+| 07:28:30Z | 7 | phase G, driven at **07:29:00** |
+| 07:29:00Z | 53 | phase H + teardown, driven at **07:29:30** |
+
+Every phase lands one window early. And the exception proves the mechanism: the one window
+measured at offset `0` is the fixture setup, whose traffic is spread across its window instead
+of arriving as a burst just after a boundary. **The window a row receives depends on when
+inside it the traffic landed** — so no fixed shift can correct this downstream, and the join
+has to be on `report_seq` via the summary row's own record bounds.
+
 ### Also confirmed by the export
 
 - **`last_write_bytes` / `last_read_bytes` work.** `last write 536` and `117`, `last read

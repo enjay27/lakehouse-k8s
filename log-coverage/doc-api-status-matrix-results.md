@@ -1,6 +1,6 @@
-# API status matrix -- run 1789368559
+# API status matrix -- run 1789370776
 
-Driven 2026-09-14 06:52Z against `local`, schema v3, windows of 30s.
+Driven 2026-09-14 07:29Z against `local`, schema v3, windows of 30s.
 
 > **WINDOWS.** Window attribution is INCONSISTENT across rows ({-30: 5, 0: 1}); no single offset can correct it, so window-scoped gates were read unshifted and must not be quoted.
 
@@ -17,10 +17,10 @@ Driven 2026-09-14 06:52Z against `local`, schema v3, windows of 30s.
 |---|---|---|
 | Gate 1 margins | PASS | 6/6 windows answered |
 | Gate 0b array split | PASS | {'resource': 135, 'principal': 18, 'summary': 6} |
-| Gate 2 last_write_bytes | VOID | 2 table row(s) in the window and NONE carries last_write_bytes -- the field is the v3 feature and it did not fire |
+| Gate 2 last_write_bytes | VOID | 2 table row(s) in this window and none carries last_write_bytes. THIS SAYS NOTHING ABOUT WHETHER THE FEATURE WORKS: the OpenSearch export of 2026-09-14 shows last_write_bytes and last_read_bytes firing wherever a sized write or read occurred (last write 536 / 117, last read 53) and absent exactly where the response was 0 bytes, which is the `> 0` guard working. A VOID here means this window held no sized table write -- check WHICH window was read before blaming the filter |
 | Gate 2 delete leaves it ABSENT | VOID | rows without the field=0  rows WITH it=0 (want 0) |
 | Gate 3 classification | PASS | {'management': ['collection', 'principal-role', 'catalog-role', 'principal', 'catalog'], 'catalog': ['collection', 'table', 'namespace', 'view', 'auth', 'config', 'transaction'], 'mixed': ['error']} |
-| Gate 4 privilege count | FAIL | writes=1 granted=3 on /api/management/v1/catalogs/apimatrix1789368559_cat/catalog-roles/mx_1789368559_crole |
+| Gate 4 privilege count | FAIL | writes=1 granted=3 on /api/management/v1/catalogs/apimatrix1789370776_cat/catalog-roles/mx_1789370776_crole |
 | Gate 4 denial forces the row | FAIL | auth_denied=0 (the ROLE_KINDS exemption; 0 means the 403 fell to __errors__) |
 | Gate 4 grants fold into the role | PASS | no separate grants row |
 | Gate 5 __errors__ holds only errors | PASS | requests=<Metric requests=68 over 4 doc(s)> |
@@ -31,13 +31,13 @@ Driven 2026-09-14 06:52Z against `local`, schema v3, windows of 30s.
 
 | phase | start | seconds | cells | straddled |
 |---|---|---|---|---|
-| B | 2026-09-14T06:49:30Z | 1.2 | 63 | False |
-| C | 2026-09-14T06:50:00Z | 1.0 | 180 | False |
-| D | 2026-09-14T06:50:30Z | 0.7 | 43 | False |
-| E | 2026-09-14T06:51:00Z | 0.1 | 1 | False |
-| F | 2026-09-14T06:51:30Z | 0.0 | 1 | False |
-| G | 2026-09-14T06:52:00Z | 0.2 | 4 | False |
-| H | 2026-09-14T06:52:30Z | 0.5 | 12 | False |
+| B | 2026-09-14T07:26:30Z | 1.0 | 63 | False |
+| C | 2026-09-14T07:27:00Z | 1.0 | 180 | False |
+| D | 2026-09-14T07:27:30Z | 0.5 | 43 | False |
+| E | 2026-09-14T07:28:00Z | 0.1 | 1 | False |
+| F | 2026-09-14T07:28:30Z | 0.0 | 1 | False |
+| G | 2026-09-14T07:29:00Z | 0.1 | 4 | False |
+| H | 2026-09-14T07:29:30Z | 0.6 | 12 | False |
 
 ## Coverage by operation
 
