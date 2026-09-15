@@ -60,3 +60,14 @@ E/F/G/H carry `at`. Calls, order and request ids are unchanged. The only `sleep`
 (E) no longer has a window to itself, so a per-window `last_write_bytes` check and a per-window
 grant count (G) will see neighbouring traffic. A verifier must join on `Polaris-Request-Id` and
 the recorded times, not on "the window this phase owned". v2 still has the phased drive.
+
+## Then: one wait, before phase B
+
+Run `1789460641` (no waits) drove B-H in **~6 s** (B 1.3, C 1.1, D 0.4, E/F/G 0.2, H 2.7) and
+landed at 08:24:04-10, inside window 08:24:00 only by luck. Kade: *wait for a new window, then
+run all.* v1 now has **one** `seconds_to_boundary` wait, in a new cell 3b right before phase B,
+with the parameters back (`WINDOW_SECONDS` 30, `TICK_INTERVAL_S` 5, `PHASE_LAG` 6.5 -- fast-run,
+edit on revert). It stamps `DRIVE_T0`/`DRIVE_WINDOW`; the cleanup cell stamps `DRIVE_T1` and the
+end window, and the summary says `CROSSED A BOUNDARY` if B-I did not fit. At 30 s windows,
+6.5 s lag + ~6 s drive + cleanup should fit; that is a prediction, not yet observed.
+Cells must run without pausing after 3b -- a pause between cells is time inside the window.
