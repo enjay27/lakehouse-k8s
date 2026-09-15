@@ -516,6 +516,14 @@ they said.** 2026-09-14. Measured from the OpenSearch report + log exports, not 
 Full derivation, including the wrong turn that nearly filed this as a constant 30s shift, in
 [`sessions/2026-09-14-window-skew-review.md`](sessions/2026-09-14-window-skew-review.md).
 
+**2026-09-15 — FIX CONFIRMED by run `1789460891`; two corrections.** Bursts started +11.5s and
++6.6s past the boundary; errors per row 2 / 251 == detail docs, by label, no shift. (a) **The tick
+does drift**: same pod, `seq` unbroken 440→854, offset 3.673s → 2.77s — divisibility fixes the grid,
+not the timer. The `Interval_Sec + 1.5` lag is immune; a hardcoded 3.673 is not. (b) The run put
+**every phase in one window**, so per-phase window gates (Gate 4's grant count on a busy role) read
+the whole matrix. Downgrade to MONITOR once phases are one-per-window again.
+[`sessions/2026-09-15-rerun-1789460891-review.md`](sessions/2026-09-15-rerun-1789460891-review.md).
+
 ## Resolved, kept because they recur
 
 **#13 — RESOLVED. `polaris_noise_filter` was written and not running; it runs now.**

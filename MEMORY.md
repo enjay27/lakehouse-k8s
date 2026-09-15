@@ -5,17 +5,14 @@ everything else is a link into [`.memory/`](.memory/README.md).
 
 ## Now — 2026-09-15
 
-**THREE OF RUN `1789370776`'s GATES WERE READ ONE ROW OFF, AND THE RUN SAID SO WRONG (`#26`).**
-Report rows are stamped by a tick that fires **3.673s late**, constant (σ<2ms, 11 rows) and
-undriftable because `Interval_Sec 5` **divides** `WINDOW_SECONDS 30`; the matrix fires every phase
-**0.5s after the boundary**, so each burst lands in the previous row. The run called this an
-inconsistent offset that *"no single offset can correct"* — **withdrawn**: `{-30: 5, 0: 1}` is one
-skew measured against the label twice, the `0` being the only burst that did not start on a
-boundary. Verified against the log index: `access_kept` == real-window access docs, **7/7**,
-343==343. **Cheapest fix is in the notebook — start each phase ~5s past the boundary.**
+**`#26` IS FIXED — run `1789460891` agrees with the log index by label** (errors 2/251 == 2/251,
+resource == principal totals). But the tick **does drift** (3.673s → 2.77s, same pod), and the run put
+**all phases in one window**, so per-phase gates read the whole matrix.
+[`sessions/2026-09-15-rerun-1789460891-review.md`](.memory/sessions/2026-09-15-rerun-1789460891-review.md).
 
-**Gate 2 — `last_write_bytes`, which IS the feature — is STILL unanswered**, second run running.
-Gate 4's two FAILs and Gate 2's VOID are all `#26`: the 403 did **not** fall to `__errors__`.
+**Gate 2 — on a table it cannot be answered from `polaris-logs-*`:** a 2xx catalog POST is counted,
+never stored (rule 5'). `probe_tbl` says `last_write_bytes 1941`; the record to compare is in
+`k8s-logs` only. 12/12 checkable (management/PUT) rows match.
 
 **Written and NOT running (`#25`), unchanged.** `fluent-bit/values.yaml` omits `min/max_record_time`
 when nil; `logging/opensearch/polaris-report-template.json` types them `date`. **Both or neither,
@@ -24,10 +21,8 @@ HTTP 200. Apply with `logging/scripts/step9-report-index-template.sh`; not retro
 "index mapping" item is this issue, not new work, and its nine-digits cause is still **asserted** —
 a 3-call `_analyze`/probe-index test settles it without waiting a day.
 
-**Next, in order.** (1) **`#26`'s cause is in the NOTEBOOK, not the pipeline** — every phase calls
-`seconds_to_boundary(lag=0.5)` and fires into the tick's blind spot. Two edits, no cluster change:
-[`logging/HANDOFF-notebook-window-attribution-2026-09-15.md`](logging/HANDOFF-notebook-window-attribution-2026-09-15.md).
-(2) Re-drive Gate 2 in a named window. (3) Roll the Lua, then the template. (4) `#24` reproduced across two runs;
+**Next, in order.** (1) Gate 2 against `k8s-logs`: last 2xx `POST …/tables/probe_tbl` in
+[17:28:30, 17:29:00) KST, `response_size` == 1941? Fix the guide's query. (2) One window per phase. (3) Roll the Lua, then the template. (4) `#24` reproduced across two runs;
 `exception.frames` is what is missing before it goes upstream. (5) `#18` `Id_Key sequence` indexes
 nothing. (6) The **30s revert to 1800/30** is the cutover's last step — it also changes `#26`'s
 arithmetic, so re-check the tick divides the window.
