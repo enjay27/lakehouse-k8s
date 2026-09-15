@@ -1,6 +1,6 @@
 # PLAN — tier 2 audit stream: application logs by ALLOW-LIST, commit time on table rows, no zero rows
 
-**Status: WRITTEN 2026-09-15 into `fluent-bit/values.yaml`, NOT ROLLED (`active-issues #27`).** D1–D3 settled. Kade, 2026-09-15: *"in the audit log part, all I need to store
+**Status: ROLLED 2026-09-15 (`active-issues #27`); first run checked on its setup windows only.** D1–D3 settled. Kade, 2026-09-15: *"in the audit log part, all I need to store
 is clients' behaviour trends and issue tracking — make it a whitelist, so initialization-catalog,
 federated-iceberg-table … are not stored any longer."* Also: the `summary` report is not needed
 (→ D1: kept, ignored), commit time wanted per table (→ D2), rows with exactly 0 requests not wanted (→ D3).
@@ -230,7 +230,7 @@ and it is what step 5's subset proof compares against.
 | G4 | `_msg:*clientSecret*` in `polaris-logs-*` → only `*` or `<redacted>` | — |
 | G5 | `schema_version: 4` on every new report row; `dropped`, `commit_*` mapped `long`; no `carried_rows` | — |
 | G6 | over a range: `sum(commit_count)` on table+view rows == `k8s-logs` count of `Successfully committed to` lines ± edge | a key mismatch or a missed pattern |
-| G7 | no two resource rows in one window whose keys differ only by `.` vs `%1F`; every row with `commit_count` and `requests: 0` has a `/transactions/commit` row with `writes > 0` in that window | §2.4's mapping is creating phantom rows |
+| G7 | no two resource rows in one window whose keys differ only by `.` vs `%1F`; every row with `commit_count` and `requests: 0` has, in that window, a write on its collection (`POST …/tables` or `…/views` — create) **or** a `/transactions/commit` row with `writes > 0`. *Corrected 2026-09-15: create_table/create_view commit onto a key no request touches — 3 such rows in seq=4 of the first v4 run, all creates.* | §2.4's mapping is creating phantom rows |
 | G8 | no report row with `requests: 0` and no `commit_count` | zero-carry was not fully removed |
 
 ## 6. Decisions — settled 2026-09-15

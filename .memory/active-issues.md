@@ -532,7 +532,20 @@ or the Lua filters lose their script and the pod CrashLoops). The running pod is
 `helm get values` showed `luaScripts: {}`, the pod logged `cannot access script
 '/fluent-bit/scripts/polaris_access_log.lua'` → `filter initialization failed`, and every input
 paused — **tier 1 (`k8s-logs`) stopped with it**, not only Polaris. step2 was not run on that
-render; its APP_ALLOW check would have failed. Fix is the full command with the flag. What changes when it rolls:
+render; its APP_ALLOW check would have failed. Fix is the full command with the flag.
+**Rolled correctly the same day (pod `benchmarks-fluent-bit-rvm49`). First run `1789463971`, exports
+`…-7` (598 polaris-logs docs) / `…-8` (report `seq` 3–4 only):**
+- detail is exactly the replay's prediction: 598 docs = 343 access + 180 IcebergExceptionMapper (4 ERROR)
+  + 75 PolarisServiceImpl; **no dropped logger present**; `clientSecret` all `*`.
+- `schema_version 4`; `app_dropped` rows present (seq 4: 7+4+4+4+2 = `app_dropped_total` 21).
+- seq 3 / 4: `access_kept` 6 / 39 == detail docs between tick emits (18:19:01.765–31.765–01.769 KST);
+  errors 2 / 0 match; resource == principal == access lines (8, 76); management writes 39 == 39 docs;
+  `catalog_admin` + `_shared` writes 1 + 25 == 26 `Adding grant` lines. No zero rows without commits.
+- Commit-only rows (3 in seq 4) are **creates** (`POST …/tables`, `…/views` keys to the collection, the
+  commit to the table) — plan gate G7 corrected; not a fault.
+- New pod, new tick phase **1.765s**; the setup burst started +1.57s, so 6 lines went to seq 3.
+- **NOT checked:** seq 5 (the matrix window: 298 access lines, 251 errors) was not in the export, and
+  `commit_*` / `dropped` were not export columns, so their `long` mapping is unseen. What changes when it rolls:
 app-log allow-list (`IcebergExceptionMapper`, `PolarisServiceImpl`; WARN/ERROR exempt), dropped lines
 counted as `report_type: app_dropped`, `commit_count/commit_ms_*` on table/view rows, zero-carry
 deleted (`carried_rows` gone), clientSecret guard. `WINDOW_SECONDS` stays **30** — the 1800 revert is

@@ -27,7 +27,7 @@ a 3-call `_analyze`/probe-index test settles it without waiting a day.
 nothing. (6) The **30s revert to 1800/30** is the cutover's last step — it also changes `#26`'s
 arithmetic, so re-check the tick divides the window.
 
-**Policy v4 WRITTEN, NOT ROLLED (`#27`):** allow-list, `app_dropped`, `commit_ms_*`, no zero rows — in `fluent-bit/polaris_access_log.lua` (installed with `--set-file`, see `fluent-bit/values.yaml` header), window still 30s. Tests + export replay pass off-cluster; **no helm render yet**. Roll → step3 (Lua sha `f364c89653dfe481`) → template (#25) → gates G1–G8 in [`logging/PLAN-audit-allowlist-2026-09-15.md`](logging/PLAN-audit-allowlist-2026-09-15.md).
+**Policy v4 ROLLED 2026-09-15 (`#27`)** — first run's setup windows match detail exactly (598 docs as predicted, seq 3–4 kept/errors/grants/invariants). **Still owed:** the matrix window (seq 5) report export, `commit_*` mapping, template (#25), 1800 revert. Every upgrade needs `--set-file` (`fluent-bit/values.yaml` header; comments now Korean).
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent
 artifact** — and a model that fits every count can still be wrong by an order of magnitude
