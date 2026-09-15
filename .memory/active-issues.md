@@ -527,7 +527,12 @@ the whole matrix. Downgrade to MONITOR once phases are one-per-window again.
 **#27 — Policy v4 / report schema v4 is WRITTEN AND NOT ROLLED. OPEN.** 2026-09-15.
 `fluent-bit/polaris_access_log.lua` carries it (split out of `values.yaml`'s `luaScripts` the same day;
 **every `helm upgrade` needs `--set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/polaris_access_log.lua'`**,
-or the Lua filters lose their script and the pod CrashLoops). The running pod is v3. What changes when it rolls:
+or the Lua filters lose their script and the pod CrashLoops). The running pod is v3.
+**2026-09-15 09:14 UTC — that happened.** The first v4 roll ran without `--set-file`:
+`helm get values` showed `luaScripts: {}`, the pod logged `cannot access script
+'/fluent-bit/scripts/polaris_access_log.lua'` → `filter initialization failed`, and every input
+paused — **tier 1 (`k8s-logs`) stopped with it**, not only Polaris. step2 was not run on that
+render; its APP_ALLOW check would have failed. Fix is the full command with the flag. What changes when it rolls:
 app-log allow-list (`IcebergExceptionMapper`, `PolarisServiceImpl`; WARN/ERROR exempt), dropped lines
 counted as `report_type: app_dropped`, `commit_count/commit_ms_*` on table/view rows, zero-carry
 deleted (`carried_rows` gone), clientSecret guard. `WINDOW_SECONDS` stays **30** — the 1800 revert is
