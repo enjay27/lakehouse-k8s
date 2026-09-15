@@ -45,3 +45,18 @@ blind spot. Out of scope for this task; it is the next thing to fix.
 nbformat valid; all 16 code cells parse; used `th.`/`mt.`/`mx.` attributes all exist;
 `run_traffic.py --dry-run` builds 286 requests; `pytest` 911 passed / 45 skipped (in a VM venv
 synced from `uv.lock` — the checkout's `.venv` is the Mac's and does not run in the VM).
+
+## Later the same session: the window waits are gone
+
+Kade ran v1 (run `1789460272`, stopped at phase D) and asked why it waits for a fresh window: *"just
+run all traffic in time."* Every `seconds_to_boundary` sleep is removed (`run_phase`, E, F, G, H) --
+up to ~30 s x 7 phases. With them went everything that only existed to serve them: the timing
+parameters cell (`WINDOW_SECONDS`, `TICK_INTERVAL_S`, `PHASE_LAG`), the `make_traffic` import,
+window labels and straddle checks. Phases now record wall-clock `start`/`end` (ISO ms) in `PHASES`;
+E/F/G/H carry `at`. Calls, order and request ids are unchanged. The only `sleep` left is the
+404 retry on `assign crole->prole`.
+
+**What this gives up, for `local-k8s`:** v1 no longer isolates phases by report window. The commit
+(E) no longer has a window to itself, so a per-window `last_write_bytes` check and a per-window
+grant count (G) will see neighbouring traffic. A verifier must join on `Polaris-Request-Id` and
+the recorded times, not on "the window this phase owned". v2 still has the phased drive.
