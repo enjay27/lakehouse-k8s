@@ -43,7 +43,8 @@ Full detail in [`.memory/repository-map.md`](.memory/repository-map.md). The sha
   ignores them.
 - **Values-only directories:** `airflow/`, `argo/`, `datahub/`, `fluent-bit/`, `jupyter/`,
   `kafka/`, `logging/`, `schema-registry/`, `spark/` — a `values.yaml` aimed at an upstream
-  chart, nothing more.
+  chart, nothing more. Exception: `fluent-bit/` also holds `polaris_access_log.lua`, installed
+  with `--set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/polaris_access_log.lua'`.
 - **`postgresql/schema/`** — Polaris DDL (`schema_v3.sql` is the ASF-shipped file and the
   authority; `schema.sql` and `bootstrap.sql` are the local variants).
 - **`postgresql/secret/`** — Secret manifests. One of them is stale; see active issues #4.

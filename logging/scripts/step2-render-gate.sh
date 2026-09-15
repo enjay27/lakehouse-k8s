@@ -6,6 +6,7 @@
 #
 #   helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
 #     --version 0.57.6 -n datahub-hynix -f fluent-bit/values.yaml \
+#     --set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/polaris_access_log.lua' \
 #     --dry-run=client > /tmp/render-after.txt
 #   bash logging/scripts/step2-render-gate.sh /tmp/render-after.txt
 #
@@ -67,7 +68,7 @@ echo "=== policy v4 / schema v4 arrived intact ==="
 ge "RESOURCE_PATTERNS present"              'RESOURCE_PATTERNS'       1
 ge "MGMT_PREFIX present"                    'MGMT_PREFIX'             1
 eq "type_int_key  (guide says 2; ACTUAL 4)" 'type_int_key'            4
-ge "v4 allow-list present"                  'APP_ALLOW'               1
+ge "v4 allow-list present (FAILS if --set-file was forgotten)" 'APP_ALLOW' 1
 ge "v4 schema constant"                     'SCHEMA_VERSION = 4'      1
 ge "v4 commit fields in type_int_key"       'commit_ms_max dropped'   1
 eq "carried_rows gone from type_int_key"    'distinct_principals carried_rows' 0
@@ -97,5 +98,6 @@ STILL NOT PROVEN BY ANY OF THIS, and each has bitten this pipeline before:
   * that the deployed script matches the file:
       kubectl -n datahub-hynix get configmap benchmarks-fluent-bit-luascripts \
         -o jsonpath='{.data.polaris_access_log\.lua}' | shasum -a 256
+      shasum -a 256 fluent-bit/polaris_access_log.lua     # the two must match
       # must equal LUA_SHA_EXPECT in step3-postupgrade.sh:  f364c89653dfe481...
 EOT

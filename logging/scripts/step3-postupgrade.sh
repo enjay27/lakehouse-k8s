@@ -17,11 +17,13 @@
 set -uo pipefail
 NS=datahub-hynix
 DS=benchmarks-fluent-bit
-# sha256 (first 16) of luaScripts.polaris_access_log.lua in fluent-bit/values.yaml -- policy v4,
-# 2026-09-15. Recompute after ANY edit to the script:
-#   python3 -c "import yaml,hashlib;print(hashlib.sha256(yaml.safe_load(open('fluent-bit/values.yaml'))['luaScripts']['polaris_access_log.lua'].encode()).hexdigest()[:16])"
-# (v3's value aa180e90b9f69bda was the shipper's copy; that identity no longer binds.)
-LUA_SHA_EXPECT=f364c89653dfe481
+# sha256 (first 16) of the repo script, computed now -- so it cannot go stale. Run from the
+# repo root. Since 2026-09-15 the script is fluent-bit/polaris_access_log.lua, supplied with
+# --set-file; Helm stores its bytes verbatim, so the ConfigMap must hash identically.
+# (v4 as committed dfbbe21: f364c89653dfe481. v3 was the shipper's aa180e90b9f69bda.)
+LUA_FILE=fluent-bit/polaris_access_log.lua
+[ -r "$LUA_FILE" ] || { echo "FATAL: run from the repo root ($LUA_FILE not found)"; exit 2; }
+LUA_SHA_EXPECT=$(shasum -a 256 "$LUA_FILE" | cut -c1-16)
 FAIL=0
 ok(){ printf '  PASS  %s\n' "$*"; }
 bad(){ printf '  FAIL  %s\n' "$*"; FAIL=$((FAIL+1)); }

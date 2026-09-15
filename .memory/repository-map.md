@@ -19,7 +19,8 @@ and one directory per service. A service directory is either a **local chart**
 `prerequisites-values.yaml`, logback configmap).
 
 **There are two Fluent Bit values files and they are different deployments, not
-duplicates** — `fluent-bit/values.yaml` is the **DaemonSet** (container logs →
+duplicates** — `fluent-bit/values.yaml` is the **DaemonSet** (its Lua is the separate file
+`fluent-bit/polaris_access_log.lua` since 2026-09-15, passed with `--set-file`; container logs →
 OpenSearch in Docker); `logging/fb-values.yaml` is a **single-replica Deployment**
 (shared-PVC file tail → VictoriaLogs). `logging/` also holds
 `victoria-values.yaml` and `polaris-logging-architecture-spec.md`, the design doc

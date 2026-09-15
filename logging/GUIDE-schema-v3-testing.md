@@ -211,7 +211,7 @@ detail of the harness.
 ## Gate 7 — the Lua unit test, before any of the above
 
 ```bash
-python3 -c "import yaml;print(yaml.safe_load(open('fluent-bit/values.yaml'))['luaScripts']['polaris_access_log.lua'])" > /tmp/polaris.lua
+cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua   # its own file since 2026-09-15 (was luaScripts in values.yaml)
 lua5.4 logging/scripts/test-schema-v3.lua
 ```
 

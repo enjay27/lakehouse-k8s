@@ -1,6 +1,6 @@
 -- Regression test for report schema v3, run against the ACTUAL deployed Lua.
 --
---   python3 -c "import yaml;print(yaml.safe_load(open('fluent-bit/values.yaml'))['luaScripts']['polaris_access_log.lua'])" > /tmp/polaris.lua
+--   cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua     # the deployed script is its own file since 2026-09-15
 --   lua5.4 logging/scripts/test-schema-v3.lua
 --
 -- Needs a lua interpreter; the Fluent Bit image is distroless and has none, and the
