@@ -3,7 +3,7 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-14
+## Now — 2026-09-15
 
 **THREE OF RUN `1789370776`'s GATES WERE READ ONE ROW OFF, AND THE RUN SAID SO WRONG (`#26`).**
 Report rows are stamped by a tick that fires **3.673s late**, constant (σ<2ms, 11 rows) and
@@ -31,6 +31,8 @@ a 3-call `_analyze`/probe-index test settles it without waiting a day.
 `exception.frames` is what is missing before it goes upstream. (5) `#18` `Id_Key sequence` indexes
 nothing. (6) The **30s revert to 1800/30** is the cutover's last step — it also changes `#26`'s
 arithmetic, so re-check the tick divides the window.
+
+**Proposed 2026-09-15, not applied:** tier-2 app logs by allow-list (`IcebergExceptionMapper`, `PolarisServiceImpl`; WARN/ERROR exempt; dropped counted as `app_dropped`) — lands after `#26`/Gate 2, three decisions open: [`logging/PLAN-audit-allowlist-2026-09-15.md`](logging/PLAN-audit-allowlist-2026-09-15.md).
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent
 artifact** — and a model that fits every count can still be wrong by an order of magnitude
