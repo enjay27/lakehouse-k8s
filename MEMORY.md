@@ -24,8 +24,10 @@ HTTP 200. Apply with `logging/scripts/step9-report-index-template.sh`; not retro
 "index mapping" item is this issue, not new work, and its nine-digits cause is still **asserted** —
 a 3-call `_analyze`/probe-index test settles it without waiting a day.
 
-**Next, in order.** (1) Offset the notebook's phase starts past `Interval_Sec`. (2) Re-drive Gate 2
-in a named window. (3) Roll the Lua, then the template. (4) `#24` reproduced across two runs;
+**Next, in order.** (1) **`#26`'s cause is in the NOTEBOOK, not the pipeline** — every phase calls
+`seconds_to_boundary(lag=0.5)` and fires into the tick's blind spot. Two edits, no cluster change:
+[`logging/HANDOFF-notebook-window-attribution-2026-09-15.md`](logging/HANDOFF-notebook-window-attribution-2026-09-15.md).
+(2) Re-drive Gate 2 in a named window. (3) Roll the Lua, then the template. (4) `#24` reproduced across two runs;
 `exception.frames` is what is missing before it goes upstream. (5) `#18` `Id_Key sequence` indexes
 nothing. (6) The **30s revert to 1800/30** is the cutover's last step — it also changes `#26`'s
 arithmetic, so re-check the tick divides the window.
