@@ -62,8 +62,12 @@ def test_dedup_replayed_keys_on_the_record_not_the_request():
     recs = [
         {"mdc.requestId": "a", "sequence": "1", "hostName": "p", "loggerName": "sql"},
         {"mdc.requestId": "a", "sequence": "2", "hostName": "p", "loggerName": "sql"},
-        {"mdc.requestId": "a", "sequence": "3", "hostName": "p",
-         "loggerName": vlogs.ACCESS_LOGGER},
+        {
+            "mdc.requestId": "a",
+            "sequence": "3",
+            "hostName": "p",
+            "loggerName": vlogs.ACCESS_LOGGER,
+        },
     ]
     assert len(vlogs.dedup_replayed(recs)) == 3
 
@@ -238,8 +242,12 @@ def test_report_types_counts_the_split_which_is_the_whole_gate():
     #: type back means it did not, the record carries numeric-keyed fields, and
     #: the schema the tests target does not exist.
     V = _RecordingVLogs(
-        [_report_row("summary"), _report_row("resource"), _report_row("resource"),
-         _report_row("principal")]
+        [
+            _report_row("summary"),
+            _report_row("resource"),
+            _report_row("resource"),
+            _report_row("principal"),
+        ]
     )
     assert V.report_types() == {"summary": 1, "resource": 2, "principal": 1}
 
@@ -299,8 +307,9 @@ def test_a_drop_counter_that_cannot_be_a_record_count_is_refused():
     assert "UNREADABLE" in note and "record count" in note
 
     #: and a plausible pair still measures
-    delta, note = vlogs.drop_records_delta({"lua.0": {"drop_records": 10}},
-                                           {"lua.0": {"drop_records": 99}})
+    delta, note = vlogs.drop_records_delta(
+        {"lua.0": {"drop_records": 10}}, {"lua.0": {"drop_records": 99}}
+    )
     assert (delta, note) == (89, None)
 
 
@@ -312,8 +321,8 @@ def test_the_drop_breakdown_names_the_plugin():
 
 
 PROM_SAMPLE = (
-    '# HELP fluentbit_filter_drop_records_total drops\n'
-    '# TYPE fluentbit_filter_drop_records_total counter\n'
+    "# HELP fluentbit_filter_drop_records_total drops\n"
+    "# TYPE fluentbit_filter_drop_records_total counter\n"
     'fluentbit_filter_drop_records_total{name="polaris_noise_filter"} 1943 1788745242920\n'
     'fluentbit_filter_add_records_total{name="polaris_noise_filter"} 534 1788745242920\n'
     'fluentbit_output_retries_failed_total{name="http.0"} 0 1788745242920\n'
