@@ -67,6 +67,9 @@ echo
 echo "=== policy v4 / schema v4 arrived intact ==="
 ge "RESOURCE_PATTERNS present"              'RESOURCE_PATTERNS'       1
 ge "MGMT_PREFIX present"                    'MGMT_PREFIX'             1
+# 4 = 2 real directives + 1 comment in the filters block + 1 for the whole Lua ConfigMap line
+# (the script mentions it). A comment in a rendered block scalar COUNTS: on 2026-09-15 a v4
+# comment naming it made this read 5 on a correct config. Keep the word out of new comments.
 eq "type_int_key  (guide says 2; ACTUAL 4)" 'type_int_key'            4
 ge "v4 allow-list present (FAILS if --set-file was forgotten)" 'APP_ALLOW' 1
 ge "v4 schema constant"                     'SCHEMA_VERSION = 4'      1

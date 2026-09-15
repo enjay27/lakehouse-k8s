@@ -282,7 +282,7 @@ config:
         type_int_key  http_status response_size
 
     # 3. Decide what is worth storing (policy v4). v4 added app_dropped_total, dropped and
-    #    commit_* to type_int_key and removed carried_rows -- every integer the Lua emits must
+    #    commit_* to the integer-key list below and removed carried_rows -- every integer the Lua emits must
     #    be listed or it stores as a string and numeric queries return nothing, silently.
     #    Match is polaris.* rather than
     #    polaris.logs so the report tick reaches THIS filter instance -- Lua state
