@@ -1,6 +1,6 @@
 # PLAN — tier 2 audit stream: application logs by ALLOW-LIST, commit time on table rows, no zero rows
 
-**Status: DECIDED (D1–D3 settled 2026-09-15), nothing changed in config.** Kade, 2026-09-15: *"in the audit log part, all I need to store
+**Status: WRITTEN 2026-09-15 into `fluent-bit/values.yaml`, NOT ROLLED (`active-issues #27`).** D1–D3 settled. Kade, 2026-09-15: *"in the audit log part, all I need to store
 is clients' behaviour trends and issue tracking — make it a whitelist, so initialization-catalog,
 federated-iceberg-table … are not stored any longer."* Also: the `summary` report is not needed
 (→ D1: kept, ignored), commit time wanted per table (→ D2), rows with exactly 0 requests not wanted (→ D3).

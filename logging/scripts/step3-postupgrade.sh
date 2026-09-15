@@ -17,7 +17,11 @@
 set -uo pipefail
 NS=datahub-hynix
 DS=benchmarks-fluent-bit
-LUA_SHA_EXPECT=aa180e90b9f69bda        # must equal the shipper's copy
+# sha256 (first 16) of luaScripts.polaris_access_log.lua in fluent-bit/values.yaml -- policy v4,
+# 2026-09-15. Recompute after ANY edit to the script:
+#   python3 -c "import yaml,hashlib;print(hashlib.sha256(yaml.safe_load(open('fluent-bit/values.yaml'))['luaScripts']['polaris_access_log.lua'].encode()).hexdigest()[:16])"
+# (v3's value aa180e90b9f69bda was the shipper's copy; that identity no longer binds.)
+LUA_SHA_EXPECT=f364c89653dfe481
 FAIL=0
 ok(){ printf '  PASS  %s\n' "$*"; }
 bad(){ printf '  FAIL  %s\n' "$*"; FAIL=$((FAIL+1)); }

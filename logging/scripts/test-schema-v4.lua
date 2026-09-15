@@ -1,13 +1,11 @@
--- 리포트 스키마 v4 / 정책 v4 회귀 테스트. "실제 배포할" Lua 파일에 대해 돌린다.
+-- 리포트 스키마 v4 / 정책 v4 회귀 테스트. "배포되는" 스크립트 텍스트에 대해 돌린다.
 --
---   sed 's/^local WINDOW_SECONDS = 1800/local WINDOW_SECONDS = 30/' \
---       fluent-bit/examples/polaris_access_log.lua > /tmp/polaris.lua
---   luajit logging/scripts/test-schema-v4.lua        # Fluent Bit 과 같은 LuaJIT
+--   python3 -c "import yaml;print(yaml.safe_load(open('fluent-bit/values.yaml'))['luaScripts']['polaris_access_log.lua'])" > /tmp/polaris.lua
+--   luajit logging/scripts/test-schema-v4.lua        # Fluent Bit 과 같은 LuaJIT (lua5.1 도 가능)
+--   luajit logging/scripts/test-schema-v3.lua        # v3 동작(분류, last_*, 롤, __errors__)
 --
--- WINDOW_SECONDS 를 30 으로 바꾸는 이유: 틱 시각을 _now_override 로 30초씩 넘겨 윈도우를
--- 닫기 때문. 판정·집계 로직은 윈도우 길이와 무관하다.
--- v3 동작(분류, last_*, 롤, __errors__)은 test-schema-v3.lua 가 그대로 검증한다
--- (schema_version 기대값만 4 로 바꿔 돌릴 것).
+-- 틱 시각을 _now_override 로 30초씩 넘겨 윈도우를 닫으므로 WINDOW_SECONDS 가 30 이어야 한다.
+-- 운영값 1800 으로 되돌린 뒤에는 추출 결과에 sed 's/^local WINDOW_SECONDS = 1800/local WINDOW_SECONDS = 30/' 를 적용할 것.
 dofile("/tmp/polaris.lua")
 local T0 = 1788940800                 -- 30초 경계에 정렬된 시각
 local A  = "io.quarkus.http.access-log"

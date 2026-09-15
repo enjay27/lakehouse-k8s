@@ -1,4 +1,4 @@
-# Report schema reference — v3 (written, not yet deployed)
+# Report schema reference — v3 (deployed); v4 written 2026-09-15, see the end
 
 Read off `fluent-bit/values.yaml` (`build_report`, ~line 447) on 2026-09-09, not from intent.
 Three `report_type` values share one envelope and one `_time`, so `stats by (_time)` — or a terms
@@ -158,3 +158,22 @@ have failed the whole chunk at load.
 See the tables above for the fields. `SCHEMA_VERSION` is 3; `last_read_bytes`, `last_write_bytes`
 are in `type_int_key`; `last_write_method` was considered and **dropped** —
 the size > 0 rule separates commit from drop without it.
+
+---
+
+# v4 — written 2026-09-15, verified off-cluster, not deployed
+
+Plan: `logging/PLAN-audit-allowlist-2026-09-15.md`. Script: `luaScripts` in `fluent-bit/values.yaml`.
+
+| change | field(s) | notes |
+|---|---|---|
+| new `report_type: app_dropped` | `logger_name` (string), `dropped` (int) | one row per logger with dropped > 0; no zero rows |
+| new on `summary` | `app_dropped_total` (int) | |
+| new on `resource` rows of kind `table` / `view` | `commit_count`, `commit_ms_sum`, `commit_ms_min`, `commit_ms_max` (int) | from `Successfully committed to table\|view <id> in N ms`; **Iceberg commit time, success only, not request latency**; absent when no commit; mean = `sum(commit_ms_sum)/sum(commit_count)` |
+| removed from `summary` | `carried_rows` | zero-carry deleted: a row is emitted only if `requests > 0` or it has commits |
+
+Invariants change: `count(rows where requests == 0) == carried_rows` is gone. A resource row with
+`requests: 0` now exists only with `commit_count` (a table changed by `/transactions/commit` only).
+`sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors` is unchanged —
+commit lines do not touch `requests`. Tests: `test-schema-v3.lua` and `test-schema-v4.lua`, both
+passing on LuaJIT and Lua 5.1 against the extracted script.

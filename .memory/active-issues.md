@@ -524,6 +524,26 @@ not the timer. The `Interval_Sec + 1.5` lag is immune; a hardcoded 3.673 is not.
 the whole matrix. Downgrade to MONITOR once phases are one-per-window again.
 [`sessions/2026-09-15-rerun-1789460891-review.md`](sessions/2026-09-15-rerun-1789460891-review.md).
 
+**#27 — Policy v4 / report schema v4 is WRITTEN AND NOT ROLLED. OPEN.** 2026-09-15.
+`fluent-bit/values.yaml` carries it; the running pod is v3. What changes when it rolls:
+app-log allow-list (`IcebergExceptionMapper`, `PolarisServiceImpl`; WARN/ERROR exempt), dropped lines
+counted as `report_type: app_dropped`, `commit_count/commit_ms_*` on table/view rows, zero-carry
+deleted (`carried_rows` gone), clientSecret guard. `WINDOW_SECONDS` stays **30** — the 1800 revert is
+still its own last step.
+
+- **Verified off-cluster only:** v3 tests + v4 tests pass on LuaJIT and Lua 5.1 against the extracted
+  script; a replay of run `1789460891`'s export keeps 598 / drops 158 exactly by logger, errors per
+  window 2 / 251 as the real report, commit keys equal the real report's resource keys; every numeric
+  field the Lua emits is in `type_int_key`.
+- **NOT verified:** no `helm lint` / `--dry-run` render (no helm in the Cowork session);
+  `step2-render-gate.sh` updated for v4 but never run against a real render. Nested-namespace `%1F`
+  key never seen in real traffic. Deployed ConfigMap sha must read **`f364c89653dfe481`**
+  (`step3-postupgrade.sh`).
+- **Order:** roll the Lua, THEN apply `polaris-report-template.json` (#25) — it now also types the
+  v4 integers as `long`.
+- **After rolling, the plan's gates G1–G8** (`logging/PLAN-audit-allowlist-2026-09-15.md` §5).
+  Any v3 dashboard reading `carried_rows` or counting zero rows breaks by design; filter `schema_version`.
+
 ## Resolved, kept because they recur
 
 **#13 — RESOLVED. `polaris_noise_filter` was written and not running; it runs now.**

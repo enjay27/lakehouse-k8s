@@ -13,7 +13,7 @@
 | 보관 기간 | **30일** (ISM `hot -> delete`) |
 | 적재 방식 | Fluent Bit DaemonSet + Lua 필터 -> OpenSearch 3.5.0 |
 | 요약 주기 | 30분 (`WINDOW_SECONDS`, 조정 가능) |
-| 문서 상태 | 제안 — 적용 전. 검증 계획은 §9 |
+| 문서 상태 | 제안 — 적용 전. 검증 계획은 §9. **2026-09-15: 정책 v4 가 `fluent-bit/values.yaml` 에 작성됨(미롤)** — 애플리케이션 로그 허용 목록, 커밋 시간, 0 행 제거 |
 
 ---
 
@@ -170,7 +170,7 @@ WARN / ERROR 레벨은 기본적으로 전부 적재한다. `[WARN] deprecated c
 | 순서 | 조건 | 처리 |
 |---|---|---|
 | 1 | level 이 `ERROR` 또는 `WARN` | **적재** |
-| 2 | 액세스 로그가 아닌 레코드 | **적재** (애플리케이션 로그) |
+| 2 | 액세스 로그가 아닌 레코드 | **v4: 허용 목록만 적재** — `IcebergExceptionMapper`, `PolarisServiceImpl`. 그 외는 logger 별로 세고 버림(`app_dropped`). `Successfully committed to table\|view` 는 버리기 전에 해당 행의 `commit_ms_*` 로 집계 |
 | — | *여기서 모든 액세스 라인이 요약에 집계된다 — 판정보다 먼저* | |
 | 3 | `http_status >= 400` 또는 파싱 실패 | **적재 — 전건, 상한 없음** |
 | 4 | `PUT` / `DELETE` / `PATCH` | **적재 — 전건** |
@@ -199,7 +199,8 @@ WARN / ERROR 레벨은 기본적으로 전부 적재한다. `[WARN] deprecated c
 | 2xx `GET`/`HEAD` | 정상 조회. 감사 가치 대비 압도적 다수 | `reads`, `last_read_bytes` |
 | 2xx catalog `POST` (`create_table`, `commit_table`, `report_metrics`, `oauth/tokens`) | 데이터 플레인 반복 트래픽 | `writes`, `counted_post`, `last_write_bytes` |
 | `[WARN] deprecated config` | 설정 경고, 운영 의미 없음 | — |
-| DEBUG 레벨 SQL 로그 | 용량의 실질적 다수 | **현재 미분리 — §10 참조** |
+| DEBUG 레벨 SQL 로그 | 용량의 실질적 다수 | **v4: 허용 목록 밖이라 버려짐** (`app_dropped` 로 집계) |
+| `IcebergCatalogHandler`, `BaseMetastoreCatalog`, `CatalogUtil`, `IcebergCatalog`, `BaseMetastoreViewCatalog`, `PolarisIcebergObjectMapperCustomizer` INFO | 요청마다 반복되는 초기화·속성·FileIO 로그. 2026-09-15 측정 161/759건 | `app_dropped` 행 (logger 별 개수), 커밋 시간은 `commit_ms_*` |
 
 ---
 
@@ -257,8 +258,8 @@ seq=185 principal mx_1789370776_runner: 27 requests, 13 reads, 14 writes, 4 erro
 |---|---|---|
 | `app` | string | `polaris-shipper-report` |
 | `level` | string | 항상 `REPORT`. **심각도가 아니라 스트림 선택자** |
-| `schema_version` | int | 현재 3. **항상 필터에 포함할 것** — 버전이 공존한다 |
-| `report_type` | string | `summary` / `resource` / `principal` |
+| `schema_version` | int | 배포 3, 작성 4. **항상 필터에 포함할 것** — 버전이 공존한다 |
+| `report_type` | string | `summary` / `resource` / `principal` / `app_dropped`(v4) |
 | `report_seq` | int | **파드 단위 일련번호.** 파드 교체 시 리셋되므로 `hostname` 과 반드시 함께 사용 |
 | `hostname` | string | Fluent Bit 파드명 (Polaris 파드가 아님) |
 | `window_start` / `window_end` | date | RFC3339. 윈도우 그리드에 정렬 |
@@ -275,7 +276,8 @@ seq=185 principal mx_1789370776_runner: 27 requests, 13 reads, 14 writes, 4 erro
 | `errors_kept`, `errors_4xx`, `errors_5xx`, `auth_denied` | 오류 계열 카운터 |
 | `parse_errors` | 액세스 로그로 인식됐으나 파싱 실패 |
 | `distinct_resources` / `distinct_principals` | **활성(요청>0)** 행 수만 |
-| `carried_rows` | 이번 윈도우에 요청이 0이 된 행 수 |
+| `carried_rows` | 이번 윈도우에 요청이 0이 된 행 수. **v4 에서 삭제** — zero-carry 제거로 요청 0 행을 내지 않는다 |
+| `app_dropped_total` | **v4.** 허용 목록 밖이라 버린 애플리케이션 로그 수 |
 | `resources_other` / `resources_other_distinct` / `principals_other` | 상한(500 / 200) 초과분 |
 | `role_keys_forced` | 오류 요청이 강제 생성한 롤 행 수. 100이면 상한 도달 |
 | `windows_skipped` | 틱 누락으로 열리지 못한 윈도우 수 |
