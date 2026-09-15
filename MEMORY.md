@@ -27,7 +27,7 @@ a 3-call `_analyze`/probe-index test settles it without waiting a day.
 nothing. (6) The **30s revert to 1800/30** is the cutover's last step — it also changes `#26`'s
 arithmetic, so re-check the tick divides the window.
 
-**Proposed 2026-09-15, not applied:** tier-2 app logs by allow-list (`IcebergExceptionMapper`, `PolarisServiceImpl`; WARN/ERROR exempt; dropped counted as `app_dropped`; `commit_ms_*` on table/view rows; zero rows gone) — decisions settled, lands after `#26`/Gate 2: [`logging/PLAN-audit-allowlist-2026-09-15.md`](logging/PLAN-audit-allowlist-2026-09-15.md).
+**Proposed 2026-09-15, not applied:** tier-2 app logs by allow-list (`IcebergExceptionMapper`, `PolarisServiceImpl`; WARN/ERROR exempt; dropped counted as `app_dropped`; `commit_ms_*` on table/view rows; zero rows gone) — decisions settled, lands after `#26`/Gate 2: [`logging/PLAN-audit-allowlist-2026-09-15.md`](logging/PLAN-audit-allowlist-2026-09-15.md). **Example written, not applied:** `fluent-bit/examples/{values.yaml,polaris_access_log.lua}` (schema v4, `--set-file`), tests `logging/scripts/test-schema-v4.lua` pass on LuaJIT; no helm render run.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent
 artifact** — and a model that fits every count can still be wrong by an order of magnitude

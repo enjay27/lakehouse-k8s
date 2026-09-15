@@ -1,0 +1,494 @@
+# =====================================================================================
+# Fluent Bit — K8s DaemonSet, 릴리스 `benchmarks-fluent-bit`, namespace datahub-hynix
+# 예시 파일: 정책 v4 / 리포트 스키마 v4 (logging/PLAN-audit-allowlist-2026-09-15.md)
+# =====================================================================================
+#
+# 릴리스 하나, 계층(tier) 셋. 전부 Mac 의 Docker OpenSearch 3.5.0 으로 보낸다
+# (https://192.168.194.1:9200 — 일반 파드에서 도달 가능, hostNetwork 불필요):
+#
+#   tier 1  kube.*          -> k8s-logs-*         5일   모든 컨테이너, 필터 없음 (원본)
+#   tier 2  polaris.logs    -> polaris-logs-*    30일   Polaris 로그, 정책 v4 로 선별
+#   tier 3  polaris.report  -> polaris-report-*        윈도우 요약 리포트, 스키마 v4
+#
+# tier 1 은 v3 와 동일하다. 단 하나, OpenSearch 자격증명을 평문 대신 Secret 환경변수로
+# 바꿨다 (커밋 파일에 비밀번호 금지). Polaris 로그는 tier 1 에도 "필터 없이" 계속 들어간다 —
+# 요약이 원본의 부분집합인지 검증할 수단이 그것뿐이므로 지우지 않는다.
+#
+# ── v3 → v4 에서 바뀐 것 (이 파일 기준) ──────────────────────────────────────────────
+#   * luaScripts: 스크립트를 values 에 인라인하지 않고 파일 하나로 분리 (--set-file).
+#   * FILTER 3 type_int_key: dropped / app_dropped_total / commit_* 추가, carried_rows 제거.
+#   * 틱: WINDOW_SECONDS 1800 (Lua) + Interval_Sec 5. 검증용 30s 윈도우에서 운영값으로 복귀.
+#   * tier 1 출력 2개: HTTP_User/HTTP_Passwd 를 ${OS_USER}/${OS_PASSWORD} 로.
+#   판정 규칙 자체(허용 목록, 커밋 시간, zero-carry 제거, 시크릿 가드)는 전부 Lua 에 있다.
+#
+# ── 설치 ─────────────────────────────────────────────────────────────────────────────
+#   kubectl config current-context        # 반드시 orbstack
+#   helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
+#     --version 0.57.6 -n datahub-hynix \
+#     -f fluent-bit/examples/values.yaml \
+#     --set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/examples/polaris_access_log.lua' \
+#     --dry-run=client --debug            # 먼저 렌더 확인, 그다음 --dry-run 제거
+#
+#   --set-file 키의 점(.)은 반드시 \. 로 이스케이프한다. 빠뜨리면 luaScripts.polaris_access_log
+#   아래 lua 라는 하위 키가 생기고, 스크립트 파일이 마운트되지 않아 Fluent Bit 이 기동 실패한다.
+#   렌더 결과에 `benchmarks-fluent-bit-luascripts` ConfigMap 과 polaris_access_log.lua 키가
+#   있는지 확인할 것.
+#
+#   ⚠ 차트는 luaScripts 값을 `tpl` 로 한 번 렌더한다. Lua 안에 `{{` 가 들어가면 Helm 템플릿으로
+#     해석되어 렌더가 깨진다. 스크립트에 이중 중괄호를 쓰지 말 것.
+#
+# ── 적용 순서 (active-issues #25) ────────────────────────────────────────────────────
+#   1) 이 파일 + Lua 롤  2) logging/opensearch/polaris-report-template.json 적용
+#   반대로 하면 구버전 문서가 date/long 필드에서 "HTTP 200 인 _bulk 안에서 건별 거부" 된다.
+#
+# ── 단일 노드 가정 ───────────────────────────────────────────────────────────────────
+# DaemonSet 은 노드당 파드 하나이고 이 클러스터는 OrbStack 단일 노드라, Lua 리포트 상태는
+# 정확히 한 파드에 있다. 다중 노드에서는 노드마다 자기 윈도우 카운터를 갖는다 — 리포트
+# 쿼리는 항상 hostname 을 함께 묶을 것 (report_seq 도 파드 단위다).
+# =====================================================================================
+
+kind: DaemonSet
+
+# ── 이미지 ──────────────────────────────────────────────────────────────────────────
+image:
+  repository: cr.fluentbit.io/fluent/fluent-bit
+  # Lua 체인, type_int_key, 리포트 윈도우는 5.1.1 에서 검증됐다.
+  # 이미지 태그는 tier 1 런타임에도 영향을 주므로, 올릴 때는 tier 1 까지 다시 확인한다.
+  tag: "5.1.1"
+  pullPolicy: IfNotPresent
+
+# ── 노드당 정확히 1개 파드 ──────────────────────────────────────────────────────────
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+
+# ── 서비스 어카운트 / RBAC (kubernetes 필터의 메타데이터 조회용) ─────────────────────
+serviceAccount:
+  create: true
+  name: fluent-bit
+
+rbac:
+  create: true
+  nodeAccess: true
+  eventsAccess: true
+
+# ── OpenSearch 자격증명 (세 계층 출력 공통) ───────────────────────────────────────────
+# Secret 은 이 저장소 밖에서 만든다 (값을 파일에 쓰지 않는다):
+#   kubectl -n datahub-hynix create secret generic opensearch-shipper-credentials \
+#     --from-literal=username=... --from-literal=password=...
+#
+# ⚠ 정의되지 않은 ${VAR} 는 빈 문자열로 확장되고, OpenSearch 는 조용히 401 을 준다.
+#   렌더 grep 으로는 안 잡힌다. 롤 후 파드 로그에서 401 / "HTTP status=401" 을 확인할 것.
+env:
+  - name: OS_USER
+    valueFrom:
+      secretKeyRef:
+        name: opensearch-shipper-credentials
+        key: username
+  - name: OS_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: opensearch-shipper-credentials
+        key: password
+
+# ── 리소스 ──────────────────────────────────────────────────────────────────────────
+# Lua 카운터는 윈도우당 리소스 500 / principal 200 / 롤 100 / logger 50 행으로 상한이 있어
+# 메모리가 트래픽에 비례해 늘지 않는다.
+resources:
+  requests:
+    memory: "64Mi"
+    cpu: "50m"
+  limits:
+    memory: "256Mi"
+    cpu: "200m"
+
+# ── 톨러레이션: 모든 노드에서 실행 ─────────────────────────────────────────────────
+tolerations:
+  - key: node-role.kubernetes.io/master
+    operator: Exists
+    effect: NoSchedule
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+# ── Lua 스크립트 ────────────────────────────────────────────────────────────────────
+# 비워 두고 설치 시 --set-file 로 채운다 (위 "설치" 참고). 스크립트 원본은 한 곳에만 둔다:
+#   fluent-bit/examples/polaris_access_log.lua
+# 차트는 이것을 ConfigMap `<릴리스>-luascripts` 로 렌더해 /fluent-bit/scripts/<키> 에 마운트한다.
+# --set-file 을 빠뜨리면 ConfigMap 이 생기지 않고, FILTER 2/3 이 스크립트를 못 찾아
+# 파드가 CrashLoop 에 빠진다 — 조용한 실패가 아니라 시끄러운 실패이므로 의도된 동작이다.
+luaScripts: {}
+
+# ── Fluent Bit 설정 ─────────────────────────────────────────────────────────────────
+config:
+
+  # ── 서비스 ────────────────────────────────────────────────────────────────────────
+  service: |
+    [SERVICE]
+        Flush         5
+        Daemon        Off
+        Log_Level     info
+        Parsers_File  /fluent-bit/etc/parsers.conf
+        Parsers_File  /fluent-bit/etc/conf/custom_parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+        Health_Check  On
+
+        # tier 2/3 체인의 파일시스템 버퍼. tier 1 에는 영향 없음:
+        # storage.path 는 `storage.type filesystem` 을 선언한 INPUT 에만 적용되고,
+        # tier 1 의 tail 은 선언하지 않아 기존처럼 메모리 버퍼다.
+        # /var/log 는 DaemonSet 의 hostPath 라 파드 교체 후에도 남는다.
+        storage.path              /var/log/flb-storage/
+        storage.sync              normal
+        storage.checksum          off
+        storage.max_chunks_up     64
+        storage.backlog.mem_limit 32M
+
+  # ── 입력 ──────────────────────────────────────────────────────────────────────────
+  inputs: |
+    # ── TIER 1 — 모든 컨테이너 로그 ───────────────────────────────────────
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/*.log
+        multiline.parser  docker, cri
+        Tag               kube.*
+        Refresh_Interval  5
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+        DB                /var/log/flb_kube.db
+        DB.sync           normal
+
+    # ── TIER 2/3 — Polaris 로그만 ─────────────────────────────────────────
+    # tier 1 과 "같은 파일" 을 읽지만 오프셋 DB 는 반드시 따로 둔다.
+    # /var/log/flb_kube.db 를 공유하면 양쪽 오프셋이 모두 깨진다.
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/*benchmarks-polaris*.log
+        Tag               polaris.logs
+        # `cri` 단독이 아니라 `docker, cri` (2026-09-09 실측). `cri` 단독이면 아래 parser
+        # 필터가 `log` 를 건드리지 못해 loggerName 이 필드가 되지 않는다 (4,993건 중 0건 변환).
+        # 같은 파일·같은 필터에 이 줄만 바꿨을 때 4,314/4,314 파싱. 원인은 미규명, 측정은 확정.
+        multiline.parser  docker, cri
+        Refresh_Interval  5
+        Rotate_Wait       10
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+        DB                /var/log/flb_polaris.db
+        DB.sync           normal
+        storage.type      filesystem
+
+    # ── 리포트 틱 ─────────────────────────────────────────────────────────
+    # 로그 데이터가 없는 빈 레코드. Lua 가 윈도우 경계를 넘은 틱만 리포트로 치환하고 나머지는
+    # 버린다. Interval_Sec 은 리포트 "주기" 가 아니다 — 주기는 Lua 의 WINDOW_SECONDS(1800) 다.
+    #
+    # Interval_Sec 5 로 둔 이유 (v3 계획의 "1800/30 으로 복귀" 와 다름, 의도적):
+    #   * 과잉 틱은 무해하다: 윈도우 안의 틱은 Lua 호출 한 번 후 버려진다 (5초당 1회).
+    #   * 윈도우 라벨 스큐 = 틱 위상 (0 ~ Interval_Sec). 30 이면 경계 직후 최대 30초의 트래픽이
+    #     직전 윈도우로 가고, 5 면 최대 5초다. 위상은 고정이 아니라 드리프트한다
+    #     (같은 파드에서 3.673s → 2.77s, active-issues #26).
+    #   * 반드시 WINDOW_SECONDS 보다 충분히 작아야 한다. 가까워지면 지터로 경계 두 개가 틱 사이를
+    #     지나가 윈도우 하나가 통째로 열리지 않는다.
+    # 검증 구간(30s 윈도우)으로 돌릴 때도 5 그대로 둔다. 그때 테스트 트래픽은 경계 + 6.5s 이후에.
+    [INPUT]
+        Name              dummy
+        Alias             polaris_report_tick
+        Tag               polaris.report
+        Dummy             {"tick":"polaris-report"}
+        Rate              1
+        Interval_Sec      5
+        Interval_NSec     0
+
+  # ── 필터 ──────────────────────────────────────────────────────────────────────────
+  filters: |
+    # ══ TIER 1 — kube.* ══════════════════════════════════════════════════
+    # K8s 메타데이터 부착. Merge_Log On + Keep_Log Off 가 실제로 tier 1 의 JSON 을 파싱한다.
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Keep_Log            Off
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude On
+        Annotations         Off
+        Labels              On
+
+    # Polaris JSON 로그 파싱 (실제로는 위 kubernetes 필터가 `log` 를 이미 지워 no-op 에 가깝다)
+    [FILTER]
+        Name         parser
+        Match        kube.*
+        Key_Name     log
+        Parser       polaris_json
+        Reserve_Data On
+
+    # 모든 로그에 환경 메타데이터 부착
+    [FILTER]
+        Name         record_modifier
+        Match        kube.*
+        Record       environment dev
+        Record       cluster     datahub-hynix
+
+    # Polaris 평문 포맷 폴백 (JSON 비활성 시)
+    [FILTER]
+        Name         parser
+        Match        kube.*benchmarks-polaris*
+        Key_Name     log
+        Parser       polaris_text
+        Reserve_Data On
+
+    # DataHub GMS / MAE / MCE JSON 로그
+    [FILTER]
+        Name         parser
+        Match        kube.*datahub-*
+        Key_Name     log
+        Parser       datahub_json
+        Reserve_Data On
+
+    # ══ TIER 2/3 — Polaris 체인. polaris.* 만 매치한다 ═══════════════════
+    # kubernetes 필터(kube.*)는 이 태그를 보지 못한다. 순서는 스타일이 아니라 계약이다.
+
+    # 0. CRI 봉투를 벗긴다 — Polaris JSON 은 `log` 안에 있다.
+    #    tier 1 의 polaris_json 이 아니라 polaris_stdout_json 을 쓴다 (아래 파서 설명 참고).
+    [FILTER]
+        Name          parser
+        Alias         polaris_cri_unwrap
+        Match         polaris.logs
+        Key_Name      log
+        Parser        polaris_stdout_json
+        Reserve_Data  On
+
+    # 1. 키 표준화. Lua 가 _msg 를 읽으므로 반드시 Lua 보다 먼저.
+    #    이름을 _msg/_time 으로 유지해 가이드 §7 쿼리의 필드명이 그대로 통한다.
+    [FILTER]
+        Name          modify
+        Alias         polaris_key_rename
+        Match         polaris.logs
+        Add           app polaris
+        Rename        message _msg
+        Rename        timestamp _time
+
+    # 2. Quarkus 액세스 라인을 필드로 분해 (Lua 함수 polaris_access_log).
+    #    type_int_key 가 없으면 Fluent Bit 이 숫자를 double 로 인코딩한다.
+    [FILTER]
+        Name          lua
+        Alias         polaris_access_log
+        Match         polaris.logs
+        script        /fluent-bit/scripts/polaris_access_log.lua
+        call          polaris_access_log
+        type_int_key  http_status response_size
+
+    # 3. 적재 판정 + 집계 + 리포트 생성 (Lua 함수 polaris_noise_filter, 정책 v4).
+    #    Match 가 polaris.logs 가 아니라 polaris.* 인 이유: 리포트 틱도 "이 필터 인스턴스" 를
+    #    지나야 한다. Lua 상태는 인스턴스 단위이고, 카운터는 이 인스턴스에 있다.
+    #
+    #    type_int_key: Lua 가 만드는 "모든" 숫자 필드를 여기에 나열한다. 빠진 필드는 문자열로
+    #    저장되고, 숫자 범위 쿼리가 에러 없이 0건을 반환한다. 필드를 추가하면 여기와 인덱스
+    #    템플릿(polaris-report-template.json) 두 곳을 같이 고칠 것.
+    #      envelope   schema_version report_seq window_seconds
+    #      summary    access_seen access_kept access_counted role_keys_forced counted_read
+    #                 counted_post errors_kept parse_errors bytes_total distinct_resources
+    #                 distinct_principals resources_other resources_other_distinct
+    #                 principals_other windows_skipped app_dropped_total(v4)
+    #      rows       requests reads writes errors errors_4xx errors_5xx auth_denied
+    #                 response_bytes last_read_bytes last_write_bytes
+    #                 commit_count commit_ms_sum commit_ms_min commit_ms_max (v4, table/view)
+    #      app_dropped dropped (v4)
+    #    v4 에서 제거: carried_rows (zero-carry 삭제)
+    [FILTER]
+        Name          lua
+        Alias         polaris_noise_filter
+        Match         polaris.*
+        script        /fluent-bit/scripts/polaris_access_log.lua
+        call          polaris_noise_filter
+        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted role_keys_forced counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals resources_other resources_other_distinct principals_other windows_skipped app_dropped_total requests reads writes errors response_bytes last_read_bytes last_write_bytes commit_count commit_ms_sum commit_ms_min commit_ms_max dropped
+
+    # 4. 모든 레코드에서 저장 비용만 들고 답하는 것이 없는 필드, CRI 봉투 잔여물을 지운다.
+    #    없는 키의 Remove_key 는 no-op 이라 봉투 이름은 방어적으로 나열한다.
+    [FILTER]
+        Name          record_modifier
+        Alias         polaris_field_trim
+        Match         polaris.logs
+        Remove_key    processName
+        Remove_key    loggerClassName
+        Remove_key    processId
+        Remove_key    logtag
+        Remove_key    time
+
+  # ── 커스텀 파서 ──────────────────────────────────────────────────────────────────
+  customParsers: |
+    # Polaris JSON 포맷 (logging.console.json: true) — tier 1 전용
+    [PARSER]
+        Name        polaris_json
+        Format      json
+        Time_Key    timestamp
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    # Polaris 평문 폴백 — tier 1 전용
+    [PARSER]
+        Name        polaris_text
+        Format      regex
+        Regex       ^(?<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) (?<level>[A-Z]+)\s+\[(?<logger>[^\]]+)\] \((?<thread>[^\)]+)\) \[(?<requestId>[^\]]*)\] (?<message>.+)$
+        Time_Key    timestamp
+        Time_Format %Y-%m-%d %H:%M:%S,%L
+
+    # DataHub PatternLayout JSON — timestamp 필드는 text 라 Time_Key 로 쓰지 않는다
+    [PARSER]
+        Name        datahub_json
+        Format      json
+
+    # Polaris stdout JSON — tier 2/3 체인 전용. polaris_json 과 일부러 분리한다.
+    #
+    # Time_Key 를 두지 않는 것은 의도다 (2026-09-09). Time_Key timestamp + Time_Format
+    # ...%L%z + Time_Keep On 이었을 때 모든 레코드에서 파싱이 실패했다: 5,030건 처리, 변환 0,
+    # 다음 필터까지의 바이트 증가가 정확히 `Add app polaris` 분량(12 B/건)뿐. loggerName 이
+    # 필드가 되지 않아 access_seen 이 0 으로 읽혔고, 헬스체크는 전부 초록이었다.
+    # 의심 원인은 `.697818537Z` 의 9자리 소수부와 %L 의 불일치(미증명). 형식을 맞추는 대신
+    # 실패 모드 자체를 없앴고, 잃는 것은 없다:
+    #   * `timestamp` 가 소비되지 않으므로 필터 1 의 Rename timestamp _time 이 그대로 동작한다.
+    #   * _time 이 문자열로 남아야 Lua 의 min/max_record_time(재생 탐지)이 동작한다.
+    #   * @timestamp 는 페이로드가 아니라 CRI 봉투에서 온다 (실측 7ms 차이).
+    # polaris_json 에 Time_Key/Time_Keep 을 추가하지 말 것 — tier 1 이 키 소비에 의존한다.
+    [PARSER]
+        Name        polaris_stdout_json
+        Format      json
+
+  # ── 출력: Mac 의 Docker OpenSearch ────────────────────────────────────────────────
+  outputs: |
+    # ══ TIER 1 — k8s-logs, 5일 ════════════════════════════════════════════
+    # OUTPUT 1: Polaris 컨테이너 로그, sequence 로 dedup 의도.
+    # ⚠ active-issues #18: Polaris 의 sequence 는 JSON 정수인데 Id_Key 는 문자열을 요구해서,
+    #   이 출력은 레코드를 "전부 버린다" (2026-09-09 실측: 13,737문서 / 13,737 sequence).
+    #   k8s-logs 의 Polaris 문서는 전부 OUTPUT 2 에서 온다. 수정 방향은
+    #   logging/PLAN-tier1-dedup-2026-09-09.md (결정 대기) — 여기서는 v3 그대로 둔다.
+    [OUTPUT]
+        Name                opensearch
+        Match               kube.*benchmarks-polaris*
+        Host                192.168.194.1
+        Port                9200
+        HTTP_User           ${OS_USER}
+        HTTP_Passwd         ${OS_PASSWORD}
+        Index               k8s-logs
+        Type                _doc
+        Logstash_Format     On
+        Logstash_Prefix     k8s-logs
+        Logstash_DateFormat %Y.%m.%d
+        Time_Key            @timestamp
+        Time_Key_Format     %Y-%m-%dT%H:%M:%S
+        Include_Tag_Key     On
+        Tag_Key             flb_tag
+        Retry_Limit         3
+        # _bulk "응답" 을 읽는 버퍼 상한 (요청이 아님). 응답에 레코드당 상태가 하나씩 들어가
+        # 배치와 함께 커진다. 기본 512KB 가 부하에서 초과됐다 (#19). False = 무제한(청크 크기로 제한).
+        Buffer_Size         False
+        tls                 On
+        tls.verify          Off
+        Suppress_Type_Name  On
+        Id_Key              sequence
+        Write_Operation     upsert
+
+    # OUTPUT 2: 그 외 모든 K8s 로그 — _id 자동 생성
+    [OUTPUT]
+        Name                opensearch
+        Match               kube.*
+        Host                192.168.194.1
+        Port                9200
+        HTTP_User           ${OS_USER}
+        HTTP_Passwd         ${OS_PASSWORD}
+        Index               k8s-logs
+        Type                _doc
+        Logstash_Format     On
+        Logstash_Prefix     k8s-logs
+        Logstash_DateFormat %Y.%m.%d
+        Time_Key            @timestamp
+        Time_Key_Format     %Y-%m-%dT%H:%M:%S
+        Include_Tag_Key     On
+        Tag_Key             flb_tag
+        Retry_Limit         3
+        Buffer_Size         False
+        tls                 On
+        tls.verify          Off
+        Suppress_Type_Name  On
+        Generate_ID         On
+
+    # ══ TIER 2 — 선별된 Polaris 로그, 30일 ═══════════════════════════════
+    # 여기에 들어오는 것 (정책 v4):
+    #   * 액세스 라인: 4xx/5xx 전건, PUT/DELETE/PATCH 전건, management POST 전건
+    #   * 애플리케이션 로그: IcebergExceptionMapper, PolarisServiceImpl 만 (+ 모든 WARN/ERROR)
+    # 성공한 조회와 catalog POST 는 여기 없다 — tier 3 의 숫자로만 존재한다.
+    # 적재된 애플리케이션 로그는 mdc.requestId 로 액세스 문서와 조인된다.
+    #
+    # Time_Key 를 두지 않는 것은 의도다: Logstash_Format 에서 플러그인은 Time_Key 를 "기존 키에
+    # 더해" 넣으므로, 레코드에 이미 있는 이름이면 한 JSON 에 @timestamp 가 두 개가 되고
+    # OpenSearch 가 HTTP 200 인 _bulk 안에서 건별로 거부한다. 그 거부를 파드 로그에 드러내는
+    # 것이 Trace_Error 이며, 출력 메트릭에는 잡히지 않는다.
+    [OUTPUT]
+        Name                opensearch
+        Match               polaris.logs
+        Host                192.168.194.1
+        Port                9200
+        HTTP_User           ${OS_USER}
+        HTTP_Passwd         ${OS_PASSWORD}
+        Logstash_Format     On
+        Logstash_Prefix     polaris-logs
+        Logstash_DateFormat %Y.%m.%d
+        Include_Tag_Key     On
+        Tag_Key             flb_tag
+        Retry_Limit         5
+        Buffer_Size         False
+        tls                 On
+        tls.verify          Off
+        Suppress_Type_Name  On
+        Generate_ID         On
+        Trace_Error         On
+        storage.total_limit_size 400M
+
+    # ══ TIER 3 — 윈도우 리포트 ═══════════════════════════════════════════
+    # report_type: summary / resource / principal / app_dropped (v4 추가).
+    # 성공한 조회는 "여기에만" 집계로 존재한다. 이 스트림을 잃으면 그 조회들이 있었다는 유일한
+    # 기록을 잃는다.
+    #
+    # 대시보드 규칙 (v4):
+    #   * 항상 schema_version 으로 필터. 버전이 한 인덱스에 공존한다.
+    #   * summary 는 대시보드에서 제외 (NOT report_type:summary), 완결성 검증에만 쓴다.
+    #   * 0 행이 없으므로, 추이 차트는 "빈 버킷을 0 으로" 그리도록 설정한다.
+    #   * 커밋 평균 = sum(commit_ms_sum) / sum(commit_count). 평균의 평균을 쓰지 말 것.
+    #   * commit_ms_* 는 성공한 Iceberg 커밋 시간이지 요청 지연이 아니다.
+    #   * app_dropped 에 새로운 org.apache.polaris.service.* logger 가 보이면 허용 목록 검토.
+    [OUTPUT]
+        Name                opensearch
+        Match               polaris.report
+        Host                192.168.194.1
+        Port                9200
+        HTTP_User           ${OS_USER}
+        HTTP_Passwd         ${OS_PASSWORD}
+        Logstash_Format     On
+        Logstash_Prefix     polaris-report
+        Logstash_DateFormat %Y.%m.%d
+        Retry_Limit         5
+        Buffer_Size         False
+        tls                 On
+        tls.verify          Off
+        Suppress_Type_Name  On
+        Generate_ID         On
+        Trace_Error         On
+        storage.total_limit_size 200M
+
+# ── 헬스 프로브 (SERVICE 의 HTTP_Server / Health_Check 가 제공) ────────────────────────
+livenessProbe:
+  httpGet:
+    path: /api/v1/health
+    port: 2020
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /api/v1/health
+    port: 2020
+  initialDelaySeconds: 5
+  periodSeconds: 10
