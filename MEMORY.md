@@ -4,7 +4,9 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-15 (session 13)
+## Now — 2026-09-15 (sessions 13–14)
+
+**Session 14: `log-coverage/polaris_api_traffic_v1.ipynb` is v2's traffic with every verification cell removed** — no OpenSearch, no kubectl; window timing is a parameter cell (30/5 fast-run, edit on revert). Kept cells diff against v2 only in printed strings. **`src/make_traffic.py` still uses `lag=0.5`** — the session-13 fix never reached it. Not run on the cluster. [`.memory/sessions/2026-09-15-traffic-only-notebook.md`](.memory/sessions/2026-09-15-traffic-only-notebook.md)
 
 **THE WINDOW OFFSET WAS `lag=0.5`. THE NOTEBOOK CAUSED THE CONDITION IT SPENT THREE RUNS
 REPORTING TO `local-k8s`, AND NOTHING IN THE CLUSTER IS WRONG.** A window closes when the 5 s
