@@ -597,8 +597,11 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   `polaris-fluent-bit-lua` IS applied (sha `bfff86db220036c2` == repo). restartCount 0, and the pod log still holds
   engine lines from 05:09 UTC (before v5 was written), so the pod was not replaced either. The in-pod script sha
   (`8c1fb607…`) is unexplained — not any committed version of the Lua; possibly an exec error string (5.1.1 image
-  may lack `cat`). Cause (upgrade not run / failed / other chart or values) **not yet established** — needs
-  `helm history`, `helm get values`, pod age. Tier 1 alive (k8s-logs 22874/10m); report 20 docs/10m.
+  may lack `cat`). **Cause established the same afternoon: step 5 (`helm upgrade`) was never run.** `helm history`
+  tops out at **rev 16, 2026-09-15 18:18 KST, deployed, SSA** (no failed revision, so no SSA conflict);
+  `get values` still has `luaScripts:`; DS volumes are `config luascripts varlog varlibdockercontainers
+  etcmachineid` (no `polaris-lua`); generation 25 == observed; pod `benchmarks-fluent-bit-rvm49`, 23h, 0 restarts.
+  So the running pod is v4 and the in-pod sha was of a path that does not exist (step3 mislabels that as "not synced"). Tier 1 alive (k8s-logs 22874/10m); report 20 docs/10m.
   Separately: a tier-1 chunk (tail.0 → opensearch.1, k8s-logs `kube.*`) was dropped after retries at 05:10:45 UTC.
 - **NOT verified:** any real `helm` render (no helm in Cowork); hot reload itself; **what 5.1.1 does when a
   reloaded script is invalid** (runbook C — may stop tier 1 like #27); reload loss (runbook D); whether
