@@ -907,3 +907,143 @@ def classify_500s(calls):
             continue
         out[classify_500(call)].append(call)
     return out
+
+
+# ----------------------------------------------------------------------
+# phase J -- a two-level namespace (added 2026-09-16, not moved from v1)
+# ----------------------------------------------------------------------
+#: Names defined here AFTER the split. They were never in `log_coverage`, so
+#: `test_log_coverage_still_re_exports_every_moved_name` must not ask the v1
+#: module to re-export them -- that test guards what MOVED.
+__added_after_split__ = frozenset(
+    {"NESTED_CHILD", "nested_table_resource_key", "drive_nested_namespace"}
+)
+
+#: The child level phase J creates under the fixture namespace.
+NESTED_CHILD = "nested"
+
+
+def nested_table_resource_key(catalog, parent_ns, child, table):
+    """The report row key a table in `parent_ns.child` must land on.
+
+    Iceberg REST joins namespace levels with the ASCII unit separator, which a
+    URL carries as `%1F`. The shipper's Lua keys a table row on the request path
+    AND, for commit time, rebuilds the same key from the dotted identifier in
+    `Successfully committed to table cat.parent.child.table`. If the two do not
+    produce this exact string, the commit lands on a second row that no request
+    touches -- which is what phase J exists to catch.
+    """
+    return f"{CAT_PREFIX}/v1/{catalog}/namespaces/{parent_ns}%1F{child}/tables/{table}"
+
+
+def drive_nested_namespace(
+    ic, run, catalog, parent_ns, schema, table_payload, seq=3400
+):
+    """Phase J: create, commit, load and drop a table in a two-level namespace.
+
+    Six calls on one client, each tagged with its own request id:
+    createNamespace, createTable, updateTable (a commit), loadTable, dropTable,
+    dropNamespace. The two drops are attempted even when an earlier step failed,
+    so a half-run leaves nothing behind.
+
+    Args:
+        ic: an `IcebergREST` client (the runner's, so the calls are attributed to
+            a real principal).
+        run: the run id.
+        catalog: the fixture catalog -- Polaris's URL prefix is the catalog name.
+        parent_ns: an existing single-level namespace in it.
+        schema, table_payload: as the other phases build tables.
+        seq: first request-id sequence number; the six steps use seq..seq+5.
+
+    Returns:
+        dict with `rows` (one per call, the same shape `make_traffic` records),
+        `namespace` (the two levels), `table`, `resource_key` (what the verifier
+        must find as ONE row carrying both requests and commit_count),
+        `path_encoded` (True when every issued path carried `%1F`), and
+        `request_ids`.
+    """
+    ns = [parent_ns, NESTED_CHILD]
+    table = f"mx_{run}_deep"
+    steps = [
+        ("createNamespace", "POST", 200, lambda: ic.create_namespace(catalog, ns)),
+        (
+            "createTable",
+            "POST",
+            200,
+            lambda: ic.create_table(catalog, ns, table_payload(table, schema)),
+        ),
+        (
+            "updateTable",
+            "POST",
+            200,
+            lambda: ic.commit_table(
+                catalog,
+                ns,
+                table,
+                [{"action": "set-properties", "updates": {"mx.nested": str(run)}}],
+            ),
+        ),
+        ("loadTable", "GET", 200, lambda: ic.load_table(catalog, ns, table)),
+        ("dropTable", "DELETE", 204, lambda: ic.drop_table(catalog, ns, table)),
+        ("dropNamespace", "DELETE", 204, lambda: ic.drop_namespace(catalog, ns)),
+    ]
+    rows = []
+    for i, (op_id, method, target, fn) in enumerate(steps):
+        rid = request_id(run, seq + i, f"nested-{op_id}")
+        tag_clients([ic], rid)
+        t0 = time.time()
+        try:
+            resp = fn()
+            status = getattr(resp, "status_code", None)
+            rows.append(
+                {
+                    "request_id": rid,
+                    "echoed_request_id": (getattr(resp, "headers", {}) or {}).get(
+                        "Polaris-Request-Id"
+                    ),
+                    "op_id": op_id,
+                    "method": method,
+                    "actual_path": _issued_path(resp),
+                    "api": "catalog",
+                    "target": target,
+                    "status": status,
+                    "response_bytes": len(getattr(resp, "content", b"") or b""),
+                    "principal": "runner",
+                    "issued_at": t0,
+                    "verdict": "covered" if status == target else "missed",
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - the drops below must still run
+            rows.append(
+                {
+                    "request_id": rid,
+                    "op_id": op_id,
+                    "method": method,
+                    "api": "catalog",
+                    "target": target,
+                    "status": None,
+                    "principal": "runner",
+                    "issued_at": t0,
+                    "verdict": "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+        finally:
+            tag_clients([ic], None)
+    # createNamespace names both levels in its BODY; every other step carries
+    # them in the path, which is the encoding the report key depends on.
+    paths = [
+        r.get("actual_path")
+        for r in rows
+        if r["op_id"] != "createNamespace" and r.get("actual_path")
+    ]
+    return {
+        "rows": rows,
+        "namespace": ns,
+        "table": table,
+        "resource_key": nested_table_resource_key(
+            catalog, parent_ns, NESTED_CHILD, table
+        ),
+        "path_encoded": bool(paths) and all("%1F" in p for p in paths),
+        "request_ids": [r["request_id"] for r in rows],
+    }

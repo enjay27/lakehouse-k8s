@@ -29,3 +29,32 @@ Changed:
 Verified: `pytest` 917 passed / 45 skipped (run in a VM venv outside the repo — the repo's `.venv`
 points at the Mac's Python and cannot run in the Cowork VM); `black --check` clean. NOT run against
 the cluster.
+
+## Part 2 — phase J: a table in a two-level namespace (local-k8s TODO 1.5)
+
+Why: the shipper's v4 Lua keys a table row on the request path, and rebuilds the same key for commit
+time from `Successfully committed to table cat.ns.child.table`, joining the middle levels with `%1F`.
+That rebuild had only ever seen one-level namespaces. If it disagrees with the path, the commit lands on
+a second row that no request touches — silently.
+
+Added:
+- `traffic_helpers.drive_nested_namespace(ic, run, catalog, parent_ns, schema, table_payload)` — six
+  runner calls, each tagged: createNamespace `[parent, "nested"]`, createTable `mx_<run>_deep`,
+  updateTable (commit), loadTable, dropTable, dropNamespace. The drops run even if an earlier step
+  raised. Returns rows (make_traffic's row shape), `resource_key`
+  (`/api/catalog/v1/<cat>/namespaces/<ns>%1Fnested/tables/mx_<run>_deep`), `path_encoded`, request ids.
+- `nested_table_resource_key()`, `NESTED_CHILD`, and `__added_after_split__` — the re-export test guards
+  names that MOVED from `log_coverage`; names born after the split are listed and excluded, and a test
+  checks the list is real.
+- `make_traffic`: phase `J` at the end of the `full` profile (`_phase_nested`, waits with the validated
+  lag, records rows under phase J, writes `fixture.nested`). No new claim — that would bump
+  `CONTRACT_VERSION`.
+- `polaris_api_traffic_v1.ipynb`: cells 10b (markdown + code) before phase I, driven back to back with
+  B–H; the summary prints J's request ids and the row to find. Existing outputs untouched.
+- Tests (no network): `%1F` is what `requests` puts on the wire for the unit separator; six tagged calls
+  in order and the tag cleared; the issued table path IS the resource key; drops still run when the
+  commit raises; `full` ends with J.
+
+Verified: `pytest` 923 passed / 45 skipped; `black --check` / isort clean; every notebook code cell
+parses. **NOT run against the cluster** — the notebook's Restart & Run All and a `full` CLI drive are
+Kade's; whether Polaris accepts a nested namespace in the probe catalog is therefore unmeasured.

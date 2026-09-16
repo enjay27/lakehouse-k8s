@@ -114,7 +114,11 @@ def test_log_coverage_still_re_exports_every_moved_name():
     import log_coverage as lc
     import traffic_helpers as th
 
-    moved = [n for n in dir(th) if not n.startswith("__")]
+    moved = [
+        n
+        for n in dir(th)
+        if not n.startswith("__") and n not in th.__added_after_split__
+    ]
     missing = [n for n in moved if not hasattr(lc, n)]
     assert not missing, f"log_coverage no longer re-exports {missing}"
 
@@ -777,3 +781,130 @@ def test_finish_can_be_told_to_write_nothing_at_all(tmp_path):
     }
     mt._finish(state, "1", "full", {k: "x" for k in mt._REQUIRED_CONFIG}, 30, False)
     assert list(tmp_path.iterdir()) == []
+
+
+# ----------------------------------------------------------------------
+# phase J -- the two-level namespace (local-k8s TODO 1.5)
+# ----------------------------------------------------------------------
+class _FakeResp:
+    def __init__(self, status, url, rid, body=b""):
+        import requests
+
+        self.status_code = status
+        self.content = body
+        self.headers = {"Polaris-Request-Id": rid}
+        self.request = requests.Request("GET", url).prepare()
+
+
+class _FakeIceberg:
+    """Records every call and answers with a prepared URL built the real way."""
+
+    def __init__(self, fail_on=None):
+        from iceberg_rest import IcebergREST
+
+        self.real = IcebergREST("http://polaris:8181", "POLARIS", token="t")
+        self.calls, self.fail_on, self.extra_headers = [], fail_on, {}
+
+    def _answer(self, op, status, path):
+        rid = self.extra_headers.get("Polaris-Request-Id")
+        self.calls.append((op, rid))
+        if op == self.fail_on:
+            raise RuntimeError(f"boom in {op}")
+        return _FakeResp(status, f"http://polaris:8181{path}", rid, b"{}")
+
+    def _ns(self, cat, ns):
+        return f"/api/catalog/v1/{cat}/namespaces/{self.real._ns_path(ns)}"
+
+    def create_namespace(self, cat, ns):
+        assert isinstance(ns, list) and len(ns) == 2
+        return self._answer("createNamespace", 200, f"/api/catalog/v1/{cat}/namespaces")
+
+    def create_table(self, cat, ns, payload):
+        return self._answer("createTable", 200, self._ns(cat, ns) + "/tables")
+
+    def commit_table(self, cat, ns, table, updates):
+        return self._answer("updateTable", 200, self._ns(cat, ns) + f"/tables/{table}")
+
+    def load_table(self, cat, ns, table):
+        return self._answer("loadTable", 200, self._ns(cat, ns) + f"/tables/{table}")
+
+    def drop_table(self, cat, ns, table):
+        return self._answer("dropTable", 204, self._ns(cat, ns) + f"/tables/{table}")
+
+    def drop_namespace(self, cat, ns):
+        return self._answer("dropNamespace", 204, self._ns(cat, ns))
+
+
+def _nested(ic):
+    import traffic_helpers as th
+
+    return th.drive_nested_namespace(
+        ic,
+        "1789",
+        "cat1",
+        "probe_ns",
+        schema=None,
+        table_payload=lambda n, s: {"name": n},
+    )
+
+
+def test_names_added_after_the_split_exist():
+    import traffic_helpers as th
+
+    assert all(hasattr(th, n) for n in th.__added_after_split__)
+
+
+def test_full_profile_drives_phase_j_last():
+    assert mt._PHASES["full"][-1] == "J"
+
+
+def test_a_unit_separator_goes_out_as_percent_1f():
+    """The assumption the report key rests on, checked without a network."""
+    import requests
+
+    from iceberg_rest import IcebergREST
+
+    seg = IcebergREST._ns_path(["probe_ns", "nested"])
+    url = f"http://polaris:8181/api/catalog/v1/cat1/namespaces/{seg}/tables/t"
+    assert "%1F" in requests.Request("GET", url).prepare().path_url
+
+
+def test_phase_j_drives_six_tagged_calls_in_order():
+    ic = _FakeIceberg()
+    result = _nested(ic)
+    assert [op for op, _ in ic.calls] == [
+        "createNamespace",
+        "createTable",
+        "updateTable",
+        "loadTable",
+        "dropTable",
+        "dropNamespace",
+    ]
+    assert all(rid and rid.startswith("nb-1789-34") for _, rid in ic.calls)
+    assert len(set(result["request_ids"])) == 6
+    assert ic.extra_headers.get("Polaris-Request-Id") is None, "tag left on the client"
+    assert all(r["verdict"] == "covered" for r in result["rows"])
+
+
+def test_phase_j_names_the_one_row_the_verifier_must_find():
+    result = _nested(_FakeIceberg())
+    assert result["resource_key"] == (
+        "/api/catalog/v1/cat1/namespaces/probe_ns%1Fnested/tables/mx_1789_deep"
+    )
+    assert result["path_encoded"] is True
+    table_paths = {
+        r["actual_path"]
+        for r in result["rows"]
+        if r["op_id"] in ("updateTable", "loadTable")
+    }
+    assert table_paths == {result["resource_key"]}, "the issued path IS the report key"
+
+
+def test_phase_j_still_drops_when_the_commit_fails():
+    ic = _FakeIceberg(fail_on="updateTable")
+    result = _nested(ic)
+    ops = [op for op, _ in ic.calls]
+    assert ops[-2:] == ["dropTable", "dropNamespace"]
+    assert [r["verdict"] for r in result["rows"] if r["op_id"] == "updateTable"] == [
+        "error"
+    ]

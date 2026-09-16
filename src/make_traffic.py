@@ -54,17 +54,18 @@ CONTRACT_VERSION = 1
 #: `_PHASES` below is what the code reads, and the two are checked against each
 #: other by a test so a profile cannot be documented and unimplemented.
 PROFILES = {
-    "full": "all 63 operations x every reachable status -- 286 cells, ~9 windows",
+    "full": "all 63 operations x every reachable status -- 286 cells, plus a "
+    "two-level namespace (phase J), ~10 windows",
     "smoke": "~12 cells, one window: is the pipeline answering at all",
     "gate2": "one commit alone, then one DELETE alone -- the feature and its negative half",
     "gate4": "three grants and a denial on one role, one window",
 }
 
 #: profile -> the phases it drives, in order. "B"/"C"/"D" are grid phases;
-#: E/F/G/H are the hand-shaped windows; cleanup is not a phase because it is
+#: E/F/G/H/J are the hand-shaped windows; cleanup is not a phase because it is
 #: not optional -- it runs in `finally` for every profile including a failure.
 _PHASES = {
-    "full": ("B", "C", "D", "E", "F", "G", "H"),
+    "full": ("B", "C", "D", "E", "F", "G", "H", "J"),
     "smoke": ("B",),
     "gate2": ("E", "F"),
     "gate4": ("G",),
@@ -837,6 +838,20 @@ def drive(
                 phase_window,
                 phase_lag=phase_lag,
             )
+        if "J" in wanted:
+            _phase_nested(
+                state,
+                th,
+                run,
+                run_ic,
+                fx,
+                schema,
+                build_create_table_payload,
+                window_seconds,
+                record,
+                phase_window,
+                phase_lag=phase_lag,
+            )
     except BaseException as exc:  # noqa: BLE001 - a KeyboardInterrupt still cleans up
         state["incomplete"] = (
             f"{type(exc).__name__}: {exc} -- after {len(state['calls'])} call(s). "
@@ -1309,6 +1324,49 @@ def _phase_500(
         )
     phase_window("H", t0, t1, len(rows))
     record(rows, "H")
+    return result
+
+
+def _phase_nested(
+    state,
+    th,
+    run,
+    run_ic,
+    fx,
+    schema,
+    table_payload,
+    window_seconds,
+    record,
+    phase_window,
+    *,
+    phase_lag,
+):
+    """Phase J: a table in a TWO-LEVEL namespace, created, committed, read, dropped.
+
+    The one key shape the shipper had never seen in real traffic (local-k8s TODO
+    1.5). A request path joins the levels as `%1F`; the commit-time log line
+    names the table as `cat.parent.child.table`, and the Lua rebuilds the key
+    from that. The verifier must find ONE table row at `resource_key` carrying
+    both `requests` and `commit_count` -- two rows means the rebuild disagrees.
+
+    No claim is added: that would be a contract change. The key, the request ids
+    and whether every issued path was encoded go into `fixture.nested`.
+    """
+    _wait_for_window(window_seconds, phase_lag)
+    t0 = time.time()
+    result = th.drive_nested_namespace(
+        run_ic, run, fx.cat, fx.ns, schema, table_payload
+    )
+    t1 = time.time()
+    phase_window("J", t0, t1, len(result["rows"]))
+    record(result["rows"], "J")
+    state["fixture"]["nested"] = {
+        "namespace": result["namespace"],
+        "table": result["table"],
+        "resource_key": result["resource_key"],
+        "path_encoded": result["path_encoded"],
+        "request_ids": result["request_ids"],
+    }
     return result
 
 
