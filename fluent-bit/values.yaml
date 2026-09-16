@@ -1,7 +1,7 @@
 # =====================================================================================
 # Fluent Bit — K8s DaemonSet, 릴리스 `benchmarks-fluent-bit`, namespace datahub-hynix
 # 정책 v5 / 리포트 스키마 v5 — 2026-09-16 롤 (rev 17). 같은 날: hot reload 제거 (rev 18, #28), 상세 필드 정리 (rev 19, #30),
-# Lua 리팩터 — Lua FILTER 하나 (#31). 파이프라인 재검토: logging/REVIEW-pipeline-2026-09-16.md (결정 대기)
+# Lua 리팩터 — Lua FILTER 하나 (#31). 스키마 v6 (#32, 작성·미적용): 재검토 P1–P4/P6–P8 반영 — logging/REVIEW-pipeline-2026-09-16.md
 # =====================================================================================
 #
 # 릴리스 하나, 계층(tier) 셋. 전부 Mac 의 Docker OpenSearch 3.5.0 으로 보낸다
@@ -34,7 +34,8 @@
 #   # 0) Lua 단위 테스트 (Fluent Bit 과 같은 LuaJIT)
 #   cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua
 #   luajit logging/scripts/test-schema-v3.lua && luajit logging/scripts/test-schema-v4.lua \
-#     && luajit logging/scripts/test-schema-v5.lua && luajit logging/scripts/test-first-tick.lua
+#     && luajit logging/scripts/test-schema-v5.lua && luajit logging/scripts/test-schema-v6.lua \
+#     && luajit logging/scripts/test-first-tick.lua
 #   # 1) Lua ConfigMap — 파드가 마운트하므로 Helm 보다 먼저 존재해야 한다
 #   kubectl apply -k fluent-bit/
 #   # 2) 렌더 + 게이트 (Lua ConfigMap 렌더와 Helm 렌더 둘 다), 통과하면 --dry-run 없이 실행
@@ -43,12 +44,13 @@
 #     --version 0.57.6 -n datahub-hynix -f fluent-bit/values.yaml \
 #     --dry-run=client > /tmp/render-after.txt
 #   bash logging/scripts/step2-render-gate.sh /tmp/render-after.txt /tmp/render-lua.txt
-#   # 3) 롤 후, 저장소 루트에서 (+ v5 필드 4개를 위해 step9 로 요약 템플릿 재적용)
+#   # 3) 롤 후, 저장소 루트에서 (템플릿이 바뀌었으면 step9 / step12 로 재적용)
 #   bash logging/scripts/step3-postupgrade.sh
 #   bash logging/scripts/step9-report-index-template.sh
+#   bash logging/scripts/step12-logs-index-template.sh
 #
 #   이후 스크립트만 바꿀 때는 Helm 없이:  bash fluent-bit/apply-lua.sh
-#     (컨텍스트 확인 → Lua 테스트 v3–v5 + first-tick → kubectl apply -k → rollout restart → rollout status).
+#     (컨텍스트 확인 → Lua 테스트 v3–v6 + first-tick → kubectl apply -k → rollout restart → rollout status).
 #   ⚠ apply 만 하고 재시작하지 않으면 파드는 이전 스크립트로 계속 돈다 — 아무 경고도 없다 (#13/#20).
 #     step3 는 fluent-bit 컨테이너 시작 시각이 ConfigMap 마지막 변경보다 늦은지 확인한다.
 #   ⚠ 잘못된 스크립트는 재시작 시 filter 초기화 실패 → 입력 전체 정지 → tier 1 도 멈춘다
@@ -188,9 +190,13 @@ config:
   # ── 입력 ──────────────────────────────────────────────────────────────────────────
   inputs: |
     # ── TIER 1 — 모든 컨테이너 로그 ───────────────────────────────────────
+    # 2026-09-16 (REVIEW-pipeline P3): Fluent Bit 자기 컨테이너 로그는 읽지 않는다. 읽으면 출력 오류·재시도·
+    # 버림 경고가 k8s-logs 문서가 되어 되돌아온다 (실측: traffic notebook 1회당 약 1,800건). 파드 로그는
+    # kubectl logs 로 본다.
     [INPUT]
         Name              tail
         Path              /var/log/containers/*.log
+        Exclude_Path      /var/log/containers/benchmarks-fluent-bit-*.log
         multiline.parser  docker, cri
         Tag               kube.*
         Refresh_Interval  5
@@ -258,13 +264,9 @@ config:
         Annotations         Off
         Labels              On
 
-    # Polaris JSON 로그 파싱 (실제로는 위 kubernetes 필터가 `log` 를 이미 지워 no-op 에 가깝다)
-    [FILTER]
-        Name         parser
-        Match        kube.*
-        Key_Name     log
-        Parser       polaris_json
-        Reserve_Data On
+    # 2026-09-16 (REVIEW-pipeline P4): parser 필터 셋(Polaris JSON / Polaris 평문 / DataHub JSON)을 없앴다.
+    # JSON 두 개는 위 kubernetes 필터(Merge_Log)와 같은 JSON 해석이라, 그것이 실패한 줄에서 성공할 수 없다.
+    # Polaris 평문 폴백은 Polaris 가 JSON 콘솔 로그를 쓰는 동안 맞는 줄이 없다.
 
     # 모든 로그에 환경 메타데이터 부착
     [FILTER]
@@ -273,27 +275,11 @@ config:
         Record       environment dev
         Record       cluster     datahub-hynix
 
-    # Polaris 평문 포맷 폴백 (JSON 비활성 시)
-    [FILTER]
-        Name         parser
-        Match        kube.*benchmarks-polaris*
-        Key_Name     log
-        Parser       polaris_text
-        Reserve_Data On
-
-    # DataHub GMS / MAE / MCE JSON 로그
-    [FILTER]
-        Name         parser
-        Match        kube.*datahub-*
-        Key_Name     log
-        Parser       datahub_json
-        Reserve_Data On
-
     # ══ TIER 2/3 — Polaris 체인. polaris.* 만 매치한다 ═══════════════════
     # kubernetes 필터(kube.*)는 이 태그를 보지 못한다. 순서는 스타일이 아니라 계약이다.
 
     # 0. CRI 봉투를 벗긴다 — Polaris JSON 은 `log` 안에 있다.
-    #    tier 1 의 polaris_json 이 아니라 polaris_stdout_json 을 쓴다 (아래 파서 설명 참고).
+    #    전용 파서 polaris_stdout_json 을 쓴다 (아래 파서 설명 참고).
     [FILTER]
         Name          parser
         Alias         polaris_cri_unwrap
@@ -302,21 +288,39 @@ config:
         Parser        polaris_stdout_json
         Reserve_Data  On
 
-    # 1. 키 표준화. Lua 가 _msg 를 읽으므로 반드시 Lua 보다 먼저.
-    #    이름을 _msg/_time 으로 유지해 가이드 §7 쿼리의 필드명이 그대로 통한다.
+    # 1. 키 표준화. Lua 가 _time 을 읽으므로 반드시 Lua 보다 먼저.
+    #    2026-09-16 (스키마 v6, 결정: Kade): 원문 필드는 Polaris 이름 그대로 `message` — 옛 이름으로 바꾸던
+    #    Rename 을 없앴다. 상수 필드 app 도 더 붙이지 않는다 (인덱스가 스트림을 구분한다).
     [FILTER]
         Name          modify
         Alias         polaris_key_rename
         Match         polaris.logs
-        Add           app polaris
-        Rename        message _msg
         Rename        timestamp _time
 
-    # 2. (2026-09-16 리팩터 R1 로 삭제) 액세스 라인 파싱은 FILTER 3 의 Lua 안에서 한다.
-    #    Lua 필터 하나가 레코드마다 msgpack <-> Lua 변환을 한 번씩 하므로, 필터를 합쳐 그 왕복을 없앴다.
-    #    파싱 필드의 정수 키 두 개(http_status response_size)는 아래 목록의 맨 앞으로 옮겼다.
+    # 2. 저장하지 않을 필드를 Lua "앞에서" 지운다 (REVIEW-pipeline P1). Lua 필터는 레코드 전체를 Lua 테이블로
+    #    바꿨다가 되돌리는데, 예전에는 Lua 뒤에서 지우던 7개 필드(바이트의 약 32%)를 매번 함께 변환했다.
+    #    Lua 가 읽는 것은 loggerName level message _time mdc 뿐이다. 보류분·고아 레코드도 이 모양으로 나간다.
+    #    2026-09-16 (Kade): 스레드 이름·ID 는 추적 가치가 없어 제거. ndc 는 detail 300건 전부 "".
+    #    stream 은 모든 문서가 stdout (P6). 없는 키의 Remove_key 는 no-op 이라 CRI 봉투 이름은 방어적으로 나열한다.
+    #    polaris-logs-* 에만 적용된다 — tier 1(k8s-logs)과 shipper(VictoriaLogs)는 그대로 둔다.
+    [FILTER]
+        Name          record_modifier
+        Alias         polaris_field_trim
+        Match         polaris.logs
+        Remove_key    processName
+        Remove_key    loggerClassName
+        Remove_key    processId
+        Remove_key    logtag
+        Remove_key    time
+        Remove_key    stream
+        Remove_key    threadName
+        Remove_key    threadId
+        Remove_key    ndc
 
-    # 3. 액세스 라인 파싱 + 적재 판정 + 집계 + 리포트 생성 (Lua 함수 polaris_noise_filter, 정책 v5).
+    # (옛 FILTER 2 액세스 라인 파싱은 2026-09-16 리팩터 R1 로 아래 Lua 안에 합쳐졌다. 파싱 필드의 정수 키 두 개는
+    #  아래 목록의 맨 앞에 있다.)
+
+    # 3. 액세스 라인 파싱 + 적재 판정 + 집계 + 리포트 생성 (Lua 함수 polaris_noise_filter, 정책 v5 / 스키마 v6).
     #    Match 가 polaris.logs 가 아니라 polaris.* 인 이유: 리포트 틱도 "이 필터 인스턴스" 를
     #    지나야 한다. Lua 상태는 인스턴스 단위이고, 카운터는 이 인스턴스에 있다.
     #
@@ -345,62 +349,24 @@ config:
         call          polaris_noise_filter
         type_int_key  http_status response_size schema_version report_seq window_seconds access_seen access_kept access_counted role_keys_forced counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals resources_other resources_other_distinct principals_other windows_skipped app_dropped_total requests reads writes errors response_bytes last_read_bytes last_write_bytes commit_count commit_ms_sum commit_ms_min commit_ms_max dropped counted_404 app_dropped_404 held_orphans held_pending
 
-    # 4. 모든 레코드에서 저장 비용만 들고 답하는 것이 없는 필드, CRI 봉투 잔여물을 지운다.
-    #    없는 키의 Remove_key 는 no-op 이라 봉투 이름은 방어적으로 나열한다.
-    #    2026-09-16 (Kade): 스레드 이름·ID 는 추적 가치가 없어 제거. ndc 는 detail 300건 전부 "".
-    #    polaris-logs-* 에만 적용된다 — tier 1(k8s-logs)과 shipper(VictoriaLogs)는 그대로 둔다.
-    #    Lua 가 아니라 여기서 지우는 이유: Lua 에서 지우면 적재되는 모든 레코드가 반환 코드 2 로
-    #    재인코딩된다. 이 필터는 Lua 뒤라 보류분·고아 레코드에도 똑같이 적용된다.
-    [FILTER]
-        Name          record_modifier
-        Alias         polaris_field_trim
-        Match         polaris.logs
-        Remove_key    processName
-        Remove_key    loggerClassName
-        Remove_key    processId
-        Remove_key    logtag
-        Remove_key    time
-        Remove_key    threadName
-        Remove_key    threadId
-        Remove_key    ndc
-
   # ── 커스텀 파서 ──────────────────────────────────────────────────────────────────
   customParsers: |
-    # Polaris JSON 포맷 (logging.console.json: true) — tier 1 전용
-    [PARSER]
-        Name        polaris_json
-        Format      json
-        Time_Key    timestamp
-        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+    # (tier 1 전용 파서 셋 — Polaris JSON / Polaris 평문 / DataHub JSON — 은 쓰는 필터가 없어져 2026-09-16 삭제, P4.)
 
-    # Polaris 평문 폴백 — tier 1 전용
-    [PARSER]
-        Name        polaris_text
-        Format      regex
-        Regex       ^(?<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) (?<level>[A-Z]+)\s+\[(?<logger>[^\]]+)\] \((?<thread>[^\)]+)\) \[(?<requestId>[^\]]*)\] (?<message>.+)$
-        Time_Key    timestamp
-        Time_Format %Y-%m-%d %H:%M:%S,%L
-
-    # DataHub PatternLayout JSON — timestamp 필드는 text 라 Time_Key 로 쓰지 않는다
-    [PARSER]
-        Name        datahub_json
-        Format      json
-
-    # Polaris stdout JSON — tier 2/3 체인 전용. polaris_json 과 일부러 분리한다.
+    # Polaris stdout JSON — tier 2/3 체인 전용.
     #
     # Time_Key 를 두지 않는 것은 의도다 (2026-09-09). 원래 설정은
     #     Time_Key    timestamp
     #     Time_Format %Y-%m-%dT%H:%M:%S.%L%z
     #     Time_Keep   On
     # 이었고, 모든 레코드에서 파싱이 실패했다: 5,030건 처리, 변환 0,
-    # 다음 필터까지의 바이트 증가가 정확히 `Add app polaris` 분량(12 B/건)뿐. loggerName 이
+    # 다음 필터까지의 바이트 증가가 정확히 그때 붙이던 app 필드 분량(12 B/건)뿐. loggerName 이
     # 필드가 되지 않아 access_seen 이 0 으로 읽혔고, 헬스체크는 전부 초록이었다.
     # 의심 원인은 `.697818537Z` 의 9자리 소수부와 %L 의 불일치(미증명). 형식을 맞추는 대신
     # 실패 모드 자체를 없앴고, 잃는 것은 없다:
     #   * `timestamp` 가 소비되지 않으므로 필터 1 의 Rename timestamp _time 이 그대로 동작한다.
     #   * _time 이 문자열로 남아야 Lua 의 min/max_record_time(재생 탐지)이 동작한다.
     #   * @timestamp 는 페이로드가 아니라 CRI 봉투에서 온다 (실측 7ms 차이).
-    # polaris_json 에 Time_Key/Time_Keep 을 추가하지 말 것 — tier 1 이 키 소비에 의존한다.
     [PARSER]
         Name        polaris_stdout_json
         Format      json
@@ -408,15 +374,14 @@ config:
   # ── 출력: Mac 의 Docker OpenSearch ────────────────────────────────────────────────
   outputs: |
     # ══ TIER 1 — k8s-logs, 5일 ════════════════════════════════════════════
-    # 두 출력의 자격증명은 평문 그대로다 (active-issues #4). v4 와 무관하며 별도 변경으로 다룬다.
-    # OUTPUT 1: Polaris 컨테이너 로그, sequence 로 dedup 의도.
-    # ⚠ active-issues #18: Polaris 의 sequence 는 JSON 정수인데 Id_Key 는 문자열을 요구해서,
-    #   이 출력은 레코드를 "전부 버린다" (2026-09-09 실측: 13,737문서 / 13,737 sequence).
-    #   k8s-logs 의 Polaris 문서는 전부 OUTPUT 2 에서 온다. 수정 방향은
-    #   logging/PLAN-tier1-dedup-2026-09-09.md (결정 대기) — 여기서는 v3 그대로 둔다.
+    # 자격증명은 평문 그대로다 (active-issues #4). 별도 변경으로 다룬다.
+    # 2026-09-16 (REVIEW-pipeline P2): Polaris 전용 출력(Id_Key sequence)을 삭제했다. Polaris 의 sequence 는 JSON
+    #   정수라 문자열 Id_Key 조건에 맞지 않아 한 건도 색인하지 못했다 (active-issues #18, 13,737/13,737 실측).
+    #   Polaris 문서는 원래부터 아래 출력이 저장해 왔으므로 저장 결과는 같다. 중복 제거 키는 PLAN-tier1-dedup 참고.
+    # 모든 K8s 로그 — _id 자동 생성
     [OUTPUT]
         Name                opensearch
-        Match               kube.*benchmarks-polaris*
+        Match               kube.*
         Host                192.168.194.1
         Port                9200
         HTTP_User           admin
@@ -437,34 +402,10 @@ config:
         tls                 On
         tls.verify          Off
         Suppress_Type_Name  On
-        Id_Key              sequence
-        Write_Operation     upsert
-
-    # OUTPUT 2: 그 외 모든 K8s 로그 — _id 자동 생성
-    [OUTPUT]
-        Name                opensearch
-        Match               kube.*
-        Host                192.168.194.1
-        Port                9200
-        HTTP_User           admin
-        HTTP_Passwd         Str0ngP@ssw0rd123!
-        Index               k8s-logs
-        Type                _doc
-        Logstash_Format     On
-        Logstash_Prefix     k8s-logs
-        Logstash_DateFormat %Y.%m.%d
-        Time_Key            @timestamp
-        Time_Key_Format     %Y-%m-%dT%H:%M:%S
-        Include_Tag_Key     On
-        Tag_Key             flb_tag
-        Retry_Limit         3
-        Buffer_Size         False
-        tls                 On
-        tls.verify          Off
-        Suppress_Type_Name  On
         Generate_ID         On
 
-    # ══ TIER 2 — 선별된 Polaris 로그, 30일 ═══════════════════════════════
+    # ══ TIER 2 — 선별된 Polaris 로그 (보관: 모니터링팀 ISM, 권장 30일) ════════════
+    # 2026-09-16 (P6): 태그 필드(flb_tag, 모든 문서가 polaris.logs)를 붙이지 않는다. 원문 필드 이름은 message.
     # 여기에 들어오는 것 (정책 v5):
     #   * 액세스 라인: 404 를 뺀 4xx/5xx 전건, PUT/DELETE/PATCH 전건, management POST 전건
     #     (404 는 tier 3 의 counted_404 / errors_4xx 숫자로만 남는다)
@@ -487,8 +428,6 @@ config:
         Logstash_Format     On
         Logstash_Prefix     polaris-logs
         Logstash_DateFormat %Y.%m.%d
-        Include_Tag_Key     On
-        Tag_Key             flb_tag
         Retry_Limit         5
         Buffer_Size         False
         tls                 On
@@ -498,7 +437,8 @@ config:
         Trace_Error         On
         storage.total_limit_size 400M
 
-    # ══ TIER 3 — 윈도우 리포트 ═══════════════════════════════════════════
+    # ══ TIER 3 — 윈도우 리포트 (보관: 모니터링팀 ISM, 권장 365일) ═════════════════
+    # 스키마 v6 (2026-09-16, P7): 봉투에 app / level 없음, 사람이 읽는 문장(message)은 summary 행에만.
     # report_type: summary / resource / principal / app_dropped (v4 추가).
     # 성공한 조회는 "여기에만" 집계로 존재한다. 이 스트림을 잃으면 그 조회들이 있었다는 유일한
     # 기록을 잃는다.

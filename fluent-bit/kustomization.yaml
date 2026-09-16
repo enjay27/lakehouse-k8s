@@ -7,7 +7,7 @@
 #
 #   bash fluent-bit/apply-lua.sh
 #
-# 가 하는 일: context 가 orbstack 인지 확인 → Lua 테스트 v3–v5 + first-tick (LuaJIT) → kubectl apply -k fluent-bit/
+# 가 하는 일: context 가 orbstack 인지 확인 → Lua 테스트 v3–v6 + first-tick (LuaJIT) → kubectl apply -k fluent-bit/
 #   → kubectl rollout restart ds/benchmarks-fluent-bit → rollout status → 파드 로그의 filter 초기화 오류 확인.
 #
 # hot reload 는 쓰지 않는다 (2026-09-16 결정). Fluent Bit 은 Lua 를 시작할 때만 읽는다:

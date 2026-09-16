@@ -53,15 +53,17 @@ ge(){ n=$(grep -c -- "$2" "${4:-$R}"); if [ "$n" -ge "$3" ]; then printf '  PASS
 
 echo "=== the five silent traps ==="
 eq "3.1 both Parsers_File lines"            'Parsers_File'            2
-eq "3.2 Time_Keep On (or _time never exists)" 'Time_Keep   On'        1
+# 3.2 was "Time_Keep On must exist". Since 2026-09-09 the tier-2 parser has NO Time_Key; the one match is the
+# comment above polaris_stdout_json that quotes the old setting. Kept as a count so an edit to that block is noticed.
+eq "3.2 old Time_Keep quoted once, in a comment" 'Time_Keep   On'        1
 eq "3.3 no stale polaris.vlogs tag"         'polaris\.vlogs'          0
-eq "3.4 Time_Key only on tier 1's outputs"  'Time_Key            @timestamp' 2
+eq "3.4 Time_Key only on tier 1's output"   'Time_Key            @timestamp' 1
 eq "3.6 credential reaches the outputs"     'OS_PASSWORD'             3
 eq "3.7 Trace_Error on both new outputs"    'Trace_Error'             3
 
 echo
 echo "=== structure ==="
-eq "four opensearch outputs (2 tier-1 + 2 new)" 'Name  *opensearch'   4
+eq "three opensearch outputs (tier 1, 2, 3)" 'Name  *opensearch'   3
 eq "no http output in THIS release"         'Name  *http'             0
 eq "one report tick"                        'Name              dummy' 1
 eq "two distinct tail DBs"                  'DB  */var/log/flb_'      2
@@ -103,7 +105,7 @@ eq "one ConfigMap"                          '^kind: ConfigMap'        1 "$L"
 eq "name, no hash suffix"                   '^  name: polaris-fluent-bit-lua$' 1 "$L"
 eq "namespace"                              '^  namespace: datahub-hynix$' 1 "$L"
 eq "the data key"                           '^  polaris_access_log.lua: |' 1 "$L"
-eq "schema constant"                        'local SCHEMA_VERSION = 5' 1 "$L"
+eq "schema constant (v6)"                        'local SCHEMA_VERSION = 6' 1 "$L"
 ge "allow-list present"                     'APP_ALLOW'               1 "$L"
 ge "resource patterns present"              'RESOURCE_PATTERNS'       1 "$L"
 ge "404 request-id hold present"            'HOLD_MAX_SECONDS'        1 "$L"
@@ -118,9 +120,24 @@ eq "threadId removed in polaris_field_trim"   'Remove_key    threadId'   1
 eq "ndc removed in polaris_field_trim"        'Remove_key    ndc$'       1
 
 echo
-echo "=== tier 1 untouched ==="
-eq "tier-1 literals still present (#4 follow-up)" 'Str0ngP@ssw0rd123!' 2
-eq "k8s-logs prefix unchanged"              'Logstash_Prefix     k8s-logs' 2
+echo "=== 2026-09-16 pipeline review: P1 P2 P3 P4 P6 (schema v6) ==="
+# order(): line number of the first match of $1 must be smaller than that of $2
+order(){ a=$(grep -n -m1 -- "$2" "$R" | cut -d: -f1); b=$(grep -n -m1 -- "$3" "$R" | cut -d: -f1)
+         if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; then printf '  PASS  %-46s %s < %s\n' "$1" "$a" "$b";
+         else printf '  FAIL  %-46s %s / %s\n' "$1" "${a:-none}" "${b:-none}"; FAIL=$((FAIL+1)); fi; }
+order "P1 field trim runs BEFORE the Lua"       'Alias         polaris_field_trim' 'Alias         polaris_noise_filter'
+order "P1 key rename runs before the trim"      'Alias         polaris_key_rename' 'Alias         polaris_field_trim'
+eq "P6 stream trimmed"                          'Remove_key    stream'    1
+eq "P6/v6 no message rename, no app added"      'Rename        message\|Add           app' 0
+eq "P6 no tag field on tier 2 (only tier 1 has one)" 'Include_Tag_Key' 1
+eq "P2 no Id_Key output left"                   '^ *Id_Key ' 0
+eq "P3 Fluent Bit's own log excluded"           'Exclude_Path      /var/log/containers/benchmarks-fluent-bit-\*\.log' 1
+eq "P4 no tier-1 parser filters / definitions"  'polaris_json\|polaris_text\|datahub_json' 0
+
+echo
+echo "=== tier 1 ==="
+eq "tier-1 literal still present (#4 follow-up)" 'Str0ngP@ssw0rd123!' 1
+eq "k8s-logs prefix (one tier-1 output)"    'Logstash_Prefix     k8s-logs' 1
 eq "tier-1 tail path unchanged"             'Path              /var/log/containers/\*\.log' 1
 
 echo

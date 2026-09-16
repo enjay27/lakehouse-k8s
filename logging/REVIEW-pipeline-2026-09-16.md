@@ -3,7 +3,12 @@
 **Scope:** every step a Polaris log line goes through, from the container log file to OpenSearch. That covers Fluent Bit's
 input, chunk, filter and routing stages, the config (`fluent-bit/values.yaml`), the Lua, the index templates, the deploy
 path, the verification scripts and the docs.
-**Status: REVIEW ONLY. Nothing here is changed on the cluster or in the config.** Every proposal needs Kade's decision.
+**Status: DECIDED 2026-09-16 (Kade) — P1, P2, P3, P4, P6, P7, P8, P11, P12 applied in the repo as schema v6, NOT ROLLED (`#32`).**
+P5 not decided. P9 is practice (use step10/step11). P10: the shipper exists; Kade uninstalls it manually later.
+P6 decision on the raw access line: **keep it, renamed `message`** (and the report summary sentence renamed the same way); `app` dropped.
+Measurements: M1 unknown · M2 **~1,800 Fluent Bit docs per traffic notebook run** · M3 yes (tier-1 docs with `log` exist — they are
+lines no parser handled; P4's JSON filters repeat Merge_Log's decode and cannot succeed where it failed; see `#32` for the one gate on
+the Polaris text parser) · M4 yes · M5 out of scope (tier 2/3 only).
 The Lua itself was reviewed and refactored earlier the same day (`REVIEW-lua-refactor-2026-09-16.md`, `#31`, rolled).
 Retention/ISM is **out of scope**: the Monitoring team owns it (Kade, 2026-09-16).
 

@@ -7,7 +7,7 @@
 -- 틱 시각을 _now_override 로 30초씩 넘겨 윈도우를 닫으므로 WINDOW_SECONDS 가 30 이어야 한다.
 -- 운영값 1800 으로 되돌린 뒤에는 추출 결과에 sed 's/^local WINDOW_SECONDS = 1800/local WINDOW_SECONDS = 30/' 를 적용할 것.
 dofile("/tmp/polaris.lua")
-dofile("logging/scripts/test-raw-access-shim.lua")   -- 액세스 라인을 _msg 원문으로 넣는다 (분리형·병합형 공통)
+dofile("logging/scripts/test-raw-access-shim.lua")   -- 액세스 라인을 message 원문으로 넣는다 (분리형·병합형 공통)
 local T0 = 1788940800                 -- 30초 경계에 정렬된 시각
 local A  = "io.quarkus.http.access-log"
 local fails = 0
@@ -23,7 +23,7 @@ local function acc(m, p, st, sz, user)
            _time="2026-09-15T08:00:05.000Z" }
 end
 local function app(logger, msg, level)
-  return { loggerName=logger, level=level or "INFO", _msg=msg, _time="2026-09-15T08:00:05.000Z" }
+  return { loggerName=logger, level=level or "INFO", message=msg, _time="2026-09-15T08:00:05.000Z" }
 end
 local function feed(r) local code = polaris_noise_filter("polaris.logs", 0, r); return code end
 local function tick(t)
@@ -57,7 +57,7 @@ check("  두 번째도 버림",                   feed(app(HANDLER,"Initializing
 check("모르는 logger INFO 버림",           feed(app("org.example.New", "hello")), -1)
 check("모르는 logger WARN 은 적재",         feed(app("org.example.New", "careful", "WARN")), 0)
 check("모르는 logger ERROR 는 적재",        feed(app("org.example.New", "boom", "ERROR")), 0)
-check("loggerName 없는 레코드 버림",        feed({ level="INFO", _msg="x" }), -1)
+check("loggerName 없는 레코드 버림",        feed({ level="INFO", message="x" }), -1)
 
 print("== 자격증명 가드 ==")
 local masked = app(ADMIN, "Created new principal\n    credentials: class X {\n        clientSecret: *\n    }")
@@ -65,8 +65,8 @@ check("마스킹된 시크릿: 적재, 변경 없음(0)", feed(masked), 0)
 check("  secret_redacted 없음",            masked.secret_redacted, "nil")
 local leaked = app(ADMIN, "Created new principal\n        clientId: abc\n        clientSecret: s3cr3tValue\n")
 check("평문 시크릿: 적재, 변경됨(2)",       feed(leaked), 2)
-check("  값이 치환됨",                      leaked._msg:find("s3cr3tValue", 1, true) == nil, true)
-check("  <redacted> 로",                    leaked._msg:find("clientSecret: <redacted>", 1, true) ~= nil, true)
+check("  값이 치환됨",                      leaked.message:find("s3cr3tValue", 1, true) == nil, true)
+check("  <redacted> 로",                    leaked.message:find("clientSecret: <redacted>", 1, true) ~= nil, true)
 check("  secret_redacted=true",            leaked.secret_redacted, true)
 
 print("== 2a: 커밋 시간 수확 ==")
@@ -95,7 +95,7 @@ check("  commit_ms_min",           R[T] and R[T].commit_ms_min, 10)
 check("  commit_ms_max",           R[T] and R[T].commit_ms_max, 57)
 check("  requests 는 액세스만",     R[T] and R[T].requests, 1)
 check("  avg 필드는 저장 안 함",     R[T] and R[T].commit_ms_avg, "nil")
-check("  _msg 에 min/avg/max",      R[T] and R[T]._msg:find("commits 3 (min/avg/max 10/29/57 ms)", 1, true) ~= nil, true)
+check("  v6: resource 행에 문장 없음",  R[T] and (R[T]._msg or R[T].message), "nil")
 check("view 행에 커밋",            R[V] and R[V].commit_count, 1)
 check("  resource_kind view",      R[V] and R[V].resource_kind, "view")
 check("a.b → a%1Fb, 요청 행과 같은 키", R[T2] and R[T2].commit_count, 1)
@@ -114,7 +114,7 @@ check("loggerName 없음 → '-'",       D["-"] and D["-"].dropped, 1)
 check("IcebergCatalog 8줄 (커밋 7 + Refreshing 1)", D[ICAT] and D[ICAT].dropped, 8)
 check("허용 logger 는 app_dropped 에 없음", D[ADMIN], "nil")
 check("summary.app_dropped_total",  r1.summary.app_dropped_total, 12)
-check("schema_version 5 (v5 파일에서도 v4 동작 유지)", r1.summary.schema_version, 5)
+check("schema_version 6 (v6 파일에서도 v4 동작 유지)", r1.summary.schema_version, 6)
 check("carried_rows 필드 없음",       r1.summary.carried_rows, "nil")
 
 print("== 불변식 ==")

@@ -1,4 +1,6 @@
-# HANDOFF — refactored v5 is live; the pipeline review awaits decisions. Start at §3 step 1.
+# HANDOFF — refactored v5 is live; schema v6 (review decisions) is written and waits for its roll. Start at §3 step 3.
+
+> **Update 2026-09-16 (later):** steps 1–2 done — Kade decided P1 P2 P3 P4 P6/7 P8 P11/12 (M2 ~1,800 self-log docs/run, M3 yes, M4 yes, M5 out of scope). Written as schema v6, `active-issues.md` **#32** has the gate and the roll. P11 scripts moved to `logging/scripts/attic/`.
 
 **Written 2026-09-16 (late KST) at the end of the Cowork session that refactored and rolled the Lua, removed the thread
 fields and reviewed the whole pipeline (commits `5315e0d`..this one).**
@@ -41,10 +43,10 @@ Docs index: [`README.md`](README.md).
 |---|---|---|---|---|
 | **1** | **Review measurements M1–M5** (`REVIEW-pipeline` §4, read-only): skip-log count on OUTPUT 1, Fluent Bit self-ingest volume, `log`-field docs in tier 1, shipper still installed?, index sizes | K run · C read | — | numbers filed against P2/P3/P4/P8/P10 |
 | **2** | **Decide review items** — P1 (trim before Lua) + P6 constants, P2/P3/P4 (tier 1), P5 (one deploy unit), P6 `_msg`, P7 report `_msg`, P8 mappings, P10 shipper, P11 script moves | K decide · C write | 1 for P2–P4, P8, P10 | decisions recorded; accepted items planned |
-| 3 | **P1 + P6-constants roll** (tier 2 values only) while windows are still 30 s: step2 → `helm upgrade` → step3 → traffic → step10/11 | C write · K roll | 2 | report rows and detail-by-logger unchanged; stored field list minus the removed constants |
+| 3 | **Roll schema v6 (`#32`)** — Lua + values + templates, while windows are still 30 s: gate (P4 `logger` count) → `apply-lua.sh --no-restart` → step2 → `helm upgrade` → step3 → traffic → step3 → step12 + step9 → step10/11 | C wrote · K roll | 2 ✔ | report counts as before (355/200/155), detail 200/22/78; step3 field checks PASS; step9/12 PASS |
 | 4 | **TODO 2.5 — `WINDOW_SECONDS` 30 → 1800** (Lua-only, `apply-lua.sh`). Do everything that wants 30 s windows first (3, tier-1 items). After it a verification window costs 30 min; step10 takes `[window_seconds]` 1800 | C write · K apply | 3 (preferably) | summary `window_seconds` 1800, `window_start` on :00/:30, step11 PASS on one 1800 s window |
 | 5 | **TODO 2.7 — delete the 30 s-window `polaris-report-*` indices.** *Destructive: explicit OK at execution.* Tell the Monitoring team they are verification data | K | 4 | only 1800 s report indices remain |
-| 6 | **Tier-1 roll** for accepted P2/P3/P4 (node-wide: tier 1 must still index afterwards) | C write · K roll | 1, 2 | step3 section 4 PASS; M1–M3 re-read |
+| 6 | ~~Tier-1 roll~~ **folded into step 3** (P2/P3/P4 are in the same values change) | — | — | step3 section 4 PASS (tier 1 still indexing) |
 | 7 | **Phase 3** (plan §3): 3.1 load test (also measures `#31` and P1 CPU) · 3.2 row caps · 3.3 one-day size · 3.4 one vs two prod indices · 3.5 GitOps port (decide P5 first) · 3.6 tier-1 credentials to a Secret (`#4`) · 3.7 prod Polaris log level / replicas · 3.8 dashboards and alerts (hand the P12 buffer-drop metrics to the Monitoring team) | see plan | 4 for 3.3/3.8 | see plan |
 | 8 | `#24` upstream report (four NPEs) — **Kade's call** | K | — | filed or declined |
 | 9 | Docs: `polaris-logging.drawio` is still pre-v4 (two Lua filters, no report tick detail) | C | — | diagram matches review §1 |

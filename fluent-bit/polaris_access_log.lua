@@ -1,5 +1,5 @@
 -- =====================================================================================
--- polaris_access_log.lua — Polaris 감사 로그 Fluent Bit Lua 필터 (정책 v5 / 리포트 스키마 v5)
+-- polaris_access_log.lua — Polaris 감사 로그 Fluent Bit Lua 필터 (정책 v5 / 리포트 스키마 v6)
 -- =====================================================================================
 --
 -- 함수 하나, FILTER 하나:
@@ -12,6 +12,15 @@
 --
 -- 런타임: Fluent Bit 내장 LuaJIT (Lua 5.1 문법). `//`, `table.unpack`, 정수 나눗셈 등
 -- 5.3+ 기능은 쓰지 않는다. 테스트는 luajit / lua5.1 로 돌린다.
+--
+-- ── v6 (2026-09-16, logging/REVIEW-pipeline-2026-09-16.md P6/P7, 결정: Kade) ────────────────
+--   1. 메시지 필드 이름: 입력도 저장도 `message` (Polaris JSON 원래 이름). values.yaml 의
+--      `Rename message _msg` 를 없앴다. 상세 인덱스의 원문 라인은 `message` 로 남는다 (값은 그대로).
+--   2. 리포트: 요약 행에만 사람이 읽는 문장(`message`)을 둔다. resource / principal / app_dropped 행의
+--      문장은 같은 문서의 숫자 필드를 되풀이할 뿐이라 없앴다 (리포트 바이트의 약 25%).
+--   3. 리포트 봉투에서 상수 `app` / `level` 제거 — 인덱스가 스트림을 구분하고, 리포트 문서 판별은
+--      `report_type` 이 한다.
+--   정책(무엇을 적재·집계하는가)은 v5 와 같다. 필드가 사라지므로 스키마는 6.
 --
 -- ── v5 리팩터 (2026-09-16, logging/REVIEW-lua-refactor-2026-09-16.md) ─────────────────
 --   정책·리포트 스키마는 v5 그대로 (필드의 의미가 바뀌지 않았다). 바뀐 것:
@@ -56,12 +65,12 @@
 -- ─────────────────────────────────────────────────────────────────────────────────────
 -- loggerName 이 io.quarkus.http.access-log 인 레코드만 파싱한다.
 --
--- 입력 _msg 형식 (Quarkus 패턴 %h %l %u %t "%r" %s %b):
+-- 입력 message 형식 (Quarkus 패턴 %h %l %u %t "%r" %s %b):
 --   192.168.194.1 - root [03/Sep/2026:06:37:47 +0000] "DELETE /api/... HTTP/1.1" 404 133
 --   client_ip     |  user   시각(버림)                 method  path   버전(버림) status size
 --                 %l, 항상 "-", 버림
 --
--- _msg 원문은 지우지 않는다. 파싱이 틀렸을 때 읽을 수 있는 유일한 근거다.
+-- message 원문은 지우지 않는다. 파싱이 틀렸을 때 읽을 수 있는 유일한 근거다 (결정: Kade 2026-09-16, P6).
 
 local ACCESS_LOGGER = "io.quarkus.http.access-log"
 
@@ -73,7 +82,7 @@ local PATTERN = '^(%S+) %S+ (%S+) %[[^%]]*%] "(%u+) (%S+)[^"]*" (%d+) (%S+)'
 -- 조용히 실패하지 않는다. 이 logger 의 라인이 파싱되지 않는다는 것은 로그 패턴이 바뀌었다는
 -- 뜻이고, access_log_parse_error:true 로 찾을 수 있어야 한다.
 local function parse_access(record)
-    local msg = record["_msg"]
+    local msg = record["message"]
     local ip, user, method, path, status, size
     if type(msg) == "string" then
         ip, user, method, path, status, size = string.match(msg, PATTERN)
@@ -135,7 +144,6 @@ end
 
 -- ── 튜닝 값 ────────────────────────────────────────────────────────────────────────────
 local REPORT_TAG     = "polaris.report"
-local REPORT_APP     = "polaris-shipper-report"
 
 -- 스키마 버전. 필드의 "의미" 가 바뀌면 올린다. 모든 대시보드/쿼리는 이 값으로 필터할 것.
 --   v3 (2026-09-09): last_read_bytes/last_write_bytes, api_kind, grant 의 롤 행 귀속.
@@ -143,9 +151,10 @@ local REPORT_APP     = "polaris-shipper-report"
 --                    zero-carry 제거(carried_rows 삭제), summary 에 app_dropped_total 추가.
 --   v5 (2026-09-16): 404 집계만 + 같은 요청의 앱 로그 폐기, summary 에 counted_404 /
 --                    app_dropped_404 / held_pending / held_orphans 추가, register 분류.
+--   v6 (2026-09-16): 봉투에서 app / level 제거, 문장 필드는 요약 행에만 `message` 로 (행의 `_msg` 제거).
 -- 새 숫자 필드는 반드시 values.yaml FILTER 3 의 type_int_key 에도 넣어야 한다.
 -- 빠지면 문자열로 저장되고, 숫자 범위 쿼리가 "조용히" 0건을 반환한다.
-local SCHEMA_VERSION = 5
+local SCHEMA_VERSION = 6
 
 -- 리포트 윈도우 길이(초). values.yaml 의 틱 INPUT Interval_Sec 과 짝이다.
 -- 정상 운영 1800 (매시 :00 / :30, KST 는 UTC+9 정수 시간이라 경계가 같다).
@@ -564,7 +573,7 @@ end
 -- 적재 직전 자격증명 가드. "*" (Polaris 마스킹) 가 아니면 값을 치환한다.
 -- 반환: 치환이 일어났으면 true.
 local function redact_secret(record)
-    local msg = record["_msg"]
+    local msg = record["message"]
     if type(msg) ~= "string" or not find(msg, "clientSecret", 1, true) then return false end
     local hit = false
     local out = msg:gsub(SECRET_PATTERN, function(prefix, value)
@@ -573,7 +582,7 @@ local function redact_secret(record)
         return prefix .. "<redacted>"
     end)
     if hit then
-        record["_msg"] = out
+        record["message"] = out
         record["secret_redacted"] = true
     end
     return hit
@@ -680,7 +689,7 @@ end
 --   resource     리소스 키별 1건 (요청 > 0 또는 커밋 있음).
 --   principal    호출 주체별 1건 (요청 > 0).
 --   app_dropped  버린 logger 별 1건 (dropped > 0). zero-carry 없음 — 추이가 아니라 헬스 신호.
--- level 은 INFO 가 아니라 "REPORT" 로 둔다. 심각도가 아니라 스트림 선택자다.
+-- v6: 봉투에 app / level 없음 (인덱스가 스트림을, report_type 이 문서 종류를 가른다). 문장은 요약 행에만.
 -- summary 가 배열의 첫 원소다. 필드는 행을 모두 돈 뒤에 채운다 (같은 테이블 참조).
 local function build_report(idx, windows_skipped)
     local starts, ends = iso(idx * WINDOW_SECONDS), iso((idx + 1) * WINDOW_SECONDS)
@@ -688,8 +697,7 @@ local function build_report(idx, windows_skipped)
     local host = os.getenv("HOSTNAME") or "unknown"
 
     local function base(kind)
-        return { app = REPORT_APP, level = "REPORT",
-                 schema_version = SCHEMA_VERSION, report_type = kind,
+        return { schema_version = SCHEMA_VERSION, report_type = kind,
                  report_seq = report_seq, hostname = host,
                  window_start = starts, window_end = ends,
                  window_seconds = WINDOW_SECONDS, _time = ends }
@@ -725,24 +733,6 @@ local function build_report(idx, windows_skipped)
             e.commit_ms_min    = r.commit_ms_min
             e.commit_ms_max    = r.commit_ms_max
 
-            local extra = ""
-            if r.last_read_bytes ~= nil or r.last_write_bytes ~= nil then
-                extra = string.format(", last read %s, last write %s",
-                    r.last_read_bytes  and tostring(r.last_read_bytes)  or "-",
-                    r.last_write_bytes and tostring(r.last_write_bytes) or "-")
-            end
-            if r.commit_count ~= nil then
-                -- 평균은 표시용으로만 _msg 에 쓴다. 필드로 저장하지 않는다 — 평균끼리는
-                -- 합칠 수 없다. 기간 평균은 항상 sum(commit_ms_sum) / sum(commit_count).
-                extra = extra .. string.format(", commits %d (min/avg/max %d/%d/%d ms)",
-                    r.commit_count, r.commit_ms_min,
-                    floor(r.commit_ms_sum / r.commit_count + 0.5), r.commit_ms_max)
-            end
-            e._msg = string.format(
-                "seq=%d resource %s (%s/%s): %d requests, %d reads, %d writes, "
-                .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes%s",
-                report_seq, key, e.api_kind, e.resource_kind, r.requests, r.reads, r.writes,
-                r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes, extra)
             out[#out + 1] = e
             -- distinct_resources 는 "요청 > 0" 인 행만 센다. 커밋만 있는 행은 제외.
             if r.requests > 0 then n_active_res = n_active_res + 1 end
@@ -756,11 +746,6 @@ local function build_report(idx, windows_skipped)
         e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
         e.errors_4xx, e.errors_5xx, e.auth_denied = r.errors_4xx, r.errors_5xx, r.auth_denied
         e.response_bytes = r.response_bytes
-        e._msg = string.format(
-            "seq=%d principal %s: %d requests, %d reads, %d writes, "
-            .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes",
-            report_seq, user, r.requests, r.reads, r.writes,
-            r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes)
         out[#out + 1] = e
         n_active_pri = n_active_pri + 1
     end
@@ -770,7 +755,6 @@ local function build_report(idx, windows_skipped)
         local e = base("app_dropped")
         e.logger_name = name
         e.dropped     = n
-        e._msg = string.format("seq=%d app_dropped %s: %d lines", report_seq, name, n)
         out[#out + 1] = e
     end
 
@@ -804,7 +788,7 @@ local function build_report(idx, windows_skipped)
     s.min_record_time     = counts.min_time
     s.max_record_time     = counts.max_time
     s.partial_window      = counts.partial and "true" or "false"
-    s._msg = string.format(
+    s.message = string.format(
         "polaris shipper report seq=%d@%s %s..%s: %d access lines, %d kept, "
         .. "%d counted (%d read, %d POST, %d 404), %d errors kept (%d 4xx, %d 5xx, "
         .. "%d denied), %d resources, %d principals, %d app lines dropped, %d bytes, "
@@ -902,7 +886,7 @@ function polaris_noise_filter(tag, timestamp, record)
     if not is_access then
         -- 2a. 커밋 시간은 버리기 전에 수확한다.
         if logger == COMMIT_LOGGER then
-            count_commit(record["_msg"])
+            count_commit(record["message"])
         end
         -- 2b. 허용 목록이면 적재 — 요청 ID 가 있으면 액세스 라인까지 보류.
         if APP_ALLOW[logger] then

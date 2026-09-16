@@ -18,7 +18,7 @@
 | 인덱스 | `polaris-logs-YYYY.MM.DD` (상세) · `polaris-report-YYYY.MM.DD` (요약) |
 | 보관 기간 | 상세 **30일** · 요약 **365일** (권장값, §5.3). **보관 정책(ISM) 작성·적용은 모니터링팀 담당** (2026-09-16) |
 | 요약 주기 | 30분 (`WINDOW_SECONDS` 1800). 검증 중에는 30초 |
-| 필터 정책 | **정책 v5 / 리포트 스키마 v5** — 2026-09-16 적용 (같은 날 Lua 리팩터까지 롤, §9.1) |
+| 필터 정책 | **정책 v5 / 리포트 스키마 v5** — 2026-09-16 적용 (같은 날 Lua 리팩터까지 롤, §9.1) · **스키마 v6 작성됨, 미적용** (필드 이름 `message`, 리포트 봉투 정리, 파이프라인 재검토 반영) |
 | 문서 상태 | 로컬 환경(OrbStack) 적용 · **v5 롤·검증 완료 (2026-09-16)** (404 집계, Lua ConfigMap, hot reload 없음) · **Lua 리팩터 롤·검증** (Lua FILTER 2개 → 1개) · 상세 인덱스에서 `threadName`/`threadId`/`ndc` 제거. 남은 단계는 §10, 파이프라인 전체 재검토는 `logging/REVIEW-pipeline-2026-09-16.md` |
 
 ### 현재 상태와 목표
@@ -41,6 +41,7 @@
 | v3 | 2026-09-09 | `last_read_bytes` / `last_write_bytes`, `api_kind`, grant 를 롤 행으로 접기 |
 | **v4** | **2026-09-15** | 애플리케이션 로그 허용 목록, `app_dropped`, 테이블 커밋 시간 `commit_ms_*`, 요청 0 행 제거, 자격증명 가드 |
 | v5 | 2026-09-16 (롤, 검증) | **404 집계만** + 같은 `requestId` 의 앱 로그 폐기 (`counted_404`, `app_dropped_404`, `held_orphans`, `held_pending`), `/namespaces/{ns}/register` 분류, Lua 를 별도 ConfigMap 으로 배포 (hot reload 없음, 재시작으로 반영) |
+| v6 | 2026-09-16 (작성, **미적용**) | 정책 동일. 원문 필드 이름 `_msg` → **`message`** (상세·요약), 리포트 봉투에서 `app`/`level` 제거, 문장은 summary 행에만. 파이프라인: 저장 안 할 필드를 Lua 앞에서 제거, `flb_tag`·`stream`·`app` 상수 필드 제거, tier 1 의 죽은 출력·자기 로그 수집·빈 파서 필터 제거, 템플릿의 문자열을 `.keyword` 전용으로 (`logging/REVIEW-pipeline-2026-09-16.md` P1–P8) |
 | v5 리팩터 | 2026-09-16 (롤, 검증) | **스키마·정책 동일.** 액세스 라인 파싱을 판정 필터에 통합 (Lua FILTER 2개 → 1개), 리소스 분류 가속, 기동 직후 첫 틱 이전 레코드도 집계 (그 윈도우는 `partial_window: "true"`). 상세 인덱스에서 `threadName`·`threadId`·`ndc` 제거. 리팩터 전후 같은 트래픽의 요약 수치 동일 |
 
 ---
@@ -162,6 +163,7 @@ FILTER 였다. Lua FILTER 는 레코드마다 전체를 Lua 테이블로 변환�
 | `response_size` | `132` | 숫자형. CLF 의 `-` 는 0 |
 | `mdc.requestId` | `bbe6f50a-…_…043` | **요청 ID. 같은 요청의 예외·권한 로그와 조인하는 키** (§3.2, §3.3) |
 | `access_log_parse_error` | `true` | 파싱 실패 시에만 존재. **로그 패턴 변경 감지용** |
+| `message` | 위 원문 라인 | **원문 그대로 보존** (결정: Kade 2026-09-16). 스키마 v6 부터 이름이 `message` (이전 `_msg`) |
 
 ### 3.2 [INFO] Runtime Exception — "왜 실패했나"
 
@@ -347,6 +349,9 @@ polaris shipper report seq=4@benchmarks-fluent-bit-rvm49 2026-09-15T09:19:30Z..2
 
 ### 4.2 리소스 요약 (`report_type: resource`)
 
+> **v6 부터** resource / principal / app_dropped 행에는 아래와 같은 문장이 없다 — 같은 문서의 숫자 필드를 되풀이할 뿐이라
+> 제거했다 (리포트 용량의 약 25%). 문장은 summary 행의 `message` 에만 남는다. 아래 예시는 필드 값을 읽는 법으로 본다.
+
 ```
 seq=4 resource /api/management/v1/catalogs/apimatrix1789463971_cat/catalog-roles/apimatrix1789463971_shared (management/catalog-role): 50 requests, 25 reads, 25 writes, 0 errors (0 4xx, 0 5xx, 0 denied), 16205 bytes, last read 1254, last write -
 seq=4 resource /api/catalog/v1/apimatrix1789463971_cat/namespaces/probe_ns/tables/probe_tbl (catalog/table): 0 requests, 0 reads, 0 writes, 0 errors (0 4xx, 0 5xx, 0 denied), 0 bytes, commits 1 (min/avg/max 57/57/57 ms)
@@ -385,15 +390,15 @@ seq=4 app_dropped org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandl
 헬스 신호**다 — 처음 보는 `org.apache.polaris.service.*` logger 가 나타나면 Polaris 가 새 로그를 내기
 시작했다는 뜻이고, 허용 목록 검토 대상이다 (§7.5).
 
-### 4.5 스키마 필드 정의 (v5)
+### 4.5 스키마 필드 정의 (v6 — v5 와의 차이는 봉투와 문장 필드뿐)
 
 **공통 봉투** — 네 종류 모두.
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
-| `app` | string | `polaris-shipper-report` |
-| `level` | string | 항상 `REPORT`. 심각도가 아니라 스트림 선택자 |
-| `schema_version` | int | **5** (v4 롤 중에는 4). 항상 필터에 포함 |
+| ~~`app`~~ | string | **v6 에서 제거.** v5 까지 `polaris-shipper-report` |
+| ~~`level`~~ | string | **v6 에서 제거.** v5 까지 항상 `REPORT`. 리포트 문서 판별은 `report_type` 으로 |
+| `schema_version` | int | **6** (v5 롤 중에는 5). 항상 필터에 포함 |
 | `report_type` | string | `summary` / `resource` / `principal` / `app_dropped` |
 | `report_seq` | int | **파드 단위** 일련번호. 파드 교체 시 리셋 → `hostname` 과 함께 사용 |
 | `hostname` | string | Fluent Bit 파드명 (Polaris 파드 아님) |
@@ -418,6 +423,7 @@ seq=4 app_dropped org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandl
 | `resources_other` / `resources_other_distinct` / `principals_other` | 행 상한(리소스 500 / principal 200) 초과분 |
 | `role_keys_forced` | 오류 요청이 강제로 만든 롤 행 수 (100 = 상한 도달) |
 | `windows_skipped` | 틱 누락으로 열리지 못한 윈도우 수 |
+| `message` | **v6.** 사람이 읽는 윈도우 요약 문장 (v5 까지 `_msg`, 모든 행에 있었음) |
 | `min_record_time` / `max_record_time` | 윈도우 레코드의 최소/최대 시각. 트래픽 없으면 **필드 없음** |
 | ~~`carried_rows`~~ | **v4 에서 삭제** |
 
@@ -481,12 +487,15 @@ seq=4 app_dropped org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandl
 사고다 — `polaris-report-2026.09.10` 에서 `min_record_time` 이 `text` 로 굳어 날짜 범위 쿼리가 영구히
 불가능해졌다.
 
-`logging/opensearch/polaris-report-template.json` (요약 인덱스용, **작성됨·미적용**):
+`logging/opensearch/polaris-report-template.json` (요약 인덱스용, **적용됨** 2026-09-16 · v6 매핑은 작성됨·미적용):
 
 - `min_record_time`, `max_record_time` → `date` (`ignore_malformed: true`)
 - 모든 정수 카운터 → `long` — v4 의 `app_dropped_total`, `dropped`, `commit_count`, `commit_ms_sum/min/max`
   포함. `carried_rows` 는 같은 인덱스의 v3 문서 때문에 매핑에 남긴다.
 - 문자열 필드는 동적 매핑(`text` + `.keyword`)을 유지한다 — 기존 쿼리·게이트가 `.keyword` 에 의존.
+- **v6 (2026-09-16, P8):** 선언하지 않은 문자열은 `dynamic_templates` 로 `text`(`index: false`) + `.keyword` 가 된다 — 쿼리 경로
+  (`resource.keyword` 등)는 그대로이고, 분석 색인은 만들지 않는다. **새 인덱스에서는 문자열을 반드시 `.keyword` 로 조회한다**
+  (맨 필드명 조회는 0건). `message` 는 전문 검색 가능한 `text`.
 
 적용: `logging/scripts/step9-report-index-template.sh`. **새로 생성되는 인덱스부터** 적용된다 (소급 불가).
 
@@ -497,9 +506,9 @@ seq=4 app_dropped org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandl
 > **`term` 쿼리는 `.keyword` 필드에.** `text` 필드에 `term` 을 걸면 대소문자만으로 매치가 사라지고,
 > 쿼리는 **0건을 반환하며 조용히 성공**한다 — 검증 게이트가 통과한 것처럼 보인다.
 
-상세 인덱스(`polaris-logs-*`)의 템플릿은 아직 없다. `http_status`, `response_size` 는 Fluent Bit 의
-`type_int_key` 로 정수로 들어가므로 동적 매핑으로도 `long` 이 되지만, 인덱스를 새로 여는 첫 문서가
-애플리케이션 로그일 수 있으므로 **상세용 템플릿 작성을 권장**한다 (§10).
+상세 인덱스 템플릿 `logging/opensearch/polaris-logs-template.json` 은 **적용됨** (2026-09-16, `step12`): `http_status`,
+`response_size`, `sequence`, `exception.refId` → `long`, `_time` → `date`, 플래그 두 개 → `boolean`. **v6 매핑 (작성됨·미적용):**
+`message`·`exception.message` → 전문 `text`, `client_ip` → `ip`, 나머지 문자열은 요약 인덱스와 같은 `.keyword` 전용 규칙.
 
 ### 5.3 보관 정책 (ISM) — *모니터링팀 담당*
 
@@ -523,7 +532,7 @@ polaris-report-*  hot ──▶ delete (min_index_age: 365d)
 | 항목 | 값 |
 |---|---|
 | 이름 | `polaris-audit-YYYY.MM.DD` |
-| 구분 | 요약 = `level: REPORT` (또는 `report_type` 존재), 상세 = 그 외 |
+| 구분 | 요약 = `report_type` 존재 (v6 부터 `level: REPORT` 없음), 상세 = 그 외 |
 | 보관 | **30일** — 한 인덱스에 두 보관 기간을 둘 수 없으므로 상세 기준 |
 | 템플릿 | 상세·요약 필드를 **하나의 템플릿에 모두** 선언 (동적 매핑 사고 위험이 2개 구성보다 크다) |
 | 변경 | Fluent Bit OUTPUT 두 개의 `Logstash_Prefix` 를 `polaris-audit` 로. 필터·Lua 는 변경 없음 |
@@ -879,7 +888,7 @@ v4 스크립트가 함께 돌아온다. **엔진이 멈췄다면** 좋은 스크
 | 15 | 공용 인덱스 tier 1 출력의 평문 자격증명 | 설정 파일에 비밀번호 | 별도 변경 (Secret 사용자 권한 확인 후) |
 | 16 | Polaris 콘솔 로그 레벨 | DEBUG 가 켜지면 수집·필터 부하만 늘고 저장은 안 됨 | 운영 값 확인 |
 | 17 | Lua 와 config 동시 변경 순서 | 순서가 틀리면 전체 수집 정지 또는 전 액세스 라인 파싱 실패 적재 | §9.1 위험 3 의 순서로 방지. 한 Helm 릴리스로 통합하는 안은 `REVIEW-pipeline-2026-09-16.md` P5 (결정 대기) |
-| 18 | 파이프라인 재검토 항목 | tier 1 죽은 출력·자기 로그 재수집, Lua 입력 필드 과다, 상수 필드 저장 등 | `REVIEW-pipeline-2026-09-16.md` P1–P12 (결정 대기) |
+| 18 | 파이프라인 재검토 항목 | tier 1 죽은 출력·자기 로그 재수집, Lua 입력 필드 과다, 상수 필드 저장 등 | **결정 (2026-09-16):** P1·P2·P3·P4·P6·P7·P8·P11·P12 적용 — 스키마 v6 로 작성, 롤 대기. P5 (한 릴리스 통합) 미결정, P10 shipper 는 Kade 가 수동 제거 예정 |
 
 **해결됨**
 

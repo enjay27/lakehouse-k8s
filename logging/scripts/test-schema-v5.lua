@@ -3,10 +3,10 @@
 --   cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua
 --   luajit logging/scripts/test-schema-v5.lua
 --
--- v3/v4 동작은 test-schema-v3.lua / test-schema-v4.lua 가 계속 검증한다 (schema_version 기대값 5).
+-- v3/v4 동작은 test-schema-v3.lua / test-schema-v4.lua 가 계속 검증한다 (schema_version 기대값 6).
 -- WINDOW_SECONDS 30 을 가정한다 (틱 _now_override 로 30초씩 넘긴다).
 dofile("/tmp/polaris.lua")
-dofile("logging/scripts/test-raw-access-shim.lua")   -- 액세스 라인을 _msg 원문으로 넣는다 (분리형·병합형 공통)
+dofile("logging/scripts/test-raw-access-shim.lua")   -- 액세스 라인을 message 원문으로 넣는다 (분리형·병합형 공통)
 local T0 = 1788940800
 local A  = "io.quarkus.http.access-log"
 local MAPPER = "org.apache.polaris.service.exception.IcebergExceptionMapper"
@@ -24,7 +24,7 @@ local function acc(rid, m, p, st, sz)
            _time="2026-09-16T00:00:05.000Z", _now_override=NOW }
 end
 local function app(rid, logger, msg, level)
-  return { loggerName=logger, level=level or "INFO", _msg=msg, mdc=rid and { requestId=rid } or nil,
+  return { loggerName=logger, level=level or "INFO", message=msg, mdc=rid and { requestId=rid } or nil,
            _time="2026-09-16T00:00:05.000Z", _now_override=NOW }
 end
 -- returns: code, list of records emitted (possibly empty)
@@ -101,7 +101,7 @@ NOW = T0 + 5
 print("== 윈도우 요약 ==")
 local r = tick(T0 + 31 + 30)
 local s = r.summary
-check("schema_version 5", s.schema_version, 5)
+check("schema_version 6", s.schema_version, 6)
 check("counted_404 (r404, r404b)", s.counted_404, 2)
 check("app_dropped_404 (2 보류 + 1 늦음)", s.app_dropped_404, 3)
 check("held_orphans", s.held_orphans, 1)

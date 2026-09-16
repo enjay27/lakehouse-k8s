@@ -15,6 +15,11 @@
 #     * if you already have a panel copy: python3 logging/scripts/devtools-json-fix.py in.json > out.json
 #       (restores valid JSON; the re-indentation inside multi-line strings cannot be undone).
 #
+# Schema v6 (2026-09-16): the raw Polaris line in polaris-logs-* and the summary sentence in polaris-report-* are
+# `message` (was `_msg`); report rows carry no app / level. Indices from before the roll keep the old names, so
+# requests spanning both list both. From the first index created after the v6 templates, query undeclared strings
+# through `.keyword` (the bare field is not indexed).
+#
 # Why not Discover → CSV: CSV keeps only the columns you picked (the v5 counters were missing), prints
 # numbers with thousands separators ("1,898"), and flattens arrays (exception.frames) into strings.
 # `_source` below is the document exactly as Fluent Bit indexed it — every field, original types.
@@ -50,7 +55,7 @@ GET polaris-report-*/_search?filter_path=hits.total,hits.hits._source
   },
   "_source": [ "@timestamp", "window_start", "window_end", "report_seq", "hostname", "schema_version",
                "access_seen", "access_kept", "access_counted", "counted_404", "app_dropped_404",
-               "errors_4xx", "errors_5xx", "held_orphans", "held_pending", "_msg" ],
+               "errors_4xx", "errors_5xx", "held_orphans", "held_pending", "_msg", "message" ],
   "sort": [ { "window_start": "asc" } ]
 }
 

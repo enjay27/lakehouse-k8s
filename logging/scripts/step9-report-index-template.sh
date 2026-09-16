@@ -55,13 +55,22 @@ except Exception as e:
 fail = 0
 def cmp(name, have):
     global fail
-    bad = [f for f, spec in want.items() if have.get(f, {}).get("type") != spec["type"]]
+    bad = [f for f, spec in want.items() if have.get(f, {}).get("type") != spec["type"]
+           or any(k in spec and have.get(f, {}).get(k) != spec[k] for k in ("index",))]
     print(f"  {'PASS' if not bad else 'FAIL'}  {name}: {len(want) - len(bad)}/{len(want)} fields typed as in the file")
     for f in bad: print(f"          {f}: want {want[f]['type']}, got {have.get(f, {}).get('type')}")
     fail += len(bad)
 print(f"  index_patterns={pats} priority={prio}")
 cmp("stored template", got)
 cmp("simulated new index", sim)
+# v6 (2026-09-16): undeclared strings are shaped by dynamic_templates -- compare them too.
+want_dt = json.load(open(sys.argv[1]))["template"]["mappings"].get("dynamic_templates", [])
+got_dt = json.loads(sys.argv[2])["index_templates"][0]["index_template"]["template"]["mappings"].get("dynamic_templates", [])
+sim_dt = json.loads(sys.argv[3])["template"]["mappings"].get("dynamic_templates", [])
+for name, have in (("stored dynamic_templates", got_dt), ("simulated dynamic_templates", sim_dt)):
+    same = json.dumps(have, sort_keys=True) == json.dumps(want_dt, sort_keys=True)
+    print(f"  {'PASS' if same else 'FAIL'}  {name}: {'as in the file' if same else '!= file: ' + json.dumps(have)[:300]}")
+    fail += 0 if same else 1
 for f in ("app_dropped_total", "dropped", "commit_count", "commit_ms_sum", "commit_ms_min", "commit_ms_max"):
     print(f"        v4 {f:<18} template={got.get(f, {}).get('type')}  simulated={sim.get(f, {}).get('type')}")
 sys.exit(1 if fail else 0)

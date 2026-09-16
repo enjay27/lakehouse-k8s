@@ -94,18 +94,31 @@ for idx in polaris-logs polaris-report; do
   else bad "${idx}-*: no answer (index missing, or 401 — check \${OS_PASSWORD} expanded)"; fi
 done
 
-# 2026-09-16: polaris_field_trim removes threadName / threadId / ndc. Only docs written AFTER the pod
-# started can prove it -- older docs in the same daily index still carry the fields.
+# 2026-09-16: fields that must NOT be on docs written after this pod started. Older docs in the same daily index still
+# carry them, so only the time filter makes this a check. #30 (thread/ndc), P1/P6 + schema v6 (_msg renamed to message,
+# app / stream / flb_tag constants gone), P7 (report envelope without app / level, sentence only on summary rows).
+count_since(){ "${OS[@]}" "${OS_URL}/$1/_count" -H 'Content-Type: application/json' \
+    -d "{\"query\":{\"bool\":{\"filter\":[{\"range\":{\"@timestamp\":{\"gt\":\"${START_T}\"}}}$2]}}}" 2>/dev/null \
+    | sed -n 's/.*"count":\([0-9]*\).*/\1/p'; }
+none_since(){ N=$(count_since "$1" "$2")
+    if [ "$N" = "0" ]; then ok "$1: 0 docs $3 since pod start"
+    elif [ -z "$N" ]; then huh "$1: could not count docs $3"
+    else bad "$1: $N docs $3 since pod start -- $4"; fi; }
 if [ -n "${START_T:-}" ]; then
-  for f in threadName threadId ndc; do
-    N=$("${OS[@]}" "${OS_URL}/polaris-logs-*/_count" -H 'Content-Type: application/json' \
-        -d "{\"query\":{\"bool\":{\"filter\":[{\"range\":{\"@timestamp\":{\"gt\":\"${START_T}\"}}},{\"exists\":{\"field\":\"${f}\"}}]}}}" 2>/dev/null \
-        | sed -n 's/.*"count":\([0-9]*\).*/\1/p')
-    if [ "$N" = "0" ]; then ok "polaris-logs-*: 0 docs with $f since pod start $START_T"
-    elif [ -z "$N" ]; then huh "polaris-logs-*: could not count docs with $f"
-    else bad "polaris-logs-*: $N docs with $f since pod start -- polaris_field_trim is not in effect"; fi
+  for f in threadName threadId ndc processName stream flb_tag app _msg; do
+    none_since "polaris-logs-*" ",{\"exists\":{\"field\":\"$f\"}}" "with $f" "the tier-2 trim / v6 rename is not in effect"
   done
-else huh "no container start time -- skipped the field-trim check"; fi
+  M=$(count_since "polaris-logs-*" ",{\"exists\":{\"field\":\"message\"}}")
+  if [ -n "$M" ] && [ "$M" -gt 0 ] 2>/dev/null; then ok "polaris-logs-*: $M docs carry message since pod start"
+  else huh "polaris-logs-*: ${M:-no answer} docs with message since pod start -- run traffic, then re-run"; fi
+  for f in app level _msg; do
+    none_since "polaris-report-*" ",{\"exists\":{\"field\":\"$f\"}}" "with $f" "the Lua is not schema v6"
+  done
+  none_since "polaris-report-*" ",{\"exists\":{\"field\":\"message\"}}],\"must_not\":[{\"term\":{\"report_type.keyword\":\"summary\"}}" \
+    "that are rows carrying message" "the Lua is not schema v6"
+  none_since "k8s-logs-*" ",{\"wildcard\":{\"kubernetes.pod_name.keyword\":\"benchmarks-fluent-bit-*\"}}" \
+    "from Fluent Bit's own pod (P3 Exclude_Path)" "Exclude_Path is not in effect"
+else huh "no container start time -- skipped the field checks"; fi
 
 echo
 echo "=== 6. Fluent Bit's own counters (port-forward 2020) ==="

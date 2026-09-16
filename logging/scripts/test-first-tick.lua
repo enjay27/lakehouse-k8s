@@ -20,10 +20,10 @@ local CAT = "/api/catalog/v1/cat1"
 -- 파드 기동: 틱보다 레코드가 먼저 온다 (Interval_Sec 5 → 최대 5초)
 polaris_noise_filter("polaris.logs", 0, acc("a", "GET", CAT .. "/namespaces/ns/tables/t", 200, T0 + 2))
 polaris_noise_filter("polaris.logs", 0, acc("b", "POST", CAT .. "/namespaces/ns/tables/t", 200, T0 + 2))
-polaris_noise_filter("polaris.logs", 0, { loggerName=MAPPER, level="INFO", _msg="Handling runtimeException x",
+polaris_noise_filter("polaris.logs", 0, { loggerName=MAPPER, level="INFO", message="Handling runtimeException x",
                                           mdc={ requestId="c" }, _time="2026-09-16T00:00:02.000Z", _now_override=T0 + 3 })
 polaris_noise_filter("polaris.logs", 0, acc("c", "GET", CAT .. "/namespaces/ns/tables/gone", 404, T0 + 3))
-polaris_noise_filter("polaris.logs", 0, { loggerName="org.x.Noise", level="INFO", _msg="n", _time="2026-09-16T00:00:03.000Z", _now_override=T0 + 3 })
+polaris_noise_filter("polaris.logs", 0, { loggerName="org.x.Noise", level="INFO", message="n", _time="2026-09-16T00:00:03.000Z", _now_override=T0 + 3 })
 -- 첫 틱 (같은 윈도우), 그리고 경계를 넘은 틱
 polaris_noise_filter("polaris.report", 0, { tick="x", _now_override=T0 + 4 })
 local code, _, out = polaris_noise_filter("polaris.report", 0, { tick="x", _now_override=T0 + 31 })

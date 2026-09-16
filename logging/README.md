@@ -1,4 +1,4 @@
-# `logging/` — which document to read (status as of 2026-09-16, late)
+# `logging/` — which document to read (status as of 2026-09-16, late — schema v6 written, not rolled)
 
 Most files here are dated working documents. They stay because the reasoning in them is still cited, but **only the
 first table describes the pipeline as it runs**. When a dated document disagrees with it, the first table wins.
@@ -17,7 +17,7 @@ first table describes the pipeline as it runs**. When a dated document disagrees
 | [`scripts/`](scripts/) | see *Scripts* below |
 | `../fluent-bit/values.yaml` · `../fluent-bit/polaris_access_log.lua` · `../fluent-bit/apply-lua.sh` | what is deployed, and how the Lua is rolled |
 
-Not in this repo on purpose: retention / ISM policies — **the Monitoring team owns them** (2026-09-16).
+Not in this repo on purpose: retention / ISM policies — **the Monitoring team owns them** (2026-09-16). What they need from us: [`NOTE-monitoring-team-handover-2026-09-16.md`](NOTE-monitoring-team-handover-2026-09-16.md).
 
 ## Dated reference — still useful, check against the current set
 
@@ -47,8 +47,8 @@ Not in this repo on purpose: retention / ISM policies — **the Monitoring team 
 
 | status | files |
 |---|---|
-| **live** | `step2-render-gate.sh` (render gate) · `step3-postupgrade.sh` (post-roll) · `step9-report-index-template.sh` · `step12-logs-index-template.sh` · `step10-v4-window-readout.sh` (one window, three sources) · `step11-replay-window.py` (replay; `POLARIS_LUA=` for a candidate) · `test-schema-v3/v4/v5.lua` · `test-first-tick.lua` · `test-raw-access-shim.lua` · `devtools-json-fix.py` |
-| **finished / superseded** (proposed move to `scripts/attic/`, `REVIEW-pipeline` P11) | `step0-preflight.sh` · `step4-report-readout.sh` · `step5-probe-apply-verify.sh` · `step6-tier2-readout.sh` · `step7-dedup-check.sh` · `step8-subset-proof.sh` · `test-polaris-filters.py` (tests the shipper's Lua) · `report_readout.py` (used by step4) |
-| harnesses | `candidates/diff-refactor.lua` · `bench-refactor.lua` · `bench-classify.lua` · `tier1-to-lua.py` |
+| **live** | `step2-render-gate.sh` (render gate) · `step3-postupgrade.sh` (post-roll) · `step9-report-index-template.sh` · `step12-logs-index-template.sh` · `step10-v4-window-readout.sh` (one window, three sources) · `step11-replay-window.py` (replay; `POLARIS_LUA=` for a candidate) · `test-schema-v3/v4/v5/v6.lua` · `test-first-tick.lua` · `test-raw-access-shim.lua` · `devtools-json-fix.py` |
+| **finished / superseded** — **moved to `scripts/attic/` 2026-09-16** (P11; old docs cite the old paths) | `step0-preflight.sh` · `step4-report-readout.sh` · `step5-probe-apply-verify.sh` · `step6-tier2-readout.sh` · `step7-dedup-check.sh` · `step8-subset-proof.sh` · `test-polaris-filters.py` (tests the shipper's Lua) · `report_readout.py` (used by step4) |
+| harnesses | `candidates/diff-v5-v6.lua` (v5 vs v6) · `diff-refactor.lua` · `bench-refactor.lua` · `bench-classify.lua` (pre-v6 scripts: they feed `_msg`) · `tier1-to-lua.py` |
 
 The step numbers are the order of old plans, not an order of use.

@@ -68,13 +68,21 @@ def cmp(name, have):
     global fail
     bad = [f for f, spec in want.items()
            if have.get(f, {}).get("type") != spec["type"]
-           or (spec.get("format") and have.get(f, {}).get("format") != spec["format"])]
+           or any(k in spec and have.get(f, {}).get(k) != spec[k] for k in ("format", "index", "ignore_malformed"))]
     print(f"  {'PASS' if not bad else 'FAIL'}  {name}: {len(want) - len(bad)}/{len(want)} declared fields as in the file")
     for f in bad: print(f"          {f}: want {want[f]}, got {have.get(f)}")
     fail += len(bad)
 print(f"  index_patterns={t.get('index_patterns')} priority={t.get('priority')}")
 cmp("stored template", got)
 cmp("simulated new index", sim)
+# v6 (2026-09-16): undeclared strings are shaped by dynamic_templates -- compare them too.
+want_dt = json.load(open(sys.argv[1]))["template"]["mappings"].get("dynamic_templates", [])
+got_dt = t["template"]["mappings"].get("dynamic_templates", [])
+sim_dt = json.loads(sys.argv[3])["template"]["mappings"].get("dynamic_templates", [])
+for name, have in (("stored dynamic_templates", got_dt), ("simulated dynamic_templates", sim_dt)):
+    same = json.dumps(have, sort_keys=True) == json.dumps(want_dt, sort_keys=True)
+    print(f"  {'PASS' if same else 'FAIL'}  {name}: {len(have)} entr{'y' if len(have)==1 else 'ies'} {'as in the file' if same else '!= file: ' + json.dumps(have)[:300]}")
+    fail += 0 if same else 1
 if overlapping:
     print(f"  NOTE  lower-priority templates also match polaris-logs-*: {overlapping} -- the simulate above is the merged result")
 sys.exit(1 if fail else 0)

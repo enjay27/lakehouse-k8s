@@ -33,7 +33,7 @@ ws = int(summary[0].get("window_seconds", 30))
 def q(s):
     return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "") + '"'
 
-# Tier-1 records carry the raw Polaris JSON: `message` is what tier 2 renames to `_msg`.
+# Tier-1 records carry the raw Polaris JSON; tier 2 keeps `message` under its own name since schema v6 (no rename).
 # The window is opened by one tick and closed by the next; record times are irrelevant to
 # attribution (the Lua counts into whichever window is open), so any T0 on the grid works.
 lines = [
@@ -56,11 +56,11 @@ lines = [
 ]
 for r in t1:
     rid = (r.get("mdc") or {}).get("requestId")
-    lines.append("F({loggerName=%s,level=%s,_msg=%s,_time=%s%s})" % (
+    lines.append("F({loggerName=%s,level=%s,message=%s,_time=%s%s})" % (
         q(r.get("loggerName", "")), q(r.get("level", "")), q(r.get("message", "")), q(r.get("@timestamp", "")),
         f",mdc={{requestId={q(rid)}}}" if rid else ""))
 lines.append(f'local _, _, o = polaris_noise_filter("polaris.report", 0, {{_now_override = T0 + {ws} + 1}})')
-lines.append('for _, x in ipairs(o) do local p = {} for k, v in pairs(x) do if k ~= "_msg" and k ~= "_time" then '
+lines.append('for _, x in ipairs(o) do local p = {} for k, v in pairs(x) do if k ~= "message" and k ~= "_msg" and k ~= "_time" then '
              'p[#p+1] = string.format("%q:%s", k, type(v) == "number" and tostring(v) or string.format("%q", tostring(v))) '
              'end end print("{" .. table.concat(p, ",") .. "}") end')
 lines.append('for k, v in pairs(KEPT) do print("KEPT\\t" .. k .. "\\t" .. v) end')

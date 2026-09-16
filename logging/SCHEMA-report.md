@@ -1,4 +1,4 @@
-# Report schema reference — v3 tables; v4 deployed 2026-09-15; **v5 deployed 2026-09-16 (current)**, refactored the same day without a schema change — see the end
+# Report schema reference — v3 tables; v4 deployed 2026-09-15; **v5 deployed 2026-09-16 (running)**; **v6 written 2026-09-16, not rolled** — see the end
 
 Read off `fluent-bit/values.yaml` (`build_report`, ~line 447) on 2026-09-09, not from intent.
 Three `report_type` values share one envelope and one `_time`, so `stats by (_time)` — or a terms
@@ -239,3 +239,23 @@ Tests: `test-schema-v3.lua`, `test-schema-v4.lua` (both now expect `schema_versi
 Tests: `test-schema-v3/v4/v5.lua` now feed raw `_msg` access lines through `logging/scripts/test-raw-access-shim.lua`;
 `test-first-tick.lua` covers the start-up counting. All run in `fluent-bit/apply-lua.sh`.
 
+---
+
+# v6 — written 2026-09-16, NOT ROLLED (`active-issues.md` #32, `REVIEW-pipeline-2026-09-16.md` P6/P7/P8)
+
+Decisions (Kade 2026-09-16). **Policy unchanged** — the same records are stored, counted and reported. The document shape changes:
+
+| change | field(s) | notes |
+|---|---|---|
+| removed from every row | `app`, `level` | constants; the index isolates the stream and `report_type` identifies a report doc. Single-index layout (§5.4 of the proposal) now tells reports apart by `report_type` |
+| renamed, summary only | `_msg` → **`message`** | the human sentence stays on `summary` rows |
+| removed from `resource` / `principal` / `app_dropped` | `_msg` | it only repeated the numeric fields of the same doc (~25 % of report bytes). The commit min/avg/max text went with it: mean = `sum(commit_ms_sum) / sum(commit_count)` |
+| `schema_version` | **6** | v5 and v6 rows share the day of the roll |
+
+Detail index (`polaris-logs-*`), same roll: the raw Polaris line is **`message`** (was `_msg`, value unchanged), no `app`,
+`stream`, `flb_tag`. Mappings for indices created after step9/step12 are re-run: undeclared strings are `text` with `index: false`
+plus the `.keyword` sub-field (query `.keyword`, never the bare name), `message` / `exception.message` full-text, `client_ip` `ip`.
+
+Tests: `test-schema-v6.lua` (document shape) plus v3/v4/v5/first-tick, all passing on LuaJIT 2.1 against the v6 script;
+`logging/candidates/diff-v5-v6.lua`: v5 vs v6 on real and fuzz input, 0 diffs after normalising only the intended changes.
+step11 on readouts `084100Z` and `144400Z`: PASS 67×34, detail 200 / 22 / 78.

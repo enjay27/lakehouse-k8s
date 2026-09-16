@@ -29,3 +29,16 @@ including core flow inside Fluent Bit. And need to up to date docs. After review
 - A first draft claimed application lines are ~95 % of Polaris output (a 09-04 VictoriaLogs-era figure with DEBUG SQL).
   Replaced with the current window's number: 365 of 720.
 - The proposal's own header still said "v4 applied, v5 not" while its status row said v5 verified. Both fixed.
+
+## Decisions and implementation (same night)
+- Kade: apply P1 P2 P3 P4 P6/7 P8 P11/12. M1 unknown, M2 ~1,800 docs per notebook run, M3 yes, M4 yes (manual uninstall later), M5 not a
+  concern (tier 2/3 only). Asked in-session: raw access line → keep, **renamed `message`**; `app` → drop.
+- Chose to rename the report summary sentence `_msg` → `message` as well, for one name across both indices (flagged to Kade).
+- Rename implemented by **not renaming** (Polaris' own key) instead of a second rename — one less operation, and the Lua reads `message`.
+- P4 with M3 = yes: the JSON parser filters are redundant by construction (same decode as Merge_Log); the Polaris text regex is not
+  provably dead, so `#32` carries a pre-roll count on its capture field `logger`.
+- P8 first draft made report `message` `index: false`; changed to indexed text because step3's `exists` check on it would error on
+  new indices. The `.keyword`-only design uses `text` + `index:false` so every existing `.keyword` query path survives across old and new
+  daily indices; caveat recorded (bare-name queries find nothing on new indices).
+- `json.dump` reformatted `polaris-report-template.json` (blank-line grouping lost) — content diff is the `_meta.v6`, `dynamic_templates`
+  and `message` entries only.

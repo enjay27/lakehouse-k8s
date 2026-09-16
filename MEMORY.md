@@ -13,8 +13,9 @@ no thread/ndc fields in `polaris-logs-*` (`#30`, rev 19). Verified on traffic 15
 **Rules:** Lua only → `apply-lua.sh`; values only → step2 → `helm upgrade` → step3; both → `apply-lua.sh --no-restart` → step2 →
 `helm upgrade`, no restart between. Readouts: `step10` + `step11`, not Dev Tools copies.
 
-**Next:** (1) review measurements M1–M5 (K) → (2) decide P1–P12 of [`REVIEW-pipeline`](logging/REVIEW-pipeline-2026-09-16.md) →
-(3) P1 roll while windows are 30 s → (4) 1800 s window → (5) delete 30 s report indices (explicit OK) → phase 3.
+**Written, not rolled:** `#32` schema v6 — `message` field, trim before Lua, tier-1 dead output / self-log / parsers removed, `.keyword`-only mappings. Gate + one-restart roll in `#32`.
+
+**Next:** (1) roll `#32` while windows are 30 s → (2) 1800 s window → (3) delete 30 s report indices (explicit OK) → phase 3. P5 undecided; shipper: Kade uninstalls.
 **ISM / retention: Monitoring team, not ours.** `#29` dropped.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**

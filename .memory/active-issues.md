@@ -5,6 +5,36 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#32 — Schema v6 + pipeline review P1/P2/P3/P4/P6/P7/P8/P11/P12: WRITTEN, NOT ROLLED. Lua and values change together.** 2026-09-16.
+Decisions (Kade, 2026-09-16): apply P1 P2 P3 P4 P6/7 P8 P11/12; keep the raw access line but **rename `_msg` → `message`**; drop `app`.
+M2 measured by Kade: ~1,800 Fluent Bit self-log docs per traffic notebook run. M3: tier-1 docs with a `log` field exist. M4: shipper
+exists, Kade uninstalls manually. M5/tier 1 sizing out of scope.
+- **Lua** (`fluent-bit/polaris_access_log.lua`, schema **6**): reads `message`; report rows lose `app`/`level`; sentence only on summary,
+  as `message`. Policy unchanged.
+- **values**: tier 2 = parser → modify(Rename timestamp _time only) → **record_modifier trim (+`stream`) BEFORE the Lua** → Lua; no
+  `Add app`, no `Rename message _msg`, no `Include_Tag_Key` on the tier-2 output. Tier 1: **OUTPUT 1 (`Id_Key sequence`) deleted**,
+  **`Exclude_Path /var/log/containers/benchmarks-fluent-bit-*.log`**, parser filters and definitions `polaris_json` / `polaris_text` /
+  `datahub_json` deleted.
+- **templates** (v6 mappings): undeclared strings `text` `index:false` + `.keyword`; `message`, `exception.message` text; `client_ip` ip;
+  report `message` text. step9/step12 now also compare `dynamic_templates`.
+- step2: new block (trim-before-Lua order, no rename/app, one `Include_Tag_Key`, no `Id_Key`, `Exclude_Path`, no tier-1 parsers,
+  3 outputs, schema constant 6). step3: absence of `threadName threadId ndc processName stream flb_tag app _msg` in `polaris-logs-*`,
+  of `app level _msg` in `polaris-report-*`, no row with `message`, no `k8s-logs` doc from the Fluent Bit pod — all since pod start.
+- P11: 8 scripts `git mv` to `logging/scripts/attic/`. P12: `logging/NOTE-monitoring-team-handover-2026-09-16.md`.
+- **Verified off-cluster (Cowork):** LuaJIT tests v3/v4/v5/v6 + first-tick ALL PASS (the loop from `apply-lua.sh`); step11 PASS 67×34 with
+  detail 200/22/78 on `084100Z` and `144400Z`; `diff-v5-v6.lua` 0 diffs on real + 200k fuzz after normalising only the intended changes
+  (and 24 diffs when `schema_version` is not normalised — the harness sees reports); step2 on a stand-in render built from the values
+  blocks: all PASS; step9/step12 comparers PASS against the template files; YAML/JSON valid.
+- **NOT verified:** no helm render; OpenSearch acceptance of the v6 mappings (step9/step12 on the cluster); anything on traffic.
+- **Gate before the roll, for P4's Polaris text parser only** (the two JSON parsers repeat Merge_Log's JSON decode and cannot succeed
+  where it failed): if `k8s-logs` holds Polaris docs with the regex's capture field `logger`, that parser did work — then restore its
+  filter + definition before rolling:
+  `curl -sk -u "$OS_USER:$OS_PASSWORD" "$OS_URL/k8s-logs-*/_count" -H 'Content-Type: application/json' -d '{"query":{"bool":{"filter":[{"exists":{"field":"logger"}},{"wildcard":{"kubernetes.pod_name.keyword":"benchmarks-polaris-*"}}]}}}'` → expect `"count":0`.
+- **Roll (one restart):** gate → `bash fluent-bit/apply-lua.sh --no-restart` → step2 on a fresh render → `helm upgrade` → step3 →
+  traffic notebook → step3 again (field checks need docs) → `step12` + `step9` (v6 mappings; shape tomorrow's indices) →
+  `step10 <window_start>` → `step11`. Expect the report counts of `144400Z`/`15:01Z` (355/200/155, 404 100/110) and detail 200/22/78.
+  Dashboards/queries reading `_msg`, `app`, `level` or bare string fields need the new names.
+
 **#31 — Lua refactor (R1–R6) and the pre-first-tick counting gap: ROLLED 2026-09-16 (~15:00Z) and VERIFIED on traffic.** 2026-09-16.
 - **Rolled (Kade):** `apply-lua.sh --no-restart` → step2 → `helm upgrade` → step3 (their outputs were not pasted; helm revision not
   recorded, expected 20). New pod `benchmarks-fluent-bit-qr4br`.
