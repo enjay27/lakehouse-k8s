@@ -3,22 +3,20 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-16 (v5 live, no hot reload)
+## Now — 2026-09-16 late (refactored v5 live: one Lua filter, thread fields gone)
 
-**Start here next session:** [`logging/HANDOFF-audit-log-next-2026-09-16.md`](logging/HANDOFF-audit-log-next-2026-09-16.md) — state, rules, and the ordered task list.
+**Start here next session:** [`logging/HANDOFF-audit-log-next-2026-09-16.md`](logging/HANDOFF-audit-log-next-2026-09-16.md) — tasks A, C–K still apply; B is done (rev 18 = hot-reload removal).
 
-**Running:** policy/report schema **v5** on `benchmarks-fluent-bit` (pod `fjdjb`, one container, Fluent Bit 5.1.1). Lua = ConfigMap
-`polaris-fluent-bit-lua`, read **at start only**. Verified twice on live traffic (`#28`): 404 counted not stored, step11 67×34 exact.
-**`WINDOW_SECONDS` is still the verification value 30.**
+**Running:** `benchmarks-fluent-bit` pod `qr4br`, policy/report schema **v5**, Lua = refactor `#31` (sha `2fbcfa47c513f5a0`, parser merged into
+FILTER 3, start-up records counted) + `#30` (no threadName/threadId/ndc in `polaris-logs-*`, rev 19). Verified on traffic 15:01Z: every
+report count equal to the pre-refactor windows, detail 200/22/78. **`WINDOW_SECONDS` is still the verification value 30.**
 
-**Rules:** a Lua change is `bash fluent-bit/apply-lua.sh` — never `kubectl apply -k` alone, never `--set-file`. A values change is
-step2 → `helm upgrade` → step3. Dev Tools response panel is not JSON — export with curl.
+**Rules:** a Lua-only change is `bash fluent-bit/apply-lua.sh`; Lua + values together is `apply-lua.sh --no-restart` → step2 → `helm upgrade`
+→ step3. Never `kubectl apply -k` alone, never `--set-file`. Dev Tools response panel is not JSON — `devtools-json-fix.py` or curl.
 
-**Running:** fluent-bit **rev 19** = `#30` thread/ndc trim, verified (0/386 `polaris-logs-*` docs carry them). 14:44Z window reproduces 08:41Z exactly; step11 incl. detail PASS for live and candidate Lua.
-**Written, not rolled:** `#31` Lua refactor ([review](logging/REVIEW-lua-refactor-2026-09-16.md)) is now the repo's Lua + values (one Lua filter). ⚠ Repo ≠ pod until rolled: **no bare restart / `apply-lua.sh` without `--no-restart`**. Roll: `apply-lua.sh --no-restart` → step2 → `helm upgrade` → step3.
-
-**Next, in order:** (A) `#29` tier-1 OUTPUT 2 drops one chunk per traffic run — read the cause. (C) ISM policies (2.8).
-(D) 1800 s window via `apply-lua.sh` (2.5). (E) delete 30 s report indices — destructive, explicit OK (2.7). (F) apply ISM (2.9). Then phase 3.
+**Next, in order:** (A) `#29` tier-1 OUTPUT 2 drops one chunk per traffic run — read the cause (`.scratch/issue29-1356Z/` came out empty).
+(C) ISM policies (2.8). (D) 1800 s window via `apply-lua.sh` (2.5). (E) delete 30 s report indices — destructive, explicit OK (2.7).
+(F) apply ISM (2.9). Then phase 3 (3.1 load test also measures `#31`'s C-side saving).
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 

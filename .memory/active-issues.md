@@ -5,13 +5,24 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
-**#31 — Lua refactor (R1–R6) and the pre-first-tick counting gap: PROMOTED IN THE REPO, NOT ROLLED.** 2026-09-16.
+**#31 — Lua refactor (R1–R6) and the pre-first-tick counting gap: ROLLED 2026-09-16 (~15:00Z) and VERIFIED on traffic.** 2026-09-16.
+- **Rolled (Kade):** `apply-lua.sh --no-restart` → step2 → `helm upgrade` → step3 (their outputs were not pasted; helm revision not
+  recorded, expected 20). New pod `benchmarks-fluent-bit-qr4br`.
+- **Verified from Kade's exports of window 15:01:00Z (report seq 4 on qr4br):** summary 355 / 200 / 155, `counted_404` 100,
+  `app_dropped_404` 110, errors 247 / 4, denied 104, 57 resources, 4 principals, 5 app_dropped rows, schema 5 — **every count equal to the
+  14:44Z (old script) and 08:41Z windows; same 67 row keys.** The only field differences vs 14:44Z are run-to-run timing and name
+  lengths (`commit_ms_*`, `response_bytes` / `last_read_bytes` of listings that embed the run id), not pipeline behaviour.
+  `polaris-logs-*` (386 docs, 15:00:34–15:01:13Z): in-window detail 200 / 22 / 78 (access / PolarisServiceImpl / IcebergExceptionMapper)
+  = the replay prediction; all 243 access docs carry every parsed field (so the merged parser is what runs — old Lua + new config would
+  have stored parse errors, new Lua + old config would have stopped the pipeline); `access_log_parse_error` 0, 404 docs 0,
+  `held_orphan` 0; `http_status` is a JSON integer on all 243 (the moved `type_int_key` works, including access lines released in arrays
+  with held app logs); no `threadName` / `threadId` / `ndc`.
+- **Not observed:** R4 itself (the first window after the restart was not exported); step11 on this window (no tier-1 export); pod CPU.
 - **Promoted (Kade's go, 2026-09-16):** candidate → `fluent-bit/polaris_access_log.lua` (sha `2fbcfa47c513f5a0`), values FILTER 2 removed +
   `http_status response_size` in FILTER 3's int list, step2 expectations, `test-first-tick.lua` in `apply-lua.sh`. Re-checked on the
   promoted file (Cowork): apply-lua.sh's test loop ALL PASS (v3/v4/v5/first-tick); step11 PASS on `084100Z` and `144400Z` (with detail);
   differential vs the pre-refactor script 0 diffs; step2's Lua and filter-block counts on the files (script 1, call 0, int-list lines 1,
-  trims present). **Until rolled, the pod runs the OLD script with FILTER 2 — do not restart it alone.**
-  Roll: `apply-lua.sh --no-restart` → step2 on a fresh render → `helm upgrade` → step3 → traffic → step10/11.
+  trims present).
 Review: `logging/REVIEW-lua-refactor-2026-09-16.md`. Candidate: `logging/candidates/polaris_access_log.refactor.lua`.
 - **The live v5 script has a real counting gap (R4):** `counts` is nil until the first report tick, so after every pod start up
   to `Interval_Sec` (5 s) of successful GETs, catalog POSTs and 404s are dropped **and** in no counter
