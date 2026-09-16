@@ -35,7 +35,8 @@ huh(){ printf '  ????  %s\n' "$*"; }
 
 echo "=== 1. Is the pod up, and on the right image? ==="
 kubectl -n $NS rollout status ds/$DS --timeout=60s >/dev/null 2>&1 && ok "rollout complete" || bad "rollout NOT complete"
-IMG=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[*].image}')
+# Since v5 the pod has two containers (fluent-bit + reloader): select by name, or the list never ends in :5.1.1.
+IMG=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[?(@.name=="fluent-bit")].image}')
 case "$IMG" in *:5.1.1) ok "image $IMG";; *) bad "image is $IMG, expected :5.1.1";; esac
 RESTARTS=$(kubectl -n $NS get pods -l app.kubernetes.io/instance=$DS \
   -o jsonpath='{.items[*].status.containerStatuses[*].restartCount}' 2>/dev/null)
@@ -60,10 +61,14 @@ elif [ "$SHA" = "$LUA_SHA_EXPECT" ]; then ok "ConfigMap lua sha $SHA matches the
 else bad "ConfigMap lua sha $SHA != expected $LUA_SHA_EXPECT — deployed script differs from the file"; fi
 # The ConfigMap is not the file the process reads. kubelet syncs the mount up to ~1 min later.
 POD=$(kubectl -n $NS get pods -l app.kubernetes.io/instance=$DS -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-PSHA=$(kubectl -n $NS exec "$POD" -c fluent-bit -- cat /fluent-bit/polaris-lua/polaris_access_log.lua 2>/dev/null | shasum -a 256 | cut -c1-16)
-if [ "$PSHA" = "$LUA_SHA_EXPECT" ]; then ok "file inside pod $POD matches the repo"
-elif [ -z "$PSHA" ] || [ "$PSHA" = "$EMPTY_SHA" ]; then huh "could not read the script inside the pod (image may have no cat); skip"
-else huh "file inside pod is $PSHA — kubelet may not have synced yet; wait ~60s and re-run"; fi
+# The 5.1.1 image is distroless: there is no `cat`, and the runtime's "executable file not found" message
+# arrives on STDOUT -- which the first version of this check hashed (8c1fb607ef937f3a, the same on a v4 pod
+# where the path did not even exist) and mislabelled "not synced yet" (2026-09-16). Check the exit code first.
+PBODY=$(kubectl -n $NS exec "$POD" -c fluent-bit -- cat /fluent-bit/polaris-lua/polaris_access_log.lua 2>/dev/null); PRC=$?
+PSHA=$(printf '%s\n' "$PBODY" | shasum -a 256 | cut -c1-16)
+if [ "$PRC" -ne 0 ]; then huh "cannot read the script inside the pod (exec rc=$PRC; the image has no cat) -- the ConfigMap sha above is the check"
+elif [ "$PSHA" = "$LUA_SHA_EXPECT" ]; then ok "file inside pod $POD matches the repo"
+else huh "file inside pod is $PSHA -- kubelet may not have synced yet; wait ~60s and re-run"; fi
 CONTAINERS=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[*].name}')
 case " $CONTAINERS " in *" reloader "*) ok "reloader sidecar present ($CONTAINERS)";; *) bad "no reloader container ($CONTAINERS) — hotReload not rendered";; esac
 ARGS=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[?(@.name=="fluent-bit")].args}')
@@ -102,8 +107,11 @@ else
   echo "$M" | python3 -c '
 import json,sys
 m=json.load(sys.stdin)
+# No backslashes inside f-string braces: a SyntaxError before Python 3.12 (macOS ships 3.9), which is
+# why this printed "could not parse metrics" on every run until 2026-09-16.
 for name,v in (m.get("output") or {}).items():
-    print(f"        output {name:28s} ok={v.get(\"proc_records\",0):<8} errors={v.get(\"errors\",0):<6} retries_failed={v.get(\"retries_failed\",0)}")
+    ok_=v.get("proc_records",0); er=v.get("errors",0); rf=v.get("retries_failed",0)
+    print(f"        output {name:28s} ok={ok_:<8} errors={er:<6} retries_failed={rf}")
 for name,v in (m.get("filter") or {}).items():
     d=v.get("drop_records",0); a=v.get("add_records",0)
     if "polaris" in name: print(f"        filter {name:28s} dropped={d:<8} added={a}")

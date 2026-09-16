@@ -571,7 +571,7 @@ still its own last step.
 
 ## Resolved, kept because they recur
 
-**#28 — Policy v5 (404 counted, not stored) + Lua as its own ConfigMap with hot reload: WRITTEN AND NOT ROLLED. OPEN.** 2026-09-16.
+**#28 — Policy v5 (404 counted, not stored) + Lua as its own ConfigMap with hot reload: ROLLED 2026-09-16 (rev 17), POST-ROLL CHECKS OPEN.** 2026-09-16.
 Decisions (Kade): 404 access lines count into `errors_4xx`/`counted_404` and are not stored; the allow-listed
 app lines of a 404 request are dropped too, **matched by `mdc.requestId`** (hold until the access line, 30 s
 orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `polaris-fluent-bit-lua`
@@ -603,6 +603,18 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   etcmachineid` (no `polaris-lua`); generation 25 == observed; pod `benchmarks-fluent-bit-rvm49`, 23h, 0 restarts.
   So the running pod is v4 and the in-pod sha was of a path that does not exist (step3 mislabels that as "not synced"). Tier 1 alive (k8s-logs 22874/10m); report 20 docs/10m.
   Separately: a tier-1 chunk (tail.0 → opensearch.1, k8s-logs `kube.*`) was dropped after retries at 05:10:45 UTC.
+- **ROLLED, 2026-09-16 ~17:35 KST (08:35 UTC pod start).** step2 on the **first real helm render**: all PASS
+  (41 checks, including every v5-wiring expectation written against the simulated render). `helm upgrade` →
+  rev 17. step3: rollout complete; containers `fluent-bit` (5.1.1) + `reloader` (configmap-reload v0.15.0), 0/0
+  restarts; `--enable-hot-reload` present; ConfigMap sha `bfff86db220036c2` == repo; no error/lua/parser lines in
+  the pod log; **tier 1 alive (k8s-logs 23012 docs/10m)**; polaris-report 20 docs/10m (may include pre-restart
+  windows — `schema_version` 5 not yet read); polaris-logs 0/10m (idle Polaris, expected); `hot_reload_count` 0.
+  The one FAIL (image) and the `????` (in-pod sha) were **step3 bugs**, fixed in the same commit: the image
+  check read both containers' images; the in-pod check hashed the runtime's "cat not found" message
+  (`8c1fb607ef937f3a`, identical on the v4 pod where the path did not exist) — the image is distroless. Also
+  fixed: section 6 had printed "could not parse metrics" on every run ever — backslashes inside f-string
+  braces are a SyntaxError before Python 3.12. **Not yet done:** step9 (41 fields), one skipped window +
+  traffic + step10/11, runbook B/D, `schema_version` 5 on a summary row, no `http_status: 404` access doc.
 - **NOT verified:** any real `helm` render (no helm in Cowork); hot reload itself; **what 5.1.1 does when a
   reloaded script is invalid** (runbook C — may stop tier 1 like #27); reload loss (runbook D); whether
   Polaris assigns `requestId` without a client header (production question — if not, 404 app lines are kept).
