@@ -618,10 +618,14 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   **step7 (Kade): step11 `PASS: 0 field mismatch(es) over 67 rows x 34 fields`** — 34 = v4's 30 + the four v5
   fields; PASS also requires the row sets and the detail-docs-by-logger counts to be equal, so the running
   pipeline reproduces the repo v5 Lua exactly on its own raw tier-1 input. **`polaris-logs-*` docs with
-  `http_status: 404` since 08:36 UTC: 0.** Both are evidence for the 404 policy **only if the window held a
-  404** — `counted_404` / `app_dropped_404` on the summary row not yet read, window label not yet recorded.
-  **Not yet done:** one skipped window +
-  traffic + step10/11, runbook B/D, `schema_version` 5 on a summary row, no `http_status: 404` access doc.
+  `http_status: 404` since 08:36 UTC: 0.** Read by Claude from `.scratch/readout-2026-09-16T084100Z/`: window
+  **08:41:00Z** (17:41 KST), `schema_version` **5**, `report_seq` 12, access_seen 355 / kept 200 / counted 155,
+  errors_4xx 247, **`counted_404` 100, `app_dropped_404` 110**, app_dropped_total 155, held_orphans 0,
+  held_pending 0; record span 08:41:06.56–08:41:15.14 (8.6 s ≤ 30). Detail docs: **200 / 22 / 78** (access /
+  PolarisServiceImpl / IcebergExceptionMapper) — **exactly the replay prediction made before the roll**; no 404
+  among detail statuses (401 59, 403 45, 204 27, 400 26, 201 17, 409 11, 422 6, 200 5, 500 4); 0 held_orphan docs.
+  **So the 404 policy and the request-id drop are verified on live traffic; step 7 PASS.**
+  **Not yet done:** runbook B (comment-only reload) and D (tier-1 `sequence` gaps across a reload); C only with Kade's OK.
 - **NOT verified:** any real `helm` render (no helm in Cowork); hot reload itself; **what 5.1.1 does when a
   reloaded script is invalid** (runbook C — may stop tier 1 like #27); reload loss (runbook D); whether
   Polaris assigns `requestId` without a client header (production question — if not, 404 app lines are kept).
