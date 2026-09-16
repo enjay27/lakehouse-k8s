@@ -17,19 +17,20 @@
   artifacts (`argo-artifacts`).
 - **Fluent Bit — two releases, on purpose, both in `datahub-hynix`:**
   `fb-polaris-shipper` (chart `fluent-bit-0.58.1`, app **5.1.1**, Deployment) tails the
-  Polaris log PVC into **VictoriaLogs**; a second DaemonSet release tails
-  `/var/log/containers/*.log` into **OpenSearch**. Values: `logging/fb-values.yaml` and
+  Polaris log PVC into **VictoriaLogs**; the DaemonSet `benchmarks-fluent-bit` (chart
+  `fluent-bit-0.57.6`) tails `/var/log/containers/*.log` into **OpenSearch**. Values: `logging/fb-values.yaml` and
   `fluent-bit/values.yaml` respectively — different deployments, not duplicates.
 - **VictoriaLogs:** log sink in namespace `logging` (9428).
 - **OpenSearch:** runs in **Docker, outside the cluster and outside this repo** — no compose
   file is versioned here. **OpenSearch is `3.5.0`** (measured 2026-09-08). It is the DaemonSet's
-  sink; VictoriaLogs is the shipper's. **Both Fluent Bit values files are RECONCILED against their
-  live releases** — the shipper's on 2026-09-03 (`active-issues.md` #5), the DaemonSet's on
-  2026-09-09 by diffing `helm get values benchmarks-fluent-bit` key by key: zero differences, and
-  the running image is `cr.fluentbit.io/fluent/fluent-bit:3.2.2` exactly as
-  `fluent-bit/values.yaml` asks. *This line previously said neither file matched; that is no longer
-  true of either.* **The rule it was protecting still stands** — confirm a setting from the running
-  object, not the file — but for these two files the check has been run and it passed.
+  sink; VictoriaLogs is the shipper's. **Both Fluent Bit values files match their live releases** —
+  the shipper's reconciled 2026-09-03 (`active-issues.md` #5); the DaemonSet was **deployed from the
+  committed `fluent-bit/values.yaml` as REVISION 17 on 2026-09-16** (policy v5, `active-issues.md`
+  #28), with step2 passing on the real render and step3 read off the running object: containers
+  `fluent-bit` on `cr.fluentbit.io/fluent/fluent-bit:5.1.1` and `reloader` on
+  `ghcr.io/jimmidyson/configmap-reload:v0.15.0` (hot reload), one pod. *This line said 3.2.2 until
+  2026-09-16 — true on 09-09, stale since the 5.1.1 bump.* **The rule stands:** confirm a setting
+  from the running object, not the file — the next `helm upgrade` makes this line history again.
 - **Values-only against upstream charts:** DataHub + prerequisites (Kafka / Elasticsearch /
   MySQL / ZooKeeper), Kafka, Schema Registry, Spark, Airflow, Argo Workflows, Jupyter.
   *Service versions are declared explicitly in each chart's `values.yaml`; several charts
@@ -43,8 +44,11 @@ Full detail in [`.memory/repository-map.md`](.memory/repository-map.md). The sha
   ignores them.
 - **Values-only directories:** `airflow/`, `argo/`, `datahub/`, `fluent-bit/`, `jupyter/`,
   `kafka/`, `logging/`, `schema-registry/`, `spark/` — a `values.yaml` aimed at an upstream
-  chart, nothing more. Exception: `fluent-bit/` also holds `polaris_access_log.lua`, installed
-  with `--set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/polaris_access_log.lua'`.
+  chart, nothing more. Exception: `fluent-bit/` also holds `polaris_access_log.lua` and a
+  `kustomization.yaml` that ships it as ConfigMap **`polaris-fluent-bit-lua`**, mounted through
+  `extraVolumes` at `/fluent-bit/polaris-lua/`. Since policy v5 (2026-09-16) it is deployed with
+  `kubectl apply -k fluent-bit/` — **before** any `helm upgrade` that adds the mount — and **not**
+  with `--set-file` (that was v4 and earlier; `luaScripts` is `{}`).
 - **`postgresql/schema/`** — Polaris DDL (`schema_v3.sql` is the ASF-shipped file and the
   authority; `schema.sql` and `bootstrap.sql` are the local variants).
 - **`postgresql/secret/`** — Secret manifests. One of them is stale; see active issues #4.
@@ -212,6 +216,12 @@ run as soon as the DoD gate above is green.
 - **`git push` is Kade's.** Auto-commit is local history; publishing is a separate decision.
 - **Commit before a risky step**, not only after a finished one. A teardown, a namespace
   delete, an OrbStack reset — get the tree committed first so the before-state is recoverable.
+
+**Git from a Cowork session leaves lock files.** `device_bash` cannot delete inside the mount
+unless Kade grants it, so git's own cleanup fails (`unable to unlink '.git/index.lock'` /
+`HEAD.lock` / `objects/*/tmp_obj_*`). A left-behind `index.lock` blocks every later git command,
+Kade's included. After each git call, `mv -n` any `.git/*.lock` into `.git/_to_delete/` and check
+none remain; the commit itself is written correctly.
 
 Identity: this repo has no `user.name` / `user.email` in its local config and the mount does
 not see Kade's global one, so Claude commits with `git -c user.name=... -c user.email=...`

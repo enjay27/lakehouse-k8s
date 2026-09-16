@@ -52,10 +52,12 @@ plausible-looking name.
   **`benchmarks-fluent-bit`** (container stdout → OpenSearch) and the Deployment
   `fb-polaris-shipper`. Names and sinks are settled in `active-issues.md` #2.
   **Neither sets `hostNetwork`** (measured 2026-09-08). `benchmarks-fluent-bit` is
-  **chart `fluent-bit-0.57.6`, `appVersion` 5.0.6, REVISION 1, deployed 2026-08-19, SSA** — it has
-  **never been upgraded**. Note `appVersion` is the chart's field, *not* the running image: the
-  values file pins `image.tag: "3.2.2"`, so read the image off the DaemonSet, not off `helm get
-  metadata`.
+  **chart `fluent-bit-0.57.6`, `appVersion` 5.0.6, SSA, REVISION 17 deployed 2026-09-16** (policy v5;
+  16 upgrades since the 2026-08-19 install — *this line said "REVISION 1, never upgraded" and image
+  3.2.2 until 2026-09-16*). `appVersion` is the chart's field, *not* the running image: the running
+  image is **`fluent-bit:5.1.1`** plus the `reloader` sidecar (`configmap-reload:v0.15.0`), so read
+  images off the DaemonSet, not off `helm get metadata`. One pod (DaemonSet, one node); `READY 2/2`
+  is two containers, not two replicas.
 
 ## Secrets
 
