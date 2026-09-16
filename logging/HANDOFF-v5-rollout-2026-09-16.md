@@ -107,7 +107,7 @@ Record each result in `#28` and the runbook. Paste-backs: redact tier-1 `HTTP_Pa
 | `logging/opensearch/polaris-report-template.json` | +`counted_404`, `app_dropped_404`, `held_orphans`, `held_pending` (41) |
 | proposal (ko) §3.9, §9.1–9.4 · `SCHEMA-report.md` v5 · runbook · TODO · `#28` · `MEMORY.md` | docs |
 
-Not Claude's, left uncommitted: `polaris/values.yaml`, `postgresql/values.yaml`, `fluent-bit/values-1.yaml`,
+Not Claude's, left uncommitted: `polaris/values.yaml`, `postgresql/values.yaml`,
 `Claude outputs/*`.
 
 ## 4. After the roll — remaining TODO

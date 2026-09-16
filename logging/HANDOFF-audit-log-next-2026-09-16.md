@@ -48,7 +48,7 @@ Plan: [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md) �
 | H | Tier-1 debt: `#18` OUTPUT 1 `Id_Key sequence` indexes nothing (decision pending in `PLAN-tier1-dedup-2026-09-09.md`); `#4` plaintext password (with 3.6) | K decide · C change | — | — |
 | I | `#24` upstream report — stack traces for all four NPEs are in `#24`. **Kade's call** (Polaris is not changed from here) | K | — | filed or declined |
 | J | Docs: D.1 `polaris-logging.drawio` (still pre-v4); close stale headers — `#25` says "NOT APPLIED" but its body closes it, `#27` "NOT ROLLED" is superseded by v5; proposal §10.1 after D/F | C | — | headers match bodies |
-| K | Git leftovers: delete `.git/_to_delete/` and `.git/objects/*/tmp_obj_*` (or grant Claude delete once). Not Claude's, still uncommitted: `polaris/values.yaml`, `postgresql/values.yaml`, `fluent-bit/values-1.yaml`, `Claude outputs/*` | K | — | — |
+| K | Git leftovers: delete `.git/_to_delete/` and `.git/objects/*/tmp_obj_*` (or grant Claude delete once). Not Claude's, still uncommitted: `polaris/values.yaml`, `postgresql/values.yaml`, `Claude outputs/*` | K | — | — |
 
 ### A — the commands (read-only, from the repo root)
 
