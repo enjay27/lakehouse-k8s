@@ -94,15 +94,25 @@ q("polaris-report-*", {"size":5, "query":{"bool":{"filter":[V3,
      {"exists":{"field":"last_write_bytes"}}]}},
    "_source":["window_start","resource","last_write_bytes","writes"]})
 
-# 2. the record it should have come from
-q("polaris-logs-*", {"size":5, "query":{"bool":{"filter":[
-     {"term":{"http_method.keyword":"POST"}}, {"wildcard":{"api_path.keyword":"*/tables/*"}},
-     {"range":{"@timestamp":{"gte":"<window_start>","lt":"<window_end>"}}}]}},
-   "sort":[{"@timestamp":"desc"}], "_source":["@timestamp","api_path","http_status","response_size"]})
+# 2. the record it should have come from -- in k8s-logs-*, NOT polaris-logs-*
+#    A successful catalog POST is rule 5': counted, never stored in tier 2, so the
+#    tier-2 query can only ever find errors (2026-09-15, run 1789460891). Tier 1 holds
+#    the raw access line; the size is the last CLF field and is parsed client-side.
+#    Cut the range on the TICK interval [emit - window, emit), not the label (#26):
+#    emit = the report row's @timestamp.
+q("k8s-logs-*", {"size":50, "query":{"bool":{"filter":[
+     {"term":{"loggerName.keyword":"io.quarkus.http.access-log"}},
+     {"match_phrase":{"message":"POST /api/catalog/v1/<cat>/namespaces/<ns>/tables/<table>"}},
+     {"range":{"@timestamp":{"gte":"<emit - window>","lt":"<emit>"}}}]}},
+   "sort":[{"@timestamp":"desc"}], "_source":["@timestamp","message"]})
+# keep lines whose status is 2xx and size > 0; the newest one is the expected value
 ```
 
-**PASS** — the report's `last_write_bytes` equals the `response_size` of the **last 2xx POST** in
-that window on that table.
+`logging/scripts/step10-v4-window-readout.sh <window_start>` saves both sides of this comparison
+(report rows and the tier-1 copy over the tick interval) in one run.
+
+**PASS** — the report's `last_write_bytes` equals the size of the **last 2xx, non-empty write** in
+that tick interval on that table (a POST commit, or a PUT).
 **FAILS IF** — it matches the *first* commit (last-wins broken), or a 500's size (2xx filter
 broken), or 0 (the `> 0` guard broken), or the field is absent when a commit did happen.
 
