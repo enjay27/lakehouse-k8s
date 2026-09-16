@@ -35,20 +35,51 @@ echo "== PUT _index_template/polaris-report =="
 "${OS[@]}" -X PUT "${OS_URL}/_index_template/polaris-report" --data-binary "@${TPL}"; echo
 
 echo
-echo "== read it back from the cluster, not from the file =="
-"${OS[@]}" "${OS_URL}/_index_template/polaris-report?pretty" \
-  | grep -E '"index_patterns"|min_record_time|"type"|priority' | head -20
+echo "== read back + simulate, EVERY field compared with the file (not a grep | head) =="
+# 2026-09-16: the first version piped the read-back through `head -20`, which showed 19 of
+# the 35 `long` fields and proved nothing about the rest -- the v4 fields sit at the end.
+TPL_JSON=$("${OS[@]}" "${OS_URL}/_index_template/polaris-report")
+SIM_JSON=$("${OS[@]}" -X POST "${OS_URL}/_index_template/_simulate_index/polaris-report-9999.12.31")
+python3 - "$TPL" "$TPL_JSON" "$SIM_JSON" <<'PY'
+import json, sys
+want = json.load(open(sys.argv[1]))["template"]["mappings"]["properties"]
+def props_of_template(raw):
+    t = json.loads(raw)["index_templates"][0]["index_template"]
+    return t["template"]["mappings"]["properties"], t.get("priority"), t.get("index_patterns")
+def props_of_sim(raw):
+    return json.loads(raw)["template"]["mappings"]["properties"]
+try:
+    got, prio, pats = props_of_template(sys.argv[2]); sim = props_of_sim(sys.argv[3])
+except Exception as e:
+    print("  FAIL  could not parse the cluster response:", e); print(sys.argv[2][:300]); sys.exit(1)
+fail = 0
+def cmp(name, have):
+    global fail
+    bad = [f for f, spec in want.items() if have.get(f, {}).get("type") != spec["type"]]
+    print(f"  {'PASS' if not bad else 'FAIL'}  {name}: {len(want) - len(bad)}/{len(want)} fields typed as in the file")
+    for f in bad: print(f"          {f}: want {want[f]['type']}, got {have.get(f, {}).get('type')}")
+    fail += len(bad)
+print(f"  index_patterns={pats} priority={prio}")
+cmp("stored template", got)
+cmp("simulated new index", sim)
+for f in ("app_dropped_total", "dropped", "commit_count", "commit_ms_sum", "commit_ms_min", "commit_ms_max"):
+    print(f"        v4 {f:<18} template={got.get(f, {}).get('type')}  simulated={sim.get(f, {}).get('type')}")
+sys.exit(1 if fail else 0)
+PY
+RC=$?
 
 echo
-echo "== simulate: what mapping would a NEW polaris-report index get? =="
-"${OS[@]}" -X POST "${OS_URL}/_index_template/_simulate_index/polaris-report-9999.12.31?pretty" \
-  | grep -A4 -E 'min_record_time|max_record_time'
+echo "== existing indices keep their mapping for life (informational) =="
+"${OS[@]}" "${OS_URL}/polaris-report-*/_mapping/field/min_record_time" | python3 -c '
+import json,sys
+for idx, body in sorted(json.load(sys.stdin).items()):
+    m = body.get("mappings", {}).get("min_record_time", {}).get("mapping", {})
+    t = next(iter(m.values()), {}).get("type", "absent")
+    print(f"  {idx:<28} min_record_time: {t}")'
 
 echo
-echo "== the existing indices are UNCHANGED -- this is the fact to expect, not a fault =="
-"${OS[@]}" "${OS_URL}/polaris-report-*/_mapping/field/min_record_time?pretty" \
-  | grep -E 'polaris-report-|"type"'
-
-echo
-echo "PASS looks like: the simulate block says \"type\" : \"date\", and today's index"
-echo "still says \"text\". Tomorrow's index is the first one that maps correctly."
+echo "text on 09.09 / 09.10 / 09.14 is permanent (#25). date on indices created after the Lua stopped"
+echo "writing \"\" (2026-09-10) came from dynamic mapping -- correct, but only the template guarantees it."
+[ "$RC" -eq 0 ] && echo "RESULT: PASS -- template stored and every field simulates as declared." \
+                || echo "RESULT: FAIL -- see the field list above."
+exit $RC

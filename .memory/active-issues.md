@@ -843,6 +843,10 @@ which `polaris-logs-*` holds in full by rule 3 (`http_status >= 400` over the ru
 rolled. OPEN, LIVE.** 2026-09-10. `logging/opensearch/polaris-report-template.json` exists in the
 repo; nothing has PUT it to OpenSearch. `fluent-bit/values.yaml` no longer writes `""` for
 `min/max_record_time`; the running pod still does. Until both land:
+**2026-09-16 — APPLIED.** `PUT _index_template/polaris-report` acknowledged; a simulated new index maps
+`min/max_record_time` as `date`. Existing indices as expected: 09.09 / 09.10 / 09.14 `text` for life; 09.15 / 09.16
+already `date` by dynamic mapping (the Lua has omitted `""` since 09-10). step9's read-back was a `grep | head -20`
+that showed 19 of 35 `long` fields — rewritten to compare all 37 fields, stored and simulated; rerun owed.
 
 - `polaris-report-2026.09.10` and every earlier index keep `min_record_time` as **`text`** — no
   range query, no date histogram, for the life of those indices. The invariant

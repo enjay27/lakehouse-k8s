@@ -1,6 +1,7 @@
 # TODO — Polaris audit log, from `PROPOSAL-polaris-audit-log-retention.ko.md` to production
 
 **Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). Next: 1.1, 1.2, 1.4.
+**1.1 APPLIED 2026-09-16** (`acknowledged:true`, simulate shows `date` on both record-time fields); the full 37-field read-back is owed — rerun the fixed `step9`, it is idempotent.
 
 **Was: PLAN, nothing started.** Written 2026-09-16 from the proposal (`8331ce7`), its §10.1 steps and
 §11 open items, plus what the 2026-09-15 reviews left owed. Every item names **who** (K = Kade: cluster,
