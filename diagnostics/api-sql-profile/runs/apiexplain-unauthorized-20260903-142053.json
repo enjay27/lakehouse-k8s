@@ -1,0 +1,3586 @@
+{
+  "run_id": "apiexplain-unauthorized-20260903-142053",
+  "case": "unauthorized",
+  "matrix": "reports/doc-api-sql-matrix-unauthorized-explained-20260903-141115.md",
+  "index_state": "absent",
+  "index_state_live": "absent",
+  "indexes_on_focus_table": [
+    {
+      "name": "grant_records_pkey",
+      "def": "CREATE UNIQUE INDEX grant_records_pkey ON polaris_schema.grant_records USING btree (realm_id, securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code)"
+    }
+  ],
+  "volume": {
+    "entities": 9646,
+    "grant_records": 60815,
+    "policy_mapping_record": 0,
+    "principal_authentication_data": 1108
+  },
+  "analyze": false,
+  "apis": 43,
+  "instances": 390,
+  "pairs": 33,
+  "texts": 11,
+  "explains": [
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 50,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "2, POLARIS, root, 0, 0",
+      "apis": [
+        "iceberg.commit_table",
+        "iceberg.create_namespace",
+        "iceberg.create_table",
+        "iceberg.create_view",
+        "iceberg.drop_namespace",
+        "iceberg.drop_table",
+        "iceberg.drop_view",
+        "iceberg.get_config",
+        "iceberg.head_namespace",
+        "iceberg.head_table",
+        "iceberg.head_view",
+        "iceberg.list_namespaces",
+        "iceberg.list_tables",
+        "iceberg.list_views",
+        "iceberg.load_namespace",
+        "iceberg.load_table",
+        "iceberg.load_table[missing]",
+        "iceberg.load_table[snapshots=refs]",
+        "iceberg.load_view",
+        "iceberg.rename_table",
+        "iceberg.rename_view",
+        "iceberg.report_metrics",
+        "iceberg.stage_create_table",
+        "iceberg.update_namespace_properties",
+        "mgmt.assign_catalog_role",
+        "mgmt.assign_principal_role",
+        "mgmt.create_catalog_role",
+        "mgmt.create_principal",
+        "mgmt.create_principal_role",
+        "mgmt.delete_catalog_role",
+        "mgmt.delete_principal",
+        "mgmt.delete_principal_role",
+        "mgmt.get_catalog",
+        "mgmt.get_principal",
+        "mgmt.get_principal_role",
+        "mgmt.grant_privilege",
+        "mgmt.list_catalog_roles",
+        "mgmt.list_catalogs",
+        "mgmt.list_grants",
+        "mgmt.list_principal_roles",
+        "mgmt.list_principals",
+        "mgmt.list_principals_for_principal_role",
+        "mgmt.reset_principal_credentials"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (parent_id = '0'::bigint) AND (type_code = 2) AND (name = 'root'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND catalog_id = ? AND realm_id = ? AND id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND catalog_id = ? AND realm_id = ? AND id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 50,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "2, 0, POLARIS, 5557509405261405641",
+      "apis": [
+        "iceberg.commit_table",
+        "iceberg.create_namespace",
+        "iceberg.create_table",
+        "iceberg.create_view",
+        "iceberg.drop_namespace",
+        "iceberg.drop_table",
+        "iceberg.drop_view",
+        "iceberg.get_config",
+        "iceberg.head_namespace",
+        "iceberg.head_table",
+        "iceberg.head_view",
+        "iceberg.list_namespaces",
+        "iceberg.list_tables",
+        "iceberg.list_views",
+        "iceberg.load_namespace",
+        "iceberg.load_table",
+        "iceberg.load_table[missing]",
+        "iceberg.load_table[snapshots=refs]",
+        "iceberg.load_view",
+        "iceberg.rename_table",
+        "iceberg.rename_view",
+        "iceberg.report_metrics",
+        "iceberg.stage_create_table",
+        "iceberg.update_namespace_properties",
+        "mgmt.assign_catalog_role",
+        "mgmt.assign_principal_role",
+        "mgmt.create_catalog_role",
+        "mgmt.create_principal",
+        "mgmt.create_principal_role",
+        "mgmt.delete_catalog_role",
+        "mgmt.delete_principal",
+        "mgmt.delete_principal_role",
+        "mgmt.get_catalog",
+        "mgmt.get_principal",
+        "mgmt.get_principal_role",
+        "mgmt.grant_privilege",
+        "mgmt.list_catalog_roles",
+        "mgmt.list_catalogs",
+        "mgmt.list_grants",
+        "mgmt.list_principal_roles",
+        "mgmt.list_principals",
+        "mgmt.list_principals_for_principal_role",
+        "mgmt.reset_principal_credentials"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "idx_entities",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '5557509405261405641'::bigint))",
+          "Filter": "(type_code = 2)"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "idx_entities",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "idx_entities"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "idx_entities",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 50,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "5557509405261405641, POLARIS, 0",
+      "apis": [
+        "iceberg.commit_table",
+        "iceberg.create_namespace",
+        "iceberg.create_table",
+        "iceberg.create_view",
+        "iceberg.drop_namespace",
+        "iceberg.drop_table",
+        "iceberg.drop_view",
+        "iceberg.get_config",
+        "iceberg.head_namespace",
+        "iceberg.head_table",
+        "iceberg.head_view",
+        "iceberg.list_namespaces",
+        "iceberg.list_tables",
+        "iceberg.list_views",
+        "iceberg.load_namespace",
+        "iceberg.load_table",
+        "iceberg.load_table[missing]",
+        "iceberg.load_table[snapshots=refs]",
+        "iceberg.load_view",
+        "iceberg.rename_table",
+        "iceberg.rename_view",
+        "iceberg.report_metrics",
+        "iceberg.stage_create_table",
+        "iceberg.update_namespace_properties",
+        "mgmt.assign_catalog_role",
+        "mgmt.assign_principal_role",
+        "mgmt.create_catalog_role",
+        "mgmt.create_principal",
+        "mgmt.create_principal_role",
+        "mgmt.delete_catalog_role",
+        "mgmt.delete_principal",
+        "mgmt.delete_principal_role",
+        "mgmt.get_catalog",
+        "mgmt.get_principal",
+        "mgmt.get_principal_role",
+        "mgmt.grant_privilege",
+        "mgmt.list_catalog_roles",
+        "mgmt.list_catalogs",
+        "mgmt.list_grants",
+        "mgmt.list_principal_roles",
+        "mgmt.list_principals",
+        "mgmt.list_principals_for_principal_role",
+        "mgmt.reset_principal_credentials"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "idx_entities",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '5557509405261405641'::bigint))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "idx_entities",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "idx_entities"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "idx_entities",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_id = ? AND realm_id = ? AND grantee_catalog_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_id = ? AND realm_id = ? AND grantee_catalog_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 51,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "5557509405261405641, POLARIS, 0",
+      "apis": [
+        "iceberg.commit_table",
+        "iceberg.create_namespace",
+        "iceberg.create_table",
+        "iceberg.create_view",
+        "iceberg.drop_namespace",
+        "iceberg.drop_table",
+        "iceberg.drop_view",
+        "iceberg.get_config",
+        "iceberg.head_namespace",
+        "iceberg.head_table",
+        "iceberg.head_view",
+        "iceberg.list_namespaces",
+        "iceberg.list_tables",
+        "iceberg.list_views",
+        "iceberg.load_namespace",
+        "iceberg.load_table",
+        "iceberg.load_table[missing]",
+        "iceberg.load_table[snapshots=refs]",
+        "iceberg.load_view",
+        "iceberg.rename_table",
+        "iceberg.rename_view",
+        "iceberg.report_metrics",
+        "iceberg.stage_create_table",
+        "iceberg.update_namespace_properties",
+        "mgmt.assign_catalog_role",
+        "mgmt.assign_principal_role",
+        "mgmt.create_catalog_role",
+        "mgmt.create_principal",
+        "mgmt.create_principal_role",
+        "mgmt.delete_catalog_role",
+        "mgmt.delete_principal",
+        "mgmt.delete_principal_role",
+        "mgmt.get_catalog",
+        "mgmt.get_principal",
+        "mgmt.get_principal_role",
+        "mgmt.grant_privilege",
+        "mgmt.list_catalog_roles",
+        "mgmt.list_catalogs",
+        "mgmt.list_grants",
+        "mgmt.list_principal_roles",
+        "mgmt.list_principals",
+        "mgmt.list_principals_for_principal_role",
+        "mgmt.reset_principal_credentials"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Seq Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.0,
+          "Total Cost": 1637.26,
+          "Plan Rows": 1,
+          "Plan Width": 36,
+          "Filter": "((grantee_id = '5557509405261405641'::bigint) AND (realm_id = 'POLARIS'::text) AND (grantee_catalog_id = '0'::bigint))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "grant_records",
+          "node": "Seq Scan",
+          "index": null,
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [],
+      "scan": "Seq Scan",
+      "relation": "grant_records",
+      "index": null,
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Seq Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?)) AND realm_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?)) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 50,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "0, 3100973897112954937, POLARIS",
+      "apis": [
+        "iceberg.commit_table",
+        "iceberg.create_namespace",
+        "iceberg.create_table",
+        "iceberg.create_view",
+        "iceberg.drop_namespace",
+        "iceberg.drop_table",
+        "iceberg.drop_view",
+        "iceberg.get_config",
+        "iceberg.head_namespace",
+        "iceberg.head_table",
+        "iceberg.head_view",
+        "iceberg.list_namespaces",
+        "iceberg.list_tables",
+        "iceberg.list_views",
+        "iceberg.load_namespace",
+        "iceberg.load_table",
+        "iceberg.load_table[missing]",
+        "iceberg.load_table[snapshots=refs]",
+        "iceberg.load_view",
+        "iceberg.rename_table",
+        "iceberg.rename_view",
+        "iceberg.report_metrics",
+        "iceberg.stage_create_table",
+        "iceberg.update_namespace_properties",
+        "mgmt.assign_catalog_role",
+        "mgmt.assign_principal_role",
+        "mgmt.create_catalog_role",
+        "mgmt.create_principal",
+        "mgmt.create_principal_role",
+        "mgmt.delete_catalog_role",
+        "mgmt.delete_principal",
+        "mgmt.delete_principal_role",
+        "mgmt.get_catalog",
+        "mgmt.get_principal",
+        "mgmt.get_principal_role",
+        "mgmt.grant_privilege",
+        "mgmt.list_catalog_roles",
+        "mgmt.list_catalogs",
+        "mgmt.list_grants",
+        "mgmt.list_principal_roles",
+        "mgmt.list_principals",
+        "mgmt.list_principals_for_principal_role",
+        "mgmt.reset_principal_credentials"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "idx_entities",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '3100973897112954937'::bigint))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "idx_entities",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "idx_entities"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "idx_entities",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND catalog_id = ? AND realm_id = ? AND id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND catalog_id = ? AND realm_id = ? AND id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 50,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "3, 0, POLARIS, 3100973897112954937",
+      "apis": [
+        "iceberg.commit_table",
+        "iceberg.create_namespace",
+        "iceberg.create_table",
+        "iceberg.create_view",
+        "iceberg.drop_namespace",
+        "iceberg.drop_table",
+        "iceberg.drop_view",
+        "iceberg.get_config",
+        "iceberg.head_namespace",
+        "iceberg.head_table",
+        "iceberg.head_view",
+        "iceberg.list_namespaces",
+        "iceberg.list_tables",
+        "iceberg.list_views",
+        "iceberg.load_namespace",
+        "iceberg.load_table",
+        "iceberg.load_table[missing]",
+        "iceberg.load_table[snapshots=refs]",
+        "iceberg.load_view",
+        "iceberg.rename_table",
+        "iceberg.rename_view",
+        "iceberg.report_metrics",
+        "iceberg.stage_create_table",
+        "iceberg.update_namespace_properties",
+        "mgmt.assign_catalog_role",
+        "mgmt.assign_principal_role",
+        "mgmt.create_catalog_role",
+        "mgmt.create_principal",
+        "mgmt.create_principal_role",
+        "mgmt.delete_catalog_role",
+        "mgmt.delete_principal",
+        "mgmt.delete_principal_role",
+        "mgmt.get_catalog",
+        "mgmt.get_principal",
+        "mgmt.get_principal_role",
+        "mgmt.grant_privilege",
+        "mgmt.list_catalog_roles",
+        "mgmt.list_catalogs",
+        "mgmt.list_grants",
+        "mgmt.list_principal_roles",
+        "mgmt.list_principals",
+        "mgmt.list_principals_for_principal_role",
+        "mgmt.reset_principal_credentials"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "idx_entities",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '3100973897112954937'::bigint))",
+          "Filter": "(type_code = 3)"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "idx_entities",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "idx_entities"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "idx_entities",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "2, POLARIS, zerograve_principal, 0, 0",
+      "apis": [
+        "iceberg.get_config"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (parent_id = '0'::bigint) AND (type_code = 2) AND (name = 'zerograve_principal'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "0, POLARIS, 5557509405261405641",
+      "apis": [
+        "iceberg.get_config"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Only Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "grant_records_pkey",
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.41,
+          "Total Cost": 14.11,
+          "Plan Rows": 20,
+          "Plan Width": 36,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (securable_catalog_id = '0'::bigint) AND (securable_id = '5557509405261405641'::bigint))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "grant_records",
+          "node": "Index Only Scan",
+          "index": "grant_records_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 20
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "grant_records_pkey"
+      ],
+      "scan": "Index Only Scan",
+      "relation": "grant_records",
+      "index": "grant_records_pkey",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 20,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Only Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "3, POLARIS, zerograve_principal_role, 0, 0",
+      "apis": [
+        "iceberg.get_config"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (parent_id = '0'::bigint) AND (type_code = 3) AND (name = 'zerograve_principal_role'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_id = ? AND realm_id = ? AND grantee_catalog_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_id = ? AND realm_id = ? AND grantee_catalog_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "3100973897112954937, POLARIS, 0",
+      "apis": [
+        "iceberg.get_config"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Seq Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.0,
+          "Total Cost": 1637.26,
+          "Plan Rows": 1,
+          "Plan Width": 36,
+          "Filter": "((grantee_id = '3100973897112954937'::bigint) AND (realm_id = 'POLARIS'::text) AND (grantee_catalog_id = '0'::bigint))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "grant_records",
+          "node": "Seq Scan",
+          "index": null,
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [],
+      "scan": "Seq Scan",
+      "relation": "grant_records",
+      "index": null,
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Seq Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "0, POLARIS, 3100973897112954937",
+      "apis": [
+        "iceberg.get_config"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Only Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "grant_records_pkey",
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.41,
+          "Total Cost": 14.11,
+          "Plan Rows": 20,
+          "Plan Width": 36,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (securable_catalog_id = '0'::bigint) AND (securable_id = '3100973897112954937'::bigint))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "grant_records",
+          "node": "Index Only Scan",
+          "index": "grant_records_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 20
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "grant_records_pkey"
+      ],
+      "scan": "Index Only Scan",
+      "relation": "grant_records",
+      "index": "grant_records_pkey",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 20,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Only Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "4, POLARIS, apiprofile1788334618_cat, 0, 0",
+      "apis": [
+        "iceberg.get_config"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (parent_id = '0'::bigint) AND (type_code = 4) AND (name = 'apiprofile1788334618_cat'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "0, POLARIS, 1893966347987449989",
+      "apis": [
+        "iceberg.get_config"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Only Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "grant_records_pkey",
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.41,
+          "Total Cost": 14.11,
+          "Plan Rows": 20,
+          "Plan Width": 36,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (securable_catalog_id = '0'::bigint) AND (securable_id = '1893966347987449989'::bigint))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "grant_records",
+          "node": "Index Only Scan",
+          "index": "grant_records_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 20
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "grant_records_pkey"
+      ],
+      "scan": "Index Only Scan",
+      "relation": "grant_records",
+      "index": "grant_records_pkey",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 20,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Only Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?), (?, ?), (?, ?)) AND realm_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?), (?, ?), (?, ?)) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 17,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "0, 5557509405261405641, 0, 3100973897112954937, 0, 1893966347987449989, 0, 0, POLARIS",
+      "apis": [
+        "iceberg.create_namespace",
+        "iceberg.drop_namespace",
+        "iceberg.list_namespaces",
+        "iceberg.load_namespace",
+        "mgmt.create_catalog_role",
+        "mgmt.delete_catalog_role",
+        "mgmt.get_catalog",
+        "mgmt.grant_privilege",
+        "mgmt.list_catalog_roles",
+        "mgmt.list_grants"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Bitmap Heap Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 17.18,
+          "Total Cost": 32.1,
+          "Plan Rows": 2,
+          "Plan Width": 298,
+          "Recheck Cond": "(((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '1893966347987449989'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '0'::bigint)))",
+          "Filter": "(catalog_id = '0'::bigint)",
+          "Plans": [
+            {
+              "Node Type": "BitmapOr",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 17.18,
+              "Total Cost": 17.18,
+              "Plan Rows": 4,
+              "Plan Width": 0,
+              "Plans": [
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '1893966347987449989'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "idx_entities",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.3,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '0'::bigint))"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Bitmap Heap Scan",
+          "index": null,
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 2
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "idx_entities",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "scan": "Bitmap Heap Scan",
+      "relation": "entities",
+      "index": null,
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 2,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Bitmap Heap Scan",
+        "BitmapOr",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "6, POLARIS, probe_ns, 1893966347987449989, 1893966347987449989",
+      "apis": [
+        "iceberg.load_namespace"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1893966347987449989'::bigint) AND (parent_id = '1893966347987449989'::bigint) AND (type_code = 6) AND (name = 'probe_ns'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "1893966347987449989, POLARIS, 5184606887867710024",
+      "apis": [
+        "iceberg.load_namespace"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Only Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "grant_records_pkey",
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.41,
+          "Total Cost": 8.44,
+          "Plan Rows": 1,
+          "Plan Width": 36,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (securable_catalog_id = '1893966347987449989'::bigint) AND (securable_id = '5184606887867710024'::bigint))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "grant_records",
+          "node": "Index Only Scan",
+          "index": "grant_records_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "grant_records_pkey"
+      ],
+      "scan": "Index Only Scan",
+      "relation": "grant_records",
+      "index": "grant_records_pkey",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Only Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?), (?, ?), (?, ?), (?, ?)) AND realm_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?), (?, ?), (?, ?), (?, ?)) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 15,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "0, 5557509405261405641, 0, 3100973897112954937, 0, 1893966347987449989, 0, 0, 1893966347987449989, 5184606887867710024, POLARIS",
+      "apis": [
+        "iceberg.create_table",
+        "iceberg.create_view",
+        "iceberg.drop_table",
+        "iceberg.drop_view",
+        "iceberg.head_namespace",
+        "iceberg.head_view",
+        "iceberg.list_tables",
+        "iceberg.list_views",
+        "iceberg.load_table",
+        "iceberg.load_table[missing]",
+        "iceberg.load_view",
+        "iceberg.rename_table",
+        "iceberg.rename_view",
+        "iceberg.stage_create_table",
+        "iceberg.update_namespace_properties"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Bitmap Heap Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 21.48,
+          "Total Cost": 40.02,
+          "Plan Rows": 2,
+          "Plan Width": 298,
+          "Recheck Cond": "(((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '1893966347987449989'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '0'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '5184606887867710024'::bigint)))",
+          "Filter": "(((catalog_id = '0'::bigint) AND (id = '5557509405261405641'::bigint)) OR ((catalog_id = '0'::bigint) AND (id = '3100973897112954937'::bigint)) OR ((catalog_id = '0'::bigint) AND (id = '1893966347987449989'::bigint)) OR ((catalog_id = '0'::bigint) AND (id = '0'::bigint)) OR ((catalog_id = '1893966347987449989'::bigint) AND (id = '5184606887867710024'::bigint)))",
+          "Plans": [
+            {
+              "Node Type": "BitmapOr",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 21.48,
+              "Total Cost": 21.48,
+              "Plan Rows": 5,
+              "Plan Width": 0,
+              "Plans": [
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '1893966347987449989'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "idx_entities",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.3,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '0'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '5184606887867710024'::bigint))"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Bitmap Heap Scan",
+          "index": null,
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 2
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "idx_entities",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "scan": "Bitmap Heap Scan",
+      "relation": "entities",
+      "index": null,
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 2,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Bitmap Heap Scan",
+        "BitmapOr",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 2,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "6, POLARIS, probe_ns_tmp, 1893966347987449989, 1893966347987449989",
+      "apis": [
+        "iceberg.create_namespace",
+        "iceberg.drop_namespace"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1893966347987449989'::bigint) AND (parent_id = '1893966347987449989'::bigint) AND (type_code = 6) AND (name = 'probe_ns_tmp'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "7, POLARIS, probe_tbl, 1893966347987449989, 5184606887867710024",
+      "apis": [
+        "iceberg.load_table"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1893966347987449989'::bigint) AND (parent_id = '5184606887867710024'::bigint) AND (type_code = 7) AND (name = 'probe_tbl'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_catalog_id = ? AND realm_id = ? AND securable_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "1893966347987449989, POLARIS, 3861358557659396986",
+      "apis": [
+        "iceberg.load_table"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Only Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "grant_records_pkey",
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.41,
+          "Total Cost": 8.44,
+          "Plan Rows": 1,
+          "Plan Width": 36,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (securable_catalog_id = '1893966347987449989'::bigint) AND (securable_id = '3861358557659396986'::bigint))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "grant_records",
+          "node": "Index Only Scan",
+          "index": "grant_records_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "grant_records_pkey"
+      ],
+      "scan": "Index Only Scan",
+      "relation": "grant_records",
+      "index": "grant_records_pkey",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Only Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)) AND realm_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 3,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "0, 5557509405261405641, 0, 3100973897112954937, 0, 1893966347987449989, 0, 0, 1893966347987449989, 5184606887867710024, 1893966347987449989, 3861358557659396986, POLARIS",
+      "apis": [
+        "iceberg.commit_table",
+        "iceberg.head_table",
+        "iceberg.load_table[snapshots=refs]"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Bitmap Heap Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 25.78,
+          "Total Cost": 47.86,
+          "Plan Rows": 2,
+          "Plan Width": 298,
+          "Recheck Cond": "(((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '1893966347987449989'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '0'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '5184606887867710024'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '3861358557659396986'::bigint)))",
+          "Filter": "(((catalog_id = '0'::bigint) AND (id = '5557509405261405641'::bigint)) OR ((catalog_id = '0'::bigint) AND (id = '3100973897112954937'::bigint)) OR ((catalog_id = '0'::bigint) AND (id = '1893966347987449989'::bigint)) OR ((catalog_id = '0'::bigint) AND (id = '0'::bigint)) OR ((catalog_id = '1893966347987449989'::bigint) AND (id = '5184606887867710024'::bigint)) OR ((catalog_id = '1893966347987449989'::bigint) AND (id = '3861358557659396986'::bigint)))",
+          "Plans": [
+            {
+              "Node Type": "BitmapOr",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 25.78,
+              "Total Cost": 25.78,
+              "Plan Rows": 6,
+              "Plan Width": 0,
+              "Plans": [
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '1893966347987449989'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "idx_entities",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.3,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '0'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '5184606887867710024'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '3861358557659396986'::bigint))"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Bitmap Heap Scan",
+          "index": null,
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 2
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "idx_entities",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "scan": "Bitmap Heap Scan",
+      "relation": "entities",
+      "index": null,
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 2,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Bitmap Heap Scan",
+        "BitmapOr",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 2,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "7, POLARIS, probe_tbl2, 1893966347987449989, 5184606887867710024",
+      "apis": [
+        "iceberg.create_table",
+        "iceberg.rename_table"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1893966347987449989'::bigint) AND (parent_id = '5184606887867710024'::bigint) AND (type_code = 7) AND (name = 'probe_tbl2'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "7, POLARIS, probe_staged, 1893966347987449989, 5184606887867710024",
+      "apis": [
+        "iceberg.stage_create_table"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1893966347987449989'::bigint) AND (parent_id = '5184606887867710024'::bigint) AND (type_code = 7) AND (name = 'probe_staged'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "7, POLARIS, does_not_exist, 1893966347987449989, 5184606887867710024",
+      "apis": [
+        "iceberg.load_table[missing]"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1893966347987449989'::bigint) AND (parent_id = '5184606887867710024'::bigint) AND (type_code = 7) AND (name = 'does_not_exist'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "7, POLARIS, probe_tbl3, 1893966347987449989, 5184606887867710024",
+      "apis": [
+        "iceberg.drop_table"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1893966347987449989'::bigint) AND (parent_id = '5184606887867710024'::bigint) AND (type_code = 7) AND (name = 'probe_tbl3'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 4,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "7, POLARIS, probe_view, 1893966347987449989, 5184606887867710024",
+      "apis": [
+        "iceberg.create_view",
+        "iceberg.head_view",
+        "iceberg.load_view",
+        "iceberg.rename_view"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1893966347987449989'::bigint) AND (parent_id = '5184606887867710024'::bigint) AND (type_code = 7) AND (name = 'probe_view'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "7, POLARIS, probe_view2, 1893966347987449989, 5184606887867710024",
+      "apis": [
+        "iceberg.drop_view"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1893966347987449989'::bigint) AND (parent_id = '5184606887867710024'::bigint) AND (type_code = 7) AND (name = 'probe_view2'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?), (?, ?)) AND realm_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?), (?, ?)) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 8,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "0, 5557509405261405641, 0, 3100973897112954937, 0, 0, POLARIS",
+      "apis": [
+        "mgmt.create_principal",
+        "mgmt.create_principal_role",
+        "mgmt.delete_principal",
+        "mgmt.get_principal",
+        "mgmt.list_catalogs",
+        "mgmt.list_principal_roles",
+        "mgmt.list_principals",
+        "mgmt.reset_principal_credentials"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Bitmap Heap Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 12.89,
+          "Total Cost": 24.19,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Recheck Cond": "(((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '0'::bigint)))",
+          "Filter": "(catalog_id = '0'::bigint)",
+          "Plans": [
+            {
+              "Node Type": "BitmapOr",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 12.89,
+              "Total Cost": 12.89,
+              "Plan Rows": 3,
+              "Plan Width": 0,
+              "Plans": [
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "idx_entities",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.3,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '0'::bigint))"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Bitmap Heap Scan",
+          "index": null,
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "idx_entities",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "scan": "Bitmap Heap Scan",
+      "relation": "entities",
+      "index": null,
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Bitmap Heap Scan",
+        "BitmapOr",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 3,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "2, POLARIS, apiprofile1788334618_p, 0, 0",
+      "apis": [
+        "mgmt.delete_principal",
+        "mgmt.get_principal",
+        "mgmt.reset_principal_credentials"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (parent_id = '0'::bigint) AND (type_code = 2) AND (name = 'apiprofile1788334618_p'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 5,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "3, POLARIS, apiprofile1788334618_pr, 0, 0",
+      "apis": [
+        "mgmt.assign_catalog_role",
+        "mgmt.assign_principal_role",
+        "mgmt.delete_principal_role",
+        "mgmt.get_principal_role",
+        "mgmt.list_principals_for_principal_role"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (parent_id = '0'::bigint) AND (type_code = 3) AND (name = 'apiprofile1788334618_pr'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?)) AND realm_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?)) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 4,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "0, 5557509405261405641, 0, 3100973897112954937, POLARIS",
+      "apis": [
+        "mgmt.assign_principal_role",
+        "mgmt.delete_principal_role",
+        "mgmt.get_principal_role",
+        "mgmt.list_principals_for_principal_role"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Bitmap Heap Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 8.59,
+          "Total Cost": 16.21,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Recheck Cond": "(((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint)))",
+          "Filter": "(catalog_id = '0'::bigint)",
+          "Plans": [
+            {
+              "Node Type": "BitmapOr",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 8.59,
+              "Total Cost": 8.59,
+              "Plan Rows": 2,
+              "Plan Width": 0,
+              "Plans": [
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint))"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Bitmap Heap Scan",
+          "index": null,
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "entities_pkey"
+      ],
+      "scan": "Bitmap Heap Scan",
+      "relation": "entities",
+      "index": null,
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Bitmap Heap Scan",
+        "BitmapOr",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?), (?, ?)) AND realm_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?), (?, ?)) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "0, 5557509405261405641, 0, 3100973897112954937, 0, 1893966347987449989, POLARIS",
+      "apis": [
+        "mgmt.assign_catalog_role"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Bitmap Heap Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 12.89,
+          "Total Cost": 24.19,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Recheck Cond": "(((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '1893966347987449989'::bigint)))",
+          "Filter": "(catalog_id = '0'::bigint)",
+          "Plans": [
+            {
+              "Node Type": "BitmapOr",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 12.89,
+              "Total Cost": 12.89,
+              "Plan Rows": 3,
+              "Plan Width": 0,
+              "Plans": [
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '5557509405261405641'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '3100973897112954937'::bigint))"
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '1893966347987449989'::bigint))"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Bitmap Heap Scan",
+          "index": null,
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        },
+        {
+          "relation": null,
+          "node": "Bitmap Index Scan",
+          "index": "entities_pkey",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "entities_pkey"
+      ],
+      "scan": "Bitmap Heap Scan",
+      "relation": "entities",
+      "index": null,
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Bitmap Heap Scan",
+        "BitmapOr",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan"
+      ],
+      "analyze": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE type_code = ? AND realm_id = ? AND name = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 10,
+      "requests": null,
+      "per_request": null,
+      "params_observed": true,
+      "params": "5, POLARIS, apiprofile1788334618_cr, 1893966347987449989, 1893966347987449989",
+      "apis": [
+        "mgmt.delete_catalog_role",
+        "mgmt.grant_privilege",
+        "mgmt.list_grants"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '1893966347987449989'::bigint) AND (parent_id = '1893966347987449989'::bigint) AND (type_code = 5) AND (name = 'apiprofile1788334618_cr'::text))"
+        }
+      },
+      "scans": [
+        {
+          "relation": "entities",
+          "node": "Index Scan",
+          "index": "constraint_name",
+          "rows_removed_by_filter": null,
+          "actual_rows": null,
+          "plan_rows": 1
+        }
+      ],
+      "seq_scanned": [],
+      "indexes_used": [
+        "constraint_name"
+      ],
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": null,
+      "plan_rows": 1,
+      "shared_hit_blocks": null,
+      "shared_read_blocks": null,
+      "buffers": null,
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "analyze": false
+    }
+  ],
+  "per_api": {
+    "iceberg.get_config": {
+      "statements": 14,
+      "planned": 13,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "grant_records_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.list_namespaces": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.load_namespace": {
+      "statements": 9,
+      "planned": 9,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "grant_records_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.head_namespace": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.update_namespace_properties": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.create_namespace": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.drop_namespace": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.list_tables": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.load_table": {
+      "statements": 9,
+      "planned": 9,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "grant_records_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.load_table[snapshots=refs]": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.head_table": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.create_table": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.stage_create_table": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.commit_table": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.rename_table": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.report_metrics": {
+      "statements": 6,
+      "planned": 6,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.load_table[missing]": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.drop_table": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.create_view": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.list_views": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.load_view": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.head_view": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.rename_view": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "iceberg.drop_view": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.list_catalogs": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.get_catalog": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.create_principal": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.get_principal": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.list_principals": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.create_principal_role": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.get_principal_role": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.list_principal_roles": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.assign_principal_role": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.create_catalog_role": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.list_catalog_roles": {
+      "statements": 7,
+      "planned": 7,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.assign_catalog_role": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.grant_privilege": {
+      "statements": 64,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.list_grants": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.list_principals_for_principal_role": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.reset_principal_credentials": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.delete_catalog_role": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.delete_principal_role": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    },
+    "mgmt.delete_principal": {
+      "statements": 8,
+      "planned": 8,
+      "skipped": 0,
+      "seq_scanned": [
+        "grant_records"
+      ],
+      "indexes_used": [
+        "constraint_name",
+        "entities_pkey",
+        "idx_entities"
+      ],
+      "relations": [
+        "entities",
+        "grant_records"
+      ],
+      "uses_index_only": false
+    }
+  }
+}
