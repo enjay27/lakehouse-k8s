@@ -1,6 +1,8 @@
 # TODO — Polaris audit log, from `PROPOSAL-polaris-audit-log-retention.ko.md` to production
 
-**Status: PLAN, nothing started.** Written 2026-09-16 from the proposal (`8331ce7`), its §10.1 steps and
+**Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). Next: 1.1, 1.2, 1.4.
+
+**Was: PLAN, nothing started.** Written 2026-09-16 from the proposal (`8331ce7`), its §10.1 steps and
 §11 open items, plus what the 2026-09-15 reviews left owed. Every item names **who** (K = Kade: cluster,
 exports, decisions · C = Claude: files, tests, reviews), **depends on**, and **done when** — a done-when
 that can read 0 hits is not a pass.

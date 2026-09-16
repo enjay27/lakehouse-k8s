@@ -545,7 +545,11 @@ render; its APP_ALLOW check would have failed. Fix is the full command with the 
   commit to the table) — plan gate G7 corrected; not a fault.
 - New pod, new tick phase **1.765s**; the setup burst started +1.57s, so 6 lines went to seq 3.
 - **NOT checked:** seq 5 (the matrix window: 298 access lines, 251 errors) was not in the export, and
-  `commit_*` / `dropped` were not export columns, so their `long` mapping is unseen. What changes when it rolls:
+  `commit_*` / `dropped` were not export columns, so their `long` mapping is unseen.
+**2026-09-16 — the matrix window (seq 5) checked: ALL PASS.** Replaying its 696 raw tier-1 docs through the
+repo Lua reproduces all 64 report rows with 0 mismatches over 30 fields; G1–G6, G8 and **Gate 2** pass
+(`probe_tbl` 1941 == last 2xx write). v4 integers map `long`. #27 stays open only for template (#25), the
+1800 revert and ISM. [`sessions/2026-09-16-v4-phase0-matrix-window.md`](sessions/2026-09-16-v4-phase0-matrix-window.md). What changes when it rolls:
 app-log allow-list (`IcebergExceptionMapper`, `PolarisServiceImpl`; WARN/ERROR exempt), dropped lines
 counted as `report_type: app_dropped`, `commit_count/commit_ms_*` on table/view rows, zero-carry
 deleted (`carried_rows` gone), clientSecret guard. `WINDOW_SECONDS` stays **30** — the 1800 revert is
