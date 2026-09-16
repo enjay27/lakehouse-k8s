@@ -14,7 +14,7 @@ everything else is a link into [`.memory/`](.memory/README.md).
 **Rules:** a Lua change is `bash fluent-bit/apply-lua.sh` — never `kubectl apply -k` alone, never `--set-file`. A values change is
 step2 → `helm upgrade` → step3. Dev Tools response panel is not JSON — export with curl.
 
-**Written, not rolled:** `#30` threadName/threadId/ndc trimmed from `polaris-logs-*` (values FILTER 4 + template) — step2 → helm upgrade → step3 → step12.
+**Rolled, half-proven:** `#30` threadName/threadId/ndc trimmed from `polaris-logs-*` — helm upgrade done, step3 PASS; still read step3 §5 after a traffic run, record the revision, run step12.
 **Awaiting Kade's comparison:** `#31` Lua refactor candidate ([review](logging/REVIEW-lua-refactor-2026-09-16.md)) — fixes a live gap (records before the first tick uncounted); promote **before D**, only via `apply-lua.sh --no-restart` → `helm upgrade`.
 
 **Next, in order:** (A) `#29` tier-1 OUTPUT 2 drops one chunk per traffic run — read the cause. (C) ISM policies (2.8).

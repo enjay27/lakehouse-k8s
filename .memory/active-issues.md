@@ -20,7 +20,12 @@ Review: `logging/REVIEW-lua-refactor-2026-09-16.md`. Candidate: `logging/candida
   5 mutants are all caught. step11 on `084100Z` PASS for both. Lua CPU ~5.8 → ~2.1 µs/record.
 - **NOT verified:** no helm render of the patch; the C-side marshalling saving of R1 (phase 3.1); cache hit rate at 1800 s.
 
-**#30 — `threadName` / `threadId` / `ndc` removed from `polaris-logs-*`: WRITTEN, NOT ROLLED.** 2026-09-16.
+**#30 — `threadName` / `threadId` / `ndc` removed from `polaris-logs-*`: ROLLED 2026-09-16 (helm upgrade by Kade), step3 PASS — field absence not yet proven on traffic.** 2026-09-16.
+- **Rolled (Kade, 2026-09-16 evening KST):** `helm upgrade` from the committed values (`5315e0d`); the Lua was NOT changed (apply-lua.sh
+  reported the ConfigMap unchanged, pod start 09:07:11Z > CM change 08:28:23Z). step3: `RESULT: post-upgrade checks passed` — **only the
+  RESULT line was recorded.** step3 FAILs on a doc carrying a removed field, but prints `????` (not FAIL) when it cannot count, and a 0
+  on an idle Polaris is vacuous. So still open: the section-5 lines themselves after one traffic run, the helm revision number
+  (expected 19 if the hot-reload removal was 18), step2's output, and step12 (template re-PUT without `threadId`).
 Decision (Kade): thread name and id carry no tracing value; `ndc` was `""` on all 300 detail docs of readout
 `084100Z`. Scope **tier 2 only** — tier 1 `k8s-logs` and the VictoriaLogs shipper keep them.
 - `fluent-bit/values.yaml` FILTER 4 `polaris_field_trim`: three `Remove_key` lines (C filter, after the Lua, so
@@ -28,8 +33,7 @@ Decision (Kade): thread name and id carry no tracing value; `ndc` was `""` on al
 - `polaris-logs-template.json`: `threadId: long` dropped (re-PUT with step12; not retroactive).
 - step2: three render checks. step3 section 5: `exists` count of each field on docs newer than the container
   start must be 0 (older docs in the same daily index still carry them).
-- **NOT VERIFIED:** no render, no roll. Path: step2 on a fresh render → `helm upgrade` → step3 → step12.
-  Can ride with the R1 filter merge of the Lua refactor (`logging/REVIEW-lua-refactor-2026-09-16.md`) or go alone.
+- Originally written with no render; the roll above supersedes that. The R1 filter merge (`#31`) is a separate, later upgrade.
 
 **#16 — RESOLVED-INSTRUCTIVE 2026-09-09: the double write DOES NOT HAPPEN. The reasoning was
 sound and the conclusion was wrong.**
