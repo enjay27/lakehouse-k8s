@@ -1,6 +1,6 @@
 # TODO — Polaris audit log, from `PROPOSAL-polaris-audit-log-retention.ko.md` to production
 
-**Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). Next: 1.5 (run phase J), then phase 2.
+**Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). **1.5 DONE 2026-09-16** — run `1789535345`: one table row at `probe_ns%1Fnested/…/mx_1789535345_deep` with requests 3 and commit_count 2, no dotted phantom; replay 67×30 PASS. **Phases 0 and 1 complete. Next: phase 2 (404 policy, deploy method, register pattern, 1800s revert, ISM).**
 **1.1 DONE 2026-09-16** — step9 PASS: stored 37/37, simulated 37/37, all six v4 integers `long`.
 **1.2 WRITTEN 2026-09-16** — `logging/opensearch/polaris-logs-template.json` + `logging/scripts/step12-logs-index-template.sh` (8 fields; strings left dynamic). **1.3 DONE 2026-09-16** — step12 PASS 8/8 stored and simulated. Existing indices 09.09–09.15 already mapped every declared field the same way, so the template is insurance, not a correction. No `polaris-logs-2026.09.16` yet: tier 1 holds 0 Polaris records today and the last detail doc is the test run's end (09-15 09:20:12Z) — Polaris idle, not a stall.
 

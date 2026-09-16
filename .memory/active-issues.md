@@ -549,7 +549,8 @@ render; its APP_ALLOW check would have failed. Fix is the full command with the 
 **2026-09-16 — the matrix window (seq 5) checked: ALL PASS.** Replaying its 696 raw tier-1 docs through the
 repo Lua reproduces all 64 report rows with 0 mismatches over 30 fields; G1–G6, G8 and **Gate 2** pass
 (`probe_tbl` 1941 == last 2xx write). v4 integers map `long`. #27 stays open only for template (#25), the
-1800 revert and ISM. [`sessions/2026-09-16-v4-phase0-matrix-window.md`](sessions/2026-09-16-v4-phase0-matrix-window.md). What changes when it rolls:
+1800 revert and ISM. **2026-09-16 later: template applied (37/37), nested-namespace key PASS (run 1789535345,
+one row, commit_count 2) — #27 open only for the 1800 revert and ISM.** [`sessions/2026-09-16-v4-phase0-matrix-window.md`](sessions/2026-09-16-v4-phase0-matrix-window.md). What changes when it rolls:
 app-log allow-list (`IcebergExceptionMapper`, `PolarisServiceImpl`; WARN/ERROR exempt), dropped lines
 counted as `report_type: app_dropped`, `commit_count/commit_ms_*` on table/view rows, zero-carry
 deleted (`carried_rows` gone), clientSecret guard. `WINDOW_SECONDS` stays **30** — the 1800 revert is

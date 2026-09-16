@@ -33,3 +33,22 @@ v3's Gate 2 had never passed once ("until this gate passes once, v3 is unproven"
 - `logger_name` dynamic-maps as `text` (+ `.keyword`), as intended for strings.
 - `role_keys_forced` 4 — denied grants creating role rows, well under the cap of 100.
 - `resources_other` 0 at 54 resources — the 500 cap is nowhere near on test traffic (prod question, TODO 3.2).
+
+## 1.5 — nested namespace (phase J), run `1789535345`, window 2026-09-16T05:09:30Z
+
+Readout `.scratch/readout-2026-09-16T050930Z/` (seq 200@rvm49, tick phase 0.392s). **step11 replay PASS:
+67 rows × 30 fields, 0 mismatches** — the first run through the new `make_traffic` lag and phase J.
+
+Phase J's six calls (request ids `nb-1789535345-3400…3405`) all answered as targeted (200 ×4, 204 ×2) —
+**Polaris accepts a two-level namespace in the probe catalog.** Access lines carry `probe_ns%1Fnested`.
+
+| row | requests / reads / writes | commit_count, ms sum/min/max |
+|---|---|---|
+| `…/namespaces/probe_ns%1Fnested/tables/mx_1789535345_deep` (table) | 3 / 1 / 2 (commit, load, drop) | **2**, 36 / 12 / 24 |
+| `…/namespaces/probe_ns%1Fnested/tables` (collection) | 1 / 0 / 1 (createTable) | — |
+| `…/namespaces/probe_ns%1Fnested` (namespace) | 1 / 0 / 1 (dropNamespace) | — |
+
+The two commit lines name the table `apimatrix1789535345_cat.probe_ns.nested.mx_1789535345_deep`; the
+Lua rebuilt `probe_ns%1Fnested` from them and both commits (create 24 ms, update 12 ms) landed on the
+**same** row the requests did. **No row with a dotted namespace exists.** TODO 1.5 PASS — the last
+unmeasured key shape in v4 is measured.
