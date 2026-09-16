@@ -644,6 +644,15 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   checks that means one container (no reloader), no `--enable-hot-reload`, container start ≥ ConfigMap change,
   CM sha == repo, tier 1 receiving. Only the RESULT line was pasted: step2's output and the new revision
   number (expected 18) are not recorded. `apply-lua.sh` has still never run for real. Decision record follows.
+- **Re-verified on the no-reload pod `benchmarks-fluent-bit-fjdjb` from Discover exports (`…-3.csv` detail, `…-4.csv`
+  report), run `1789549828`, 18:10–18:11:30 KST, report seq 7/8/9:** seq 9 (09:11:00Z) is **identical** to the 08:41Z
+  window — 355 seen / 200 kept / 155 counted (100 × 404), 247 4xx, 4 5xx, 104 denied, 57 resources, 4 principals,
+  155 app lines dropped, 1,035,369 bytes; detail 200 / 22 / 78 (access / ServiceImpl / ExceptionMapper), 0 × 404
+  stored. In every window: detail access docs == `access_kept` (35 / 8 / 200); resource totals == principal totals
+  == access lines, bytes included (21,643 / 183,509 / 1,035,369); `app_dropped` rows sum to the summary; all 143 app
+  docs join an access doc by `mdc.requestId`, no duplicate request ids. The run spans three windows (seq 7–8 are
+  setup: 201s and grants). Not checkable from these CSVs: `counted_404` / `app_dropped_404` / `held_*` columns were
+  not selected in Discover, and numbers export with thousands separators (`1,898`).
 - *(as written, Kade's decision 2026-09-16)* Wanted: no reloader, Lua and
   config read at start only, simple config. Choice among two: *Helm `--set-file`* (one command, chart checksum
   restarts; the 09-15 outage risk) vs **separate ConfigMap + restart** — **chosen**. Changes:
@@ -937,6 +946,18 @@ Not chased, deliberately: the run's job was coverage, and Polaris is not to be c
 standing). What is missing before anyone files this upstream is the **stack trace per operation**,
 which `polaris-logs-*` holds in full by rule 3 (`http_status >= 400` over the run's windows, field
 `exception.frames` — not `exception`).
+**Stack traces now in hand (2026-09-16, run `1789549828`, window 09:11:00Z, Discover export
+`opensearch_export_2026-09-16-3.csv`).** Reproduced a third time: the same four operations, 4 × 500, each with one
+ERROR `IcebergExceptionMapper` "Unhandled exception returning INTERNAL_SERVER_ERROR" joined by `mdc.requestId`, all
+`java.lang.NullPointerException`, top frames:
+- `POST …/tables/rename` and `POST …/views/rename`: *"identifier" is null* —
+  `PolarisCatalogHelpers.tableIdentifierToList:38` ← `CatalogHandler.authorizeRenameTableLikeOperationOrThrow:339`
+  ← `IcebergCatalogHandler.renameTable:956` / `renameView:1135` (58 frames). A null source/destination reaches
+  authorization before validation.
+- `POST …/namespaces` (createNamespace): *"namespace" is null* — `IcebergCatalogHandler.createNamespace:284` (56 frames).
+- `POST /api/catalog/v1/oauth/tokens` (getToken): *"o" is null* — `ImmutableCollections$Set12.contains:817` ←
+  `JWTBroker.supportsGrantType:169` (42 frames): a request without `grant_type`.
+Polaris 1.3.0-incubating. Enough to file upstream; not filed (Polaris is not to be changed from here).
 
 **#25 — The report index template is WRITTEN AND NOT APPLIED, and the Lua change is written and not
 rolled. OPEN, LIVE.** 2026-09-10. `logging/opensearch/polaris-report-template.json` exists in the
