@@ -5,9 +5,10 @@
     "source": "local-k8s: logging/opensearch/polaris-logs-template.json",
     "written": "2026-09-16",
     "why": "The detail index opens every day on whatever document arrives first -- an access line, an exception log or a grant log -- so each daily index's field types are decided by chance. This pins the fields whose type matters to a query (ranges on http_status/response_size, date ranges on _time, booleans for the two flags) and leaves every other string to dynamic mapping.",
-    "measured_from": "2026-09-16 readout of polaris-logs-* (run 1789463971, 508 docs): http_status, response_size, sequence, threadId, exception.refId arrive as JSON integers; _time as an RFC3339 string with nanoseconds; access_log_parse_error / secret_redacted as booleans (absent on a normal record).",
-    "strings_left_dynamic": "_msg, api_path, loggerName, level, user_principal_name, http_method, client_ip, hostName, threadName, mdc.*, exception.exceptionType/message, app, flb_tag, stream, ndc are NOT declared: dynamic mapping gives text + a .keyword subfield, and G1/G3, Gate 2 and the proposal's queries all use .keyword.",
+    "measured_from": "2026-09-16 readout of polaris-logs-* (run 1789463971, 508 docs): http_status, response_size, sequence, threadId (removed 2026-09-16), exception.refId arrive as JSON integers; _time as an RFC3339 string with nanoseconds; access_log_parse_error / secret_redacted as booleans (absent on a normal record).",
+    "strings_left_dynamic": "_msg, api_path, loggerName, level, user_principal_name, http_method, client_ip, hostName, mdc.*, exception.exceptionType/message, app, flb_tag, stream are NOT declared: dynamic mapping gives text + a .keyword subfield, and G1/G3, Gate 2 and the proposal's queries all use .keyword.",
     "_time": "date with the nanos format: Polaris writes 9 fractional digits. ignore_malformed so a surprise value costs the field, never the document.",
+    "removed_2026-09-16": "threadId mapping dropped: threadName, threadId and ndc are removed by polaris_field_trim (fluent-bit/values.yaml FILTER 4). Indices created before the upgrade still hold them.",
     "not_retroactive": "applies only to indices created after it is applied.",
     "pairs_with": "logging/scripts/step12-logs-index-template.sh"
   },
@@ -29,7 +30,6 @@
         "http_status": { "type": "long" },
         "response_size": { "type": "long" },
         "sequence": { "type": "long" },
-        "threadId": { "type": "long" },
         "access_log_parse_error": { "type": "boolean" },
         "secret_redacted": { "type": "boolean" },
         "exception": {

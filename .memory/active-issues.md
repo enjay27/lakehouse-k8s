@@ -5,6 +5,17 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#30 — `threadName` / `threadId` / `ndc` removed from `polaris-logs-*`: WRITTEN, NOT ROLLED.** 2026-09-16.
+Decision (Kade): thread name and id carry no tracing value; `ndc` was `""` on all 300 detail docs of readout
+`084100Z`. Scope **tier 2 only** — tier 1 `k8s-logs` and the VictoriaLogs shipper keep them.
+- `fluent-bit/values.yaml` FILTER 4 `polaris_field_trim`: three `Remove_key` lines (C filter, after the Lua, so
+  held/orphan records are trimmed too; removing in Lua would force return code 2 on every stored record).
+- `polaris-logs-template.json`: `threadId: long` dropped (re-PUT with step12; not retroactive).
+- step2: three render checks. step3 section 5: `exists` count of each field on docs newer than the container
+  start must be 0 (older docs in the same daily index still carry them).
+- **NOT VERIFIED:** no render, no roll. Path: step2 on a fresh render → `helm upgrade` → step3 → step12.
+  Can ride with the R1 filter merge of the Lua refactor (`logging/REVIEW-lua-refactor-2026-09-16.md`) or go alone.
+
 **#16 — RESOLVED-INSTRUCTIVE 2026-09-09: the double write DOES NOT HAPPEN. The reasoning was
 sound and the conclusion was wrong.**
 

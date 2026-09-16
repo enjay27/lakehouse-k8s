@@ -347,6 +347,10 @@ config:
 
     # 4. 모든 레코드에서 저장 비용만 들고 답하는 것이 없는 필드, CRI 봉투 잔여물을 지운다.
     #    없는 키의 Remove_key 는 no-op 이라 봉투 이름은 방어적으로 나열한다.
+    #    2026-09-16 (Kade): 스레드 이름·ID 는 추적 가치가 없어 제거. ndc 는 detail 300건 전부 "".
+    #    polaris-logs-* 에만 적용된다 — tier 1(k8s-logs)과 shipper(VictoriaLogs)는 그대로 둔다.
+    #    Lua 가 아니라 여기서 지우는 이유: Lua 에서 지우면 적재되는 모든 레코드가 반환 코드 2 로
+    #    재인코딩된다. 이 필터는 Lua 뒤라 보류분·고아 레코드에도 똑같이 적용된다.
     [FILTER]
         Name          record_modifier
         Alias         polaris_field_trim
@@ -356,6 +360,9 @@ config:
         Remove_key    processId
         Remove_key    logtag
         Remove_key    time
+        Remove_key    threadName
+        Remove_key    threadId
+        Remove_key    ndc
 
   # ── 커스텀 파서 ──────────────────────────────────────────────────────────────────
   customParsers: |

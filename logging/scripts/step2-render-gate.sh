@@ -108,6 +108,12 @@ eq "WINDOW_SECONDS still 30 (flip to 1800 is TODO 2.5)" 'local WINDOW_SECONDS = 
 # Measured 2026-09-16 with kustomize v5.4.3: the rendered data is byte-identical to the file.
 
 echo
+echo "=== polaris-logs-* field trim (2026-09-16: thread name/id and ndc removed, tier 2 only) ==="
+eq "threadName removed in polaris_field_trim" 'Remove_key    threadName' 1
+eq "threadId removed in polaris_field_trim"   'Remove_key    threadId'   1
+eq "ndc removed in polaris_field_trim"        'Remove_key    ndc$'       1
+
+echo
 echo "=== tier 1 untouched ==="
 eq "tier-1 literals still present (#4 follow-up)" 'Str0ngP@ssw0rd123!' 2
 eq "k8s-logs prefix unchanged"              'Logstash_Prefix     k8s-logs' 2

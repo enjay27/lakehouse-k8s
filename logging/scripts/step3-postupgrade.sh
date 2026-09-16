@@ -94,6 +94,19 @@ for idx in polaris-logs polaris-report; do
   else bad "${idx}-*: no answer (index missing, or 401 — check \${OS_PASSWORD} expanded)"; fi
 done
 
+# 2026-09-16: polaris_field_trim removes threadName / threadId / ndc. Only docs written AFTER the pod
+# started can prove it -- older docs in the same daily index still carry the fields.
+if [ -n "${START_T:-}" ]; then
+  for f in threadName threadId ndc; do
+    N=$("${OS[@]}" "${OS_URL}/polaris-logs-*/_count" -H 'Content-Type: application/json' \
+        -d "{\"query\":{\"bool\":{\"filter\":[{\"range\":{\"@timestamp\":{\"gt\":\"${START_T}\"}}},{\"exists\":{\"field\":\"${f}\"}}]}}}" 2>/dev/null \
+        | sed -n 's/.*"count":\([0-9]*\).*/\1/p')
+    if [ "$N" = "0" ]; then ok "polaris-logs-*: 0 docs with $f since pod start $START_T"
+    elif [ -z "$N" ]; then huh "polaris-logs-*: could not count docs with $f"
+    else bad "polaris-logs-*: $N docs with $f since pod start -- polaris_field_trim is not in effect"; fi
+  done
+else huh "no container start time -- skipped the field-trim check"; fi
+
 echo
 echo "=== 6. Fluent Bit's own counters (port-forward 2020) ==="
 kubectl -n $NS port-forward ds/$DS 2020:2020 >/dev/null 2>&1 &
