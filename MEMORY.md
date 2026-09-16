@@ -29,6 +29,8 @@ arithmetic, so re-check the tick divides the window.
 
 **Policy v4 ROLLED 2026-09-15 (`#27`)** — first run's setup windows match detail exactly (598 docs as predicted, seq 3–4 kept/errors/grants/invariants). **Still owed:** the matrix window (seq 5) report export, `commit_*` mapping, template (#25), 1800 revert. Every upgrade needs `--set-file` (`fluent-bit/values.yaml` header; comments now Korean).
 
+**TODO plan (2026-09-16):** [`logging/PLAN-audit-log-todo-2026-09-16.md`](logging/PLAN-audit-log-todo-2026-09-16.md) — phase 0 verify v4 (matrix-window export, Gate 2 in `k8s-logs`), 1 templates + one phase per window, 2 next Lua bundle (404 policy, register, 1800s) + ISM, 3 load test and GitOps port.
+
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent
 artifact** — and a model that fits every count can still be wrong by an order of magnitude
 (`sessions/2026-09-14-window-skew-review.md` §6).

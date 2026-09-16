@@ -1,0 +1,87 @@
+# TODO — Polaris audit log, from `PROPOSAL-polaris-audit-log-retention.ko.md` to production
+
+**Status: PLAN, nothing started.** Written 2026-09-16 from the proposal (`8331ce7`), its §10.1 steps and
+§11 open items, plus what the 2026-09-15 reviews left owed. Every item names **who** (K = Kade: cluster,
+exports, decisions · C = Claude: files, tests, reviews), **depends on**, and **done when** — a done-when
+that can read 0 hits is not a pass.
+
+Scope: local OrbStack first (phases 0–2), then the production port (phase 3). v4 is already rolled
+(`active-issues #27`); nothing here changes Polaris.
+
+---
+
+## Phase 0 — finish verifying v4 as it runs now (no config change)
+
+| # | Task | Who | Depends on | Done when |
+|---|---|---|---|---|
+| 0.1 | Export the **matrix window** report (`seq` 5 of run `1789463971`, or a fresh run) **with `commit_count`, `commit_ms_*`, `logger_name`, `dropped`, `access_seen`, `parse_errors`, `role_keys_forced` as columns** | K | — | CSV holds summary + resource + principal + app_dropped rows for a window with 4xx/403/500 traffic |
+| 0.2 | Review 0.1 against the detail export: gates **G1, G3, G4, G5, G7, G8** + the per-window invariants (proposal §10.2) | C | 0.1 | every gate PASS or a finding filed in `active-issues` |
+| 0.3 | **G2 / G6** — compare `sum(app_dropped.dropped)` and `sum(commit_count)` against the unfiltered `k8s-logs` copy over ≥10 whole windows | K export · C review | 0.1 | equal within boundary lines |
+| 0.4 | **Gate 2 (`last_write_bytes`) against `k8s-logs`** — last 2xx `POST …/tables/probe_tbl` in the named window, `response_size` vs the row. Fix `GUIDE-schema-v3-testing.md` Gate 2 query 2 to search `k8s-logs-*` (successful catalog POST is never in `polaris-logs-*`) | K query · C guide fix | — | sizes equal on ≥1 table row; guide updated and committed |
+| 0.5 | Confirm the **mapping** of v4 fields in today's `polaris-report-*` (`GET polaris-report-*/_mapping/field/commit_*,dropped,app_dropped_total`) | K | — | all `long` (dynamic) — or recorded as `float`/`text` → forces 1.1 before more data |
+
+## Phase 1 — index hygiene on the local cluster
+
+| # | Task | Who | Depends on | Done when |
+|---|---|---|---|---|
+| 1.1 | Apply the **report template**: `bash logging/scripts/step9-report-index-template.sh` | K | 0.5 | next day's index mapping shows `date` / `long` on the template's fields (not retroactive) |
+| 1.2 | Write a **detail template** `logging/opensearch/polaris-logs-template.json` (`http_status`, `response_size` long; `mdc.requestId`, `loggerName`, `user_principal_name`, `api_path` keyword; `secret_redacted` boolean) + extend step9 or a sibling script | C | — | JSON valid, committed |
+| 1.3 | Apply 1.2 | K | 1.2 | next `polaris-logs-*` index mapping matches |
+| 1.4 | **Notebook: one phase per window** (`polaris_log_coverage_v2.ipynb`, lag = `Interval_Sec + 1.5` into *each* window) — so role/grant gates read one phase | K (notebook repo) · C review | — | a run whose report shows ≥ one window per phase |
+| 1.5 | **Nested namespace commit key** — add an `a.b` namespace + table commit to the matrix; check the table row carries both `requests` and `commit_count` (no `a.b` phantom row) | K run · C review | 1.4 | one row, not two |
+
+## Phase 2 — the next Lua roll (bundle changes; every roll is a whole-pipeline availability risk, proposal §9.2)
+
+| # | Task | Who | Depends on | Done when |
+|---|---|---|---|---|
+| 2.1 | **Decide the 404 policy** and write proposal §3.9 (400k/day, ~98% of the detail index) | K | — | §3.9 written; if it changes the Lua, spec added to this bundle |
+| 2.2 | **Decide the deploy method** — local: keep `--set-file` + gate, inline (B), or a `fluent-bit/upgrade.sh` wrapper; prod: ArgoCD `helm.fileParameters` (check the ArgoCD version) | K decide · C implement | — | chosen method in proposal §9.1 and `values.yaml` header |
+| 2.3 | Add a **RESOURCE_PATTERN for `/namespaces/{ns}/register`** (kind `table`) + test | C | — | `test-schema-v4.lua` case passes |
+| 2.4 | Implement 2.1's Lua change (if any) + tests | C | 2.1 | tests pass on LuaJIT/Lua 5.1; export replay shows the expected keep/drop |
+| 2.5 | **Revert the window to 1800s** (`WINDOW_SECONDS = 1800`; keep `Interval_Sec 5` — proposal §4.6-7) | C | phase 0 and 1.4–1.5 done (they need 30s windows) | Lua + comments updated, tests adjusted (sed to 30 for tests) |
+| 2.6 | **Roll the bundle** (2.3–2.5): unit tests → render → `step2-render-gate.sh` → upgrade → `step3-postupgrade.sh` | K | 2.3–2.5, 2.2 | step3 all PASS, `k8s-logs` receiving, first 1800s report rows present |
+| 2.7 | **Delete the 30s-window verification `polaris-report-*` indices** before any 365d policy attaches. *Destructive — explicit OK at execution time.* | K | 2.6 | only 1800s-window report indices remain |
+| 2.8 | Write **ISM policies** (`logging/opensearch/ism-polaris-logs-30d.json`, `ism-polaris-report-365d.json`) + apply script | C | — | JSON valid, committed |
+| 2.9 | Apply ISM | K | 2.7, 2.8 | `_plugins/_ism/explain/polaris-*` shows both policies attached |
+
+## Phase 3 — production readiness and port
+
+| # | Task | Who | Depends on | Done when |
+|---|---|---|---|---|
+| 3.1 | **Load test** the DaemonSet at production rate: ~580 lines/s average, and a peak (e.g. 3×), CPU limit 200m | K run · C harness + review | 2.6 | no input pause / backlog growth; CPU headroom recorded, or limits raised |
+| 3.2 | **Row caps** — watch `resources_other`, `principals_other`, `role_keys_forced` under realistic key counts; size `REPORT_MAX_RESOURCES` | K · C | 3.1 or first prod day | caps never hit, or raised with memory re-checked |
+| 3.3 | **One-day measurement** — `_cat/indices` sizes / doc counts for both indices; replace proposal §6 estimates (doc size, exception-lines-per-error ratio) | K measure · C doc | 2.6 (+ prod for real ratios) | §6 carries measured numbers |
+| 3.4 | **Can production have two Polaris indices?** If not: merge into `polaris-audit-*` 30d (proposal §5.4) — one template holding both shapes | K confirm · C config | — | index layout decided for prod |
+| 3.5 | **Port to GitOps** (Bitbucket → Jenkins → ArgoCD): values, Lua, templates, ISM; prod index prefix and OpenSearch endpoint; Secret-based credentials | C files · K pipeline | 2.2, 3.4 | ArgoCD app syncs; step3-equivalent checks pass in prod |
+| 3.6 | **Tier 1 credentials to the Secret** (`#4`) — first verify the Secret's user can write `k8s-logs` | K verify · C change | — | two literal credentials gone; tier 1 still indexing |
+| 3.7 | **Polaris runtime settings in prod** — console threshold (DEBUG would cost filter CPU for nothing), replica count (several Polaris pods on one node aggregate into one report) | K | — | recorded in proposal §11 |
+| 3.8 | **Dashboards and alerts** from proposal §8 (commit mean via sum/count, auth_denied surge, new logger, `secret_redacted`, collection gap, `errors_5xx` minus the four `#24` operations) | C queries · K build | 2.6 (1800s data) | alerts fire on a synthetic trigger |
+
+## Docs to keep in step (same commit as the change they describe)
+
+| # | Task | Who | When |
+|---|---|---|---|
+| D.1 | `polaris-logging.drawio` — v4 diagram (tick, allow-list drop, app_dropped, two indices) | C | any time |
+| D.2 | Proposal status table (top) and §10.1 after each phase | C | per phase |
+| D.3 | `SCHEMA-report.md` for any schema change (404 policy, register) | C | with 2.4 / 2.3 |
+| D.4 | `.memory/active-issues.md` #25 / #27 closed or updated; `MEMORY.md` *Now* | C | per phase |
+
+---
+
+## Order at a glance
+
+```
+0.1 → 0.2 → 0.3          0.4   0.5 → 1.1          1.2 → 1.3
+          1.4 → 1.5
+2.1 ─┐  2.3 ─┐
+2.2 ─┼──────┼─ 2.4, 2.5 → 2.6 → 2.7 → 2.9 ← 2.8
+     │      │                   └→ 3.1 → 3.2, 3.3, 3.8
+3.4 ─┴──────┴──────────────────────────────→ 3.5        3.6, 3.7 independent
+```
+
+**Critical path:** 0.1 → 0.2 → 1.4 → 1.5 → 2.5 → 2.6 → 2.7 → 2.9. Everything that needs 30-second windows
+(phase 0, 1.4, 1.5) must finish **before** 2.5 — after the revert, a verification run takes 30 minutes per
+window.
+
+**Decisions only Kade can make:** 2.1 (404), 2.2 (deploy method), 3.4 (index count in prod), and the OK for
+2.7 (delete) at the moment of execution.
