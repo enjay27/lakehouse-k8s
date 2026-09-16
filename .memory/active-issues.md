@@ -846,7 +846,7 @@ repo; nothing has PUT it to OpenSearch. `fluent-bit/values.yaml` no longer write
 **2026-09-16 — APPLIED.** `PUT _index_template/polaris-report` acknowledged; a simulated new index maps
 `min/max_record_time` as `date`. Existing indices as expected: 09.09 / 09.10 / 09.14 `text` for life; 09.15 / 09.16
 already `date` by dynamic mapping (the Lua has omitted `""` since 09-10). step9's read-back was a `grep | head -20`
-that showed 19 of 35 `long` fields — rewritten to compare all 37 fields, stored and simulated; rerun owed.
+that showed 19 of 35 `long` fields — rewritten to compare all 37 fields. **Rerun PASS: 37/37 stored and simulated.** #25 is closed for new indices; 09.09/09.10/09.14 stay text.
 
 - `polaris-report-2026.09.10` and every earlier index keep `min_record_time` as **`text`** — no
   range query, no date histogram, for the life of those indices. The invariant

@@ -1,0 +1,43 @@
+{
+  "index_patterns": ["polaris-logs-*"],
+  "priority": 100,
+  "_meta": {
+    "source": "local-k8s: logging/opensearch/polaris-logs-template.json",
+    "written": "2026-09-16",
+    "why": "The detail index opens every day on whatever document arrives first -- an access line, an exception log or a grant log -- so each daily index's field types are decided by chance. This pins the fields whose type matters to a query (ranges on http_status/response_size, date ranges on _time, booleans for the two flags) and leaves every other string to dynamic mapping.",
+    "measured_from": "2026-09-16 readout of polaris-logs-* (run 1789463971, 508 docs): http_status, response_size, sequence, threadId, exception.refId arrive as JSON integers; _time as an RFC3339 string with nanoseconds; access_log_parse_error / secret_redacted as booleans (absent on a normal record).",
+    "strings_left_dynamic": "_msg, api_path, loggerName, level, user_principal_name, http_method, client_ip, hostName, threadName, mdc.*, exception.exceptionType/message, app, flb_tag, stream, ndc are NOT declared: dynamic mapping gives text + a .keyword subfield, and G1/G3, Gate 2 and the proposal's queries all use .keyword.",
+    "_time": "date with the nanos format: Polaris writes 9 fractional digits. ignore_malformed so a surprise value costs the field, never the document.",
+    "not_retroactive": "applies only to indices created after it is applied.",
+    "pairs_with": "logging/scripts/step12-logs-index-template.sh"
+  },
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0,
+        "refresh_interval": "5s"
+      }
+    },
+    "mappings": {
+      "properties": {
+        "_time": {
+          "type": "date",
+          "format": "strict_date_optional_time_nanos||strict_date_optional_time||epoch_millis",
+          "ignore_malformed": true
+        },
+        "http_status": { "type": "long" },
+        "response_size": { "type": "long" },
+        "sequence": { "type": "long" },
+        "threadId": { "type": "long" },
+        "access_log_parse_error": { "type": "boolean" },
+        "secret_redacted": { "type": "boolean" },
+        "exception": {
+          "properties": {
+            "refId": { "type": "long" }
+          }
+        }
+      }
+    }
+  }
+}
