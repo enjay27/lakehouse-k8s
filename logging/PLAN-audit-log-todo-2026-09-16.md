@@ -2,7 +2,7 @@
 
 **Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). Next: 1.1, 1.2, 1.4.
 **1.1 DONE 2026-09-16** — step9 PASS: stored 37/37, simulated 37/37, all six v4 integers `long`.
-**1.2 WRITTEN 2026-09-16** — `logging/opensearch/polaris-logs-template.json` + `logging/scripts/step12-logs-index-template.sh` (8 fields; strings left dynamic). 1.3 = Kade runs step12 (`--dry-run` first).
+**1.2 WRITTEN 2026-09-16** — `logging/opensearch/polaris-logs-template.json` + `logging/scripts/step12-logs-index-template.sh` (8 fields; strings left dynamic). **1.3 DONE 2026-09-16** — step12 PASS 8/8 stored and simulated. Existing indices 09.09–09.15 already mapped every declared field the same way, so the template is insurance, not a correction. No `polaris-logs-2026.09.16` yet: tier 1 holds 0 Polaris records today and the last detail doc is the test run's end (09-15 09:20:12Z) — Polaris idle, not a stall.
 
 **Was: PLAN, nothing started.** Written 2026-09-16 from the proposal (`8331ce7`), its §10.1 steps and
 §11 open items, plus what the 2026-09-15 reviews left owed. Every item names **who** (K = Kade: cluster,

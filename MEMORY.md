@@ -27,7 +27,7 @@ a 3-call `_analyze`/probe-index test settles it without waiting a day.
 nothing. (6) The **30s revert to 1800/30** is the cutover's last step — it also changes `#26`'s
 arithmetic, so re-check the tick divides the window.
 
-**Policy v4 VERIFIED 2026-09-16 (`#27`)** — matrix window replayed from the raw tier-1 copy: 64 rows × 30 fields, 0 mismatches; Gate 2 passed for the first time. Every upgrade needs `--set-file`. Report template applied (1.1, 37/37). **Next:** run `step12-logs-index-template.sh` (1.3), one test phase per window (1.4).
+**Policy v4 VERIFIED 2026-09-16 (`#27`)** — matrix window replayed from the raw tier-1 copy: 64 rows × 30 fields, 0 mismatches; Gate 2 passed for the first time. Every upgrade needs `--set-file`. Both index templates applied (1.1 37/37, 1.3 8/8). **Next:** one test phase per window (1.4, notebook repo), then the nested-namespace run (1.5).
 
 **TODO plan (2026-09-16):** [`logging/PLAN-audit-log-todo-2026-09-16.md`](logging/PLAN-audit-log-todo-2026-09-16.md) — phase 0 verify v4 (matrix-window export, Gate 2 in `k8s-logs`), 1 templates + one phase per window, 2 next Lua bundle (404 policy, register, 1800s) + ISM, 3 load test and GitOps port.
 
