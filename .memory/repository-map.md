@@ -20,11 +20,14 @@ and one directory per service. A service directory is either a **local chart**
 
 **There are two Fluent Bit values files and they are different deployments, not
 duplicates** — `fluent-bit/values.yaml` is the **DaemonSet** (its Lua is the separate file
-`fluent-bit/polaris_access_log.lua` since 2026-09-15, passed with `--set-file`; container logs →
-OpenSearch in Docker); `logging/fb-values.yaml` is a **single-replica Deployment**
+`fluent-bit/polaris_access_log.lua` since 2026-09-15 — shipped as ConfigMap `polaris-fluent-bit-lua` via
+`fluent-bit/kustomization.yaml` and rolled with `fluent-bit/apply-lua.sh` since 2026-09-16, no `--set-file`;
+container logs → OpenSearch in Docker); `logging/fb-values.yaml` is a **single-replica Deployment**
 (shared-PVC file tail → VictoriaLogs). `logging/` also holds
 `victoria-values.yaml` and `polaris-logging-architecture-spec.md`, the design doc
-those two are built against (filed 2026-09-03). Only `fluent-bit/values.yaml.bak`
+those two are built against (filed 2026-09-03). `logging/opensearch/` holds the two index templates and
+`devtools-export.console` — Dev Tools requests that export full `_source` JSON (report window, detail and
+tier-1 copy of a tick interval, a run by request-id prefix, errors with stack traces, PIT paging). Only `fluent-bit/values.yaml.bak`
 is an actual backup.
 
 **Duplicate values files are a live hazard here.** `datahub-values.yaml`,
