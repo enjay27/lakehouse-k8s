@@ -1,6 +1,7 @@
 # TODO — Polaris audit log, from `PROPOSAL-polaris-audit-log-retention.ko.md` to production
 
-**Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). **1.5 DONE 2026-09-16** — run `1789535345`: one table row at `probe_ns%1Fnested/…/mx_1789535345_deep` with requests 3 and commit_count 2, no dotted phantom; replay 67×30 PASS. **Phases 0 and 1 complete. Next: phase 2 (404 policy, deploy method, register pattern, 1800s revert, ISM).**
+**Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). **1.5 DONE 2026-09-16** — run `1789535345`: one table row at `probe_ns%1Fnested/…/mx_1789535345_deep` with requests 3 and commit_count 2, no dotted phantom; replay 67×30 PASS. **Phases 0 and 1 complete.**
+**Phase 2 bundle WRITTEN 2026-09-16, not rolled (`active-issues #28`)** — 2.1 decided (404 counted only, app lines dropped by `mdc.requestId`), 2.2 decided (Lua ConfigMap + chart hot reload, no `--set-file`), 2.3 and 2.4 implemented, tests pass. Next: 2.6 roll + `RUNBOOK-lua-hot-reload-2026-09-16.md` B/C/D; 2.5 (1800s) deliberately **not** in this bundle — step11 verification of v5 needs 30 s windows.
 **1.1 DONE 2026-09-16** — step9 PASS: stored 37/37, simulated 37/37, all six v4 integers `long`.
 **1.2 WRITTEN 2026-09-16** — `logging/opensearch/polaris-logs-template.json` + `logging/scripts/step12-logs-index-template.sh` (8 fields; strings left dynamic). **1.3 DONE 2026-09-16** — step12 PASS 8/8 stored and simulated. Existing indices 09.09–09.15 already mapped every declared field the same way, so the template is insurance, not a correction. No `polaris-logs-2026.09.16` yet: tier 1 holds 0 Polaris records today and the last detail doc is the test run's end (09-15 09:20:12Z) — Polaris idle, not a stall.
 
@@ -38,12 +39,12 @@ Scope: local OrbStack first (phases 0–2), then the production port (phase 3). 
 
 | # | Task | Who | Depends on | Done when |
 |---|---|---|---|---|
-| 2.1 | **Decide the 404 policy** and write proposal §3.9 (400k/day, ~98% of the detail index) | K | — | §3.9 written; if it changes the Lua, spec added to this bundle |
-| 2.2 | **Decide the deploy method** — local: keep `--set-file` + gate, inline (B), or a `fluent-bit/upgrade.sh` wrapper; prod: ArgoCD `helm.fileParameters` (check the ArgoCD version) | K decide · C implement | — | chosen method in proposal §9.1 and `values.yaml` header |
-| 2.3 | Add a **RESOURCE_PATTERN for `/namespaces/{ns}/register`** (kind `table`) + test | C | — | `test-schema-v4.lua` case passes |
-| 2.4 | Implement 2.1's Lua change (if any) + tests | C | 2.1 | tests pass on LuaJIT/Lua 5.1; export replay shows the expected keep/drop |
+| 2.1 | ~~Decide the 404 policy~~ **DECIDED 2026-09-16:** count, don't store; drop the request's allow-listed app lines by `mdc.requestId`. Proposal §3.9 written | K | — | §3.9 written; if it changes the Lua, spec added to this bundle |
+| 2.2 | ~~Decide the deploy method~~ **DECIDED + WRITTEN 2026-09-16:** ConfigMap `polaris-fluent-bit-lua` via `fluent-bit/kustomization.yaml`, `extraVolumes`, `hotReload` (reloader sidecar). step2 takes the kustomize render as arg 2; step3 checks the new ConfigMap sha + reloader. Hot-reload safety unmeasured → runbook | K decide · C implement | — | chosen method in proposal §9.1 and `values.yaml` header |
+| 2.3 | **DONE (written) 2026-09-16** — `/namespaces/{ns}/register` pattern, kind `collection` (the key is the namespace's table collection, like `POST …/tables`), case in `test-schema-v5.lua`. Was: kind `table` | C | — | test case passes |
+| 2.4 | **DONE (written) 2026-09-16** — v5 Lua (hold/memo/orphans, 4 summary fields), `test-schema-v5.lua`, v3/v4 tests expect schema 5, report template +4 `long`, step11 predicts the detail index by logger | C | 2.1 | tests pass on LuaJIT/Lua 5.1; export replay shows the expected keep/drop |
 | 2.5 | **Revert the window to 1800s** (`WINDOW_SECONDS = 1800`; keep `Interval_Sec 5` — proposal §4.6-7) | C | phase 0 and 1.4–1.5 done (they need 30s windows) | Lua + comments updated, tests adjusted (sed to 30 for tests) |
-| 2.6 | **Roll the bundle** (2.3–2.5): unit tests → render → `step2-render-gate.sh` → upgrade → `step3-postupgrade.sh` | K | 2.3–2.5, 2.2 | step3 all PASS, `k8s-logs` receiving, first 1800s report rows present |
+| 2.6 | **Roll the bundle** (2.2–2.4; 2.5 follows as a hot-reload-only change): tests → kustomize + helm render → `step2-render-gate.sh render lua` → `kubectl apply -k fluent-bit/` → helm upgrade → step3 → step9 → traffic → step10/11 → runbook B/C/D | K | 2.2–2.4 | step3 all PASS, `k8s-logs` receiving, step11 PASS with detail 200/22/78-style prediction met, no 404 access doc in `polaris-logs-*` |
 | 2.7 | **Delete the 30s-window verification `polaris-report-*` indices** before any 365d policy attaches. *Destructive — explicit OK at execution time.* | K | 2.6 | only 1800s-window report indices remain |
 | 2.8 | Write **ISM policies** (`logging/opensearch/ism-polaris-logs-30d.json`, `ism-polaris-report-365d.json`) + apply script | C | — | JSON valid, committed |
 | 2.9 | Apply ISM | K | 2.7, 2.8 | `_plugins/_ism/explain/polaris-*` shows both policies attached |
@@ -67,7 +68,7 @@ Scope: local OrbStack first (phases 0–2), then the production port (phase 3). 
 |---|---|---|---|
 | D.1 | `polaris-logging.drawio` — v4 diagram (tick, allow-list drop, app_dropped, two indices) | C | any time |
 | D.2 | Proposal status table (top) and §10.1 after each phase | C | per phase |
-| D.3 | `SCHEMA-report.md` for any schema change (404 policy, register) | C | with 2.4 / 2.3 |
+| D.3 | `SCHEMA-report.md` for any schema change (404 policy, register) — **v5 section written 2026-09-16** | C | with 2.4 / 2.3 |
 | D.4 | `.memory/active-issues.md` #25 / #27 closed or updated; `MEMORY.md` *Now* | C | per phase |
 
 ---

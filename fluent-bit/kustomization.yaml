@@ -1,0 +1,41 @@
+# =====================================================================================
+# Polaris 감사 로그 Lua 스크립트 → ConfigMap `polaris-fluent-bit-lua` (정책 v5 부터)
+# =====================================================================================
+# 스크립트 원본은 한 곳: fluent-bit/polaris_access_log.lua. 이 파일은 그것을 ConfigMap 으로
+# 감쌀 뿐이다 (내용 복사본 없음). Helm 릴리스와 분리되어 있어서, 스크립트만 바꿀 때는
+# Helm 을 거치지 않고 이것만 적용하면 된다:
+#
+#   kubectl config current-context                     # 반드시 orbstack
+#   luajit logging/scripts/test-schema-v5.lua          # (cp 로 /tmp/polaris.lua 준비 후) — 필수
+#   kubectl kustomize fluent-bit/ | less               # 렌더 확인
+#   kubectl apply -k fluent-bit/                       # 적용
+#
+# 적용 후 일어나는 일 (values.yaml 의 hotReload 참고):
+#   1. kubelet 이 파드에 마운트된 파일을 갱신한다 (최대 약 1분). subPath 를 쓰지 않는 마운트라서 가능.
+#   2. reloader 사이드카(configmap-reload)가 변경을 감지해 POST /api/v2/reload 를 호출한다.
+#   3. Fluent Bit 이 프로세스 재시작 없이 파이프라인을 다시 올린다.
+#      → Lua 상태(윈도우 카운터, 요청 ID 보류 목록) 초기화: 다음 리포트 행은 partial,
+#        report_seq 는 1 부터. 보류 중이던 앱 로그는 사라진다.
+#
+# ⚠ 잘못된 스크립트를 적용했을 때 5.1.1 이 이전 설정으로 계속 도는지, 엔진이 멈추는지는
+#   아직 미측정이다 (logging/RUNBOOK-lua-hot-reload-2026-09-16.md 의 C 단계). 멈춘다면
+#   tier 1(노드 전체 로그)도 함께 멈춘다 — 2026-09-15 사고와 같은 모양. 그래서 적용 전
+#   Lua 단위 테스트는 생략할 수 없다.
+#
+# 이름 해시 접미사를 끈 이유: 켜 두면 내용이 바뀔 때마다 ConfigMap 이름이 바뀌고, 그 이름을
+# 참조하는 DaemonSet 파드 스펙이 바뀌어 hot reload 가 아니라 파드 재시작이 된다.
+# =====================================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: datahub-hynix
+
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    app.kubernetes.io/part-of: benchmarks-fluent-bit
+    app.kubernetes.io/component: polaris-lua
+
+configMapGenerator:
+  - name: polaris-fluent-bit-lua
+    files:
+      - polaris_access_log.lua

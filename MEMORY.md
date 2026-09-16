@@ -3,7 +3,7 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-15
+## Now — 2026-09-16 (v5 written)
 
 **`#26` IS FIXED — run `1789460891` agrees with the log index by label** (errors 2/251 == 2/251,
 resource == principal totals). But the tick **does drift** (3.673s → 2.77s, same pod), and the run put
@@ -28,6 +28,8 @@ nothing. (6) The **30s revert to 1800/30** is the cutover's last step — it als
 arithmetic, so re-check the tick divides the window.
 
 **Policy v4 VERIFIED 2026-09-16 (`#27`)** — matrix window replayed from the raw tier-1 copy: 64 rows × 30 fields, 0 mismatches; Gate 2 passed for the first time. Every upgrade needs `--set-file`. Both index templates applied (1.1 37/37, 1.3 8/8). 1.4 closed (option A). **1.5 PASS** (nested ns: one row, commit_count 2, replay 67×30). **Phases 0–1 done; next is phase 2** (404 policy, deploy method, register, 1800s, ISM).
+
+**Policy v5 WRITTEN, NOT ROLLED (`#28`, 2026-09-16)** — 404 counted not stored (+ its app lines dropped by `mdc.requestId`); Lua moves to ConfigMap `polaris-fluent-bit-lua` + chart hot reload, no `--set-file` once rolled. Roll order starts `kubectl apply -k fluent-bit/` **before** `helm upgrade`. Invalid-script reload behaviour unmeasured — [`logging/RUNBOOK-lua-hot-reload-2026-09-16.md`](logging/RUNBOOK-lua-hot-reload-2026-09-16.md) C needs Kade's OK.
 
 **TODO plan (2026-09-16):** [`logging/PLAN-audit-log-todo-2026-09-16.md`](logging/PLAN-audit-log-todo-2026-09-16.md) — phase 0 verify v4 (matrix-window export, Gate 2 in `k8s-logs`), 1 templates + one phase per window, 2 next Lua bundle (404 policy, register, 1800s) + ISM, 3 load test and GitOps port.
 

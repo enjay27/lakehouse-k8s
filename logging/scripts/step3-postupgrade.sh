@@ -18,9 +18,11 @@ set -uo pipefail
 NS=datahub-hynix
 DS=benchmarks-fluent-bit
 # sha256 (first 16) of the repo script, computed now -- so it cannot go stale. Run from the
-# repo root. Since 2026-09-15 the script is fluent-bit/polaris_access_log.lua, supplied with
-# --set-file; Helm stores its bytes verbatim, so the ConfigMap must hash identically.
+# repo root. Since policy v5 (2026-09-16) the script ships as its own ConfigMap
+# polaris-fluent-bit-lua (`kubectl apply -k fluent-bit/`), not through Helm/--set-file.
+# kustomize v5.4.3 was measured to store the bytes verbatim, so the ConfigMap must hash identically.
 # (v4 as committed dfbbe21: f364c89653dfe481. v3 was the shipper's aa180e90b9f69bda.)
+LUA_CM=polaris-fluent-bit-lua
 LUA_FILE=fluent-bit/polaris_access_log.lua
 [ -r "$LUA_FILE" ] || { echo "FATAL: run from the repo root ($LUA_FILE not found)"; exit 2; }
 LUA_SHA_EXPECT=$(shasum -a 256 "$LUA_FILE" | cut -c1-16)
@@ -49,12 +51,26 @@ else bad "complaints in the pod log:"; printf '        %s\n' "$BADLINES"; fi
 printf '%s\n' "$LOG" | grep -iE 'lua|polaris' | head -5 | sed 's/^/        /'
 
 echo
-echo "=== 3. Is the DEPLOYED script the one in the repo? ==="
-SHA=$(kubectl -n $NS get configmap ${DS}-luascripts \
+echo "=== 3. Is the DEPLOYED script the one in the repo? And is hot reload wired? ==="
+SHA=$(kubectl -n $NS get configmap $LUA_CM \
       -o jsonpath='{.data.polaris_access_log\.lua}' 2>/dev/null | shasum -a 256 | cut -c1-16)
-if [ -z "$SHA" ]; then bad "no ${DS}-luascripts ConfigMap / no polaris_access_log.lua key"
-elif [ "$SHA" = "$LUA_SHA_EXPECT" ]; then ok "lua sha $SHA matches the repo"
-else bad "lua sha $SHA != expected $LUA_SHA_EXPECT — deployed script differs from the file"; fi
+EMPTY_SHA=$(printf '' | shasum -a 256 | cut -c1-16)
+if [ -z "$SHA" ] || [ "$SHA" = "$EMPTY_SHA" ]; then bad "no $LUA_CM ConfigMap / no polaris_access_log.lua key (kubectl apply -k fluent-bit/)"
+elif [ "$SHA" = "$LUA_SHA_EXPECT" ]; then ok "ConfigMap lua sha $SHA matches the repo"
+else bad "ConfigMap lua sha $SHA != expected $LUA_SHA_EXPECT — deployed script differs from the file"; fi
+# The ConfigMap is not the file the process reads. kubelet syncs the mount up to ~1 min later.
+POD=$(kubectl -n $NS get pods -l app.kubernetes.io/instance=$DS -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+PSHA=$(kubectl -n $NS exec "$POD" -c fluent-bit -- cat /fluent-bit/polaris-lua/polaris_access_log.lua 2>/dev/null | shasum -a 256 | cut -c1-16)
+if [ "$PSHA" = "$LUA_SHA_EXPECT" ]; then ok "file inside pod $POD matches the repo"
+elif [ -z "$PSHA" ] || [ "$PSHA" = "$EMPTY_SHA" ]; then huh "could not read the script inside the pod (image may have no cat); skip"
+else huh "file inside pod is $PSHA — kubelet may not have synced yet; wait ~60s and re-run"; fi
+CONTAINERS=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[*].name}')
+case " $CONTAINERS " in *" reloader "*) ok "reloader sidecar present ($CONTAINERS)";; *) bad "no reloader container ($CONTAINERS) — hotReload not rendered";; esac
+ARGS=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[?(@.name=="fluent-bit")].args}')
+case "$ARGS" in *--enable-hot-reload*) ok "--enable-hot-reload on fluent-bit";; *) bad "fluent-bit args lack --enable-hot-reload";; esac
+RLOG=$(kubectl -n $NS logs "$POD" -c reloader --tail=50 2>/dev/null)
+printf '%s\n' "$RLOG" | grep -iE 'error|fail' | head -5 | sed 's/^/        reloader: /'
+printf '%s\n' "$RLOG" | grep -icE 'webhook|reload' | sed 's/^/        reloader lines mentioning reload: /'
 
 echo
 echo "=== 4. TIER 1 FIRST — did node-wide collection survive 5.1.1? ==="
@@ -92,6 +108,8 @@ for name,v in (m.get("filter") or {}).items():
     d=v.get("drop_records",0); a=v.get("add_records",0)
     if "polaris" in name: print(f"        filter {name:28s} dropped={d:<8} added={a}")
 ' 2>/dev/null || echo "        (could not parse metrics)"
+  HR=$(curl -sS --max-time 10 http://127.0.0.1:2020/api/v2/reload 2>/dev/null)
+  echo "        hot reload counter (GET /api/v2/reload): ${HR:-no answer}   (0 right after a pod start)"
   echo "        NOTE: a per-item OpenSearch rejection inside an HTTP 200 increments NONE of these."
   echo "        That is what Trace_Error On is for — it lands in the pod log, section 2."
 fi

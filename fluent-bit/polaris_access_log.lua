@@ -1,5 +1,5 @@
 -- =====================================================================================
--- polaris_access_log.lua — Polaris 감사 로그 Fluent Bit Lua 필터 (정책 v4 / 리포트 스키마 v4)
+-- polaris_access_log.lua — Polaris 감사 로그 Fluent Bit Lua 필터 (정책 v5 / 리포트 스키마 v5)
 -- =====================================================================================
 --
 -- 한 파일에 함수 두 개, FILTER 도 두 개로 건다.
@@ -13,6 +13,17 @@
 --
 -- 런타임: Fluent Bit 내장 LuaJIT (Lua 5.1 문법). `//`, `table.unpack`, 정수 나눗셈 등
 -- 5.3+ 기능은 쓰지 않는다. 테스트는 luajit / lua5.1 로 돌린다.
+--
+-- ── v4 → v5 변경 요약 (2026-09-16, logging/PLAN-audit-log-todo-2026-09-16.md 2.1–2.3) ──
+--   1. 404 는 적재하지 않고 집계만 한다 (결정: Kade 2026-09-16). 액세스 라인은 errors /
+--      errors_4xx 에 반영되고 summary.counted_404 로 세어진다.
+--   2. 404 요청이 남긴 애플리케이션 로그(예외 사유, grant/assign 시도)도 버린다. 판단은
+--      mdc.requestId 로 한다: 허용 목록의 앱 로그를 요청 ID 별로 "보류" 했다가 같은 ID 의
+--      액세스 라인이 오면 상태를 보고 함께 내보내거나 함께 버린다 (§ 요청 ID 보류).
+--   3. /namespaces/{ns}/register 분류 규칙 추가 (kind collection).
+--   4. Lua 는 values 가 아니라 별도 ConfigMap(fluent-bit/kustomization.yaml)으로 배포되고
+--      hot reload 로 교체된다. reload 하면 이 파일의 모든 상태(윈도우 카운터, 보류 목록)가
+--      초기화된다 — 다음 리포트 행은 partial, report_seq 는 1 부터.
 --
 -- ── v3 → v4 변경 요약 (logging/PLAN-audit-allowlist-2026-09-15.md) ─────────────────
 --   1. 규칙 2: 애플리케이션 로그를 "전부 적재" 에서 "허용 목록(APP_ALLOW)만 적재" 로.
@@ -92,6 +103,9 @@ end
 --        2b. loggerName 이 APP_ALLOW 에 있음 ........ 적재
 --        2c. 그 외 ................................... logger 별로 세고 버림 (app_dropped)
 --   --- 모든 액세스 라인은 여기서 "판정 전에" 먼저 집계된다 ---
+--        2b'. 단, mdc.requestId 가 있으면 즉시 적재하지 않고 요청 ID 별로 보류 → 규칙 3'
+--   3'. http_status == 404 ............................ 집계만 (counted_404). 같은 요청 ID 로
+--                                                       보류된 앱 로그도 함께 버림 (app_dropped_404)
 --   3. http_status >= 400 또는 파싱 실패 ............ 적재 — 전건, 상한 없음
 --   4. PUT / DELETE / PATCH .......................... 적재 — 전건
 --   5. /api/management/ 하위 POST .................... 적재 — 전건
@@ -101,6 +115,7 @@ end
 --
 -- 보장하는 것:
 --   * 인가 실패 100% 보존 — 모든 401·403 은 규칙 3 에 의해 전문 문서로 남는다.
+--   * 액세스 라인이 적재되는 요청의 앱 로그는 그 액세스 라인과 "같은 반환" 으로 나간다.
 --   * 신원·권한 변경 100% 보존 — management POST, 모든 PUT, 모든 DELETE.
 --   * "적재하지 않음 ⇒ 집계됨" — 버린 액세스 라인은 리소스/principal 행에, 버린
 --     애플리케이션 로그는 app_dropped 행에 반드시 숫자로 남는다.
@@ -125,7 +140,9 @@ local REPORT_APP     = "polaris-shipper-report"
 --   v3 (2026-09-09): last_read_bytes/last_write_bytes, api_kind, grant 의 롤 행 귀속.
 -- 새 숫자 필드는 반드시 values.yaml FILTER 3 의 type_int_key 에도 넣어야 한다.
 -- 빠지면 문자열로 저장되고, 숫자 범위 쿼리가 "조용히" 0건을 반환한다.
-local SCHEMA_VERSION = 4
+--   v5 (2026-09-16): 404 집계만 + 같은 요청의 앱 로그 폐기, summary 에 counted_404 /
+--                    app_dropped_404 / held_pending / held_orphans 추가, register 분류.
+local SCHEMA_VERSION = 5
 
 -- 리포트 윈도우 길이(초). values.yaml 의 틱 INPUT Interval_Sec 과 짝이다.
 -- 정상 운영 1800 (매시 :00 / :30, KST 는 UTC+9 정수 시간이라 경계가 같다).
@@ -156,6 +173,23 @@ local APP_ALLOW = {
 -- app_dropped 행에 올릴 logger 이름 수 상한. 넘치면 "__other__" 한 행으로 합친다.
 -- logger 이름은 코드가 정하므로 사실상 유한하지만, 상한 없는 테이블은 두지 않는다.
 local REPORT_MAX_DROPPED_LOGGERS = 50
+
+-- ── 요청 ID 보류 (v5) ──────────────────────────────────────────────────────────────────
+-- 예외 사유·grant 로그는 액세스 라인보다 "먼저" 찍힌다 (2026-09-16 실측: 앱 로그 210건 중
+-- 207건이 앞, 간격 최대 11 ms). 그 시점에는 응답 코드를 모르므로, 허용 목록의 앱 로그를
+-- mdc.requestId 별로 잡아 두었다가 같은 ID 의 액세스 라인이 오면 결정한다.
+--   * 404          → 보류분도 버린다 (app_dropped_404 로 셈)
+--   * 그 외        → 보류분을 액세스 라인과 같은 반환으로 내보낸다
+--   * 액세스 뒤에 온 앱 로그 → STATUS_MEMO 에 남은 상태로 즉시 판정 (측정: 3건, 같은 ID 재사용)
+--   * requestId 없음 → 보류하지 않고 즉시 적재 (v4 동작)
+-- 여러 레코드를 한 번에 반환하면 Fluent Bit 은 하나의 timestamp 를 쓴다: 보류분의 @timestamp 는
+-- 액세스 라인 시각으로 수 ms 이동한다. 원래 시각은 _time 필드에 그대로 남는다.
+-- ⚠ 요청 ID 는 클라이언트가 보낸 Polaris-Request-Id 헤더다. 헤더 없는 요청에 Polaris 가 ID 를
+--   붙이는지는 미측정 — 붙이지 않으면 그 요청의 앱 로그는 보류 없이 적재된다(404 여도).
+local HOLD_MAX_SECONDS    = 30      -- 짝을 못 만난 보류분은 이 시간 뒤 다음 레코드와 함께 적재
+local HOLD_MAX_RECORDS    = 10000   -- 상한. 넘치면 가장 오래된 보류분부터 적재
+local STATUS_MEMO_SECONDS = 30      -- 액세스 라인 뒤에 온 앱 로그를 판정하기 위한 상태 기억
+local STATUS_MEMO_MAX     = 20000
 
 -- ── 2a: 커밋 시간 수확 ─────────────────────────────────────────────────────────────────
 -- IcebergCatalog 가 커밋 성공 후 남기는 라인:
@@ -212,6 +246,8 @@ local RESOURCE_PATTERNS = {
     { kind = "table",          pattern = "^.-/tables/rename$" },
     { kind = "view",           pattern = "^.-/views/rename$" },
     { kind = "transaction",    pattern = "^.-/transactions/commit$" },
+    -- v5: registerTable. 테이블 이름이 경로가 아니라 본문에 있으므로 컬렉션 행.
+    { kind = "collection",     pattern = "^.-/namespaces/[^/]+/register$" },
     { kind = "namespace",      pattern = "^.-/namespaces/[^/]+/properties$" },
     { kind = "table",          pattern = "^.-/namespaces/[^/]+/tables/[^/]+" },
     { kind = "view",           pattern = "^.-/namespaces/[^/]+/views/[^/]+" },
@@ -325,6 +361,7 @@ local function new_window(idx, partial)
         principals = {}, n_principals = 0, principals_over = 0,
         other_keys = {}, n_other_keys = 0,
         dropped = {}, n_dropped_loggers = 0, dropped_total = 0,
+        counted_404 = 0, app_dropped_404 = 0, held_orphans = 0,
         min_time = nil, max_time = nil,
     }
 end
@@ -533,6 +570,83 @@ end
 --   principal    호출 주체별 1건 (요청 > 0).
 --   app_dropped  버린 logger 별 1건 (dropped > 0). zero-carry 없음 — 추이가 아니라 헬스 신호.
 -- level 은 INFO 가 아니라 "REPORT" 로 둔다. 심각도가 아니라 스트림 선택자다.
+-- ── 요청 ID 보류 상태 (윈도우와 무관, reload 전까지 유지) ────────────────────────────────
+-- 큐는 head/tail 정수로 관리한다. 앞쪽이 nil 인 테이블에 `#` 을 쓰면 결과가 정의되지 않는다.
+local held        = {}   -- rid -> { t = 처음 보류한 시각, recs = { record, ... } }
+local held_q      = {}   -- [i] = { rid, t } 보류 순서 (오래된 것부터)
+local held_q_head, held_q_tail = 1, 0
+local held_count  = 0    -- 보류 중인 레코드 수
+local memo        = {}   -- rid -> { status, t }
+local memo_q      = {}
+local memo_q_head, memo_q_tail = 1, 0
+local memo_count  = 0
+
+local function request_id_of(record)
+    local m = record["mdc"]
+    if type(m) == "table" then
+        local rid = m["requestId"]
+        if type(rid) == "string" and rid ~= "" then return rid end
+    end
+    return nil
+end
+
+local function remember_status(rid, status, now)
+    if memo[rid] == nil then memo_count = memo_count + 1 end
+    memo[rid] = { status = status, t = now }
+    memo_q_tail = memo_q_tail + 1
+    memo_q[memo_q_tail] = { rid = rid, t = now }
+    while memo_q_head <= memo_q_tail do
+        local e = memo_q[memo_q_head]
+        if memo_count <= STATUS_MEMO_MAX and now - e.t <= STATUS_MEMO_SECONDS then break end
+        local cur = memo[e.rid]
+        if cur ~= nil and cur.t == e.t then memo[e.rid] = nil; memo_count = memo_count - 1 end
+        memo_q[memo_q_head] = nil
+        memo_q_head = memo_q_head + 1
+    end
+    if memo_q_head > memo_q_tail then memo_q, memo_q_head, memo_q_tail = {}, 1, 0 end
+end
+
+local function hold(rid, record, now)
+    local h = held[rid]
+    if h == nil then
+        h = { t = now, recs = {} }
+        held[rid] = h
+        held_q_tail = held_q_tail + 1
+        held_q[held_q_tail] = { rid = rid, t = now }
+    end
+    h.recs[#h.recs + 1] = record
+    held_count = held_count + 1
+end
+
+local function release(rid)
+    local h = held[rid]
+    if h == nil then return nil end
+    held[rid] = nil
+    held_count = held_count - #h.recs
+    return h.recs
+end
+
+-- 짝을 못 만난 보류분: HOLD_MAX_SECONDS 가 지났거나 상한을 넘으면 out 에 붙여 적재한다.
+local function take_orphans(now, out)
+    while held_q_head <= held_q_tail do
+        local e = held_q[held_q_head]
+        local h = held[e.rid]
+        if h ~= nil and h.t == e.t then
+            if held_count <= HOLD_MAX_RECORDS and now - e.t <= HOLD_MAX_SECONDS then break end
+            for _, r in ipairs(h.recs) do
+                r["held_orphan"] = true
+                out[#out + 1] = r
+            end
+            if counts ~= nil then counts.held_orphans = counts.held_orphans + #h.recs end
+            held_count = held_count - #h.recs
+            held[e.rid] = nil
+        end
+        held_q[held_q_head] = nil
+        held_q_head = held_q_head + 1
+    end
+    if held_q_head > held_q_tail then held_q, held_q_head, held_q_tail = {}, 1, 0 end
+end
+
 local function build_report(idx, windows_skipped)
     local starts, ends = iso(idx * WINDOW_SECONDS), iso((idx + 1) * WINDOW_SECONDS)
     report_seq = report_seq + 1
@@ -647,6 +761,10 @@ local function build_report(idx, windows_skipped)
     s.resources_other_distinct = counts.n_other_keys
     s.principals_other    = counts.principals_over
     s.app_dropped_total   = counts.dropped_total
+    s.counted_404         = counts.counted_404
+    s.app_dropped_404     = counts.app_dropped_404
+    s.held_orphans        = counts.held_orphans
+    s.held_pending        = held_count
     s.windows_skipped     = windows_skipped or 0
     -- 트래픽 없는 윈도우에서는 필드 자체를 생략한다 ("" 금지). 빈 문자열은 새 일별 인덱스의
     -- 동적 매핑을 text 로 굳혀 날짜 쿼리를 영구히 막는다 (polaris-report-2026.09.10 실측).
@@ -656,11 +774,11 @@ local function build_report(idx, windows_skipped)
     s.partial_window      = counts.partial and "true" or "false"
     s._msg = string.format(
         "polaris shipper report seq=%d@%s %s..%s: %d access lines, %d kept, "
-        .. "%d counted (%d read, %d POST), %d errors kept (%d 4xx, %d 5xx, "
+        .. "%d counted (%d read, %d POST, %d 404), %d errors kept (%d 4xx, %d 5xx, "
         .. "%d denied), %d resources, %d principals, %d app lines dropped, %d bytes, "
         .. "%d windows skipped",
         report_seq, host, starts, ends, counts.access_seen, s.access_kept,
-        counts.access_counted, counts.counted_read, counts.counted_post,
+        counts.access_counted, counts.counted_read, counts.counted_post, counts.counted_404,
         counts.errors_kept, tot_4xx, tot_5xx, tot_denied,
         n_active_res, n_active_pri, counts.dropped_total, tot_bytes, s.windows_skipped)
 
@@ -701,11 +819,24 @@ end
 
 
 -- ── 진입점 ─────────────────────────────────────────────────────────────────────────────
+-- 반환 조립. extra(보류분·고아)가 없으면 원래 코드 그대로, 있으면 레코드 배열로.
+local function emit(extra, code, timestamp, record)
+    if #extra == 0 then return code, timestamp, record end
+    if code ~= -1 then extra[#extra + 1] = record end
+    return 2, timestamp, extra
+end
+
 function polaris_noise_filter(tag, timestamp, record)
     -- 0. 리포트 틱. 로그 데이터가 없다. 리포트로 치환되거나 버려진다.
+    --    (보류분은 여기서 내보내지 않는다: 틱의 반환은 polaris.report 태그로 가서 리포트
+    --     인덱스에 들어가기 때문이다. 고아는 다음 polaris.logs 레코드와 함께 나간다.)
     if tag == REPORT_TAG then
         return report_tick(timestamp, record)
     end
+
+    local now = now_seconds(record)
+    local extra = {}
+    take_orphans(now, extra)
 
     -- * 적재 여부 판정 전에 가드. 버려질 레코드에 해도 무해하고, 순서 실수를 막는다.
     local changed = redact_secret(record)
@@ -714,10 +845,9 @@ function polaris_noise_filter(tag, timestamp, record)
 
     local level = record["level"]
 
-    -- 1. 오류와 경고는 허용 목록과 무관하게 항상 남긴다. 모르는 logger 의 WARN 이야말로
-    --    이슈 추적이 놓치면 안 되는 것이고, WARN/ERROR 는 용량 문제가 아니다.
+    -- 1. 오류와 경고는 허용 목록과 무관하게 항상, 즉시 남긴다.
     if level == "ERROR" or level == "WARN" then
-        return keep, timestamp, record
+        return emit(extra, keep, timestamp, record)
     end
 
     local logger = record["loggerName"]
@@ -728,13 +858,27 @@ function polaris_noise_filter(tag, timestamp, record)
         if logger == COMMIT_LOGGER then
             count_commit(record["_msg"])
         end
-        -- 2b. 허용 목록이면 적재.
+        -- 2b. 허용 목록이면 적재 — 요청 ID 가 있으면 액세스 라인까지 보류.
         if APP_ALLOW[logger] then
-            return keep, timestamp, record
+            local rid = request_id_of(record)
+            if rid == nil then
+                return emit(extra, keep, timestamp, record)
+            end
+            local known = memo[rid]
+            if known ~= nil then
+                -- 액세스 라인이 이미 지나갔다: 그 상태로 즉시 판정.
+                if known.status == 404 then
+                    if counts ~= nil then counts.app_dropped_404 = counts.app_dropped_404 + 1 end
+                    return emit(extra, -1, timestamp, record)
+                end
+                return emit(extra, keep, timestamp, record)
+            end
+            hold(rid, record, now)
+            return emit(extra, -1, timestamp, record)
         end
         -- 2c. 그 외는 세고 버린다.
         count_dropped(record)
-        return -1, timestamp, record
+        return emit(extra, -1, timestamp, record)
     end
 
     -- 먼저 세고, 나중에 판정한다. 억제될 수 있는 모든 것이 카운터에 들어가야 한다 —
@@ -749,27 +893,52 @@ function polaris_noise_filter(tag, timestamp, record)
 
     count_record(record, method, path, user, status, bytes, parse_failed)
 
+    -- 이 요청의 보류분을 꺼낸다. 액세스 라인의 판정과 운명을 같이한다.
+    local rid = request_id_of(record)
+    if rid ~= nil then
+        if status ~= nil then remember_status(rid, status, now) end
+        local pending = release(rid)
+        if pending ~= nil then
+            if status == 404 and not parse_failed then
+                if counts ~= nil then
+                    counts.app_dropped_404 = counts.app_dropped_404 + #pending
+                end
+            else
+                for _, r in ipairs(pending) do extra[#extra + 1] = r end
+            end
+        end
+    end
+
+    -- 3'. 404 는 집계만 한다 (errors / errors_4xx 는 count_record 가 이미 셌다).
+    if status == 404 and not parse_failed then
+        if counts ~= nil then
+            counts.counted_404    = counts.counted_404 + 1
+            counts.access_counted = counts.access_counted + 1
+        end
+        return emit(extra, -1, timestamp, record)
+    end
+
     -- 3. 실패한 요청은 전부, 상한 없이 남긴다. 파싱 못 한 라인도 — 읽지 못한 것은 버리지 않는다.
     if parse_failed or status == nil or status >= 400 then
         if counts ~= nil then counts.errors_kept = counts.errors_kept + 1 end
-        return keep, timestamp, record
+        return emit(extra, keep, timestamp, record)
     end
 
     -- 4. POST 이외의 변경 요청은 항상 남긴다.
     if KEEP_METHODS[method] then
-        return keep, timestamp, record
+        return emit(extra, keep, timestamp, record)
     end
 
     -- 5. POST: management 는 전건 적재, catalog 는 집계만.
     if method == "POST" then
         if path:find(MGMT_PREFIX) then
-            return keep, timestamp, record
+            return emit(extra, keep, timestamp, record)
         end
         if counts ~= nil then
             counts.counted_post   = counts.counted_post + 1
             counts.access_counted = counts.access_counted + 1
         end
-        return -1, timestamp, record
+        return emit(extra, -1, timestamp, record)
     end
 
     -- 6. 성공한 조회는 기록이 아니라 숫자다.
@@ -778,9 +947,9 @@ function polaris_noise_filter(tag, timestamp, record)
             counts.counted_read   = counts.counted_read + 1
             counts.access_counted = counts.access_counted + 1
         end
-        return -1, timestamp, record
+        return emit(extra, -1, timestamp, record)
     end
 
     -- 7. 그 외는 남긴다.
-    return keep, timestamp, record
+    return emit(extra, keep, timestamp, record)
 end

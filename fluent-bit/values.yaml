@@ -1,47 +1,55 @@
 # =====================================================================================
 # Fluent Bit — K8s DaemonSet, 릴리스 `benchmarks-fluent-bit`, namespace datahub-hynix
-# 정책 v4 / 리포트 스키마 v4 — 2026-09-15 롤 (logging/PLAN-audit-allowlist-2026-09-15.md)
+# 정책 v5 / 리포트 스키마 v5 — 2026-09-16 작성, 클러스터 미적용 (logging/PLAN-audit-log-todo-2026-09-16.md)
 # =====================================================================================
 #
 # 릴리스 하나, 계층(tier) 셋. 전부 Mac 의 Docker OpenSearch 3.5.0 으로 보낸다
 # (https://192.168.194.1:9200 — 일반 파드에서 도달 가능, hostNetwork 불필요):
 #
 #   tier 1  kube.*          -> k8s-logs-*         5일   모든 컨테이너, 필터 없음 (원본)
-#   tier 2  polaris.logs    -> polaris-logs-*    30일   Polaris 로그, 정책 v4 로 선별
-#   tier 3  polaris.report  -> polaris-report-*        윈도우 요약 리포트, 스키마 v4
+#   tier 2  polaris.logs    -> polaris-logs-*    30일   Polaris 로그, 정책 v5 로 선별
+#   tier 3  polaris.report  -> polaris-report-*        윈도우 요약 리포트, 스키마 v5
 #
 # tier 1 은 v3 와 동일하다 — 자격증명 평문 두 줄까지 그대로다 (active-issues #4: Secret 으로 옮기려면
 # 먼저 그 사용자의 k8s-logs 쓰기 권한을 확인할 것. 틀리면 노드 전체 로그 수집이 멈춘다). Polaris 로그는 tier 1 에도 "필터 없이" 계속 들어간다 —
 # 요약이 원본의 부분집합인지 검증할 수단이 그것뿐이므로 지우지 않는다.
 #
-# ── v3 → v4 에서 바뀐 것 (이 파일 기준) ──────────────────────────────────────────────
-#   * luaScripts: 스크립트를 values 에 인라인하지 않고 파일 하나로 분리 (--set-file).
-#     fluent-bit/polaris_access_log.lua
-#   * FILTER 3 의 정수 키 목록: dropped / app_dropped_total / commit_* 추가, carried_rows 제거.
-#   * 틱: Lua 의 WINDOW_SECONDS 는 아직 임시 검증값 30 (+ Interval_Sec 5). 운영값 1800 복귀는
-#     컷오버의 마지막 단계로 따로 한다.
-#   판정 규칙 자체(허용 목록, 커밋 시간, zero-carry 제거, 시크릿 가드)는 전부 Lua 에 있다.
+# ── v4 → v5 에서 바뀐 것 (2026-09-16) ─────────────────────────────────────────────────
+#   * Lua 는 Helm 값이 아니라 별도 ConfigMap `polaris-fluent-bit-lua` 로 배포한다.
+#     원본 fluent-bit/polaris_access_log.lua, 래퍼 fluent-bit/kustomization.yaml.
+#     `--set-file` 은 더 이상 쓰지 않는다.
+#   * hotReload 활성화: reloader 사이드카가 ConfigMap 변경을 감지해 파드 재시작 없이
+#     Fluent Bit 을 reload 한다. 차트는 이때 checksum 어노테이션을 빼므로, Helm 으로 config 를
+#     바꿔도 파드가 재시작되지 않고 reload 된다.
+#   * FILTER 2/3 의 script 경로: /fluent-bit/polaris-lua/polaris_access_log.lua
+#   * FILTER 3 정수 키 목록: counted_404 app_dropped_404 held_orphans held_pending 추가.
+#   판정 규칙(404 집계만 + 요청 ID 보류, 허용 목록, 커밋 시간, 시크릿 가드)은 전부 Lua 에 있다.
+#   Lua 의 WINDOW_SECONDS 는 아직 임시 검증값 30 (+ Interval_Sec 5).
 #
-# ── 설치 ─────────────────────────────────────────────────────────────────────────────
+# ── 설치 / 업그레이드 ─────────────────────────────────────────────────────────────────
 #   kubectl config current-context        # 반드시 orbstack
+#   cd ~/hynix/local-k8s
+#   # 0) Lua 단위 테스트 (Fluent Bit 과 같은 LuaJIT)
+#   cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua
+#   luajit logging/scripts/test-schema-v3.lua && luajit logging/scripts/test-schema-v4.lua \
+#     && luajit logging/scripts/test-schema-v5.lua
+#   # 1) Lua ConfigMap — 파드가 마운트하므로 Helm 보다 먼저 존재해야 한다
+#   kubectl apply -k fluent-bit/
+#   # 2) 렌더 + 게이트 (Lua ConfigMap 렌더와 Helm 렌더 둘 다), 통과하면 --dry-run 없이 실행
+#   kubectl kustomize fluent-bit/ > /tmp/render-lua.txt
 #   helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
-#     --version 0.57.6 -n datahub-hynix \
-#     -f fluent-bit/values.yaml \
-#     --set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/polaris_access_log.lua' \
+#     --version 0.57.6 -n datahub-hynix -f fluent-bit/values.yaml \
 #     --dry-run=client > /tmp/render-after.txt
-#   bash logging/scripts/step2-render-gate.sh /tmp/render-after.txt   # 통과하면 --dry-run 없이 실행
-#   bash logging/scripts/step3-postupgrade.sh                        # 롤 후, 저장소 루트에서
+#   bash logging/scripts/step2-render-gate.sh /tmp/render-after.txt /tmp/render-lua.txt
+#   # 3) 롤 후, 저장소 루트에서 (+ v5 필드 4개를 위해 step9 로 요약 템플릿 재적용)
+#   bash logging/scripts/step3-postupgrade.sh
+#   bash logging/scripts/step9-report-index-template.sh
 #
-#   ⚠ 2026-09-15 09:14 UTC 에 --set-file 없이 롤해서 DaemonSet 전체(tier 1 포함)가 멈췄다.
-#     step2 를 건너뛰지 말 것 — --set-file 누락은 APP_ALLOW 검사가 잡는다.
-#
-#   --set-file 키의 점(.)은 반드시 \. 로 이스케이프한다. 빠뜨리면 luaScripts.polaris_access_log
-#   아래 lua 라는 하위 키가 생기고, 스크립트 파일이 마운트되지 않아 Fluent Bit 이 기동 실패한다.
-#   렌더 결과에 `benchmarks-fluent-bit-luascripts` ConfigMap 과 polaris_access_log.lua 키가
-#   있는지 확인할 것. step2 는 --debug 없이 렌더한 파일에 돌린다 (--debug 는 값을 세 번 출력해 개수가 틀어진다).
-#
-#   ⚠ 차트는 luaScripts 값을 `tpl` 로 한 번 렌더한다. Lua 안에 `{{` 가 들어가면 Helm 템플릿으로
-#     해석되어 렌더가 깨진다. 스크립트에 이중 중괄호를 쓰지 말 것.
+#   이후 스크립트만 바꿀 때는 0) 과 1) 만 — Helm 은 필요 없다 (hot reload).
+#   ⚠ 1) 은 게이트 없이 곧바로 운영 중인 파드에 반영된다. 잘못된 스크립트의 reload 동작은 미측정
+#     (logging/RUNBOOK-lua-hot-reload-2026-09-16.md C). 0) 을 건너뛰지 말 것.
+#   step2 는 --debug 없이 렌더한 파일에 돌린다 (--debug 는 값을 세 번 출력해 개수가 틀어진다).
+#   ConfigMap 이 없으면 파드가 ContainerCreating 에 멈춘다 (마운트할 볼륨이 없음).
 #
 # ── 적용 순서 (active-issues #25) ────────────────────────────────────────────────────
 #   1) 이 파일 + Lua 롤  2) logging/opensearch/polaris-report-template.json 적용
@@ -119,14 +127,35 @@ tolerations:
     effect: NoSchedule
 
 # ── Lua 스크립트 ────────────────────────────────────────────────────────────────────
-# 비워 두고 설치 시 --set-file 로 채운다 (위 "설치" 참고). 스크립트 원본은 한 곳에만 둔다:
-#   fluent-bit/polaris_access_log.lua
-# 차트는 이것을 ConfigMap `<릴리스>-luascripts` 로 렌더해 /fluent-bit/scripts/<키> 에 마운트한다.
-# --set-file 을 빠뜨리면 ConfigMap 이 생기지 않고, FILTER 2/3 이 스크립트를 못 찾아
-# 파드가 CrashLoop 에 빠진다 — 조용한 실패가 아니라 시끄러운 실패다. 단 Lua 필터 하나의 로드 실패로
-# 엔진 전체가 멈추므로 tier 1(노드 전체 로그)도 같이 멈춘다 (2026-09-15 실측).
-# step3-postupgrade.sh 는 배포된 ConfigMap 의 sha 를 이 파일의 sha 와 비교한다.
+# 차트의 luaScripts 는 비워 둔다. 스크립트는 kustomize 가 만드는 ConfigMap
+# `polaris-fluent-bit-lua` 에 있고 (fluent-bit/kustomization.yaml), 아래 extraVolumes 로
+# /fluent-bit/polaris-lua/ 에 마운트된다. subPath 를 쓰지 않아야 ConfigMap 갱신이 파일에 반영된다.
+# (hotReload.enabled 이면 차트가 빈 `<릴리스>-luascripts` ConfigMap 을 여전히 만든다 — 무해.)
 luaScripts: {}
+
+extraVolumes:
+  - name: polaris-lua
+    configMap:
+      name: polaris-fluent-bit-lua
+
+extraVolumeMounts:
+  - name: polaris-lua
+    mountPath: /fluent-bit/polaris-lua
+    readOnly: true
+
+# ── Hot reload ──────────────────────────────────────────────────────────────────────
+# 차트가 Fluent Bit 을 --enable-hot-reload 로 띄우고 configmap-reload 사이드카를 붙인다.
+# 사이드카는 config / luascripts / extraWatchVolumes 를 감시하다가 바뀌면
+# POST http://localhost:2020/api/v2/reload 를 호출한다.
+#   * reload 는 Lua 상태를 초기화한다: 리포트 윈도우 1개 partial, report_seq 리셋, 보류분 소실.
+#   * 차트는 hotReload 가 켜지면 checksum/config 어노테이션을 빼므로, Helm 으로 config 를 바꿔도
+#     파드가 재시작되지 않는다. 파드 스펙(이미지, 볼륨, env)이 바뀔 때만 재시작된다.
+#   * Lua 와 정수 키 목록(config)이 함께 바뀌는 스키마 변경은 두 ConfigMap 이 따로 갱신되어
+#     reload 가 두 번, 중간 상태로 한 번 일어날 수 있다 — 스키마 변경은 한 번에 조율해서 배포.
+hotReload:
+  enabled: true
+  extraWatchVolumes:
+    - polaris-lua
 
 # ── Fluent Bit 설정 ─────────────────────────────────────────────────────────────────
 config:
@@ -287,24 +316,25 @@ config:
         Name          lua
         Alias         polaris_access_log
         Match         polaris.logs
-        script        /fluent-bit/scripts/polaris_access_log.lua
+        script        /fluent-bit/polaris-lua/polaris_access_log.lua
         call          polaris_access_log
         type_int_key  http_status response_size
 
-    # 3. 적재 판정 + 집계 + 리포트 생성 (Lua 함수 polaris_noise_filter, 정책 v4).
+    # 3. 적재 판정 + 집계 + 리포트 생성 (Lua 함수 polaris_noise_filter, 정책 v5).
     #    Match 가 polaris.logs 가 아니라 polaris.* 인 이유: 리포트 틱도 "이 필터 인스턴스" 를
     #    지나야 한다. Lua 상태는 인스턴스 단위이고, 카운터는 이 인스턴스에 있다.
     #
     #    정수 키 목록: Lua 가 만드는 "모든" 숫자 필드를 여기에 나열한다. 빠진 필드는 문자열로
     #    저장되고, 숫자 범위 쿼리가 에러 없이 0건을 반환한다. 필드를 추가하면 여기와 인덱스
     #    템플릿(polaris-report-template.json) 두 곳을 같이 고칠 것.
-    #    ⚠ 이 블록의 주석도 렌더된다. step2 는 목록 지시어 이름이 들어간 줄 수를 세므로(기대값 4),
+    #    ⚠ 이 블록의 주석도 렌더된다. step2 는 목록 지시어 이름이 들어간 줄 수를 세므로(기대값 3),
     #    새 주석에 그 이름을 쓰지 말 것 (2026-09-15 에 주석 한 줄로 5 가 나왔다).
     #      envelope   schema_version report_seq window_seconds
     #      summary    access_seen access_kept access_counted role_keys_forced counted_read
     #                 counted_post errors_kept parse_errors bytes_total distinct_resources
     #                 distinct_principals resources_other resources_other_distinct
     #                 principals_other windows_skipped app_dropped_total(v4)
+    #                 counted_404 app_dropped_404 held_orphans held_pending (v5)
     #      rows       requests reads writes errors errors_4xx errors_5xx auth_denied
     #                 response_bytes last_read_bytes last_write_bytes
     #                 commit_count commit_ms_sum commit_ms_min commit_ms_max (v4, table/view)
@@ -314,9 +344,9 @@ config:
         Name          lua
         Alias         polaris_noise_filter
         Match         polaris.*
-        script        /fluent-bit/scripts/polaris_access_log.lua
+        script        /fluent-bit/polaris-lua/polaris_access_log.lua
         call          polaris_noise_filter
-        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted role_keys_forced counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals resources_other resources_other_distinct principals_other windows_skipped app_dropped_total requests reads writes errors response_bytes last_read_bytes last_write_bytes commit_count commit_ms_sum commit_ms_min commit_ms_max dropped
+        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted role_keys_forced counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals resources_other resources_other_distinct principals_other windows_skipped app_dropped_total requests reads writes errors response_bytes last_read_bytes last_write_bytes commit_count commit_ms_sum commit_ms_min commit_ms_max dropped counted_404 app_dropped_404 held_orphans held_pending
 
     # 4. 모든 레코드에서 저장 비용만 들고 답하는 것이 없는 필드, CRI 봉투 잔여물을 지운다.
     #    없는 키의 Remove_key 는 no-op 이라 봉투 이름은 방어적으로 나열한다.
@@ -431,9 +461,11 @@ config:
         Generate_ID         On
 
     # ══ TIER 2 — 선별된 Polaris 로그, 30일 ═══════════════════════════════
-    # 여기에 들어오는 것 (정책 v4):
-    #   * 액세스 라인: 4xx/5xx 전건, PUT/DELETE/PATCH 전건, management POST 전건
-    #   * 애플리케이션 로그: IcebergExceptionMapper, PolarisServiceImpl 만 (+ 모든 WARN/ERROR)
+    # 여기에 들어오는 것 (정책 v5):
+    #   * 액세스 라인: 404 를 뺀 4xx/5xx 전건, PUT/DELETE/PATCH 전건, management POST 전건
+    #     (404 는 tier 3 의 counted_404 / errors_4xx 숫자로만 남는다)
+    #   * 애플리케이션 로그: IcebergExceptionMapper, PolarisServiceImpl 만 (+ 모든 WARN/ERROR).
+    #     단 같은 requestId 의 액세스 라인이 404 면 함께 버린다 (app_dropped_404)
     # 성공한 조회와 catalog POST 는 여기 없다 — tier 3 의 숫자로만 존재한다.
     # 적재된 애플리케이션 로그는 mdc.requestId 로 액세스 문서와 조인된다.
     #

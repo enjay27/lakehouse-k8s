@@ -186,7 +186,7 @@ check("sum(resource) == seen-parse", sr, sum.access_seen - sum.parse_errors)
 check("sum(principal) == seen-parse", sp, sum.access_seen - sum.parse_errors)
 -- 2026-09-15: the deployed script is v4. Every v3 behaviour above still holds; only the
 -- version constant moved. v4-only behaviour is in test-schema-v4.lua.
-check("schema_version", sum.schema_version, 4)
+check("schema_version", sum.schema_version, 5)
 
 print()
 if fails == 0 then print("ALL PASS") else print(fails .. " FAILURE(S)") ; os.exit(1) end

@@ -1,4 +1,4 @@
-# Report schema reference — v3 (deployed); v4 written 2026-09-15, see the end
+# Report schema reference — v3 tables; v4 deployed 2026-09-15; v5 written 2026-09-16 (not deployed) — see the end
 
 Read off `fluent-bit/values.yaml` (`build_report`, ~line 447) on 2026-09-09, not from intent.
 Three `report_type` values share one envelope and one `_time`, so `stats by (_time)` — or a terms
@@ -161,7 +161,7 @@ the size > 0 rule separates commit from drop without it.
 
 ---
 
-# v4 — written 2026-09-15, verified off-cluster, not deployed
+# v4 — written 2026-09-15, deployed 2026-09-15 (active-issues #27), verified 2026-09-16
 
 Plan: `logging/PLAN-audit-allowlist-2026-09-15.md`. Script: `fluent-bit/polaris_access_log.lua`, supplied to the chart with `--set-file` (see `fluent-bit/values.yaml`).
 
@@ -177,3 +177,47 @@ Invariants change: `count(rows where requests == 0) == carried_rows` is gone. A 
 `sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors` is unchanged —
 commit lines do not touch `requests`. Tests: `test-schema-v3.lua` and `test-schema-v4.lua`, both
 passing on LuaJIT and Lua 5.1 against the extracted script.
+
+---
+
+# v5 — written 2026-09-16, verified off-cluster, NOT deployed
+
+Decision (Kade 2026-09-16): **404 is counted, not stored**, and the allow-listed app lines of a 404
+request are dropped too, matched by `mdc.requestId`. Proposal §3.9 (Korean) has the rationale.
+Script: `fluent-bit/polaris_access_log.lua`, shipped as ConfigMap `polaris-fluent-bit-lua`
+(`fluent-bit/kustomization.yaml`) with chart hot reload — no `--set-file`.
+
+| change | field(s) | notes |
+|---|---|---|
+| new on `summary` | `counted_404` (int) | 404 access lines (parsed) counted only. **Included in `access_counted`**, so `access_kept == access_seen - access_counted` still holds. They still count in `errors` / `errors_4xx` on resource and principal rows |
+| new on `summary` | `app_dropped_404` (int) | allow-listed INFO app lines dropped because their request answered 404. **Not** in `app_dropped_total` and no `app_dropped` row |
+| new on `summary` | `held_orphans` (int) | held app lines whose access line never arrived within `HOLD_MAX_SECONDS` (30) or overflowed `HOLD_MAX_RECORDS` (10000); **stored** with `held_orphan: true` on the detail document |
+| new on `summary` | `held_pending` (int) | app lines still held when the window closed. Carries into the next window; a steadily non-zero value with no traffic means orphans are waiting for the next log record to flush |
+| new detail field | `held_orphan` (boolean, `polaris-logs-*`) | only on orphans; left to dynamic mapping |
+| new resource pattern | `/namespaces/{ns}/register` → `resource_kind: collection` | was `other` / `__errors__` |
+| `schema_version` | 5 | |
+
+Behaviour notes:
+
+* Hold only applies to allow-listed INFO lines **with** a request id. WARN/ERROR are kept at once; a
+  line with no request id is kept at once (v4 behaviour).
+* An app line arriving **after** its access line is decided from a 30 s status memo (`STATUS_MEMO_SECONDS`, max 20000 ids).
+* Held lines leave with the access line in one Lua return, so their `@timestamp` becomes the
+  access line's (ms later) — orphans take the next record's. The original time stays in `_time`.
+* Hot reload or pod restart clears all Lua state: window counters (partial next row, `report_seq`
+  from 1) **and** held lines.
+* Unmeasured for production: whether Polaris assigns `requestId` when the client sends no request-id header.
+
+Invariants added:
+
+```
+counted_404 <= errors_4xx                     (per window, summary)
+polaris-logs-* holds no http_status 404 access document after the roll
+k8s-logs 404 access lines over N whole windows == sum(counted_404)   (boundary lines aside)
+```
+
+Tests: `test-schema-v3.lua`, `test-schema-v4.lua` (both now expect `schema_version` 5) and
+`test-schema-v5.lua` — all passing on LuaJIT 2.1 and Lua 5.1 on 2026-09-16. Replay preview of the
+2026-09-16 matrix window with `step11-replay-window.py`: detail 300 / 32 / 178 → 200 / 22 / 78
+(access / PolarisServiceImpl / IcebergExceptionMapper). Template: 4 new `long` fields in
+`logging/opensearch/polaris-report-template.json` (41 declared) — re-apply with step9.

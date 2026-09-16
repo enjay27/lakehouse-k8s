@@ -571,6 +571,26 @@ still its own last step.
 
 ## Resolved, kept because they recur
 
+**#28 — Policy v5 (404 counted, not stored) + Lua as its own ConfigMap with hot reload: WRITTEN AND NOT ROLLED. OPEN.** 2026-09-16.
+Decisions (Kade): 404 access lines count into `errors_4xx`/`counted_404` and are not stored; the allow-listed
+app lines of a 404 request are dropped too, **matched by `mdc.requestId`** (hold until the access line, 30 s
+orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `polaris-fluent-bit-lua`
+(`fluent-bit/kustomization.yaml`), mounted via `extraVolumes`, reloaded by the chart's `hotReload` sidecar;
+**no `--set-file`**. Also: `/namespaces/{ns}/register` → kind `collection`.
+- **Verified off-cluster only:** v3/v4/v5 Lua tests ALL PASS on LuaJIT and Lua 5.1; `kustomize build` (v5.4.3)
+  output byte-identical to the file (sha `80119adc…` before the header-title fix — step3 recomputes); step2
+  run against a **simulated** render built from chart 0.57.6 templates + values.yaml: all PASS. step11 replay
+  of the 2026-09-16 window predicts detail 300/32/178 → 200/22/78 (access / ServiceImpl / ExceptionMapper).
+- **NOT verified:** any real `helm` render (no helm in Cowork); hot reload itself; **what 5.1.1 does when a
+  reloaded script is invalid** (runbook C — may stop tier 1 like #27); reload loss (runbook D); whether
+  Polaris assigns `requestId` without a client header (production question — if not, 404 app lines are kept).
+- **Order:** tests → `kubectl kustomize` + helm dry-run → step2 (two args) → **`kubectl apply -k fluent-bit/`
+  BEFORE `helm upgrade`** (missing ConfigMap = ContainerCreating) → step3 → step9 re-apply (41 fields) →
+  traffic → step10/11 → runbook B/C/D. [`logging/RUNBOOK-lua-hot-reload-2026-09-16.md`](../logging/RUNBOOK-lua-hot-reload-2026-09-16.md).
+- **Until it rolls, #27's rule stands:** the running release is v4 and any `helm upgrade` of the *old* values
+  still needs `--set-file`. After v5 is rolled, `--set-file` must NOT be used (it would re-add a luascripts key
+  nobody reads, harmless, but a sign the wrong runbook is being followed).
+
 **#13 — RESOLVED. `polaris_noise_filter` was written and not running; it runs now.**
 Measured absent on 2026-09-04 (0 of 34 expected drops dropped; twenty identical
 `GET .../tables/probe_tbl` stored twenty records). The filter entered `fb-values.yaml` in

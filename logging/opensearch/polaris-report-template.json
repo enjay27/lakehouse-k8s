@@ -8,6 +8,7 @@
     "pairs_with": "the Lua now OMITS min/max_record_time when nil (fluent-bit/values.yaml). BOTH OR NEITHER: with these fields typed as date, a document carrying \"\" is rejected per-item inside a bulk that still returns HTTP 200.",
     "not_retroactive": "applies only to indices CREATED after it is applied. polaris-report-2026.09.10 and earlier stay text for their life.",
     "v4": "2026-09-15: app_dropped_total, dropped, commit_count, commit_ms_sum/min/max added as long. carried_rows stays mapped although v4 no longer emits it -- v3 documents share the index. logger_name is left dynamic like the other strings, so .keyword exists.",
+    "v5": "2026-09-16: counted_404, app_dropped_404, held_orphans, held_pending added as long (summary rows). 404 access lines are counted, not stored; allow-listed app lines of a 404 request are dropped by mdc.requestId.",
     "strings_left_dynamic": "resource, resource_kind, api_kind, report_type, window_start, window_end, hostname, partial_window are deliberately NOT declared: dynamic mapping already gives text + a .keyword subfield, which every existing query, readout script and gate in GUIDE-schema-v3-testing.md depends on."
   },
   "template": {
@@ -67,7 +68,12 @@
         "commit_count": { "type": "long" },
         "commit_ms_sum": { "type": "long" },
         "commit_ms_min": { "type": "long" },
-        "commit_ms_max": { "type": "long" }
+        "commit_ms_max": { "type": "long" },
+
+        "counted_404": { "type": "long" },
+        "app_dropped_404": { "type": "long" },
+        "held_orphans": { "type": "long" },
+        "held_pending": { "type": "long" }
       }
     }
   }

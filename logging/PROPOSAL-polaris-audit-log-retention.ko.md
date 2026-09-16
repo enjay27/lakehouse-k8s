@@ -7,8 +7,8 @@
 
 - 상세 로그와 요약 로그를 **Polaris 전용 인덱스 2개**(`polaris-logs-*` / `polaris-report-*`)로 분리해
   적재한다. 인덱스를 2개 만들 수 없는 환경이면 **1개로 합친다** (§5.4).
-- 상세 로그는 **오류·변경·인증 실패 전건**과 **허용 목록의 애플리케이션 로그**만 남긴다.
-  성공한 조회와 데이터 플레인 POST 는 **세기만** 한다.
+- 상세 로그는 **오류(404 제외)·변경·인증 실패 전건**과 **허용 목록의 애플리케이션 로그**만 남긴다.
+  성공한 조회, 데이터 플레인 POST, **404** 는 **세기만** 한다 (404 는 v5, §3.9).
 - 요약은 30분 윈도우 단위로 리소스·principal 별 행을 남긴다.
 
 | 항목 | 값 |
@@ -18,19 +18,20 @@
 | 인덱스 | `polaris-logs-YYYY.MM.DD` (상세) · `polaris-report-YYYY.MM.DD` (요약) |
 | 보관 기간 | 상세 **30일** · 요약 **365일** (ISM, §5.3) |
 | 요약 주기 | 30분 (`WINDOW_SECONDS` 1800). 검증 중에는 30초 |
-| 필터 정책 | **정책 v4 / 리포트 스키마 v4** — 2026-09-15 적용 |
-| 문서 상태 | 로컬 환경(OrbStack) 적용 · **v4 검증 완료 (2026-09-16)**. 남은 단계는 §10 |
+| 필터 정책 | **정책 v4 / 리포트 스키마 v4** — 2026-09-15 적용 · **v5 작성됨, 미적용** (2026-09-16) |
+| 문서 상태 | 로컬 환경(OrbStack) 적용 · **v4 검증 완료 (2026-09-16)** · v5(404 집계, Lua ConfigMap + hot reload) 롤 대기. 남은 단계는 §10 |
 
 ### 현재 상태와 목표
 
 | 항목 | 목표 | 현재 (2026-09-16) |
 |---|---|---|
-| 필터 정책 | v4 | **v4 적용됨** (파드 `benchmarks-fluent-bit-rvm49`) |
+| 필터 정책 | v5 | **v4 적용됨** (파드 `benchmarks-fluent-bit-rvm49`). v5 는 저장소에만 있음 |
 | 인덱스 구성 | 2개 (불가 시 1개) | 2개 — `polaris-logs-*` / `polaris-report-*` |
-| 인덱스 템플릿 | 적용 | **작성됨, 미적용** (§5.2) |
+| 인덱스 템플릿 | 적용 | **적용됨** (2026-09-16, 요약·상세 모두). v5 필드 4개 추가분은 재적용 필요 |
 | ISM 보관 정책 | 상세 30일 · 요약 365일 | **미적용** |
 | 요약 윈도우 | 1800초 | 30초 (검증용 임시값) |
-| 404 처리 | 결정 필요 | 전건 적재 (§3.9, 작성 예정) |
+| 404 처리 | 집계만 (§3.9) | **결정됨** (2026-09-16) · v5 Lua 작성, 미적용 — 현재는 전건 적재 |
+| Lua 배포 | ConfigMap + hot reload (§9.1) | **작성됨, 미적용** — 현재는 Helm `--set-file` |
 
 ### 버전 이력
 
@@ -39,6 +40,7 @@
 | v2 | 2026-09-07 | 요약 스키마 정리 (`counted_read`, 활성 행만 집계) |
 | v3 | 2026-09-09 | `last_read_bytes` / `last_write_bytes`, `api_kind`, grant 를 롤 행으로 접기 |
 | **v4** | **2026-09-15** | 애플리케이션 로그 허용 목록, `app_dropped`, 테이블 커밋 시간 `commit_ms_*`, 요청 0 행 제거, 자격증명 가드 |
+| v5 | 2026-09-16 (작성, 미적용) | **404 집계만** + 같은 `requestId` 의 앱 로그 폐기 (`counted_404`, `app_dropped_404`, `held_orphans`, `held_pending`), `/namespaces/{ns}/register` 분류, Lua 를 별도 ConfigMap + hot reload 로 배포 |
 
 ---
 
@@ -77,7 +79,7 @@ OpenSearch 에서는 모든 서비스의 로그를 하나의 공용 인덱스(�
 
 ## 2. 설계 요약
 
-> 편집 가능한 원본: [`logging/polaris-logging.drawio`](polaris-logging.drawio) (draw.io) — v4 반영 필요
+> 편집 가능한 원본: [`logging/polaris-logging.drawio`](polaris-logging.drawio) (draw.io) — v4·v5 반영 필요
 
 ```mermaid
 flowchart TB
@@ -101,7 +103,7 @@ flowchart TB
   I3 --> F3
 
   F3 -->|"적재 대상"| F4
-  F3 -->|"집계만 · 문서 없음<br/>(성공 GET, catalog POST,<br/>허용 목록 밖 앱 로그)"| DROP(["drop"])
+  F3 -->|"집계만 · 문서 없음<br/>(성공 GET, catalog POST, 404,<br/>허용 목록 밖 앱 로그)"| DROP(["drop"])
   F3 -->|"윈도우 종료 시<br/>summary · resource · principal · app_dropped"| RPT["Tag polaris.report"]
 
   subgraph OS["OpenSearch"]
@@ -199,7 +201,7 @@ logger 의 경고야말로 이슈 추적이 놓치면 안 되는 것이다. WARN
 > `[WARN] deprecated config` 는 `polaris/values.yaml` 의 `io.quarkus.config: "OFF"` 로 애초에 출력되지
 > 않는다 (2026-09-04 측정 0건). 따로 제외 규칙을 두지 않는다.
 
-### 3.5 적재 판정 규칙 (정책 v4)
+### 3.5 적재 판정 규칙 (정책 v5)
 
 **위에서부터 평가하며, 먼저 일치한 규칙이 이긴다.**
 
@@ -209,9 +211,10 @@ logger 의 경고야말로 이슈 추적이 놓치면 안 되는 것이다. WARN
 | * | 모든 레코드 | 마스킹되지 않은 `clientSecret` 을 `<redacted>` 로 치환 (§3.8) |
 | 1 | level 이 `ERROR` 또는 `WARN` | **적재** |
 | 2a | `Successfully committed to table\|view … in N ms` | 해당 table/view 행에 **커밋 시간 집계** 후 2b/2c 로 계속 |
-| 2b | 액세스 로그가 아닌 레코드 & logger 가 **허용 목록**에 있음 | **적재** |
+| 2b | 액세스 로그가 아닌 레코드 & logger 가 **허용 목록**에 있음 | **적재** — 단 `mdc.requestId` 가 있으면 같은 ID 의 액세스 라인까지 **보류**, 그 요청이 404 면 함께 버림 (v5, §3.9) |
 | 2c | 액세스 로그가 아닌 그 외 레코드 | logger 별로 **세고 버림** (`app_dropped`) |
 | — | *모든 액세스 라인은 여기서 리소스·principal 행에 먼저 집계된다* | |
+| 3′ | `http_status == 404` (파싱 성공) | **집계만** — `errors_4xx` 와 `counted_404` (v5, §3.9) |
 | 3 | `http_status >= 400` 또는 파싱 실패 | **적재 — 전건, 상한 없음** |
 | 4 | `PUT` / `DELETE` / `PATCH` | **적재 — 전건** |
 | 5 | `/api/management/` 하위 `POST` | **적재 — 전건** |
@@ -221,7 +224,7 @@ logger 의 경고야말로 이슈 추적이 놓치면 안 되는 것이다. WARN
 
 보장하는 것:
 
-- **인증·인가 실패 100% 보존** — 모든 401·403 은 규칙 3 으로 전문 문서가 남는다.
+- **인증·인가 실패 100% 보존** — 모든 401·403 은 규칙 3 으로 전문 문서가 남는다. (404 는 개수만 — §3.9)
 - **신원·권한 변경 100% 보존** — management POST, 모든 PUT·DELETE (규칙 4·5) + 변경 내용 (§3.3).
 - **총량 보존** — 버린 것은 전부 카운터에 있다.
 
@@ -261,6 +264,7 @@ principal 이 **생성될 때는 안 보이고 삭제될 때만 보이는** 감�
 | 2xx `GET` / `HEAD` | 하루 수천만 건의 정상 조회 | `reads`, `last_read_bytes` |
 | 2xx catalog `POST` (`create_table`, `commit_table`, `report_metrics`, `oauth/tokens` 등) | 데이터 플레인 반복 트래픽 | `writes`, `counted_post`, `last_write_bytes`, `commit_ms_*` |
 | 허용 목록 밖 애플리케이션 로그 | 추이·이슈 추적에 쓰이지 않음 | `app_dropped` 행 (logger 별 개수) |
+| **404 액세스 라인과 그 요청의 허용 목록 앱 로그** (v5) | 하루 약 40만 건, 상세 용량의 약 98% | `errors_4xx` (리소스·principal 행), `counted_404` · `app_dropped_404` (summary) |
 
 ### 3.8 자격증명 가드
 
@@ -269,17 +273,57 @@ principal 이 **생성될 때는 안 보이고 삭제될 때만 보이는** 감�
 시크릿이 30일 인덱스에 들어가므로** Lua 에서 한 번 더 막는다 — `*` 가 아닌 값은 `<redacted>` 로 바꾸고
 `secret_redacted: true` 를 붙인다. `secret_redacted:true` 문서가 하나라도 생기면 Polaris 측 회귀다.
 
-### 3.9 404 응답 처리 — *작성 예정*
+### 3.9 404 응답 처리 (정책 v5)
 
-> **이 절은 추후 작성한다.** 아래는 결정에 필요한 현재 사실만 정리한 것이다.
+**결정 (2026-09-16)** — 404 는 **적재하지 않고 집계만** 한다. 그 요청이 남긴 애플리케이션 로그(예외 사유 등)도
+함께 버리며, 같은 요청인지는 **`mdc.requestId`** 로 판단한다. *v5 Lua 작성·단위 테스트 통과, 클러스터 미적용.*
 
-| 사실 | 값 |
+| 배경 사실 | 값 |
 |---|---|
 | 일일 404 건수 (운영) | **약 400,000** |
-| 현재 처리 | 규칙 3 에 의해 **전건 적재** (액세스 문서 + 대부분 예외 로그 1건씩) |
+| v4 처리 | 규칙 3 에 의해 **전건 적재** (액세스 문서 + 예외 로그) |
 | 상세 인덱스 용량 중 비중 | **약 98%** — 알려진 항목 기준 (§6.2) |
-| 요약 반영 | `errors`, `errors_4xx` 카운터 (리소스·principal 행) — 404 를 상세에서 빼도 **개수는 남는다** |
-| 요약에서의 귀속 | 존재하지 않는 리소스의 404 는 새 행을 만들지 못하고 `__errors__` 행으로 모인다 (§4.6-4). 상세 문서를 빼면 **어떤 경로였는지** 는 사라지고 `__errors__` 개수와 principal 행만 남는다 |
+| 예외 로그 동반율 | 2026-09-16 매트릭스 윈도우에서 404 마다 `IcebergExceptionMapper` 1줄 (비율 1.0) |
+
+**처리**
+
+| 대상 | v5 처리 | 남는 숫자 |
+|---|---|---|
+| 404 액세스 라인 (파싱 성공) | 집계만 (규칙 3′) | 리소스·principal 행 `errors`, `errors_4xx` · summary `counted_404`, `access_counted` |
+| 그 요청의 허용 목록 INFO 로그 | 버림 | summary `app_dropped_404` |
+| 그 요청의 WARN / ERROR | **적재** (규칙 1 이 먼저) | — |
+| 허용 목록 밖 로그 | 기존대로 세고 버림 | `app_dropped` 행 |
+| 404 가 아닌 요청의 허용 목록 로그 | 적재 (v4 와 같음) | — |
+
+**요청 ID 보류 — 왜 필요한가.** Polaris 는 예외 사유·grant 로그를 액세스 라인보다 **먼저** 쓴다 (2026-09-16
+실측: 앱 로그 210건 중 207건이 앞, 간격 최대 11 ms). 앱 로그를 보는 순간에는 응답 코드를 모른다. 그래서:
+
+1. 허용 목록 INFO 로그에 `mdc.requestId` 가 있으면 필터 메모리에 **보류**한다.
+2. 같은 ID 의 액세스 라인이 오면 — 404 면 보류분을 버리고, 아니면 액세스 라인과 **함께** 내보낸다.
+3. 액세스 라인보다 **늦게** 온 앱 로그는, 최근 30초(`STATUS_MEMO_SECONDS`, 최대 20,000 ID) 동안 기억한 상태로
+   즉시 판정한다 (실측 3건, 같은 ID 재사용).
+4. `requestId` 가 없으면 보류하지 않고 **즉시 적재**한다 (v4 동작).
+5. 30초(`HOLD_MAX_SECONDS`) 안에 짝을 못 찾거나 보류가 10,000건을 넘으면 `held_orphan: true` 를 붙여
+   **적재**한다 — 판단할 수 없는 것은 버리지 않는다. summary `held_orphans` 로 센다.
+6. 고아는 다음 `polaris.logs` 레코드와 함께 나간다 (틱의 반환은 요약 인덱스로 가므로 틱에서는 내보내지
+   않는다). 윈도우 종료 시점의 보류 건수는 summary `held_pending`.
+
+**잃는 것과 주의점**
+
+- **404 의 경로·주체 원문과 예외 사유.** 존재하지 않는 리소스의 404 는 `__errors__` 행 개수와 principal 행으로만
+  남는다 (§4.6-4). "무엇을 찾다가 404 가 났나" 는 5일 공용 인덱스(`k8s-logs`)에서만 볼 수 있다.
+- **`@timestamp` 이동.** 여러 레코드를 한 번에 반환하면 Fluent Bit 은 타임스탬프를 하나만 쓴다. 보류분의
+  `@timestamp` 는 함께 나간 레코드(보통 같은 요청의 액세스 라인, 수 ms 뒤; 고아는 30초 이상 뒤)의 시각이 된다.
+  원래 시각은 `_time` 에 그대로 있다.
+- **reload·파드 재시작 시 보류분 소실** — 메모리 상태이므로 최대 30초치 허용 목록 로그 (§9.1).
+- **운영 전 확인 필요** — 클라이언트가 요청 ID 헤더를 보내지 않을 때 Polaris 가 `requestId` 를 붙이는지
+  **미측정**이다 (로컬 테스트 트래픽은 전부 ID 보유). 붙이지 않으면 그 404 의 앱 로그는 보류 없이 적재된다.
+  안전한 방향(용량만 증가)이지만 §6.2 절감 폭이 줄어든다.
+- **완결성 불변식은 그대로다.** `access_seen - access_counted == access_kept` — 404 는 `access_counted` 에 들어간다.
+
+**검증 방법** — v5 롤 후 같은 윈도우를 `step11-replay-window.py` 로 공용 인덱스 원본에서 재생해 요약 행과
+상세 문서 수(logger 별)가 예측과 같은지 본다. 2026-09-16 윈도우 기준 예측: 상세 300 / 32 / 178 → **200 / 22 / 78**
+(액세스 / PolarisServiceImpl / IcebergExceptionMapper).
 
 ---
 
@@ -340,7 +384,7 @@ seq=4 app_dropped org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandl
 헬스 신호**다 — 처음 보는 `org.apache.polaris.service.*` logger 가 나타나면 Polaris 가 새 로그를 내기
 시작했다는 뜻이고, 허용 목록 검토 대상이다 (§7.5).
 
-### 4.5 스키마 필드 정의 (v4)
+### 4.5 스키마 필드 정의 (v5)
 
 **공통 봉투** — 네 종류 모두.
 
@@ -348,7 +392,7 @@ seq=4 app_dropped org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandl
 |---|---|---|
 | `app` | string | `polaris-shipper-report` |
 | `level` | string | 항상 `REPORT`. 심각도가 아니라 스트림 선택자 |
-| `schema_version` | int | **4**. 항상 필터에 포함 |
+| `schema_version` | int | **5** (v4 롤 중에는 4). 항상 필터에 포함 |
 | `report_type` | string | `summary` / `resource` / `principal` / `app_dropped` |
 | `report_seq` | int | **파드 단위** 일련번호. 파드 교체 시 리셋 → `hostname` 과 함께 사용 |
 | `hostname` | string | Fluent Bit 파드명 (Polaris 파드 아님) |
@@ -365,7 +409,11 @@ seq=4 app_dropped org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandl
 | `errors_kept`, `errors_4xx`, `errors_5xx`, `auth_denied` | 오류 계열 |
 | `parse_errors` | 액세스 로그로 인식됐으나 파싱 실패 |
 | `distinct_resources` / `distinct_principals` | 요청 > 0 인 행 수 (커밋만 있는 행 제외) |
-| `app_dropped_total` | **v4.** 버린 애플리케이션 로그 수 |
+| `app_dropped_total` | **v4.** 버린 애플리케이션 로그 수 (허용 목록 밖) |
+| `counted_404` | **v5.** 집계만 한 404 액세스 라인 수 (`access_counted` 에 포함) |
+| `app_dropped_404` | **v5.** 404 요청이라 버린 허용 목록 앱 로그 수 (`app_dropped_total` 에 **불포함**) |
+| `held_orphans` | **v5.** 짝을 못 찾아 `held_orphan: true` 로 적재된 앱 로그 수 |
+| `held_pending` | **v5.** 윈도우 종료 시점에 보류 중인 앱 로그 수 (다음 윈도우로 넘어감) |
 | `resources_other` / `resources_other_distinct` / `principals_other` | 행 상한(리소스 500 / principal 200) 초과분 |
 | `role_keys_forced` | 오류 요청이 강제로 만든 롤 행 수 (100 = 상한 도달) |
 | `windows_skipped` | 틱 누락으로 열리지 못한 윈도우 수 |
@@ -509,7 +557,8 @@ polaris-report-*  hot ──▶ delete (min_index_age: 365d)
 
 - **알려진 항목 기준, 상세 인덱스 용량의 약 98% 가 404 에서 나온다.** 404 처리 방식(§3.9)이 이 인덱스의 크기를 결정한다.
 - 비교: 필터 없이 액세스 로그 5,000만 건을 적재하면 하루 **약 50 GB**, 30일 **약 1.5 TB** (액세스 문서만).
-  v4 는 404 포함 하루 약 0.83 GB (약 1/60), 404 제외 시 수십 MB 수준이다.
+  v4 는 404 포함 하루 약 0.83 GB (약 1/60). **v5 (404 와 그 예외 로그 제외)** 는 알려진 항목 약 14 MB + 미측정
+  4xx·5xx 로 수십 MB 수준이 된다 — 단 `requestId` 없는 404 가 있으면 그 예외 로그만큼 늘어난다 (§3.9).
 
 ### 6.3 요약 인덱스
 
@@ -639,31 +688,43 @@ GET polaris-report-*/_search
 
 ## 9. 운영 절차
 
-### 9.1 배포 방식과 `--set-file`
+### 9.1 배포 방식 — Lua ConfigMap + hot reload (v5)
 
-Lua 스크립트는 `fluent-bit/polaris_access_log.lua` 파일이고, `fluent-bit/values.yaml` 의 `luaScripts` 는
-비어 있다. 설치 시 Helm 이 파일 내용을 `luaScripts` 값으로 넣는다.
+v5 부터 Lua 는 Helm 값이 아니라 **별도 ConfigMap** `polaris-fluent-bit-lua` 로 배포하고, 차트의 hot reload 로
+**파드 재시작 없이** 교체한다. `--set-file` 은 쓰지 않는다.
+
+| 구성 | 파일 | 역할 |
+|---|---|---|
+| ConfigMap | `fluent-bit/kustomization.yaml` (`configMapGenerator`) | `polaris_access_log.lua` 를 감싸 `polaris-fluent-bit-lua` 생성. 이름 해시 접미사 끔 |
+| 마운트 | `values.yaml` `extraVolumes` / `extraVolumeMounts` | `/fluent-bit/polaris-lua/` (subPath 없음 — 있으면 갱신이 반영되지 않는다) |
+| reload | `values.yaml` `hotReload.enabled: true`, `extraWatchVolumes: [polaris-lua]` | `--enable-hot-reload` + `configmap-reload` 사이드카가 변경 감지 시 `POST /api/v2/reload` |
 
 ```bash
-kubectl config current-context        # 반드시 orbstack
-helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
-  --version 0.57.6 -n datahub-hynix -f fluent-bit/values.yaml \
-  --set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/polaris_access_log.lua'
+kubectl apply -k fluent-bit/     # 스크립트만 바꿀 때는 이것뿐. Helm 불필요
 ```
 
-차트는 이 값을 ConfigMap `benchmarks-fluent-bit-luascripts` 로 렌더해 `/fluent-bit/scripts/` 에 마운트한다.
-파드는 저장소 파일을 보지 않는다 — Helm 실행 시점의 내용이 복사된다.
+적용 후: kubelet 이 마운트 파일을 갱신(최대 약 1분) → 사이드카가 reload 호출 → Fluent Bit 이 파이프라인을
+다시 올린다.
 
-**`--set-file` 은 필수가 아니다.** 스크립트가 `luaScripts` 값으로 들어가기만 하면 방법은 무엇이든 렌더
-결과가 같다.
+**v4 방식(`--set-file`)과 비교**
 
-| 방식 | 장점 | 단점 | 적합한 곳 |
-|---|---|---|---|
-| **A. `--set-file`** (현재) | 스크립트가 독립 파일 — 테스트·diff 가 쉬움 | **플래그를 빠뜨리면 파드 전체가 멈춘다** (§9.2) | 로컬 수동 `helm` |
-| **B. values.yaml 에 인라인** | 명령 하나(`-f values.yaml`)로 끝. 누락 위험 없음 | 스크립트 약 800줄이 values 에 섞임. 테스트는 YAML 에서 추출 | 수동 배포에서 실수를 없애고 싶을 때 |
-| **C. GitOps 선언** (ArgoCD `helm.fileParameters` 등) | 배포 선언에 한 번 쓰면 매번 적용 → 누락 위험 없음. 파일 분리 유지 | ArgoCD 버전별 지원 확인 필요 | 운영 (Bitbucket → Jenkins → ArgoCD) |
+| | A. `--set-file` (v4) | **B. ConfigMap + hot reload (v5)** |
+|---|---|---|
+| 스크립트 변경 | Helm upgrade → 파드 재시작 | `kubectl apply -k` → reload, 재시작 없음 |
+| 누락 위험 | 플래그를 빠뜨리면 엔진 전체 정지 (§9.2) | Helm 명령에 스크립트가 없어 빠뜨릴 것이 없음. 단 **ConfigMap 을 먼저** 만들어야 한다 |
+| GitOps | ArgoCD `helm.fileParameters` 필요 | ConfigMap 매니페스트 하나 — ArgoCD 가 그대로 동기화 |
+| Lua 상태 | 재시작 시 초기화 | reload 시에도 초기화 (같음) |
 
-권고: **운영은 C** (파일 분리를 유지하면서 누락 위험 제거), **로컬은 A + 렌더 게이트(§9.3) 필수** 또는 B.
+**B 의 알려진 위험 — 로컬에서 먼저 측정한다** ([`RUNBOOK-lua-hot-reload-2026-09-16.md`](RUNBOOK-lua-hot-reload-2026-09-16.md)):
+
+1. **잘못된 스크립트를 reload 했을 때** 5.1.1 이 이전 설정으로 계속 도는지, 엔진이 멈추는지 **미측정**.
+   멈춘다면 tier 1 까지 멈춘다 (§9.2 와 같은 모양). 그래서 적용 전 Lua 단위 테스트는 생략할 수 없다.
+2. **reload 는 모든 Lua 상태를 지운다** — 진행 중 윈도우 카운터(다음 요약은 partial, `report_seq` 1 부터),
+   §3.9 의 보류분.
+3. **Helm 으로 config 를 바꿔도 재시작 대신 reload** 된다 (hotReload 가 켜지면 차트가 checksum 어노테이션을
+   뺀다). config 와 Lua 를 동시에 바꾸면 두 ConfigMap 이 갱신되는 순서가 보장되지 않는다 — **호환되지 않는
+   변경은 나눠서** 적용한다 (예: 새 정수 필드는 values 의 정수 키 목록을 먼저, Lua 를 나중에).
+4. reload 동안 입력 버퍼(tier 1 메모리 버퍼 포함)의 손실 여부 미측정 — 런북 D.
 
 ### 9.2 사고 사례 — 2026-09-15 `--set-file` 누락
 
@@ -672,46 +733,62 @@ helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
 | 발생 | v4 첫 롤을 `--set-file` 없이 실행. `helm get values` 결과 `luaScripts: {}` |
 | 증상 | 파드 로그 `cannot access script '/fluent-bit/scripts/polaris_access_log.lua'` → `filter initialization failed` → **모든 INPUT 정지** |
 | 영향 | Polaris 파이프라인뿐 아니라 **tier 1 (노드 전체 컨테이너 로그) 수집도 중단** — Fluent Bit 는 필터 하나라도 로드에 실패하면 엔진 전체를 멈춘다 |
-| 원인 | 플래그 누락. 렌더 게이트(step2)를 건너뜀 — 실행했다면 `APP_ALLOW` 검사가 실패했을 것 |
-| 조치 | 플래그를 포함해 재배포. 게이트 명령과 경고를 `values.yaml` 머리말에 명시 |
-| 교훈 | Lua 변경은 로그 파이프라인 전체의 가용성 문제다. **렌더 게이트는 생략하지 않는다.** 급할 때는 `helm rollback` 이 가장 빠른 복구다 |
+| 원인 | 플래그 누락. 렌더 게이트(step2)를 건너뜀 |
+| 조치 | 플래그를 포함해 재배포. v5 에서 배포 방식 자체를 ConfigMap 으로 바꿈 (§9.1) |
+| 교훈 | Lua 변경은 로그 파이프라인 전체의 가용성 문제다. **렌더 게이트와 단위 테스트는 생략하지 않는다** |
 
 ### 9.3 배포 순서 (게이트)
 
+**최초 전환 (v4 → v5, Helm upgrade 1회 — 새 볼륨·사이드카 때문에 파드가 한 번 재시작된다)**
+
 ```bash
 cd ~/hynix/local-k8s
+kubectl config current-context        # 반드시 orbstack
 # 1. Lua 단위 테스트 — Fluent Bit 과 같은 LuaJIT
 cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua
-luajit logging/scripts/test-schema-v3.lua && luajit logging/scripts/test-schema-v4.lua
+for t in v3 v4 v5; do luajit logging/scripts/test-schema-$t.lua || break; done
 
-# 2. 렌더 + 렌더 게이트 (--debug 없이 렌더할 것)
+# 2. 렌더 + 게이트 (--debug 없이, --set-file 없이)
+kubectl kustomize fluent-bit/ > /tmp/render-lua.txt
 helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
   --version 0.57.6 -n datahub-hynix -f fluent-bit/values.yaml \
-  --set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/polaris_access_log.lua' \
   --dry-run=client > /tmp/render-after.txt
-bash logging/scripts/step2-render-gate.sh /tmp/render-after.txt
+bash logging/scripts/step2-render-gate.sh /tmp/render-after.txt /tmp/render-lua.txt
 
-# 3. 적용 (같은 명령, --dry-run 제거)
+# 3. ConfigMap 먼저 — 없는 ConfigMap 을 참조하는 파드는 ContainerCreating 에 멈춘다
+kubectl apply -k fluent-bit/
 
-# 4. 롤 후 점검 — 파드 로그, 배포된 스크립트 sha == 저장소 파일 sha, tier 1 수집 확인
+# 4. Helm upgrade (2 의 명령에서 --dry-run 제거)
+
+# 5. 롤 후 점검 — ConfigMap sha == 파일 sha, reloader, tier 1
 bash logging/scripts/step3-postupgrade.sh
+
+# 6. 요약 인덱스 템플릿 재적용 (v5 필드 4개)
+bash logging/scripts/step9-report-index-template.sh
 ```
 
-**롤백**: `helm -n datahub-hynix history benchmarks-fluent-bit` → `helm -n datahub-hynix rollback benchmarks-fluent-bit <N>`.
+**이후 Lua 만 바꿀 때**: 1 → `kubectl kustomize fluent-bit/` 확인 → `kubectl apply -k fluent-bit/` → 약 1분 뒤
+step3 (sha, reloader 로그, `GET /api/v2/reload` 카운터 증가).
+
+**롤백**: Lua 는 이전 커밋의 파일로 `kubectl apply -k fluent-bit/` (reload). 파드·설정은
+`helm -n datahub-hynix rollback benchmarks-fluent-bit <N>` — v4 리비전으로 돌리면 `--set-file` 로 들어간 v4
+스크립트가 함께 돌아온다. **엔진이 멈췄다면** 좋은 스크립트로 ConfigMap 을 다시 적용하고, reload 되지 않으면
+`kubectl -n datahub-hynix rollout restart ds/benchmarks-fluent-bit`.
 
 > **렌더 게이트 주의** — step2 는 렌더 결과에서 문자열이 들어간 **줄 수**를 센다. `config` 블록 안의 주석도
 > 렌더되므로, 설정 이름(`type_int_key` 등)을 주석에 새로 쓰면 개수가 바뀌어 올바른 설정에서도 FAIL 이
-> 난다 (2026-09-15 실제 발생). 또한 차트는 `luaScripts` 값을 Helm 템플릿(`tpl`)으로 한 번 렌더하므로
-> **Lua 안에 `{{` 를 쓰면 렌더가 깨진다.**
+> 난다 (2026-09-15 실제 발생). (v4 까지는 차트가 `luaScripts` 를 `tpl` 로 렌더해 Lua 안의 `{{` 가 렌더를
+> 깼다 — ConfigMap 방식에서는 해당 없음.)
 
 ### 9.4 허용 목록 · Lua 변경 절차
 
 1. `fluent-bit/polaris_access_log.lua` 의 `APP_ALLOW` (또는 해당 규칙) 수정.
 2. 새 **정수** 필드를 만들었다면 `values.yaml` FILTER 3 의 정수 키 목록과 인덱스 템플릿에 **둘 다** 추가.
-   빠지면 문자열로 저장되어 숫자 쿼리가 **에러 없이 0건**을 반환한다.
+   빠지면 문자열로 저장되어 숫자 쿼리가 **에러 없이 0건**을 반환한다. 이 경우 **Helm(values) 을 먼저**
+   적용하고 Lua 를 나중에 적용한다 (§9.1-3).
 3. 필드 의미가 바뀌면 `SCHEMA_VERSION` 을 올린다.
-4. `logging/scripts/test-schema-v4.lua` 에 케이스 추가 → 테스트 통과.
-5. §9.3 순서로 배포 → §10.2 게이트.
+4. `logging/scripts/test-schema-v5.lua` 에 케이스 추가 → v3/v4/v5 테스트 통과.
+5. §9.3 "이후 Lua 만 바꿀 때" 순서로 배포 → §10.2 게이트.
 
 ---
 
@@ -724,9 +801,10 @@ bash logging/scripts/step3-postupgrade.sh
 | 1 | Lua v4 롤 | **완료** (2026-09-15) | 파드 로그 정상, 스크립트 sha 일치 |
 | 2 | v4 1차 실측 (설정 구간) | **완료** | §10.3 |
 | 3 | 테스트 매트릭스 윈도우 요약 검증 | **완료** (2026-09-16) | G1–G8 + Gate 2 통과, 원본 재생 64행×30필드 불일치 0 (§10.3) |
-| 4 | 요약 인덱스 템플릿 적용 | 대기 | 새 인덱스 매핑에서 `date` / `long` 확인 |
-| 5 | 상세 인덱스 템플릿 작성·적용 | 권장 | `http_status` 등 `long` 확인 |
-| 6 | 404 처리 정책 결정 | **작성 예정** (§3.9) | |
+| 4 | 요약 인덱스 템플릿 적용 | **완료** (2026-09-16). v5 필드 추가분 재적용 대기 | 새 인덱스 매핑에서 `date` / `long` 확인 |
+| 5 | 상세 인덱스 템플릿 작성·적용 | **완료** (2026-09-16) | `http_status` 등 `long` 확인 |
+| 6 | 404 처리 정책 결정 | **결정·v5 작성** (§3.9). 롤 대기 | 재생 예측과 상세 문서 수 일치 |
+| 6a | Lua ConfigMap + hot reload 전환 | **작성, 미검증** (§9.1) | step3 PASS, 런북 B/C/D 결과 기록 |
 | 7 | 윈도우 30초 → 1800초 복귀 | 대기 | Lua `WINDOW_SECONDS` 1800, 요약 문서 수 감소 |
 | 8 | 검증용 `polaris-report-*` 삭제 | 대기 | 30초 윈도우 인덱스 제거 |
 | 9 | ISM 정책 적용 | 대기 | 상세 30일 · 요약 365일 부착 확인 |
@@ -743,7 +821,8 @@ bash logging/scripts/step3-postupgrade.sh
 | G2 | 10개 이상의 연속 윈도우에서, 공용 인덱스의 Polaris 비액세스 INFO 문서 수(허용 목록 외) == `sum(app_dropped.dropped)` (경계 오차 허용) |
 | G3 | 적재된 예외·권한 로그마다 같은 `mdc.requestId` 의 액세스 문서가 존재 |
 | G4 | `clientSecret` 을 포함한 문서의 값이 `*` 또는 `<redacted>` 뿐 |
-| G5 | 새 요약 행 전부 `schema_version: 4`, v4 정수 필드가 `long`, `carried_rows` 없음 |
+| G5 | 새 요약 행 전부 `schema_version: 5` (v4 롤 중에는 4), 정수 필드가 `long`, `carried_rows` 없음 |
+| G9 | **v5.** 롤 이후 윈도우의 `polaris-logs-*` 에 `http_status: 404` 액세스 문서 0건, 공용 인덱스 404 수 == `sum(counted_404)` (경계 오차 허용) |
 | G6 | 구간 합 `sum(commit_count)` == 공용 인덱스의 `Successfully committed to` 라인 수 (경계 오차 허용) |
 | G7 | `commit_count` 있고 `requests: 0` 인 행마다, 같은 윈도우에 해당 컬렉션 쓰기(생성) 또는 `/transactions/commit` 쓰기가 존재 |
 | G8 | `requests: 0` 이고 `commit_count` 없는 행이 없음 |
@@ -777,18 +856,18 @@ bash logging/scripts/step3-postupgrade.sh
 
 | # | 항목 | 영향 | 상태 |
 |---|---|---|---|
-| 1 | **404 전건 적재** | 상세 인덱스 용량의 약 98% | **정책 작성 예정** (§3.9) |
+| 1 | **404 전건 적재** | 상세 인덱스 용량의 약 98% | **v5 로 해결 예정** (§3.9) — 롤 대기. `requestId` 없는 요청 동작 운영 확인 필요 |
 | 2 | 인덱스 템플릿 미적용 | 동적 매핑 사고 재발 가능 | §10.1-4, 5 |
 | 3 | ISM 미적용 | 인덱스가 삭제되지 않고 쌓임 | §10.1-9 |
 | 4 | 윈도우 30초로 운영 중 | 요약 행 약 60배 | §10.1-7 |
 | 5 | 틱 위상 드리프트 | 윈도우 라벨이 0~5초 밀림 (§4.6-7) | 설계상 한계. 1800초 윈도우에서는 영향 미미 |
-| 6 | 테스트 phase 가 한 윈도우에 몰림 | phase 별 게이트(롤 grant 수 등)가 전체 매트릭스를 봄 | 테스트 노트북 수정 필요 |
+| 6 | 테스트 phase 가 한 윈도우에 몰림 | phase 별 게이트(롤 grant 수 등)가 전체 매트릭스를 봄 | **종결 (2026-09-16)** — 틱 구간 판독(step10) + 원본 재생(step11)으로 대체 |
 | 7 | 다단계 네임스페이스 커밋 키 | `a.b` → `a%1Fb` 변환 | **해결 (2026-09-16)** — run `1789535345` 에서 요청과 커밋 2건이 한 행에 집계, 유령 행 없음 |
-| 8 | `/namespaces/{ns}/register` 분류 규칙 없음 | 오류는 `__errors__` 로, 성공은 `other` 행으로 | 규칙 추가 후보 |
+| 8 | `/namespaces/{ns}/register` 분류 규칙 없음 | 오류는 `__errors__` 로, 성공은 `other` 행으로 | **v5 에 추가** (kind `collection`) — 롤 대기 |
 | 9 | 4개 API 가 잘못된 요청에 500 응답 | `errors_5xx` 오탐 (`getToken`, `createNamespace`, `renameTable`, `renameView`) | Polaris 측 이슈, 재현 확인 |
 | 10 | 리소스 행 상한 500 | 운영 규모에서 `__other__` 로 넘칠 수 있음 | 운영 적용 후 `resources_other` 확인 |
 | 11 | Fluent Bit 처리량 | 일 5,000만 줄 × Lua 2단계, CPU 제한 200m | 부하 측정 필요 |
-| 12 | Lua 로드 실패 = 전체 수집 중단 | tier 1 까지 멈춤 (§9.2) | 배포 게이트로 방지 |
+| 12 | Lua 로드 실패 = 전체 수집 중단 | tier 1 까지 멈춤 (§9.2) | 배포 게이트로 방지. hot reload 시 동작은 **미측정** (§9.1) |
 | 13 | multiline 병합 | 깨지면 grant 로그가 여러 문서로 분리 | 테스트에서는 정상 (75건 단일 문서) |
 | 14 | Polaris 다중 파드 | 여러 Polaris 파드의 로그가 한 Fluent Bit 파드에 합산 — 요약은 노드 단위 | 현재 `maxReplicas` 확인 필요 |
 | 15 | 공용 인덱스 tier 1 출력의 평문 자격증명 | 설정 파일에 비밀번호 | 별도 변경 (Secret 사용자 권한 확인 후) |
@@ -811,9 +890,10 @@ bash logging/scripts/step3-postupgrade.sh
 - 상세에는 **오류·변경·인증 실패 전건**과 **이유(예외 로그)·변경 내용(권한 로그)** 만 남기고, 둘은
   `mdc.requestId` 로 조인한다. 성공한 조회와 반복 로그는 **세기만** 한다.
 - 요약은 30분 단위 리소스·principal 추이, 테이블 커밋 시간, 버린 로그 개수를 담는다.
-- 운영 트래픽(일 5,000만 건) 기준 상세 인덱스는 하루 약 0.83 GB 이며 **그 98% 가 404** 다. 404 처리가
-  보관 비용을 결정한다.
-- Lua 는 배포 방식에 관계없이 반드시 함께 배포되어야 하며, 빠지면 **노드 전체 로그 수집이 멈춘다.**
+- 운영 트래픽(일 5,000만 건) 기준 상세 인덱스는 v4 로 하루 약 0.83 GB 이며 **그 98% 가 404** 다. v5 는 404 를
+  세기만 하고 그 요청의 앱 로그도 `requestId` 로 함께 버려 수십 MB 수준으로 줄인다.
+- Lua 는 별도 ConfigMap 으로 배포하고 hot reload 로 교체한다 (v5). 로드에 실패하면 **노드 전체 로그 수집이
+  멈출 수 있으므로** 단위 테스트와 렌더 게이트는 생략하지 않는다.
 
 ---
 
@@ -832,15 +912,21 @@ bash logging/scripts/step3-postupgrade.sh
 | `__errors__` | 그 순간 행이 없던 리소스의 오류가 모이는 행 |
 | `__other__` | 행 상한을 넘은 요청이 모이는 행 |
 | 렌더 게이트 | 배포 전 렌더 결과를 검사하는 `step2-render-gate.sh` |
+| 보류 (hold) | v5. 허용 목록 앱 로그를 같은 `requestId` 의 액세스 라인이 올 때까지 필터 메모리에 잡아 두는 것 |
+| hot reload | 파드 재시작 없이 Fluent Bit 설정·스크립트를 다시 읽는 기능 (`/api/v2/reload`) |
 
 ### B. 관련 파일
 
 | 파일 | 내용 |
 |---|---|
 | `fluent-bit/values.yaml` | Fluent Bit DaemonSet 설정 (tier 1/2/3) |
-| `fluent-bit/polaris_access_log.lua` | 판정·집계·요약 Lua (정책 v4) |
+| `fluent-bit/polaris_access_log.lua` | 판정·집계·요약 Lua (정책 v5) |
+| `fluent-bit/kustomization.yaml` | Lua ConfigMap `polaris-fluent-bit-lua` 생성 (v5) |
+| `logging/RUNBOOK-lua-hot-reload-2026-09-16.md` | hot reload 검증 런북 |
+| `logging/opensearch/polaris-logs-template.json` | 상세 인덱스 템플릿 |
 | `logging/opensearch/polaris-report-template.json` | 요약 인덱스 템플릿 |
-| `logging/scripts/test-schema-v3.lua`, `test-schema-v4.lua` | Lua 단위 테스트 |
+| `logging/scripts/test-schema-v3.lua`, `test-schema-v4.lua`, `test-schema-v5.lua` | Lua 단위 테스트 |
+| `logging/scripts/step10-v4-window-readout.sh`, `step11-replay-window.py` | 윈도우 판독 · 원본 재생 검증 |
 | `logging/scripts/step2-render-gate.sh` | 렌더 게이트 |
 | `logging/scripts/step3-postupgrade.sh` | 롤 후 점검 |
 | `logging/scripts/step9-report-index-template.sh` | 템플릿 적용 |

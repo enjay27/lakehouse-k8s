@@ -113,7 +113,7 @@ check("loggerName 없음 → '-'",       D["-"] and D["-"].dropped, 1)
 check("IcebergCatalog 8줄 (커밋 7 + Refreshing 1)", D[ICAT] and D[ICAT].dropped, 8)
 check("허용 logger 는 app_dropped 에 없음", D[ADMIN], "nil")
 check("summary.app_dropped_total",  r1.summary.app_dropped_total, 12)
-check("schema_version 4",           r1.summary.schema_version, 4)
+check("schema_version 5 (v5 파일에서도 v4 동작 유지)", r1.summary.schema_version, 5)
 check("carried_rows 필드 없음",       r1.summary.carried_rows, "nil")
 
 print("== 불변식 ==")
