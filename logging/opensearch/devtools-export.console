@@ -2,7 +2,18 @@
 # OpenSearch Dev Tools — full-document JSON exports for the Polaris log pipeline
 # =====================================================================================================
 # Paste this whole file into OpenSearch Dashboards → Dev Tools. Put the cursor inside one request and
-# press ▶ (Ctrl/Cmd+Enter). Copy the response panel into a .json file.
+# press ▶ (Ctrl/Cmd+Enter).
+#
+# ⚠ THE RESPONSE PANEL IS NOT JSON (measured 2026-09-16, OpenSearch Dashboards for 3.5.0). Any string
+#   containing a newline is shown between triple double-quotes (Kibana-console syntax), and its continuation
+#   lines are RE-INDENTED: of 386 polaris-logs docs, 300 `_msg` and 4 `exception.message` values came out
+#   triple-quoted and 53 multi-line messages differed from the stored value in leading whitespace.
+#   `json.load` fails on it. For a file you will parse or diff, do not copy the panel:
+#     * wrench icon next to ▶ → "Copy as cURL", add  -sk -u "$OS_USER:$OS_PASSWORD"  (and the https://192.168.194.1:9200 host if
+#       it shows localhost), run it with  > file.json  — exact bytes, or
+#     * the curl form at the end of this file, or
+#     * if you already have a panel copy: python3 logging/scripts/devtools-json-fix.py in.json > out.json
+#       (restores valid JSON; the re-indentation inside multi-line strings cannot be undone).
 #
 # Why not Discover → CSV: CSV keeps only the columns you picked (the v5 counters were missing), prints
 # numbers with thousands separators ("1,898"), and flattens arrays (exception.frames) into strings.

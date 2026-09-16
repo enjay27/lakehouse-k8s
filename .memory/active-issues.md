@@ -653,6 +653,18 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   docs join an access doc by `mdc.requestId`, no duplicate request ids. The run spans three windows (seq 7–8 are
   setup: 201s and grants). Not checkable from these CSVs: `counted_404` / `app_dropped_404` / `held_*` columns were
   not selected in Discover, and numbers export with thousands separators (`1,898`).
+- **Same run from Dev Tools JSON (`polaris-summary.json` = request 2 for 09:11:00Z, 67 rows; `polaris-log.json` = 386
+  polaris-logs docs 09:10:28–09:11:12Z)** — the fields the CSV lacked: `counted_404` 100, `app_dropped_404` 110,
+  `held_orphans` 0, `held_pending` 0, `partial_window` `"false"` (a string), `role_keys_forced` 4, span 09:11:06.57–12.92.
+  Identities hold: `access_kept` 200 = 355 − 155; `access_counted` 155 = 100 (404) + 31 read + 24 POST;
+  `errors_kept` 151 = 247 + 4 − 100 (404s not kept); `app_dropped_404` outside `app_dropped_total`. Commit fields on 5
+  table/view rows, incl. `probe_ns%1Fnested/…/mx_1789549828_deep` commit_count 2 (TODO 1.5 shape again). Detail: all
+  numerics typed int; no duplicate `_id`; every app doc joins an access doc; `exception` is an object with a
+  `frames` array of {class, method, line}; `clientSecret: *` (Polaris' own mask) on 4 docs, `secret_redacted` never
+  set; held PolarisServiceImpl lines carry `@timestamp` up to 21 ms after `_time` (v5's documented behaviour).
+  **Found: the Dev Tools response panel is not JSON** — multi-line strings print as triple-quoted blocks with
+  re-indented continuation lines (300 `_msg` + 4 `exception.message`; 53 messages differ in whitespace, identical
+  after normalising). `devtools-export.console` now says so; `logging/scripts/devtools-json-fix.py` repairs a panel copy.
 - *(as written, Kade's decision 2026-09-16)* Wanted: no reloader, Lua and
   config read at start only, simple config. Choice among two: *Helm `--set-file`* (one command, chart checksum
   restarts; the 09-15 outage risk) vs **separate ConfigMap + restart** — **chosen**. Changes:
