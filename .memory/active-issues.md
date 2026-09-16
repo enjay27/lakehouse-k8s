@@ -628,7 +628,12 @@ still its own last step.
 
 ## Resolved, kept because they recur
 
-**#29 — Tier 1 OUTPUT 2 (`opensearch.1`, `kube.*` → k8s-logs) still discards chunks under traffic, on 5.1.1. OPEN, cause unknown.** 2026-09-16.
+**#29 — Tier 1 OUTPUT 2 (`opensearch.1`, `kube.*` → k8s-logs) still discards chunks under traffic, on 5.1.1. DROPPED by Kade 2026-09-16 — not diagnosed, not fixed.** 2026-09-16.
+**Dropped (Kade, 2026-09-16 late: "drop #29, since task done"):** no further diagnosis is planned. The fault was never read: the
+diagnosis commands' output directory `.scratch/issue29-1356Z/` came out empty, so the cause (mapping reject / 429 / buffer) is unknown
+and nothing was changed. It concerns tier 1 only; the Polaris tier-2/3 pipeline was intact in every checked window. If it matters
+again (e.g. phase 3.1's load test shows more drops), restart from the commands in `logging/HANDOFF-audit-log-next-2026-09-16.md` §3 A.
+Original record:
 One chunk per traffic run, twice today, **before and after the v5 roll**, so not caused by v5:
 - `1-1789535377` (05:09:37 UTC, v4 pod `rvm49`, traffic window readout `050930Z`): warn 05:09:46, 05:10:07, `cannot be retried` 05:10:45.
 - `1-1789548067` (08:41:07 UTC, v5 pod, step-7 traffic window `084100Z`): warn 08:41:19, 08:41:38, `cannot be retried` 08:41:52.

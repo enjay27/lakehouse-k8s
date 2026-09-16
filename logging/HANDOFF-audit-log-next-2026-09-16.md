@@ -1,4 +1,4 @@
-# HANDOFF — v5 is live without hot reload. What is left, in order. Start at §3 A.
+# HANDOFF — v5 is live without hot reload. What is left, in order. Start at §3 C (A dropped, B done — 2026-09-16 late).
 
 **Written 2026-09-16 at the end of the Cowork session that rolled v5 (commits `28300b8`..`63cf6e9`).**
 Supersedes [`HANDOFF-v5-rollout-2026-09-16.md`](HANDOFF-v5-rollout-2026-09-16.md) (its §2 roll is done).
@@ -38,8 +38,8 @@ Plan: [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md) �
 
 | | task | who | depends on | done when |
 |---|---|---|---|---|
-| **A** | **`#29` diagnosis.** Run a traffic notebook, then (read-only) the unfiltered fluent-bit log around the `cannot be retried` line, `docker logs opensearch-node` for that minute grepped for `reject\|mapper\|parse\|exception\|429`, and `_cat/thread_pool/write?v`. Commands are in this session's chat and repeated below. | K run · C read | — | cause named (mapping reject / 429 / buffer) and a fix proposed in `#29` |
-| B | Housekeeping for the record: `helm -n datahub-hynix history benchmarks-fluent-bit \| tail -3` (revision of the hot-reload removal) | K | — | revision in `#28` |
+| ~~A~~ | **DROPPED by Kade 2026-09-16 (not diagnosed; see `#29`).** ~~`#29` diagnosis.~~ Run a traffic notebook, then (read-only) the unfiltered fluent-bit log around the `cannot be retried` line, `docker logs opensearch-node` for that minute grepped for `reject\|mapper\|parse\|exception\|429`, and `_cat/thread_pool/write?v`. Commands are in this session's chat and repeated below. | K run · C read | — | cause named (mapping reject / 429 / buffer) and a fix proposed in `#29` |
+| ~~B~~ | **DONE 2026-09-16: rev 18 = hot-reload removal (`#30`).** Housekeeping for the record: `helm -n datahub-hynix history benchmarks-fluent-bit \| tail -3` (revision of the hot-reload removal) | K | — | revision in `#28` |
 | C | **TODO 2.8 — ISM policies** `logging/opensearch/ism-polaris-logs-30d.json`, `ism-polaris-report-365d.json` + apply script | C | — | JSON valid, committed |
 | D | **TODO 2.5 — `WINDOW_SECONDS` 30 → 1800.** Claude edits the Lua (tests keep 30 via sed, as planned) → Kade `bash fluent-bit/apply-lua.sh` (its first real run) → step3. Finish anything that still wants 30 s windows first (A's reproduction, optional runbook D "tier-1 `sequence` gaps across a restart"). After it, a verification run costs 30 min per window; step10 takes `[window_seconds]` 1800. Re-check `#26`: the 5 s tick must divide 1800, rows on :00/:30 | C write · K apply | A (preferably) | summary `window_seconds` 1800, `window_start` on :00/:30, step11 PASS on one 1800 s window |
 | E | **TODO 2.7 — delete the 30 s-window `polaris-report-*` indices.** *Destructive: explicit OK at execution.* | K | D | only 1800 s report indices remain |
