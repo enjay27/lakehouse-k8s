@@ -1,6 +1,6 @@
 # TODO — Polaris audit log, from `PROPOSAL-polaris-audit-log-retention.ko.md` to production
 
-**Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). Next: 1.1, 1.2, 1.4.
+**Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). Next: 1.5 (run phase J), then phase 2.
 **1.1 DONE 2026-09-16** — step9 PASS: stored 37/37, simulated 37/37, all six v4 integers `long`.
 **1.2 WRITTEN 2026-09-16** — `logging/opensearch/polaris-logs-template.json` + `logging/scripts/step12-logs-index-template.sh` (8 fields; strings left dynamic). **1.3 DONE 2026-09-16** — step12 PASS 8/8 stored and simulated. Existing indices 09.09–09.15 already mapped every declared field the same way, so the template is insurance, not a correction. No `polaris-logs-2026.09.16` yet: tier 1 holds 0 Polaris records today and the last detail doc is the test run's end (09-15 09:20:12Z) — Polaris idle, not a stall.
 
@@ -31,8 +31,8 @@ Scope: local OrbStack first (phases 0–2), then the production port (phase 3). 
 | 1.1 | Apply the **report template**: `bash logging/scripts/step9-report-index-template.sh` | K | 0.5 | next day's index mapping shows `date` / `long` on the template's fields (not retroactive) |
 | 1.2 | Write a **detail template** `logging/opensearch/polaris-logs-template.json` (`http_status`, `response_size` long; `mdc.requestId`, `loggerName`, `user_principal_name`, `api_path` keyword; `secret_redacted` boolean) + extend step9 or a sibling script | C | — | JSON valid, committed |
 | 1.3 | Apply 1.2 | K | 1.2 | next `polaris-logs-*` index mapping matches |
-| 1.4 | **Notebook: one phase per window** (`polaris_log_coverage_v2.ipynb`, lag = `Interval_Sec + 1.5` into *each* window) — so role/grant gates read one phase | K (notebook repo) · C review | — | a run whose report shows ≥ one window per phase |
-| 1.5 | **Nested namespace commit key** — add an `a.b` namespace + table commit to the matrix; check the table row carries both `requests` and `commit_count` (no `a.b` phantom row) | K run · C review | 1.4 | one row, not two |
+| 1.4 | ~~**Notebook: one phase per window**~~ **CLOSED 2026-09-16 — option A: not needed.** The traffic notebook stays back to back in one window; phases are verified by `step10` (tick-interval readout) + `step11` (replay of the raw tier-1 copy, exact) + request-id lookups. Side fix in polaris-learning `c64cfd3`: `make_traffic.drive()` still waited `lag=0.5` per phase — now requires `tick_interval_s`. Was: (`polaris_log_coverage_v2.ipynb`, lag = `Interval_Sec + 1.5` into *each* window) — so role/grant gates read one phase | K (notebook repo) · C review | — | a run whose report shows ≥ one window per phase |
+| 1.5 | **Nested namespace commit key** — *traffic written 2026-09-16 (polaris-learning `ed768b9`, phase J in `polaris_api_traffic_v1.ipynb` and `make_traffic` `full`); needs a run, then `step10` + `step11` on its window; pass = ONE row at the printed `resource_key` with `requests` and `commit_count`*. Was: — add an `a.b` namespace + table commit to the matrix; check the table row carries both `requests` and `commit_count` (no `a.b` phantom row) | K run · C review | 1.4 | one row, not two |
 
 ## Phase 2 — the next Lua roll (bundle changes; every roll is a whole-pipeline availability risk, proposal §9.2)
 
@@ -83,7 +83,7 @@ Scope: local OrbStack first (phases 0–2), then the production port (phase 3). 
 3.4 ─┴──────┴──────────────────────────────→ 3.5        3.6, 3.7 independent
 ```
 
-**Critical path:** 0.1 → 0.2 → 1.4 → 1.5 → 2.5 → 2.6 → 2.7 → 2.9. Everything that needs 30-second windows
+**Critical path:** 0.1 → 0.2 → ~~1.4~~ → 1.5 → 2.5 → 2.6 → 2.7 → 2.9. Everything that needs 30-second windows
 (phase 0, 1.4, 1.5) must finish **before** 2.5 — after the revert, a verification run takes 30 minutes per
 window.
 

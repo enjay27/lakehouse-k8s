@@ -142,6 +142,14 @@ row, or a catalog-role has `api_kind: catalog` (it is served by the management A
 
 ## Gate 4 — roles, and the privilege count
 
+> **2026-09-16 — how to read this gate now.** The traffic notebook drives every phase back to back in
+> ONE window (polaris-learning `afe0101`; kept as TODO 1.4 option A), so the role row's `writes` also
+> counts the grid's writes to that role and will not equal the three grants. Read the gate as:
+> (1) `step11-replay-window.py` PASS on the drive's window — the row equals the filter applied to the
+> raw input, which is the counter's correctness; and (2) the three grant request ids and the denied
+> read are present in `polaris-logs-*` (rule 4 keeps PUT; rule 3 keeps the 403). `writes == N` off a
+> row is only meaningful for a window that held nothing else.
+
 ```python
 q("polaris-report-*", {"size":20, "query":{"bool":{"filter":[V3,
      {"term":{"resource_kind.keyword":"catalog-role"}},
