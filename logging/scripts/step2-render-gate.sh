@@ -83,12 +83,16 @@ eq "no -luascripts ConfigMap / volume"      'luascripts'              0
 eq "checksum/config on the pod template (config change restarts)" 'checksum/config' 1
 eq "volume points at the Lua ConfigMap"     'name: polaris-fluent-bit-lua' 1
 eq "Lua mount path in the fluent-bit container" 'mountPath: /fluent-bit/polaris-lua' 1
-eq "both FILTERs use the mounted script"    'script  */fluent-bit/polaris-lua/polaris_access_log\.lua' 2
+# R1 (2026-09-16 refactor): the access-line parser is inside polaris_noise_filter -- ONE Lua filter.
+eq "one Lua FILTER uses the mounted script" 'script  */fluent-bit/polaris-lua/polaris_access_log\.lua' 1
+eq "no FILTER calls the removed parser"     'call  *polaris_access_log' 0
+eq "parsed ints lead FILTER 3's int list"   'type_int_key  http_status response_size schema_version' 1
 eq "no FILTER left on the old path"         'script  */fluent-bit/scripts/' 0
 eq "no Lua in the Helm render (--set-file gone)" 'APP_ALLOW' 0
-# 3 = 2 real directives + 1 comment in the filters block. A rendered block-scalar comment
-# COUNTS (2026-09-15: a comment naming it made v4's gate read 5). Keep the word out of comments.
-eq "type_int_key  (2 directives + 1 comment)" 'type_int_key'          3
+# 1 = the one real directive (FILTER 3). Until the R1 merge it was 3: FILTER 2's directive plus the
+# comment above it. A rendered block-scalar comment COUNTS (2026-09-15: a comment naming it made
+# v4's gate read 5). Keep the word out of comments.
+eq "type_int_key  (1 directive, no comment)" 'type_int_key'          1
 ge "v4 commit fields in type_int_key"       'commit_ms_max dropped'   1
 ge "v5 404 fields in type_int_key"          'held_orphans held_pending' 1
 eq "carried_rows gone from type_int_key"    'distinct_principals carried_rows' 0

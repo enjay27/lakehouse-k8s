@@ -13,7 +13,8 @@
 #
 # Order and why:
 #   1. context guard           -- -n datahub-hynix does not protect against another cluster
-#   2. LuaJIT tests v3..v5     -- a broken script fails filter init at start, every input
+#   2. LuaJIT tests v3..v5 +   -- a broken script fails filter init at start, every input
+#      first-tick (R4)
 #                                 pauses, and TIER 1 STOPS with it (2026-09-15). Not skippable.
 #   3. kubectl diff -k         -- shows what changes; nothing changed -> nothing to do
 #   4. kubectl apply -k
@@ -41,10 +42,10 @@ echo "   orbstack"
 echo "== 2. Lua tests (LuaJIT, the engine Fluent Bit embeds)"
 command -v luajit >/dev/null || { echo "FATAL: luajit not on PATH (brew install luajit)"; exit 2; }
 cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua
-for t in v3 v4 v5; do
-  if luajit "logging/scripts/test-schema-$t.lua" > "/tmp/apply-lua-test-$t.txt" 2>&1 \
+for t in schema-v3 schema-v4 schema-v5 first-tick; do
+  if luajit "logging/scripts/test-$t.lua" > "/tmp/apply-lua-test-$t.txt" 2>&1 \
      && grep -q '^ALL PASS' "/tmp/apply-lua-test-$t.txt"; then echo "   $t ALL PASS"
-  else echo "FATAL: test-schema-$t failed -- NOT applied:"; tail -15 "/tmp/apply-lua-test-$t.txt"; exit 1; fi
+  else echo "FATAL: test-$t failed -- NOT applied:"; tail -15 "/tmp/apply-lua-test-$t.txt"; exit 1; fi
 done
 
 echo "== 3. diff against the cluster"

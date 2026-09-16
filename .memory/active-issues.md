@@ -5,7 +5,13 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
-**#31 — Lua refactor (R1–R6) and the pre-first-tick counting gap: CANDIDATE, NOT PROMOTED.** 2026-09-16.
+**#31 — Lua refactor (R1–R6) and the pre-first-tick counting gap: PROMOTED IN THE REPO, NOT ROLLED.** 2026-09-16.
+- **Promoted (Kade's go, 2026-09-16):** candidate → `fluent-bit/polaris_access_log.lua` (sha `2fbcfa47c513f5a0`), values FILTER 2 removed +
+  `http_status response_size` in FILTER 3's int list, step2 expectations, `test-first-tick.lua` in `apply-lua.sh`. Re-checked on the
+  promoted file (Cowork): apply-lua.sh's test loop ALL PASS (v3/v4/v5/first-tick); step11 PASS on `084100Z` and `144400Z` (with detail);
+  differential vs the pre-refactor script 0 diffs; step2's Lua and filter-block counts on the files (script 1, call 0, int-list lines 1,
+  trims present). **Until rolled, the pod runs the OLD script with FILTER 2 — do not restart it alone.**
+  Roll: `apply-lua.sh --no-restart` → step2 on a fresh render → `helm upgrade` → step3 → traffic → step10/11.
 Review: `logging/REVIEW-lua-refactor-2026-09-16.md`. Candidate: `logging/candidates/polaris_access_log.refactor.lua`.
 - **The live v5 script has a real counting gap (R4):** `counts` is nil until the first report tick, so after every pod start up
   to `Interval_Sec` (5 s) of successful GETs, catalog POSTs and 404s are dropped **and** in no counter

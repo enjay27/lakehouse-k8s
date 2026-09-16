@@ -74,7 +74,7 @@ If the fluent-bit log shows no reason line, the next step is `Trace_Error On` on
 
 | file | what |
 |---|---|
-| `fluent-bit/values.yaml` | the DaemonSet; no `hotReload`; FILTER 2/3 script path `/fluent-bit/polaris-lua/…` |
+| `fluent-bit/values.yaml` | the DaemonSet; no `hotReload`; one Lua FILTER (3) since the 2026-09-16 refactor (`#31`), script path `/fluent-bit/polaris-lua/…` |
 | `fluent-bit/polaris_access_log.lua` · `kustomization.yaml` · `apply-lua.sh` | v5 Lua · its ConfigMap · the only way to roll it |
 | `logging/scripts/step2-render-gate.sh` · `step3-postupgrade.sh` · `step9-…` · `step10-…` · `step11-…` | render gate · post-roll checks · report template · one-window readout · replay |
 | `logging/opensearch/` | index templates, `devtools-export.console` |

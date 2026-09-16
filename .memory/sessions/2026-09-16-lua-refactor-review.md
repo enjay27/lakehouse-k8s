@@ -28,3 +28,11 @@ compare with the current one (not replace it). Remove thread name/id. Plan first
 ## Open
 - Kade compares; promotion per the review's §3; do it before TODO 2.5 (1800 s).
 - The C-side saving of R1 is only measurable in phase 3.1.
+
+## Promotion (same evening, after #30 was verified as rev 19)
+- Kade: "proceed deploy refactor". `git mv` of the candidate onto `fluent-bit/polaris_access_log.lua` (no duplicate left to drift),
+  `git apply` of `r1-values-step2.patch` (git warned it could not unlink the old files in the mount; contents verified), the R4 test moved
+  to `logging/scripts/test-first-tick.lua` and added to `apply-lua.sh`'s loop. The pre-refactor script is kept in `.scratch/` for the
+  differential and in git at `0e9c37e`.
+- Re-ran on the promoted files: the test loop extracted from `apply-lua.sh` itself, step11 on both v5 windows, differential vs pre-refactor.
+- Why a single commit and not Lua-then-values: the two only work together (see #31's order note).

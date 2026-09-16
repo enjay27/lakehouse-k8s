@@ -2,17 +2,29 @@
 -- polaris_access_log.lua — Polaris 감사 로그 Fluent Bit Lua 필터 (정책 v5 / 리포트 스키마 v5)
 -- =====================================================================================
 --
--- 한 파일에 함수 두 개, FILTER 도 두 개로 건다.
+-- 함수 하나, FILTER 하나:
 --
---   polaris_access_log    Match polaris.logs   액세스 라인(_msg)을 필드로 분해
---   polaris_noise_filter  Match polaris.*      적재 판정 + 윈도우 집계 + 리포트 생성
+--   polaris_noise_filter  Match polaris.*   액세스 라인 파싱 + 적재 판정 + 윈도우 집계 + 리포트
 --
--- 두 번째 필터가 polaris.logs 가 아니라 polaris.* 를 매치하는 이유: 리포트 틱(dummy
--- INPUT, Tag polaris.report)도 "같은 필터 인스턴스" 를 지나야 한다. Lua 상태(카운터)는
--- 인스턴스 단위라서, 틱이 다른 인스턴스로 가면 비어 있는 카운터를 보고하게 된다.
+-- Match 가 polaris.logs 가 아니라 polaris.* 인 이유: 리포트 틱(dummy INPUT, Tag polaris.report)도
+-- "같은 필터 인스턴스" 를 지나야 한다. Lua 상태(카운터)는 인스턴스 단위라서, 틱이 다른 인스턴스로
+-- 가면 비어 있는 카운터를 보고하게 된다.
 --
 -- 런타임: Fluent Bit 내장 LuaJIT (Lua 5.1 문법). `//`, `table.unpack`, 정수 나눗셈 등
 -- 5.3+ 기능은 쓰지 않는다. 테스트는 luajit / lua5.1 로 돌린다.
+--
+-- ── v5 리팩터 (2026-09-16, logging/REVIEW-lua-refactor-2026-09-16.md) ─────────────────
+--   정책·리포트 스키마는 v5 그대로 (필드의 의미가 바뀌지 않았다). 바뀐 것:
+--   R1. 액세스 라인 파싱(구 polaris_access_log, FILTER 2)을 이 함수 안으로 합쳤다. Lua 필터는
+--       호출마다 레코드 전체를 msgpack → Lua 테이블 → msgpack 으로 왕복시키므로, 필터 하나가
+--       레코드당 왕복 한 번을 없앤다. values.yaml 에서 FILTER 2 가 사라지고 http_status /
+--       response_size 가 이 필터의 type_int_key 로 옮겨 온다.
+--   R2. classify(): 같은 패턴 표를 쓰되 plain find 가드 + 윈도우 단위 캐시.
+--   R3. 레코드당 테이블 할당 제거 (extra, count_record 의 rows, 보류/메모 큐 항목).
+--   R4. 첫 틱 이전 레코드도 센다: 윈도우는 첫 틱 "또는" 첫 레코드에서 열린다 (결정: Kade).
+--       재시작 직후 최대 Interval_Sec 동안 버려진 조회·POST·404 가 어느 카운터에도 없던 결함.
+--       그 윈도우는 partial_window "true" 로 나간다.
+--   R5/R6. 중복 조건 제거, 리포트 조립 단순화.
 --
 -- ── v4 → v5 변경 요약 (2026-09-16, logging/PLAN-audit-log-todo-2026-09-16.md 2.1–2.3) ──
 --   1. 404 는 적재하지 않고 집계만 한다 (결정: Kade 2026-09-16). 액세스 라인은 errors /
@@ -21,9 +33,10 @@
 --      mdc.requestId 로 한다: 허용 목록의 앱 로그를 요청 ID 별로 "보류" 했다가 같은 ID 의
 --      액세스 라인이 오면 상태를 보고 함께 내보내거나 함께 버린다 (§ 요청 ID 보류).
 --   3. /namespaces/{ns}/register 분류 규칙 추가 (kind collection).
---   4. Lua 는 values 가 아니라 별도 ConfigMap(fluent-bit/kustomization.yaml)으로 배포되고
---      hot reload 로 교체된다. reload 하면 이 파일의 모든 상태(윈도우 카운터, 보류 목록)가
---      초기화된다 — 다음 리포트 행은 partial, report_seq 는 1 부터.
+--   4. Lua 는 values 가 아니라 별도 ConfigMap(fluent-bit/kustomization.yaml)으로 배포된다.
+--      Fluent Bit 은 기동 시에만 읽는다 — 교체는 bash fluent-bit/apply-lua.sh (apply + restart).
+--      재시작하면 이 파일의 모든 상태(윈도우 카운터, 보류 목록)가 초기화된다 — 다음 리포트 행은
+--      partial, report_seq 는 1 부터.
 --
 -- ── v3 → v4 변경 요약 (logging/PLAN-audit-allowlist-2026-09-15.md) ─────────────────
 --   1. 규칙 2: 애플리케이션 로그를 "전부 적재" 에서 "허용 목록(APP_ALLOW)만 적재" 로.
@@ -39,9 +52,9 @@
 
 
 -- ─────────────────────────────────────────────────────────────────────────────────────
--- 1단계: polaris_access_log — 액세스 라인 파싱
+-- 액세스 라인 파싱
 -- ─────────────────────────────────────────────────────────────────────────────────────
--- loggerName 이 io.quarkus.http.access-log 인 레코드만 건드린다. 나머지는 그대로 통과.
+-- loggerName 이 io.quarkus.http.access-log 인 레코드만 파싱한다.
 --
 -- 입력 _msg 형식 (Quarkus 패턴 %h %l %u %t "%r" %s %b):
 --   192.168.194.1 - root [03/Sep/2026:06:37:47 +0000] "DELETE /api/... HTTP/1.1" 404 133
@@ -56,26 +69,19 @@ local ACCESS_LOGGER = "io.quarkus.http.access-log"
 -- 따옴표 안의 HTTP 버전 토큰은 [^"]* 가 캡처 없이 먹는다.
 local PATTERN = '^(%S+) %S+ (%S+) %[[^%]]*%] "(%u+) (%S+)[^"]*" (%d+) (%S+)'
 
-function polaris_access_log(tag, timestamp, record)
-    if record["loggerName"] ~= ACCESS_LOGGER then
-        return 0, timestamp, record            -- 0 = 변경 없음, 그대로 통과
-    end
-
+-- 레코드에 필드를 붙인다. 반환: 파싱 성공 여부.
+-- 조용히 실패하지 않는다. 이 logger 의 라인이 파싱되지 않는다는 것은 로그 패턴이 바뀌었다는
+-- 뜻이고, access_log_parse_error:true 로 찾을 수 있어야 한다.
+local function parse_access(record)
     local msg = record["_msg"]
-    if type(msg) ~= "string" then
-        record["access_log_parse_error"] = true
-        return 2, timestamp, record
+    local ip, user, method, path, status, size
+    if type(msg) == "string" then
+        ip, user, method, path, status, size = string.match(msg, PATTERN)
     end
-
-    local ip, user, method, path, status, size = string.match(msg, PATTERN)
-
     if ip == nil then
-        -- 조용히 실패하지 않는다. 이 logger 의 라인이 파싱되지 않는다는 것은 로그 패턴이
-        -- 바뀌었다는 뜻이고, access_log_parse_error:true 로 찾을 수 있어야 한다.
         record["access_log_parse_error"] = true
-        return 2, timestamp, record
+        return false
     end
-
     record["client_ip"]           = ip
     record["user_principal_name"] = user
     record["http_method"]         = method
@@ -83,15 +89,12 @@ function polaris_access_log(tag, timestamp, record)
     record["http_status"]         = tonumber(status)
     -- CLF 의 %b 는 본문 0바이트를 "-" 로 쓴다. "알 수 없음" 이 아니라 0 이다.
     record["response_size"]       = tonumber(size) or 0
-
-    -- 1 이 아니라 2: 1 은 반환한 timestamp 까지 적용하라는 뜻이라 Lua double 로 한 번
-    -- 왕복한다. 2 는 "레코드만 바뀜, 시각은 그대로" 이고 실제로 일어난 일이 그것이다.
-    return 2, timestamp, record
+    return true
 end
 
 
 -- ─────────────────────────────────────────────────────────────────────────────────────
--- 2단계: polaris_noise_filter — 무엇을 적재할지 판정하고, 나머지는 센다
+-- 적재 판정 — 무엇을 적재할지 정하고, 나머지는 센다
 -- ─────────────────────────────────────────────────────────────────────────────────────
 -- 위에서부터 순서대로 평가하며, 먼저 일치한 규칙이 이긴다.
 --
@@ -102,7 +105,7 @@ end
 --        2a. `Successfully committed to table|view` .. 커밋 시간을 해당 행에 집계
 --        2b. loggerName 이 APP_ALLOW 에 있음 ........ 적재
 --        2c. 그 외 ................................... logger 별로 세고 버림 (app_dropped)
---   --- 모든 액세스 라인은 여기서 "판정 전에" 먼저 집계된다 ---
+--   --- 모든 액세스 라인은 여기서 파싱되고 "판정 전에" 먼저 집계된다 ---
 --        2b'. 단, mdc.requestId 가 있으면 즉시 적재하지 않고 요청 ID 별로 보류 → 규칙 3'
 --   3'. http_status == 404 ............................ 집계만 (counted_404). 같은 요청 ID 로
 --                                                       보류된 앱 로그도 함께 버림 (app_dropped_404)
@@ -118,7 +121,7 @@ end
 --   * 액세스 라인이 적재되는 요청의 앱 로그는 그 액세스 라인과 "같은 반환" 으로 나간다.
 --   * 신원·권한 변경 100% 보존 — management POST, 모든 PUT, 모든 DELETE.
 --   * "적재하지 않음 ⇒ 집계됨" — 버린 액세스 라인은 리소스/principal 행에, 버린
---     애플리케이션 로그는 app_dropped 행에 반드시 숫자로 남는다.
+--     애플리케이션 로그는 app_dropped 행에 반드시 숫자로 남는다. 기동 직후 첫 틱 이전도 (R4).
 --
 -- 규칙 5 의 management/catalog 분리는 임의가 아니다. Polaris 에서 POST 는 "생성" 동사다
 -- (create_principal, create_principal_role, create_catalog_role, reset_credentials).
@@ -135,13 +138,13 @@ local REPORT_TAG     = "polaris.report"
 local REPORT_APP     = "polaris-shipper-report"
 
 -- 스키마 버전. 필드의 "의미" 가 바뀌면 올린다. 모든 대시보드/쿼리는 이 값으로 필터할 것.
+--   v3 (2026-09-09): last_read_bytes/last_write_bytes, api_kind, grant 의 롤 행 귀속.
 --   v4 (2026-09-15): report_type "app_dropped" 추가, table/view 행에 commit_* 추가,
 --                    zero-carry 제거(carried_rows 삭제), summary 에 app_dropped_total 추가.
---   v3 (2026-09-09): last_read_bytes/last_write_bytes, api_kind, grant 의 롤 행 귀속.
--- 새 숫자 필드는 반드시 values.yaml FILTER 3 의 type_int_key 에도 넣어야 한다.
--- 빠지면 문자열로 저장되고, 숫자 범위 쿼리가 "조용히" 0건을 반환한다.
 --   v5 (2026-09-16): 404 집계만 + 같은 요청의 앱 로그 폐기, summary 에 counted_404 /
 --                    app_dropped_404 / held_pending / held_orphans 추가, register 분류.
+-- 새 숫자 필드는 반드시 values.yaml FILTER 3 의 type_int_key 에도 넣어야 한다.
+-- 빠지면 문자열로 저장되고, 숫자 범위 쿼리가 "조용히" 0건을 반환한다.
 local SCHEMA_VERSION = 5
 
 -- 리포트 윈도우 길이(초). values.yaml 의 틱 INPUT Interval_Sec 과 짝이다.
@@ -180,7 +183,7 @@ local REPORT_MAX_DROPPED_LOGGERS = 50
 -- mdc.requestId 별로 잡아 두었다가 같은 ID 의 액세스 라인이 오면 결정한다.
 --   * 404          → 보류분도 버린다 (app_dropped_404 로 셈)
 --   * 그 외        → 보류분을 액세스 라인과 같은 반환으로 내보낸다
---   * 액세스 뒤에 온 앱 로그 → STATUS_MEMO 에 남은 상태로 즉시 판정 (측정: 3건, 같은 ID 재사용)
+--   * 액세스 뒤에 온 앱 로그 → 메모에 남은 상태로 즉시 판정 (측정: 3건, 같은 ID 재사용)
 --   * requestId 없음 → 보류하지 않고 즉시 적재 (v4 동작)
 -- 여러 레코드를 한 번에 반환하면 Fluent Bit 은 하나의 timestamp 를 쓴다: 보류분의 @timestamp 는
 -- 액세스 라인 시각으로 수 ms 이동한다. 원래 시각은 _time 필드에 그대로 남는다.
@@ -236,30 +239,43 @@ local KEEP_METHODS  = { PUT = true, DELETE = true, PATCH = true }
 --   * management 리소스(catalog, principal)는 롤 규칙 뒤, 맨 마지막.
 -- 패턴 안의 '-' 는 반드시 %- 로 이스케이프한다. `%\-` 는 잘못된 이스케이프라 청크 로드
 -- 자체가 실패한다 (2026-09-09 테스트에서 실제로 잡힘).
+--
+-- lit (R2): 패턴이 반드시 포함하는 리터럴. 경로에 lit 가 없으면 패턴은 매치될 수 없으므로,
+-- plain find(memchr 수준) 한 번으로 `.-` 역추적 스캔을 건너뛴다. 결과는 구성상 동일하다 —
+-- 가드는 "필요조건" 만 검사한다. 패턴을 고치면 lit 도 같이 고칠 것 (부트 시 assert 로 검사).
 local RESOURCE_PATTERNS = {
-    { kind = "principal-role", pattern = "^.-/principal%-roles/[^/]+" },
-    { kind = "collection",     pattern = "^.-/principal%-roles$" },
-    { kind = "catalog-role",   pattern = "^.-/catalog%-roles/[^/]+" },
-    { kind = "collection",     pattern = "^.-/catalog%-roles$" },
-    { kind = "auth",           pattern = "^.-/oauth/tokens$" },
-    { kind = "config",         pattern = "^.-/v1/config$" },
-    { kind = "table",          pattern = "^.-/tables/rename$" },
-    { kind = "view",           pattern = "^.-/views/rename$" },
-    { kind = "transaction",    pattern = "^.-/transactions/commit$" },
+    { kind = "principal-role", lit = "/principal-roles/",      pattern = "^.-/principal%-roles/[^/]+" },
+    { kind = "collection",     lit = "/principal-roles",       pattern = "^.-/principal%-roles$" },
+    { kind = "catalog-role",   lit = "/catalog-roles/",        pattern = "^.-/catalog%-roles/[^/]+" },
+    { kind = "collection",     lit = "/catalog-roles",         pattern = "^.-/catalog%-roles$" },
+    { kind = "auth",           lit = "/oauth/tokens",          pattern = "^.-/oauth/tokens$" },
+    { kind = "config",         lit = "/v1/config",             pattern = "^.-/v1/config$" },
+    { kind = "table",          lit = "/tables/rename",         pattern = "^.-/tables/rename$" },
+    { kind = "view",           lit = "/views/rename",          pattern = "^.-/views/rename$" },
+    { kind = "transaction",    lit = "/transactions/commit",   pattern = "^.-/transactions/commit$" },
     -- v5: registerTable. 테이블 이름이 경로가 아니라 본문에 있으므로 컬렉션 행.
-    { kind = "collection",     pattern = "^.-/namespaces/[^/]+/register$" },
-    { kind = "namespace",      pattern = "^.-/namespaces/[^/]+/properties$" },
-    { kind = "table",          pattern = "^.-/namespaces/[^/]+/tables/[^/]+" },
-    { kind = "view",           pattern = "^.-/namespaces/[^/]+/views/[^/]+" },
-    { kind = "collection",     pattern = "^.-/namespaces/[^/]+/tables$" },
-    { kind = "collection",     pattern = "^.-/namespaces/[^/]+/views$" },
-    { kind = "namespace",      pattern = "^.-/namespaces/[^/]+$" },
-    { kind = "collection",     pattern = "^.-/namespaces$" },
-    { kind = "catalog",        pattern = "^.-/catalogs/[^/]+" },
-    { kind = "collection",     pattern = "^.-/catalogs$" },
-    { kind = "principal",      pattern = "^.-/principals/[^/]+" },
-    { kind = "collection",     pattern = "^.-/principals$" },
+    { kind = "collection",     lit = "/register",              pattern = "^.-/namespaces/[^/]+/register$" },
+    { kind = "namespace",      lit = "/properties",            pattern = "^.-/namespaces/[^/]+/properties$" },
+    { kind = "table",          lit = "/tables/",               pattern = "^.-/namespaces/[^/]+/tables/[^/]+" },
+    { kind = "view",           lit = "/views/",                pattern = "^.-/namespaces/[^/]+/views/[^/]+" },
+    { kind = "collection",     lit = "/tables",                pattern = "^.-/namespaces/[^/]+/tables$" },
+    { kind = "collection",     lit = "/views",                 pattern = "^.-/namespaces/[^/]+/views$" },
+    { kind = "namespace",      lit = "/namespaces/",           pattern = "^.-/namespaces/[^/]+$" },
+    { kind = "collection",     lit = "/namespaces",            pattern = "^.-/namespaces$" },
+    { kind = "catalog",        lit = "/catalogs/",             pattern = "^.-/catalogs/[^/]+" },
+    { kind = "collection",     lit = "/catalogs",              pattern = "^.-/catalogs$" },
+    { kind = "principal",      lit = "/principals/",           pattern = "^.-/principals/[^/]+" },
+    { kind = "collection",     lit = "/principals",            pattern = "^.-/principals$" },
 }
+-- lit 가 정말 패턴의 부분 문자열인지 로드 시점에 확인한다. 틀리면 규칙이 조용히 죽는다.
+for _, r in ipairs(RESOURCE_PATTERNS) do
+    local plain = r.pattern:gsub("%%(.)", "%1")
+    assert(plain:find(r.lit, 1, true), "RESOURCE_PATTERNS lit not in pattern: " .. r.pattern)
+end
+local N_PATTERNS = #RESOURCE_PATTERNS
+
+-- 분류 캐시(R2) 상한. 윈도우마다 비운다. 경로는 클라이언트 입력이므로 상한 없이 두지 않는다.
+local CLASSIFY_CACHE_MAX = 4000
 
 -- ── 행 수 상한 ─────────────────────────────────────────────────────────────────────────
 -- 넘치면 요청은 "__other__" 한 행에 모인다. 합계는 정확하게 유지되고 키별 상세만 잘린다.
@@ -279,30 +295,22 @@ local REPORT_MAX_PRINCIPALS = 200
 local REPORT_OTHER          = "__other__"
 local REPORT_ERRORS         = "__errors__"
 
+local find, match, floor = string.find, string.match, math.floor
+
 
 -- ── 헬퍼 ───────────────────────────────────────────────────────────────────────────────
 
 -- 매치/키 생성 전에 쿼리스트링을 뗀다. api_path 필드 자체는 원문 그대로 둔다.
 local function path_only(p)
     if type(p) ~= "string" then return "" end
-    return p:match("^[^?]*") or p
+    return match(p, "^[^?]*")
 end
 
 -- api_kind 는 "어느 API 면인가" 이고, resource_kind("무엇인가")와 직교한다.
 local function api_of(path)
-    if path:find("^/api/management/") then return "management" end
-    if path:find("^/api/catalog/")    then return "catalog"    end
+    if find(path, "/api/management/", 1, true) == 1 then return "management" end
+    if find(path, "/api/catalog/", 1, true) == 1    then return "catalog"    end
     return "other"
-end
-
--- 매치되는 규칙이 없으면 경로 전체를 키로, kind "other" 로 둔다. 버킷에 넣지 않는다 —
--- 새 API 가 생기면 무엇을 분류해야 하는지 그 행이 정확히 보여준다.
-local function classify(path)
-    for _, r in ipairs(RESOURCE_PATTERNS) do
-        local span = path:match(r.pattern)
-        if span then return span, r.kind end
-    end
-    return path, "other"
 end
 
 -- os.time() 은 리포트 윈도우에만 쓰고 레코드 시각에는 쓰지 않는다 (재생된 레코드를
@@ -323,28 +331,27 @@ local function commit_key(kind, ident)
     if seg == nil then return nil end
     local parts = {}
     for p in string.gmatch(ident, "[^%.]+") do parts[#parts + 1] = p end
-    if #parts < 3 then return nil end
-    local ns = {}
-    for i = 2, #parts - 1 do ns[#ns + 1] = parts[i] end
-    return CATALOG_API .. parts[1] .. "/namespaces/" .. table.concat(ns, NS_SEPARATOR)
-           .. "/" .. seg .. "/" .. parts[#parts]
+    local n = #parts
+    if n < 3 then return nil end
+    return CATALOG_API .. parts[1] .. "/namespaces/" .. table.concat(parts, NS_SEPARATOR, 2, n - 1)
+           .. "/" .. seg .. "/" .. parts[n]
 end
 
 
 -- ── 윈도우 카운터 ──────────────────────────────────────────────────────────────────────
 -- 리포트를 낼 때마다 새로 연다. 각 리포트는 "그 윈도우의 증분" 이라 읽을 때 뺄셈이 필요 없다.
+-- counts 가 nil 인 것은 기동 직후, 첫 틱과 첫 레코드가 모두 오기 전뿐이다 (R4: open_window).
 local counts, report_seq = nil, 0
 
 -- 행 하나의 카운터.
 --   reads = GET|HEAD, writes = POST|PUT|DELETE|PATCH, errors = status >= 400.
 --   errors 는 reads/writes 와 의도적으로 겹친다. errors_4xx + errors_5xx 는 errors 와,
 --   auth_denied(401|403)는 errors_4xx 와 겹친다 — 이 컬럼들을 더하는 대시보드는 틀린다.
---   last_* 와 commit_* 는 표본이 생길 때까지 nil. nil(부재) 과 0 은 다른 사실이다.
+--   last_read_bytes / last_write_bytes / commit_* 는 표본이 생길 때까지 없다(nil).
+--   nil(부재) 과 0 은 다른 사실이다.
 local function new_row()
     return { requests = 0, reads = 0, writes = 0, errors = 0, response_bytes = 0,
-             errors_4xx = 0, errors_5xx = 0, auth_denied = 0,
-             last_read_bytes = nil, last_write_bytes = nil,
-             commit_count = nil, commit_ms_sum = nil, commit_ms_min = nil, commit_ms_max = nil }
+             errors_4xx = 0, errors_5xx = 0, auth_denied = 0 }
 end
 
 -- v4: zero-carry 없음. 새 윈도우는 항상 빈 상태로 시작한다.
@@ -363,7 +370,40 @@ local function new_window(idx, partial)
         dropped = {}, n_dropped_loggers = 0, dropped_total = 0,
         counted_404 = 0, app_dropped_404 = 0, held_orphans = 0,
         min_time = nil, max_time = nil,
+        -- R2 분류 캐시: path -> key / kind. 키 두 개를 따로 둬서 항목마다 테이블을 만들지 않는다.
+        c_key = {}, c_kind = {}, n_cache = 0,
     }
+end
+
+-- 매치되는 규칙이 없으면 경로 전체를 키로, kind "other" 로 둔다. 버킷에 넣지 않는다 —
+-- 새 API 가 생기면 무엇을 분류해야 하는지 그 행이 정확히 보여준다.
+local function classify(path)
+    local key = counts.c_key[path]
+    if key ~= nil then return key, counts.c_kind[path] end
+    local kind = "other"
+    key = path
+    for i = 1, N_PATTERNS do
+        local r = RESOURCE_PATTERNS[i]
+        if find(path, r.lit, 1, true) then
+            local span = match(path, r.pattern)
+            if span then key, kind = span, r.kind; break end
+        end
+    end
+    if counts.n_cache < CLASSIFY_CACHE_MAX then
+        counts.c_key[path], counts.c_kind[path] = key, kind
+        counts.n_cache = counts.n_cache + 1
+    end
+    return key, kind
+end
+
+-- 새 행 등록(키·kind·api). touch_resource 의 세 갈래가 같은 네 줄을 반복하던 것을 모았다.
+local function add_resource(key, kind, api)
+    local r = new_row()
+    counts.resources[key] = r
+    counts.kinds[key] = kind
+    counts.apis[key]  = api
+    counts.n_resources = counts.n_resources + 1
+    return r
 end
 
 -- create=false: 이미 있는 행이면 그 행, 없으면 __errors__ (귀속 정보 소실, 개수는 보존).
@@ -373,39 +413,17 @@ local function touch_resource(key, kind, api, create)
     local r = counts.resources[key]
     if r ~= nil then return r end
     if not create then
-        r = counts.resources[REPORT_ERRORS]
-        if r == nil then
-            r = new_row()
-            counts.resources[REPORT_ERRORS] = r
-            counts.kinds[REPORT_ERRORS] = "error"
-            counts.apis[REPORT_ERRORS]  = "mixed"
-            counts.n_resources = counts.n_resources + 1
-        end
-        return r
+        return counts.resources[REPORT_ERRORS] or add_resource(REPORT_ERRORS, "error", "mixed")
     end
     if counts.n_resources >= REPORT_MAX_RESOURCES then
         counts.resources_over = counts.resources_over + 1
-        if counts.other_keys[key] == nil
-           and counts.n_other_keys < REPORT_MAX_RESOURCES then
+        if counts.other_keys[key] == nil and counts.n_other_keys < REPORT_MAX_RESOURCES then
             counts.other_keys[key] = true
             counts.n_other_keys = counts.n_other_keys + 1
         end
-        r = counts.resources[REPORT_OTHER]
-        if r == nil then
-            r = new_row()
-            counts.resources[REPORT_OTHER] = r
-            counts.kinds[REPORT_OTHER] = "other"
-            counts.apis[REPORT_OTHER]  = "mixed"
-            counts.n_resources = counts.n_resources + 1
-        end
-        return r
+        return counts.resources[REPORT_OTHER] or add_resource(REPORT_OTHER, "other", "mixed")
     end
-    r = new_row()
-    counts.resources[key] = r
-    counts.kinds[key] = kind
-    counts.apis[key]  = api
-    counts.n_resources = counts.n_resources + 1
-    return r
+    return add_resource(key, kind, api)
 end
 
 local function touch_principal(user)
@@ -413,13 +431,9 @@ local function touch_principal(user)
     if p ~= nil then return p end
     if counts.n_principals >= REPORT_MAX_PRINCIPALS then
         counts.principals_over = counts.principals_over + 1
-        p = counts.principals[REPORT_OTHER]
-        if p == nil then
-            p = new_row()
-            counts.principals[REPORT_OTHER] = p
-            counts.n_principals = counts.n_principals + 1
-        end
-        return p
+        user = REPORT_OTHER
+        p = counts.principals[user]
+        if p ~= nil then return p end
     end
     p = new_row()
     counts.principals[user] = p
@@ -427,11 +441,48 @@ local function touch_principal(user)
     return p
 end
 
+-- 행 하나에 액세스 라인 한 건을 더한다.
+local function bump(row, method, status, bytes, is_error, is_read, is_write)
+    row.requests = row.requests + 1
+    if is_read then
+        row.reads = row.reads + 1
+    elseif is_write then
+        row.writes = row.writes + 1
+    end
+    if is_error then
+        row.errors = row.errors + 1
+        -- status == nil 은 파싱 안 된 상태값. 오류이긴 하지만 4xx 는 아니다 —
+        -- 4xx 로 세면 "클라이언트 오류" 가 파이프라인 자신의 실패를 흡수한다.
+        if status ~= nil then
+            if status >= 500 then
+                row.errors_5xx = row.errors_5xx + 1
+            else
+                row.errors_4xx = row.errors_4xx + 1
+                if status == 401 or status == 403 then
+                    row.auth_denied = row.auth_denied + 1
+                end
+            end
+        end
+    end
+    row.response_bytes = row.response_bytes + bytes
+
+    -- 마지막 응답 크기, 윈도우 내 last-wins. 2xx 이고 크기 > 0 인 것만.
+    -- 0 을 절대 쓰지 않으므로 "부재" 는 정확히 "이번 윈도우에 성공한 비어있지 않은
+    -- 응답이 없었다" 는 뜻이 된다. 테이블 행에서 DROP(204, 빈 본문)은 자연히 빠지므로
+    -- last_write_bytes 는 곧 마지막 커밋의 응답 크기다.
+    if bytes > 0 and not is_error and status >= 200 and status < 300 then
+        if is_read then
+            row.last_read_bytes = bytes
+        elseif is_write then
+            row.last_write_bytes = bytes
+        end
+    end
+end
+
 -- 액세스 라인 한 건을 리소스 행과 principal 행 "양쪽" 에 센다.
 -- 불변식: sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors
 -- 두 여백이 같아야 한다. 대시보드는 이것으로 추이를 믿어도 되는지 먼저 확인한다.
 local function count_record(record, method, path, user, status, bytes, parse_failed)
-    if counts == nil then return end        -- 첫 틱 이전(기동 직후)은 윈도우가 없다
     counts.access_seen = counts.access_seen + 1
 
     -- 고정 형식·고정 존의 RFC3339 는 사전순 정렬이 곧 시간순이라 파싱이 필요 없다.
@@ -447,7 +498,9 @@ local function count_record(record, method, path, user, status, bytes, parse_fai
         return
     end
 
-    local is_error = (status == nil or status >= 400)
+    -- 파싱에 성공했으면 status 는 항상 숫자다 (PATTERN 의 (%d+)). is_error 의 status == nil
+    -- 갈래는 파싱을 거치지 않고 필드를 직접 받는 경로(구 FILTER 2 분리 시절)의 흔적이라 없앴다.
+    local is_error = status >= 400
     local key, kind = classify(path)
 
     local create = not is_error
@@ -459,44 +512,9 @@ local function count_record(record, method, path, user, status, bytes, parse_fai
             create = true
         end
     end
-    local api  = api_of(path)
-    local rows = { touch_resource(key, kind, api, create), touch_principal(user) }
-    for _, row in ipairs(rows) do
-        row.requests = row.requests + 1
-        if READ_METHODS[method] then
-            row.reads = row.reads + 1
-        elseif WRITE_METHODS[method] then
-            row.writes = row.writes + 1
-        end
-        if is_error then
-            row.errors = row.errors + 1
-            -- status == nil 은 파싱 안 된 상태값. 오류이긴 하지만 4xx 는 아니다 —
-            -- 4xx 로 세면 "클라이언트 오류" 가 파이프라인 자신의 실패를 흡수한다.
-            if status ~= nil then
-                if status >= 500 then
-                    row.errors_5xx = row.errors_5xx + 1
-                else
-                    row.errors_4xx = row.errors_4xx + 1
-                    if status == 401 or status == 403 then
-                        row.auth_denied = row.auth_denied + 1
-                    end
-                end
-            end
-        end
-        row.response_bytes = row.response_bytes + bytes
-
-        -- 마지막 응답 크기, 윈도우 내 last-wins. 2xx 이고 크기 > 0 인 것만.
-        -- 0 을 절대 쓰지 않으므로 "부재" 는 정확히 "이번 윈도우에 성공한 비어있지 않은
-        -- 응답이 없었다" 는 뜻이 된다. 테이블 행에서 DROP(204, 빈 본문)은 자연히 빠지므로
-        -- last_write_bytes 는 곧 마지막 커밋의 응답 크기다.
-        if status ~= nil and status >= 200 and status < 300 and bytes > 0 then
-            if READ_METHODS[method] then
-                row.last_read_bytes = bytes
-            elseif WRITE_METHODS[method] then
-                row.last_write_bytes = bytes
-            end
-        end
-    end
+    local is_read, is_write = READ_METHODS[method], WRITE_METHODS[method]
+    bump(touch_resource(key, kind, api_of(path), create), method, status, bytes, is_error, is_read, is_write)
+    bump(touch_principal(user), method, status, bytes, is_error, is_read, is_write)
 end
 
 -- 2a. 커밋 라인을 해당 table/view 행에 집계한다.
@@ -506,8 +524,8 @@ end
 -- 커밋 로그는 액세스 라인보다 먼저 찍히므로, 경계 직전의 커밋은 다음 윈도우의 요청과
 -- 다른 행 윈도우에 놓일 수 있다. 윈도우 합계 수준에서만 비교할 것.
 local function count_commit(msg)
-    if counts == nil or type(msg) ~= "string" then return end
-    local kind, ident, ms = string.match(msg, COMMIT_PATTERN)
+    if type(msg) ~= "string" then return end
+    local kind, ident, ms = match(msg, COMMIT_PATTERN)
     if kind == nil then return end
     local key = commit_key(kind, ident)
     ms = tonumber(ms)
@@ -527,20 +545,19 @@ end
 -- 2c. 버린 애플리케이션 로그를 logger 별로 센다.
 -- 허용 목록의 실패 모드는 "모르는 logger" 다. 이름이 바뀐 logger 나 새 logger 는 여기에
 -- 숫자로 나타나야 한다 — app_dropped 에 새 org.apache.polaris.service.* 가 보이면 목록 검토.
-local function count_dropped(record)
-    if counts == nil then return end
-    local name = record["loggerName"]
+local function count_dropped(name)
     if type(name) ~= "string" or name == "" then name = "-" end
-    if counts.dropped[name] == nil then
+    local dropped = counts.dropped
+    if dropped[name] == nil then
         if counts.n_dropped_loggers >= REPORT_MAX_DROPPED_LOGGERS then
             name = REPORT_OTHER
         end
-        if counts.dropped[name] == nil then
-            counts.dropped[name] = 0
+        if dropped[name] == nil then
+            dropped[name] = 0
             counts.n_dropped_loggers = counts.n_dropped_loggers + 1
         end
     end
-    counts.dropped[name] = counts.dropped[name] + 1
+    dropped[name] = dropped[name] + 1
     counts.dropped_total = counts.dropped_total + 1
 end
 
@@ -548,7 +565,7 @@ end
 -- 반환: 치환이 일어났으면 true.
 local function redact_secret(record)
     local msg = record["_msg"]
-    if type(msg) ~= "string" or not msg:find("clientSecret", 1, true) then return false end
+    if type(msg) ~= "string" or not find(msg, "clientSecret", 1, true) then return false end
     local hit = false
     local out = msg:gsub(SECRET_PATTERN, function(prefix, value)
         if value == "*" or value == "<redacted>" then return prefix .. value end
@@ -563,23 +580,20 @@ local function redact_secret(record)
 end
 
 
--- ── 리포트 생성 ────────────────────────────────────────────────────────────────────────
--- 네 가지 문서가 같은 봉투를 공유하고, _time 도 윈도우 끝으로 같다.
---   summary      윈도우당 정확히 1건. 완결성 불변식과 상한/틱 누락 카운터.
---   resource     리소스 키별 1건 (요청 > 0 또는 커밋 있음).
---   principal    호출 주체별 1건 (요청 > 0).
---   app_dropped  버린 logger 별 1건 (dropped > 0). zero-carry 없음 — 추이가 아니라 헬스 신호.
--- level 은 INFO 가 아니라 "REPORT" 로 둔다. 심각도가 아니라 스트림 선택자다.
--- ── 요청 ID 보류 상태 (윈도우와 무관, reload 전까지 유지) ────────────────────────────────
--- 큐는 head/tail 정수로 관리한다. 앞쪽이 nil 인 테이블에 `#` 을 쓰면 결과가 정의되지 않는다.
-local held        = {}   -- rid -> { t = 처음 보류한 시각, recs = { record, ... } }
-local held_q      = {}   -- [i] = { rid, t } 보류 순서 (오래된 것부터)
+-- ── 요청 ID 보류 상태 (윈도우와 무관, 재시작 전까지 유지) ──────────────────────────────
+-- 큐는 head/tail 정수 + 병렬 배열(rid, t)로 관리한다. 항목마다 테이블을 만들지 않는다 (R3).
+-- 앞쪽이 nil 인 테이블에 `#` 을 쓰면 결과가 정의되지 않으므로 길이는 head/tail 로만 잰다.
+-- 같은 rid 가 다시 들어오면 큐에 항목이 하나 더 쌓이고, 오래된 항목은 t 가 현재 값과 다를 때
+-- "이미 대체됨" 으로 건너뛴다.
+local held_recs, held_t = {}, {}      -- rid -> { record, ... } / 처음 보류한 시각
+local held_q_rid, held_q_t = {}, {}
 local held_q_head, held_q_tail = 1, 0
-local held_count  = 0    -- 보류 중인 레코드 수
-local memo        = {}   -- rid -> { status, t }
-local memo_q      = {}
+local held_count = 0                  -- 보류 중인 레코드 수
+
+local memo_status, memo_t = {}, {}    -- rid -> 액세스 라인의 상태 / 기억한 시각
+local memo_q_rid, memo_q_t = {}, {}
 local memo_q_head, memo_q_tail = 1, 0
-local memo_count  = 0
+local memo_count = 0
 
 local function request_id_of(record)
     local m = record["mdc"]
@@ -591,62 +605,83 @@ local function request_id_of(record)
 end
 
 local function remember_status(rid, status, now)
-    if memo[rid] == nil then memo_count = memo_count + 1 end
-    memo[rid] = { status = status, t = now }
+    if memo_status[rid] == nil then memo_count = memo_count + 1 end
+    memo_status[rid], memo_t[rid] = status, now
     memo_q_tail = memo_q_tail + 1
-    memo_q[memo_q_tail] = { rid = rid, t = now }
+    memo_q_rid[memo_q_tail], memo_q_t[memo_q_tail] = rid, now
     while memo_q_head <= memo_q_tail do
-        local e = memo_q[memo_q_head]
-        if memo_count <= STATUS_MEMO_MAX and now - e.t <= STATUS_MEMO_SECONDS then break end
-        local cur = memo[e.rid]
-        if cur ~= nil and cur.t == e.t then memo[e.rid] = nil; memo_count = memo_count - 1 end
-        memo_q[memo_q_head] = nil
+        local et = memo_q_t[memo_q_head]
+        if memo_count <= STATUS_MEMO_MAX and now - et <= STATUS_MEMO_SECONDS then break end
+        local er = memo_q_rid[memo_q_head]
+        if memo_t[er] == et then
+            memo_status[er], memo_t[er] = nil, nil
+            memo_count = memo_count - 1
+        end
+        memo_q_rid[memo_q_head], memo_q_t[memo_q_head] = nil, nil
         memo_q_head = memo_q_head + 1
     end
-    if memo_q_head > memo_q_tail then memo_q, memo_q_head, memo_q_tail = {}, 1, 0 end
+    if memo_q_head > memo_q_tail then
+        memo_q_rid, memo_q_t, memo_q_head, memo_q_tail = {}, {}, 1, 0
+    end
 end
 
 local function hold(rid, record, now)
-    local h = held[rid]
-    if h == nil then
-        h = { t = now, recs = {} }
-        held[rid] = h
+    local recs = held_recs[rid]
+    if recs == nil then
+        recs = {}
+        held_recs[rid], held_t[rid] = recs, now
         held_q_tail = held_q_tail + 1
-        held_q[held_q_tail] = { rid = rid, t = now }
+        held_q_rid[held_q_tail], held_q_t[held_q_tail] = rid, now
     end
-    h.recs[#h.recs + 1] = record
+    recs[#recs + 1] = record
     held_count = held_count + 1
 end
 
 local function release(rid)
-    local h = held[rid]
-    if h == nil then return nil end
-    held[rid] = nil
-    held_count = held_count - #h.recs
-    return h.recs
+    local recs = held_recs[rid]
+    if recs == nil then return nil end
+    held_recs[rid], held_t[rid] = nil, nil
+    held_count = held_count - #recs
+    return recs
 end
 
--- 짝을 못 만난 보류분: HOLD_MAX_SECONDS 가 지났거나 상한을 넘으면 out 에 붙여 적재한다.
-local function take_orphans(now, out)
+-- 짝을 못 만난 보류분: HOLD_MAX_SECONDS 가 지났거나 상한을 넘으면 적재한다.
+-- 반환: 내보낼 레코드 배열, 없으면 nil (R3: 레코드마다 빈 배열을 만들지 않는다).
+local function take_orphans(now)
+    local out
     while held_q_head <= held_q_tail do
-        local e = held_q[held_q_head]
-        local h = held[e.rid]
-        if h ~= nil and h.t == e.t then
-            if held_count <= HOLD_MAX_RECORDS and now - e.t <= HOLD_MAX_SECONDS then break end
-            for _, r in ipairs(h.recs) do
+        local er, et = held_q_rid[held_q_head], held_q_t[held_q_head]
+        if held_t[er] == et then
+            if held_count <= HOLD_MAX_RECORDS and now - et <= HOLD_MAX_SECONDS then break end
+            local recs = held_recs[er]
+            out = out or {}
+            for i = 1, #recs do
+                local r = recs[i]
                 r["held_orphan"] = true
                 out[#out + 1] = r
             end
-            if counts ~= nil then counts.held_orphans = counts.held_orphans + #h.recs end
-            held_count = held_count - #h.recs
-            held[e.rid] = nil
+            counts.held_orphans = counts.held_orphans + #recs
+            held_count = held_count - #recs
+            held_recs[er], held_t[er] = nil, nil
         end
-        held_q[held_q_head] = nil
+        held_q_rid[held_q_head], held_q_t[held_q_head] = nil, nil
         held_q_head = held_q_head + 1
     end
-    if held_q_head > held_q_tail then held_q, held_q_head, held_q_tail = {}, 1, 0 end
+    if held_q_head > held_q_tail then
+        held_q_rid, held_q_t, held_q_head, held_q_tail = {}, {}, 1, 0
+    end
+    return out
 end
 
+
+-- ── 리포트 생성 ────────────────────────────────────────────────────────────────────────
+-- 네 가지 문서가 같은 봉투를 공유하고, _time 도 윈도우 끝으로 같다.
+--   summary      윈도우당 정확히 1건. 완결성 불변식과 상한/틱 누락 카운터.
+--   resource     리소스 키별 1건 (요청 > 0 또는 커밋 있음).
+--   principal    호출 주체별 1건 (요청 > 0).
+--   app_dropped  버린 logger 별 1건 (dropped > 0). zero-carry 없음 — 추이가 아니라 헬스 신호.
+-- level 은 INFO 가 아니라 "REPORT" 로 둔다. 심각도가 아니라 스트림 선택자다.
+-- summary 가 배열의 첫 원소다. 필드는 행을 모두 돈 뒤에 채운다 (같은 테이블 참조).
 local function build_report(idx, windows_skipped)
     local starts, ends = iso(idx * WINDOW_SECONDS), iso((idx + 1) * WINDOW_SECONDS)
     report_seq = report_seq + 1
@@ -660,9 +695,8 @@ local function build_report(idx, windows_skipped)
                  window_seconds = WINDOW_SECONDS, _time = ends }
     end
 
-    local out = {}
     local s = base("summary")
-    local rows = {}
+    local out = { s }
     local n_active_res, n_active_pri = 0, 0
     local tot_4xx, tot_5xx, tot_denied, tot_bytes = 0, 0, 0, 0
 
@@ -673,8 +707,8 @@ local function build_report(idx, windows_skipped)
         tot_denied = tot_denied + r.auth_denied
         tot_bytes  = tot_bytes + r.response_bytes
 
-        -- v4 / D3: 요청 0 이고 커밋도 없으면 행을 내지 않는다. zero-carry 가 없으므로
-        -- 이런 행은 이론상 생기지 않지만, 방어적으로 한 번 더 거른다.
+        -- v4 / D3: 요청 0 이고 커밋도 없으면 행을 내지 않는다. 행은 액세스 라인이나 커밋이
+        -- 있어야 생기므로 이론상 생기지 않지만, 방어적으로 한 번 더 거른다.
         if r.requests > 0 or r.commit_count ~= nil then
             local e = base("resource")
             e.resource       = key
@@ -702,44 +736,42 @@ local function build_report(idx, windows_skipped)
                 -- 합칠 수 없다. 기간 평균은 항상 sum(commit_ms_sum) / sum(commit_count).
                 extra = extra .. string.format(", commits %d (min/avg/max %d/%d/%d ms)",
                     r.commit_count, r.commit_ms_min,
-                    math.floor(r.commit_ms_sum / r.commit_count + 0.5), r.commit_ms_max)
+                    floor(r.commit_ms_sum / r.commit_count + 0.5), r.commit_ms_max)
             end
             e._msg = string.format(
                 "seq=%d resource %s (%s/%s): %d requests, %d reads, %d writes, "
                 .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes%s",
                 report_seq, key, e.api_kind, e.resource_kind, r.requests, r.reads, r.writes,
                 r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes, extra)
-            rows[#rows + 1] = e
+            out[#out + 1] = e
             -- distinct_resources 는 "요청 > 0" 인 행만 센다. 커밋만 있는 행은 제외.
             if r.requests > 0 then n_active_res = n_active_res + 1 end
         end
     end
 
     for user, r in pairs(counts.principals) do
-        if r.requests > 0 then
-            local e = base("principal")
-            e.user_principal_name = user
-            e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
-            e.errors_4xx, e.errors_5xx, e.auth_denied = r.errors_4xx, r.errors_5xx, r.auth_denied
-            e.response_bytes = r.response_bytes
-            e._msg = string.format(
-                "seq=%d principal %s: %d requests, %d reads, %d writes, "
-                .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes",
-                report_seq, user, r.requests, r.reads, r.writes,
-                r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes)
-            rows[#rows + 1] = e
-            n_active_pri = n_active_pri + 1
-        end
+        -- principal 행은 액세스 라인으로만 생기므로 requests 는 항상 > 0 이다.
+        local e = base("principal")
+        e.user_principal_name = user
+        e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
+        e.errors_4xx, e.errors_5xx, e.auth_denied = r.errors_4xx, r.errors_5xx, r.auth_denied
+        e.response_bytes = r.response_bytes
+        e._msg = string.format(
+            "seq=%d principal %s: %d requests, %d reads, %d writes, "
+            .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes",
+            report_seq, user, r.requests, r.reads, r.writes,
+            r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes)
+        out[#out + 1] = e
+        n_active_pri = n_active_pri + 1
     end
 
     for name, n in pairs(counts.dropped) do
-        if n > 0 then
-            local e = base("app_dropped")
-            e.logger_name = name
-            e.dropped     = n
-            e._msg = string.format("seq=%d app_dropped %s: %d lines", report_seq, name, n)
-            rows[#rows + 1] = e
-        end
+        -- dropped[name] 은 0 으로 만들어진 직후 +1 되므로 항상 > 0 이다.
+        local e = base("app_dropped")
+        e.logger_name = name
+        e.dropped     = n
+        e._msg = string.format("seq=%d app_dropped %s: %d lines", report_seq, name, n)
+        out[#out + 1] = e
     end
 
     s.access_seen         = counts.access_seen
@@ -765,7 +797,7 @@ local function build_report(idx, windows_skipped)
     s.app_dropped_404     = counts.app_dropped_404
     s.held_orphans        = counts.held_orphans
     s.held_pending        = held_count
-    s.windows_skipped     = windows_skipped or 0
+    s.windows_skipped     = windows_skipped
     -- 트래픽 없는 윈도우에서는 필드 자체를 생략한다 ("" 금지). 빈 문자열은 새 일별 인덱스의
     -- 동적 매핑을 text 로 굳혀 날짜 쿼리를 영구히 막는다 (polaris-report-2026.09.10 실측).
     -- 인덱스 템플릿이 date 로 선언하므로, "" 는 HTTP 200 인 _bulk 안에서 건별로 거부된다.
@@ -780,10 +812,7 @@ local function build_report(idx, windows_skipped)
         report_seq, host, starts, ends, counts.access_seen, s.access_kept,
         counts.access_counted, counts.counted_read, counts.counted_post, counts.counted_404,
         counts.errors_kept, tot_4xx, tot_5xx, tot_denied,
-        n_active_res, n_active_pri, counts.dropped_total, tot_bytes, s.windows_skipped)
-
-    out[#out + 1] = s
-    for _, e in ipairs(rows) do out[#out + 1] = e end
+        n_active_res, n_active_pri, counts.dropped_total, tot_bytes, windows_skipped)
     return out
 end
 
@@ -796,9 +825,9 @@ end
 --   천천히 드리프트한다 (같은 파드에서 3.673s → 2.77s, 2026-09-14 → 09-15 실측).
 --   경계 기준으로 트래픽을 넣는 테스트는 경계 + Interval_Sec + 1.5s 이후에 시작할 것.
 local function report_tick(timestamp, record)
-    local idx = math.floor(now_seconds(record) / WINDOW_SECONDS)
+    local idx = floor(now_seconds(record) / WINDOW_SECONDS)
     if counts == nil then
-        -- 기동 후 첫 틱: 빈 리포트를 내지 않고 윈도우만 연다. 시작 부분을 놓쳤으므로 partial.
+        -- 기동 후 레코드도 틱도 없었다: 빈 리포트를 내지 않고 윈도우만 연다. 시작 부분을 놓쳤으므로 partial.
         counts = new_window(idx, true)
         return -1, timestamp, record
     end
@@ -821,9 +850,16 @@ end
 -- ── 진입점 ─────────────────────────────────────────────────────────────────────────────
 -- 반환 조립. extra(보류분·고아)가 없으면 원래 코드 그대로, 있으면 레코드 배열로.
 local function emit(extra, code, timestamp, record)
-    if #extra == 0 then return code, timestamp, record end
+    if extra == nil then return code, timestamp, record end
     if code ~= -1 then extra[#extra + 1] = record end
     return 2, timestamp, extra
+end
+
+-- 두 배열을 잇는다 (a 가 nil 이면 b 를 그대로).
+local function append(a, b)
+    if a == nil then return b end
+    for i = 1, #b do a[#a + 1] = b[i] end
+    return a
 end
 
 function polaris_noise_filter(tag, timestamp, record)
@@ -835,25 +871,35 @@ function polaris_noise_filter(tag, timestamp, record)
     end
 
     local now = now_seconds(record)
-    local extra = {}
-    take_orphans(now, extra)
+    -- R4. 첫 틱보다 레코드가 먼저 오면 여기서 윈도우를 연다 (partial). 예전에는 counts 가 nil 인
+    -- 동안 버려진 레코드가 어느 카운터에도 남지 않았다.
+    if counts == nil then counts = new_window(floor(now / WINDOW_SECONDS), true) end
+
+    local extra = take_orphans(now)
 
     -- * 적재 여부 판정 전에 가드. 버려질 레코드에 해도 무해하고, 순서 실수를 막는다.
-    local changed = redact_secret(record)
     -- 반환 코드: 레코드를 바꿨으면 2, 아니면 0.
-    local keep = changed and 2 or 0
+    local keep = redact_secret(record) and 2 or 0
 
     local level = record["level"]
+    local logger = record["loggerName"]
+    local is_access = logger == ACCESS_LOGGER
+
+    -- R1. 파싱은 규칙 1 보다 먼저: WARN/ERROR 액세스 라인도 필드를 가진 채 적재된다
+    --     (구조상 FILTER 2 가 먼저 돌던 때와 같다).
+    local parsed
+    if is_access then
+        parsed = parse_access(record)
+        keep = 2                                     -- 필드를 붙였거나 parse_error 를 달았다
+    end
 
     -- 1. 오류와 경고는 허용 목록과 무관하게 항상, 즉시 남긴다.
     if level == "ERROR" or level == "WARN" then
         return emit(extra, keep, timestamp, record)
     end
 
-    local logger = record["loggerName"]
-
     -- 2. 애플리케이션 로그 (액세스 로그가 아닌 레코드)
-    if logger ~= ACCESS_LOGGER then
+    if not is_access then
         -- 2a. 커밋 시간은 버리기 전에 수확한다.
         if logger == COMMIT_LOGGER then
             count_commit(record["_msg"])
@@ -864,11 +910,11 @@ function polaris_noise_filter(tag, timestamp, record)
             if rid == nil then
                 return emit(extra, keep, timestamp, record)
             end
-            local known = memo[rid]
+            local known = memo_status[rid]
             if known ~= nil then
                 -- 액세스 라인이 이미 지나갔다: 그 상태로 즉시 판정.
-                if known.status == 404 then
-                    if counts ~= nil then counts.app_dropped_404 = counts.app_dropped_404 + 1 end
+                if known == 404 then
+                    counts.app_dropped_404 = counts.app_dropped_404 + 1
                     return emit(extra, -1, timestamp, record)
                 end
                 return emit(extra, keep, timestamp, record)
@@ -877,50 +923,45 @@ function polaris_noise_filter(tag, timestamp, record)
             return emit(extra, -1, timestamp, record)
         end
         -- 2c. 그 외는 세고 버린다.
-        count_dropped(record)
+        count_dropped(logger)
         return emit(extra, -1, timestamp, record)
     end
 
     -- 먼저 세고, 나중에 판정한다. 억제될 수 있는 모든 것이 카운터에 들어가야 한다 —
     -- 그렇지 않으면 억제된 레코드는 "요약" 이 아니라 "소실" 이 된다. 이 설계가 막으려는
     -- 단 하나의 실패가 그것이다.
-    local method       = record["http_method"]
-    local path         = path_only(record["api_path"])
-    local user         = record["user_principal_name"] or "-"
-    local status       = tonumber(record["http_status"])
-    local bytes        = tonumber(record["response_size"]) or 0
-    local parse_failed = record["access_log_parse_error"] ~= nil
+    local method = record["http_method"]
+    local path   = path_only(record["api_path"])
+    local status = record["http_status"]              -- 파싱 성공 시 숫자, 실패 시 nil
+    local bytes  = record["response_size"] or 0
 
-    count_record(record, method, path, user, status, bytes, parse_failed)
+    count_record(record, method, path, record["user_principal_name"] or "-", status, bytes, not parsed)
 
     -- 이 요청의 보류분을 꺼낸다. 액세스 라인의 판정과 운명을 같이한다.
+    -- 파싱 실패는 status 가 nil 이므로 아래의 404 비교들은 저절로 거짓이 된다.
     local rid = request_id_of(record)
     if rid ~= nil then
         if status ~= nil then remember_status(rid, status, now) end
         local pending = release(rid)
         if pending ~= nil then
-            if status == 404 and not parse_failed then
-                if counts ~= nil then
-                    counts.app_dropped_404 = counts.app_dropped_404 + #pending
-                end
+            if status == 404 then
+                counts.app_dropped_404 = counts.app_dropped_404 + #pending
             else
-                for _, r in ipairs(pending) do extra[#extra + 1] = r end
+                extra = append(extra, pending)
             end
         end
     end
 
     -- 3'. 404 는 집계만 한다 (errors / errors_4xx 는 count_record 가 이미 셌다).
-    if status == 404 and not parse_failed then
-        if counts ~= nil then
-            counts.counted_404    = counts.counted_404 + 1
-            counts.access_counted = counts.access_counted + 1
-        end
+    if status == 404 then
+        counts.counted_404    = counts.counted_404 + 1
+        counts.access_counted = counts.access_counted + 1
         return emit(extra, -1, timestamp, record)
     end
 
     -- 3. 실패한 요청은 전부, 상한 없이 남긴다. 파싱 못 한 라인도 — 읽지 못한 것은 버리지 않는다.
-    if parse_failed or status == nil or status >= 400 then
-        if counts ~= nil then counts.errors_kept = counts.errors_kept + 1 end
+    if status == nil or status >= 400 then
+        counts.errors_kept = counts.errors_kept + 1
         return emit(extra, keep, timestamp, record)
     end
 
@@ -931,22 +972,18 @@ function polaris_noise_filter(tag, timestamp, record)
 
     -- 5. POST: management 는 전건 적재, catalog 는 집계만.
     if method == "POST" then
-        if path:find(MGMT_PREFIX) then
+        if find(path, MGMT_PREFIX) then
             return emit(extra, keep, timestamp, record)
         end
-        if counts ~= nil then
-            counts.counted_post   = counts.counted_post + 1
-            counts.access_counted = counts.access_counted + 1
-        end
+        counts.counted_post   = counts.counted_post + 1
+        counts.access_counted = counts.access_counted + 1
         return emit(extra, -1, timestamp, record)
     end
 
     -- 6. 성공한 조회는 기록이 아니라 숫자다.
     if READ_METHODS[method] then
-        if counts ~= nil then
-            counts.counted_read   = counts.counted_read + 1
-            counts.access_counted = counts.access_counted + 1
-        end
+        counts.counted_read   = counts.counted_read + 1
+        counts.access_counted = counts.access_counted + 1
         return emit(extra, -1, timestamp, record)
     end
 

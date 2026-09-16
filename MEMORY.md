@@ -15,7 +15,7 @@ everything else is a link into [`.memory/`](.memory/README.md).
 step2 → `helm upgrade` → step3. Dev Tools response panel is not JSON — export with curl.
 
 **Running:** fluent-bit **rev 19** = `#30` thread/ndc trim, verified (0/386 `polaris-logs-*` docs carry them). 14:44Z window reproduces 08:41Z exactly; step11 incl. detail PASS for live and candidate Lua.
-**Awaiting Kade's comparison:** `#31` Lua refactor candidate ([review](logging/REVIEW-lua-refactor-2026-09-16.md)) — fixes a live gap (records before the first tick uncounted); promote **before D**, only via `apply-lua.sh --no-restart` → `helm upgrade`.
+**Written, not rolled:** `#31` Lua refactor ([review](logging/REVIEW-lua-refactor-2026-09-16.md)) is now the repo's Lua + values (one Lua filter). ⚠ Repo ≠ pod until rolled: **no bare restart / `apply-lua.sh` without `--no-restart`**. Roll: `apply-lua.sh --no-restart` → step2 → `helm upgrade` → step3.
 
 **Next, in order:** (A) `#29` tier-1 OUTPUT 2 drops one chunk per traffic run — read the cause. (C) ISM policies (2.8).
 (D) 1800 s window via `apply-lua.sh` (2.5). (E) delete 30 s report indices — destructive, explicit OK (2.7). (F) apply ISM (2.9). Then phase 3.

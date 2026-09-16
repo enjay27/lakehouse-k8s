@@ -1,7 +1,10 @@
 # REVIEW — `polaris_access_log.lua` refactor (policy v5, schema v5 unchanged)
 
-**Status: CANDIDATE, not promoted.** The live script is still `fluent-bit/polaris_access_log.lua` (sha `bfff86db220036c2`).
-The candidate is `logging/candidates/polaris_access_log.refactor.lua`. Nothing here is on the cluster.
+**Status: PROMOTED in the repo 2026-09-16 (Kade: "proceed deploy refactor"), NOT YET ROLLED.** The candidate was moved to
+`fluent-bit/polaris_access_log.lua` (sha `2fbcfa47c513f5a0`; before: `bfff86db220036c2`, recoverable with
+`git show 0e9c37e:fluent-bit/polaris_access_log.lua`), `r1-values-step2.patch` applied, `test-r4-first-tick.lua` → `logging/scripts/test-first-tick.lua`
+(in `apply-lua.sh`). Paths below that name `logging/candidates/polaris_access_log.refactor.lua` / `test-r4-first-tick.lua` mean those files now.
+Roll: §3 steps 2–4.
 Decisions (Kade, 2026-09-16): R1 merge **yes**, R4 fix **yes** (a partial first window is visible anyway, because
 `partial_window` is `"true"` and `window_start` / `min_record_time` disagree), thread fields out of `polaris-logs-*` only
 (done separately, `#30`, commit `5315e0d`), `ndc` out too.

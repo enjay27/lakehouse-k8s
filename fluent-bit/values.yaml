@@ -21,7 +21,7 @@
 #   * hot reload 는 쓰지 않는다 (2026-09-16, Kade 결정). Fluent Bit 은 설정과 Lua 를 파드 시작 때만
 #     읽는다. 변경은 항상 파드 재시작으로 반영된다 — Helm config 변경은 차트의 checksum/config
 #     어노테이션이 재시작시키고, Lua 변경은 fluent-bit/apply-lua.sh 가 apply 후 재시작한다.
-#   * FILTER 2/3 의 script 경로: /fluent-bit/polaris-lua/polaris_access_log.lua
+#   * FILTER 3 의 script 경로: /fluent-bit/polaris-lua/polaris_access_log.lua (FILTER 2 는 R1 로 합쳐져 없다)
 #   * FILTER 3 정수 키 목록: counted_404 app_dropped_404 held_orphans held_pending 추가.
 #   판정 규칙(404 집계만 + 요청 ID 보류, 허용 목록, 커밋 시간, 시크릿 가드)은 전부 Lua 에 있다.
 #   Lua 의 WINDOW_SECONDS 는 아직 임시 검증값 30 (+ Interval_Sec 5).
@@ -32,7 +32,7 @@
 #   # 0) Lua 단위 테스트 (Fluent Bit 과 같은 LuaJIT)
 #   cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua
 #   luajit logging/scripts/test-schema-v3.lua && luajit logging/scripts/test-schema-v4.lua \
-#     && luajit logging/scripts/test-schema-v5.lua
+#     && luajit logging/scripts/test-schema-v5.lua && luajit logging/scripts/test-first-tick.lua
 #   # 1) Lua ConfigMap — 파드가 마운트하므로 Helm 보다 먼저 존재해야 한다
 #   kubectl apply -k fluent-bit/
 #   # 2) 렌더 + 게이트 (Lua ConfigMap 렌더와 Helm 렌더 둘 다), 통과하면 --dry-run 없이 실행
@@ -46,13 +46,16 @@
 #   bash logging/scripts/step9-report-index-template.sh
 #
 #   이후 스크립트만 바꿀 때는 Helm 없이:  bash fluent-bit/apply-lua.sh
-#     (컨텍스트 확인 → Lua 테스트 v3–v5 → kubectl apply -k → rollout restart → rollout status).
+#     (컨텍스트 확인 → Lua 테스트 v3–v5 + first-tick → kubectl apply -k → rollout restart → rollout status).
 #   ⚠ apply 만 하고 재시작하지 않으면 파드는 이전 스크립트로 계속 돈다 — 아무 경고도 없다 (#13/#20).
 #     step3 는 fluent-bit 컨테이너 시작 시각이 ConfigMap 마지막 변경보다 늦은지 확인한다.
 #   ⚠ 잘못된 스크립트는 재시작 시 filter 초기화 실패 → 입력 전체 정지 → tier 1 도 멈춘다
 #     (2026-09-15 와 같은 모양). 테스트가 게이트다. 복구: 이전 스크립트로 apply-lua.sh.
 #   Lua 와 config(정수 키 목록 등)가 함께 바뀌면: kubectl apply -k 먼저, 그 다음 helm upgrade
-#     (helm 이 재시작시키며 새 ConfigMap 을 읽는다).
+#     (helm 이 재시작시키며 새 ConfigMap 을 읽는다). 즉 apply-lua.sh --no-restart → step2 → helm upgrade.
+#     2026-09-16 리팩터(R1)가 그 예다: 새 Lua 에는 polaris_access_log 가 없고 새 config 에는 FILTER 2 가 없다.
+#     둘 중 하나만 들어간 채 파드가 뜨면 — 새 Lua + 옛 config 는 filter 초기화 실패(입력 전체 정지),
+#     옛 Lua + 새 config 는 모든 액세스 라인이 파싱 실패로 적재된다.
 #   step2 는 --debug 없이 렌더한 파일에 돌린다 (--debug 는 값을 세 번 출력해 개수가 틀어진다).
 #   ConfigMap 이 없으면 파드가 ContainerCreating 에 멈춘다 (마운트할 볼륨이 없음).
 #
@@ -307,25 +310,20 @@ config:
         Rename        message _msg
         Rename        timestamp _time
 
-    # 2. Quarkus 액세스 라인을 필드로 분해 (Lua 함수 polaris_access_log).
-    #    type_int_key 가 없으면 Fluent Bit 이 숫자를 double 로 인코딩한다.
-    [FILTER]
-        Name          lua
-        Alias         polaris_access_log
-        Match         polaris.logs
-        script        /fluent-bit/polaris-lua/polaris_access_log.lua
-        call          polaris_access_log
-        type_int_key  http_status response_size
+    # 2. (2026-09-16 리팩터 R1 로 삭제) 액세스 라인 파싱은 FILTER 3 의 Lua 안에서 한다.
+    #    Lua 필터 하나가 레코드마다 msgpack <-> Lua 변환을 한 번씩 하므로, 필터를 합쳐 그 왕복을 없앴다.
+    #    파싱 필드의 정수 키 두 개(http_status response_size)는 아래 목록의 맨 앞으로 옮겼다.
 
-    # 3. 적재 판정 + 집계 + 리포트 생성 (Lua 함수 polaris_noise_filter, 정책 v5).
+    # 3. 액세스 라인 파싱 + 적재 판정 + 집계 + 리포트 생성 (Lua 함수 polaris_noise_filter, 정책 v5).
     #    Match 가 polaris.logs 가 아니라 polaris.* 인 이유: 리포트 틱도 "이 필터 인스턴스" 를
     #    지나야 한다. Lua 상태는 인스턴스 단위이고, 카운터는 이 인스턴스에 있다.
     #
     #    정수 키 목록: Lua 가 만드는 "모든" 숫자 필드를 여기에 나열한다. 빠진 필드는 문자열로
     #    저장되고, 숫자 범위 쿼리가 에러 없이 0건을 반환한다. 필드를 추가하면 여기와 인덱스
     #    템플릿(polaris-report-template.json) 두 곳을 같이 고칠 것.
-    #    ⚠ 이 블록의 주석도 렌더된다. step2 는 목록 지시어 이름이 들어간 줄 수를 세므로(기대값 3),
+    #    ⚠ 이 블록의 주석도 렌더된다. step2 는 목록 지시어 이름이 들어간 줄 수를 세므로(기대값 1, R1 이전 3),
     #    새 주석에 그 이름을 쓰지 말 것 (2026-09-15 에 주석 한 줄로 5 가 나왔다).
+    #      parsed     http_status response_size (구 FILTER 2)
     #      envelope   schema_version report_seq window_seconds
     #      summary    access_seen access_kept access_counted role_keys_forced counted_read
     #                 counted_post errors_kept parse_errors bytes_total distinct_resources
@@ -343,7 +341,7 @@ config:
         Match         polaris.*
         script        /fluent-bit/polaris-lua/polaris_access_log.lua
         call          polaris_noise_filter
-        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted role_keys_forced counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals resources_other resources_other_distinct principals_other windows_skipped app_dropped_total requests reads writes errors response_bytes last_read_bytes last_write_bytes commit_count commit_ms_sum commit_ms_min commit_ms_max dropped counted_404 app_dropped_404 held_orphans held_pending
+        type_int_key  http_status response_size schema_version report_seq window_seconds access_seen access_kept access_counted role_keys_forced counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals resources_other resources_other_distinct principals_other windows_skipped app_dropped_total requests reads writes errors response_bytes last_read_bytes last_write_bytes commit_count commit_ms_sum commit_ms_min commit_ms_max dropped counted_404 app_dropped_404 held_orphans held_pending
 
     # 4. 모든 레코드에서 저장 비용만 들고 답하는 것이 없는 필드, CRI 봉투 잔여물을 지운다.
     #    없는 키의 Remove_key 는 no-op 이라 봉투 이름은 방어적으로 나열한다.
