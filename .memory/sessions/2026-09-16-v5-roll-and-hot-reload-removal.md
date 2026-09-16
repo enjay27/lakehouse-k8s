@@ -35,3 +35,10 @@ Written, gates adjusted, **not rolled**. Runbook B/C never ran; nothing about in
 ## Roll of the removal
 Kade: step3 `RESULT: post-upgrade checks passed` (new checks: single container, no flag, start ≥ CM change).
 step2 output and revision number not pasted.
+
+## After the roll
+- Discover CSV exports reviewed (seq 9 identical to 08:41Z; `#24` got its four stack traces), then Dev Tools
+  queries written (`logging/opensearch/devtools-export.console`). Their first JSON exports showed the response panel
+  is not JSON (triple-quoted, re-indented strings) — `devtools-json-fix.py` + a warning; data checks all held.
+- Closed with `logging/HANDOFF-audit-log-next-2026-09-16.md`; MEMORY.md *Now* rewritten to 43 lines (was 61,
+  carrying digests of 09-15 work already filed).

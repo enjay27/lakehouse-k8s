@@ -1,5 +1,7 @@
 # HANDOFF — policy v5 is committed and NOT on the cluster. Start at §2 step 1.
 
+> **SUPERSEDED by [`HANDOFF-audit-log-next-2026-09-16.md`](HANDOFF-audit-log-next-2026-09-16.md) — start there.**
+>
 > **UPDATE 2026-09-16 (later the same day).** §2 was run: v5 is live as **rev 17** and verified (step11
 > 67×34, `counted_404` 100 with 0 stored, detail 200/22/78 as predicted — `active-issues.md` #28). Then
 > **hot reload was removed** (Kade): `hotReload` is gone from `values.yaml`, Lua changes go through
