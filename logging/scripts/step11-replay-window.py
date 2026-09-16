@@ -21,7 +21,8 @@ import json, os, re, shutil, subprocess, sys, tempfile
 
 d = sys.argv[1] if len(sys.argv) > 1 else sys.exit(__doc__)
 lua_bin = shutil.which("luajit") or shutil.which("lua5.1") or sys.exit("need luajit or lua5.1 on PATH")
-script = os.path.abspath("fluent-bit/polaris_access_log.lua")
+# POLARIS_LUA=<file> replays a candidate script instead (e.g. logging/candidates/*.lua).
+script = os.path.abspath(os.environ.get("POLARIS_LUA", "fluent-bit/polaris_access_log.lua"))
 rep = json.load(open(f"{d}/report.json"))
 t1 = json.load(open(f"{d}/tier1.json"))
 summary = [r for r in rep if r.get("report_type") == "summary"]
@@ -46,8 +47,10 @@ lines = [
     # of what polaris-logs-* holds, compared below against detail.json.
     'local KEPT = {}',
     'local function tally(x) KEPT[x.loggerName or "-"] = (KEPT[x.loggerName or "-"] or 0) + 1 end',
-    'local function F(r) local _, _, r2 = polaris_access_log("polaris.logs", 0, r); '
-    'local c, _, o = polaris_noise_filter("polaris.logs", 0, r2 or r); '
+    # Split script (FILTER 2 polaris_access_log + FILTER 3) or merged (refactor R1, 2026-09-16): call the
+    # parser only if the script still defines it.
+    'local function F(r) local r2 = r; if polaris_access_log then local _, _, x = polaris_access_log("polaris.logs", 0, r); r2 = x or r end; '
+    'local c, _, o = polaris_noise_filter("polaris.logs", 0, r2); '
     'if c ~= -1 then if type(o) == "table" and type(o[1]) == "table" then '
     'for _, x in ipairs(o) do tally(x) end else tally(o) end end end',
 ]

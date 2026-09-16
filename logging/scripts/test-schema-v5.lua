@@ -6,6 +6,7 @@
 -- v3/v4 동작은 test-schema-v3.lua / test-schema-v4.lua 가 계속 검증한다 (schema_version 기대값 5).
 -- WINDOW_SECONDS 30 을 가정한다 (틱 _now_override 로 30초씩 넘긴다).
 dofile("/tmp/polaris.lua")
+dofile("logging/scripts/test-raw-access-shim.lua")   -- 액세스 라인을 _msg 원문으로 넣는다 (분리형·병합형 공통)
 local T0 = 1788940800
 local A  = "io.quarkus.http.access-log"
 local MAPPER = "org.apache.polaris.service.exception.IcebergExceptionMapper"

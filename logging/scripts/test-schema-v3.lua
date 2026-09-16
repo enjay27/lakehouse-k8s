@@ -11,6 +11,7 @@
 -- and the startup blind spot means records fed before the FIRST tick are dropped, so a
 -- naive harness reports zeros and looks like a broken filter.
 dofile("/tmp/polaris.lua")
+dofile("logging/scripts/test-raw-access-shim.lua")   -- 액세스 라인을 _msg 원문으로 넣는다 (분리형·병합형 공통)
 local T0 = 1788940800   -- aligned to a 30s boundary
 local A = "io.quarkus.http.access-log"
 local fails = 0

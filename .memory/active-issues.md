@@ -5,6 +5,21 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#31 — Lua refactor (R1–R6) and the pre-first-tick counting gap: CANDIDATE, NOT PROMOTED.** 2026-09-16.
+Review: `logging/REVIEW-lua-refactor-2026-09-16.md`. Candidate: `logging/candidates/polaris_access_log.refactor.lua`.
+- **The live v5 script has a real counting gap (R4):** `counts` is nil until the first report tick, so after every pod start up
+  to `Interval_Sec` (5 s) of successful GETs, catalog POSTs and 404s are dropped **and** in no counter
+  (`test-r4-first-tick.lua`: current script reports `access_seen` 0 for 3 lines). Every Lua change is a restart. Fixed in the
+  candidate by opening the window on the first record (decision: Kade; that window stays `partial_window: "true"`).
+- **R1 (Kade: merge):** the parser moves into `polaris_noise_filter`; FILTER 2 goes away (`logging/candidates/r1-values-step2.patch`).
+  **Promotion order is load-bearing:** new Lua + old config = FILTER 2 fails init and all inputs stop (tier 1 too); old Lua + new
+  config = every access line becomes a stored parse error. Only `apply-lua.sh --no-restart` → `helm upgrade` (one restart) is safe.
+- R2 classify guard + per-window cache, R3 allocations, R5/R6 dead conditions.
+- **Verified off-cluster (Cowork, LuaJIT 2.1):** tests v3/v4/v5 ALL PASS on both scripts, now fed raw `_msg` lines
+  (`test-raw-access-shim.lua`). Differential current vs candidate: 0 diffs on 2,136 real tier-1 records and 300k fuzz records.
+  5 mutants are all caught. step11 on `084100Z` PASS for both. Lua CPU ~5.8 → ~2.1 µs/record.
+- **NOT verified:** no helm render of the patch; the C-side marshalling saving of R1 (phase 3.1); cache hit rate at 1800 s.
+
 **#30 — `threadName` / `threadId` / `ndc` removed from `polaris-logs-*`: WRITTEN, NOT ROLLED.** 2026-09-16.
 Decision (Kade): thread name and id carry no tracing value; `ndc` was `""` on all 300 detail docs of readout
 `084100Z`. Scope **tier 2 only** — tier 1 `k8s-logs` and the VictoriaLogs shipper keep them.

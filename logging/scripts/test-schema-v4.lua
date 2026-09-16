@@ -7,6 +7,7 @@
 -- 틱 시각을 _now_override 로 30초씩 넘겨 윈도우를 닫으므로 WINDOW_SECONDS 가 30 이어야 한다.
 -- 운영값 1800 으로 되돌린 뒤에는 추출 결과에 sed 's/^local WINDOW_SECONDS = 1800/local WINDOW_SECONDS = 30/' 를 적용할 것.
 dofile("/tmp/polaris.lua")
+dofile("logging/scripts/test-raw-access-shim.lua")   -- 액세스 라인을 _msg 원문으로 넣는다 (분리형·병합형 공통)
 local T0 = 1788940800                 -- 30초 경계에 정렬된 시각
 local A  = "io.quarkus.http.access-log"
 local fails = 0
