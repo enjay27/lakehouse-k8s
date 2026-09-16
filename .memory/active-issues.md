@@ -613,7 +613,8 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   check read both containers' images; the in-pod check hashed the runtime's "cat not found" message
   (`8c1fb607ef937f3a`, identical on the v4 pod where the path did not exist) — the image is distroless. Also
   fixed: section 6 had printed "could not parse metrics" on every run ever — backslashes inside f-string
-  braces are a SyntaxError before Python 3.12. **Not yet done:** step9 (41 fields), one skipped window +
+  braces are a SyntaxError before Python 3.12. **Re-run with the fixed step3: `post-upgrade checks passed`. step9:
+  `PASS -- template stored and every field simulates as declared` (41 fields).** **Not yet done:** one skipped window +
   traffic + step10/11, runbook B/D, `schema_version` 5 on a summary row, no `http_status: 404` access doc.
 - **NOT verified:** any real `helm` render (no helm in Cowork); hot reload itself; **what 5.1.1 does when a
   reloaded script is invalid** (runbook C — may stop tier 1 like #27); reload loss (runbook D); whether
