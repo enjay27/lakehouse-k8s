@@ -28,8 +28,9 @@
   committed `fluent-bit/values.yaml` as REVISION 17 on 2026-09-16** (policy v5, `active-issues.md`
   #28), with step2 passing on the real render and step3 read off the running object: containers
   `fluent-bit` on `cr.fluentbit.io/fluent/fluent-bit:5.1.1` and `reloader` on
-  `ghcr.io/jimmidyson/configmap-reload:v0.15.0` (hot reload), one pod. *This line said 3.2.2 until
-  2026-09-16 — true on 09-09, stale since the 5.1.1 bump.* **The rule stands:** confirm a setting
+  `ghcr.io/jimmidyson/configmap-reload:v0.15.0` (hot reload), one pod. **The repo has since dropped hot
+  reload (same day, #28) and that is NOT ROLLED** — until it is, the file and rev 17 differ by the
+  `hotReload` block. *This line said 3.2.2 until 2026-09-16 — true on 09-09, stale since the 5.1.1 bump.* **The rule stands:** confirm a setting
   from the running object, not the file — the next `helm upgrade` makes this line history again.
 - **Values-only against upstream charts:** DataHub + prerequisites (Kafka / Elasticsearch /
   MySQL / ZooKeeper), Kafka, Schema Registry, Spark, Airflow, Argo Workflows, Jupyter.
@@ -46,9 +47,10 @@ Full detail in [`.memory/repository-map.md`](.memory/repository-map.md). The sha
   `kafka/`, `logging/`, `schema-registry/`, `spark/` — a `values.yaml` aimed at an upstream
   chart, nothing more. Exception: `fluent-bit/` also holds `polaris_access_log.lua` and a
   `kustomization.yaml` that ships it as ConfigMap **`polaris-fluent-bit-lua`**, mounted through
-  `extraVolumes` at `/fluent-bit/polaris-lua/`. Since policy v5 (2026-09-16) it is deployed with
-  `kubectl apply -k fluent-bit/` — **before** any `helm upgrade` that adds the mount — and **not**
-  with `--set-file` (that was v4 and earlier; `luaScripts` is `{}`).
+  `extraVolumes` at `/fluent-bit/polaris-lua/`. **No hot reload: Fluent Bit reads the Lua only at start.**
+  A Lua change is **`bash fluent-bit/apply-lua.sh`** (tests → `kubectl apply -k` → `rollout restart`);
+  `apply -k` alone leaves the old script running with no warning. **Not** `--set-file` (v4 and earlier;
+  `luaScripts` is `{}`).
 - **`postgresql/schema/`** — Polaris DDL (`schema_v3.sql` is the ASF-shipped file and the
   authority; `schema.sql` and `bootstrap.sql` are the local variants).
 - **`postgresql/secret/`** — Secret manifests. One of them is stale; see active issues #4.

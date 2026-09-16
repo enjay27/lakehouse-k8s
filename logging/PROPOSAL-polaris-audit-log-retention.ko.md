@@ -19,7 +19,7 @@
 | 보관 기간 | 상세 **30일** · 요약 **365일** (ISM, §5.3) |
 | 요약 주기 | 30분 (`WINDOW_SECONDS` 1800). 검증 중에는 30초 |
 | 필터 정책 | **정책 v4 / 리포트 스키마 v4** — 2026-09-15 적용 · **v5 작성됨, 미적용** (2026-09-16) |
-| 문서 상태 | 로컬 환경(OrbStack) 적용 · **v4 검증 완료 (2026-09-16)** · v5(404 집계, Lua ConfigMap + hot reload) 롤 대기. 남은 단계는 §10 |
+| 문서 상태 | 로컬 환경(OrbStack) 적용 · **v5 롤·검증 완료 (2026-09-16)** (404 집계, Lua ConfigMap) · hot reload 제거 롤 대기. 남은 단계는 §10 |
 
 ### 현재 상태와 목표
 
@@ -31,7 +31,7 @@
 | ISM 보관 정책 | 상세 30일 · 요약 365일 | **미적용** |
 | 요약 윈도우 | 1800초 | 30초 (검증용 임시값) |
 | 404 처리 | 집계만 (§3.9) | **결정됨** (2026-09-16) · v5 Lua 작성, 미적용 — 현재는 전건 적재 |
-| Lua 배포 | ConfigMap + hot reload (§9.1) | **작성됨, 미적용** — 현재는 Helm `--set-file` |
+| Lua 배포 | ConfigMap, 시작 시 로드 (§9.1) | ConfigMap **적용됨** (rev 17, hot reload 포함) · hot reload 제거 **작성됨, 미적용** |
 
 ### 버전 이력
 
@@ -40,7 +40,7 @@
 | v2 | 2026-09-07 | 요약 스키마 정리 (`counted_read`, 활성 행만 집계) |
 | v3 | 2026-09-09 | `last_read_bytes` / `last_write_bytes`, `api_kind`, grant 를 롤 행으로 접기 |
 | **v4** | **2026-09-15** | 애플리케이션 로그 허용 목록, `app_dropped`, 테이블 커밋 시간 `commit_ms_*`, 요청 0 행 제거, 자격증명 가드 |
-| v5 | 2026-09-16 (작성, 미적용) | **404 집계만** + 같은 `requestId` 의 앱 로그 폐기 (`counted_404`, `app_dropped_404`, `held_orphans`, `held_pending`), `/namespaces/{ns}/register` 분류, Lua 를 별도 ConfigMap + hot reload 로 배포 |
+| v5 | 2026-09-16 (롤, 검증) | **404 집계만** + 같은 `requestId` 의 앱 로그 폐기 (`counted_404`, `app_dropped_404`, `held_orphans`, `held_pending`), `/namespaces/{ns}/register` 분류, Lua 를 별도 ConfigMap 으로 배포 (hot reload 없음, 재시작으로 반영) |
 
 ---
 
@@ -315,7 +315,7 @@ principal 이 **생성될 때는 안 보이고 삭제될 때만 보이는** 감�
 - **`@timestamp` 이동.** 여러 레코드를 한 번에 반환하면 Fluent Bit 은 타임스탬프를 하나만 쓴다. 보류분의
   `@timestamp` 는 함께 나간 레코드(보통 같은 요청의 액세스 라인, 수 ms 뒤; 고아는 30초 이상 뒤)의 시각이 된다.
   원래 시각은 `_time` 에 그대로 있다.
-- **reload·파드 재시작 시 보류분 소실** — 메모리 상태이므로 최대 30초치 허용 목록 로그 (§9.1).
+- **파드 재시작 시 보류분 소실** — 메모리 상태이므로 최대 30초치 허용 목록 로그 (§9.1).
 - **운영 전 확인 필요** — 클라이언트가 요청 ID 헤더를 보내지 않을 때 Polaris 가 `requestId` 를 붙이는지
   **미측정**이다 (로컬 테스트 트래픽은 전부 ID 보유). 붙이지 않으면 그 404 의 앱 로그는 보류 없이 적재된다.
   안전한 방향(용량만 증가)이지만 §6.2 절감 폭이 줄어든다.
@@ -688,43 +688,43 @@ GET polaris-report-*/_search
 
 ## 9. 운영 절차
 
-### 9.1 배포 방식 — Lua ConfigMap + hot reload (v5)
+### 9.1 배포 방식 — Lua ConfigMap, 시작 시 로드 (v5)
 
-v5 부터 Lua 는 Helm 값이 아니라 **별도 ConfigMap** `polaris-fluent-bit-lua` 로 배포하고, 차트의 hot reload 로
-**파드 재시작 없이** 교체한다. `--set-file` 은 쓰지 않는다.
+v5 부터 Lua 는 Helm 값이 아니라 **별도 ConfigMap** `polaris-fluent-bit-lua` 로 배포한다. `--set-file` 은 쓰지
+않는다. Fluent Bit 은 설정과 Lua 를 **파드가 시작할 때 한 번만** 읽고, 변경은 **파드 재시작**으로 반영한다.
+
+> **2026-09-16 결정 (Kade): hot reload 는 쓰지 않는다.** v5 는 처음에 차트의 hot reload(reloader 사이드카)와
+> 함께 롤됐으나(rev 17) 같은 날 제거했다. 이유: 설정을 단순하게 유지하고, "잘못된 스크립트를 reload 하면
+> 엔진이 어떻게 되는가" 같은 미측정 동작을 운영에 들이지 않기 위해서.
 
 | 구성 | 파일 | 역할 |
 |---|---|---|
-| ConfigMap | `fluent-bit/kustomization.yaml` (`configMapGenerator`) | `polaris_access_log.lua` 를 감싸 `polaris-fluent-bit-lua` 생성. 이름 해시 접미사 끔 |
-| 마운트 | `values.yaml` `extraVolumes` / `extraVolumeMounts` | `/fluent-bit/polaris-lua/` (subPath 없음 — 있으면 갱신이 반영되지 않는다) |
-| reload | `values.yaml` `hotReload.enabled: true`, `extraWatchVolumes: [polaris-lua]` | `--enable-hot-reload` + `configmap-reload` 사이드카가 변경 감지 시 `POST /api/v2/reload` |
+| ConfigMap | `fluent-bit/kustomization.yaml` (`configMapGenerator`) | `polaris_access_log.lua` 를 감싸 `polaris-fluent-bit-lua` 생성. 이름 해시 접미사 끔 (DaemonSet 이 고정 이름으로 참조) |
+| 마운트 | `values.yaml` `extraVolumes` / `extraVolumeMounts` | `/fluent-bit/polaris-lua/` |
+| 반영 | `fluent-bit/apply-lua.sh` | 컨텍스트 확인 → Lua 테스트 v3–v5 → `kubectl apply -k` → `rollout restart` → 새 파드 로그 확인 |
 
 ```bash
-kubectl apply -k fluent-bit/     # 스크립트만 바꿀 때는 이것뿐. Helm 불필요
+bash fluent-bit/apply-lua.sh     # 스크립트만 바꿀 때는 이것뿐. Helm 불필요
 ```
-
-적용 후: kubelet 이 마운트 파일을 갱신(최대 약 1분) → 사이드카가 reload 호출 → Fluent Bit 이 파이프라인을
-다시 올린다.
 
 **v4 방식(`--set-file`)과 비교**
 
-| | A. `--set-file` (v4) | **B. ConfigMap + hot reload (v5)** |
+| | A. `--set-file` (v4) | **B. ConfigMap + 재시작 (v5)** |
 |---|---|---|
-| 스크립트 변경 | Helm upgrade → 파드 재시작 | `kubectl apply -k` → reload, 재시작 없음 |
-| 누락 위험 | 플래그를 빠뜨리면 엔진 전체 정지 (§9.2) | Helm 명령에 스크립트가 없어 빠뜨릴 것이 없음. 단 **ConfigMap 을 먼저** 만들어야 한다 |
-| GitOps | ArgoCD `helm.fileParameters` 필요 | ConfigMap 매니페스트 하나 — ArgoCD 가 그대로 동기화 |
-| Lua 상태 | 재시작 시 초기화 | reload 시에도 초기화 (같음) |
+| 스크립트 변경 | Helm upgrade → 파드 재시작 (checksum 어노테이션) | `apply-lua.sh` → apply + 재시작 |
+| 누락 위험 | 플래그를 빠뜨리면 엔진 전체 정지 (§9.2) | Helm 명령에 스크립트가 없어 빠뜨릴 플래그가 없음. 대신 **apply 후 재시작을 빠뜨리면 이전 스크립트가 경고 없이 계속 돈다** — 스크립트 하나로 묶고, step3 가 "컨테이너 시작 시각 > ConfigMap 마지막 변경" 을 확인 |
+| GitOps | ArgoCD `helm.fileParameters` 필요 | ConfigMap 매니페스트 하나 + 재시작 트리거 필요 (§10 GitOps 이식에서 결정) |
+| Lua 상태 | 재시작 시 초기화 | 재시작 시 초기화 (같음) |
 
-**B 의 알려진 위험 — 로컬에서 먼저 측정한다** ([`RUNBOOK-lua-hot-reload-2026-09-16.md`](RUNBOOK-lua-hot-reload-2026-09-16.md)):
+**B 의 알려진 위험**
 
-1. **잘못된 스크립트를 reload 했을 때** 5.1.1 이 이전 설정으로 계속 도는지, 엔진이 멈추는지 **미측정**.
-   멈춘다면 tier 1 까지 멈춘다 (§9.2 와 같은 모양). 그래서 적용 전 Lua 단위 테스트는 생략할 수 없다.
-2. **reload 는 모든 Lua 상태를 지운다** — 진행 중 윈도우 카운터(다음 요약은 partial, `report_seq` 1 부터),
+1. **잘못된 스크립트로 재시작하면** filter 초기화 실패 → 모든 INPUT 정지 → tier 1 까지 멈춘다 (§9.2 와 같은
+   모양). `apply-lua.sh` 의 단위 테스트가 게이트이고, 롤백은 이전 커밋의 스크립트로 `apply-lua.sh` 재실행.
+2. **재시작은 모든 Lua 상태를 지운다** — 진행 중 윈도우 카운터(다음 요약은 partial, `report_seq` 1 부터),
    §3.9 의 보류분.
-3. **Helm 으로 config 를 바꿔도 재시작 대신 reload** 된다 (hotReload 가 켜지면 차트가 checksum 어노테이션을
-   뺀다). config 와 Lua 를 동시에 바꾸면 두 ConfigMap 이 갱신되는 순서가 보장되지 않는다 — **호환되지 않는
-   변경은 나눠서** 적용한다 (예: 새 정수 필드는 values 의 정수 키 목록을 먼저, Lua 를 나중에).
-4. reload 동안 입력 버퍼(tier 1 메모리 버퍼 포함)의 손실 여부 미측정 — 런북 D.
+3. Helm 으로 config 를 바꾸면 차트의 `checksum/config` 어노테이션 때문에 파드가 재시작된다. config 와 Lua 를
+   함께 바꿀 때는 **`apply-lua.sh --no-restart` 먼저, Helm upgrade 나중** — 재시작 한 번에 둘 다 반영된다.
+4. 재시작 동안 tier 1 메모리 버퍼의 손실 여부는 미측정.
 
 ### 9.2 사고 사례 — 2026-09-15 `--set-file` 누락
 
@@ -739,7 +739,7 @@ kubectl apply -k fluent-bit/     # 스크립트만 바꿀 때는 이것뿐. Helm
 
 ### 9.3 배포 순서 (게이트)
 
-**최초 전환 (v4 → v5, Helm upgrade 1회 — 새 볼륨·사이드카 때문에 파드가 한 번 재시작된다)**
+**Helm 변경 (values.yaml) — 파드가 한 번 재시작된다**
 
 ```bash
 cd ~/hynix/local-k8s
@@ -760,20 +760,18 @@ kubectl apply -k fluent-bit/
 
 # 4. Helm upgrade (2 의 명령에서 --dry-run 제거)
 
-# 5. 롤 후 점검 — ConfigMap sha == 파일 sha, reloader, tier 1
+# 5. 롤 후 점검 — ConfigMap sha == 파일 sha, 시작 시각 > ConfigMap 변경, reloader 없음, tier 1
 bash logging/scripts/step3-postupgrade.sh
 
 # 6. 요약 인덱스 템플릿 재적용 (v5 필드 4개)
 bash logging/scripts/step9-report-index-template.sh
 ```
 
-**이후 Lua 만 바꿀 때**: 1 → `kubectl kustomize fluent-bit/` 확인 → `kubectl apply -k fluent-bit/` → 약 1분 뒤
-step3 (sha, reloader 로그, `GET /api/v2/reload` 카운터 증가).
+**이후 Lua 만 바꿀 때**: `bash fluent-bit/apply-lua.sh` (1·3 + 재시작) → step3.
 
-**롤백**: Lua 는 이전 커밋의 파일로 `kubectl apply -k fluent-bit/` (reload). 파드·설정은
-`helm -n datahub-hynix rollback benchmarks-fluent-bit <N>` — v4 리비전으로 돌리면 `--set-file` 로 들어간 v4
-스크립트가 함께 돌아온다. **엔진이 멈췄다면** 좋은 스크립트로 ConfigMap 을 다시 적용하고, reload 되지 않으면
-`kubectl -n datahub-hynix rollout restart ds/benchmarks-fluent-bit`.
+**롤백**: Lua 는 이전 커밋의 파일로 `bash fluent-bit/apply-lua.sh`. 파드·설정은
+`helm -n datahub-hynix rollback benchmarks-fluent-bit <N>` — v4 리비전(16 이하)으로 돌리면 `--set-file` 로 들어간
+v4 스크립트가 함께 돌아온다. **엔진이 멈췄다면** 좋은 스크립트로 `apply-lua.sh` 를 다시 실행한다 (재시작 포함).
 
 > **렌더 게이트 주의** — step2 는 렌더 결과에서 문자열이 들어간 **줄 수**를 센다. `config` 블록 안의 주석도
 > 렌더되므로, 설정 이름(`type_int_key` 등)을 주석에 새로 쓰면 개수가 바뀌어 올바른 설정에서도 FAIL 이
@@ -784,8 +782,8 @@ step3 (sha, reloader 로그, `GET /api/v2/reload` 카운터 증가).
 
 1. `fluent-bit/polaris_access_log.lua` 의 `APP_ALLOW` (또는 해당 규칙) 수정.
 2. 새 **정수** 필드를 만들었다면 `values.yaml` FILTER 3 의 정수 키 목록과 인덱스 템플릿에 **둘 다** 추가.
-   빠지면 문자열로 저장되어 숫자 쿼리가 **에러 없이 0건**을 반환한다. 이 경우 **Helm(values) 을 먼저**
-   적용하고 Lua 를 나중에 적용한다 (§9.1-3).
+   빠지면 문자열로 저장되어 숫자 쿼리가 **에러 없이 0건**을 반환한다. 이 경우 `apply-lua.sh --no-restart`
+   로 ConfigMap 을 먼저, Helm upgrade 를 나중에 — 재시작 한 번 (§9.1-3).
 3. 필드 의미가 바뀌면 `SCHEMA_VERSION` 을 올린다.
 4. `logging/scripts/test-schema-v5.lua` 에 케이스 추가 → v3/v4/v5 테스트 통과.
 5. §9.3 "이후 Lua 만 바꿀 때" 순서로 배포 → §10.2 게이트.
@@ -804,7 +802,7 @@ step3 (sha, reloader 로그, `GET /api/v2/reload` 카운터 증가).
 | 4 | 요약 인덱스 템플릿 적용 | **완료** (2026-09-16). v5 필드 추가분 재적용 대기 | 새 인덱스 매핑에서 `date` / `long` 확인 |
 | 5 | 상세 인덱스 템플릿 작성·적용 | **완료** (2026-09-16) | `http_status` 등 `long` 확인 |
 | 6 | 404 처리 정책 결정 | **결정·v5 작성** (§3.9). 롤 대기 | 재생 예측과 상세 문서 수 일치 |
-| 6a | Lua ConfigMap + hot reload 전환 | **작성, 미검증** (§9.1) | step3 PASS, 런북 B/C/D 결과 기록 |
+| 6a | Lua ConfigMap 전환 | **완료** (2026-09-16, rev 17). hot reload 제거는 작성·롤 대기 (§9.1) | step3 PASS (reloader 없음, 시작 시각 > ConfigMap 변경) |
 | 7 | 윈도우 30초 → 1800초 복귀 | 대기 | Lua `WINDOW_SECONDS` 1800, 요약 문서 수 감소 |
 | 8 | 검증용 `polaris-report-*` 삭제 | 대기 | 30초 윈도우 인덱스 제거 |
 | 9 | ISM 정책 적용 | 대기 | 상세 30일 · 요약 365일 부착 확인 |
@@ -867,7 +865,7 @@ step3 (sha, reloader 로그, `GET /api/v2/reload` 카운터 증가).
 | 9 | 4개 API 가 잘못된 요청에 500 응답 | `errors_5xx` 오탐 (`getToken`, `createNamespace`, `renameTable`, `renameView`) | Polaris 측 이슈, 재현 확인 |
 | 10 | 리소스 행 상한 500 | 운영 규모에서 `__other__` 로 넘칠 수 있음 | 운영 적용 후 `resources_other` 확인 |
 | 11 | Fluent Bit 처리량 | 일 5,000만 줄 × Lua 2단계, CPU 제한 200m | 부하 측정 필요 |
-| 12 | Lua 로드 실패 = 전체 수집 중단 | tier 1 까지 멈춤 (§9.2) | 배포 게이트로 방지. hot reload 시 동작은 **미측정** (§9.1) |
+| 12 | Lua 로드 실패 = 전체 수집 중단 | tier 1 까지 멈춤 (§9.2) | `apply-lua.sh` 의 단위 테스트 게이트로 방지 (§9.1) |
 | 13 | multiline 병합 | 깨지면 grant 로그가 여러 문서로 분리 | 테스트에서는 정상 (75건 단일 문서) |
 | 14 | Polaris 다중 파드 | 여러 Polaris 파드의 로그가 한 Fluent Bit 파드에 합산 — 요약은 노드 단위 | 현재 `maxReplicas` 확인 필요 |
 | 15 | 공용 인덱스 tier 1 출력의 평문 자격증명 | 설정 파일에 비밀번호 | 별도 변경 (Secret 사용자 권한 확인 후) |
@@ -892,7 +890,7 @@ step3 (sha, reloader 로그, `GET /api/v2/reload` 카운터 증가).
 - 요약은 30분 단위 리소스·principal 추이, 테이블 커밋 시간, 버린 로그 개수를 담는다.
 - 운영 트래픽(일 5,000만 건) 기준 상세 인덱스는 v4 로 하루 약 0.83 GB 이며 **그 98% 가 404** 다. v5 는 404 를
   세기만 하고 그 요청의 앱 로그도 `requestId` 로 함께 버려 수십 MB 수준으로 줄인다.
-- Lua 는 별도 ConfigMap 으로 배포하고 hot reload 로 교체한다 (v5). 로드에 실패하면 **노드 전체 로그 수집이
+- Lua 는 별도 ConfigMap 으로 배포하고 파드 재시작으로 반영한다 (v5, hot reload 없음). 로드에 실패하면 **노드 전체 로그 수집이
   멈출 수 있으므로** 단위 테스트와 렌더 게이트는 생략하지 않는다.
 
 ---
@@ -913,7 +911,7 @@ step3 (sha, reloader 로그, `GET /api/v2/reload` 카운터 증가).
 | `__other__` | 행 상한을 넘은 요청이 모이는 행 |
 | 렌더 게이트 | 배포 전 렌더 결과를 검사하는 `step2-render-gate.sh` |
 | 보류 (hold) | v5. 허용 목록 앱 로그를 같은 `requestId` 의 액세스 라인이 올 때까지 필터 메모리에 잡아 두는 것 |
-| hot reload | 파드 재시작 없이 Fluent Bit 설정·스크립트를 다시 읽는 기능 (`/api/v2/reload`) |
+| hot reload | 파드 재시작 없이 Fluent Bit 설정·스크립트를 다시 읽는 기능 (`/api/v2/reload`). **이 파이프라인에서는 쓰지 않는다** (§9.1) |
 
 ### B. 관련 파일
 
@@ -922,7 +920,8 @@ step3 (sha, reloader 로그, `GET /api/v2/reload` 카운터 증가).
 | `fluent-bit/values.yaml` | Fluent Bit DaemonSet 설정 (tier 1/2/3) |
 | `fluent-bit/polaris_access_log.lua` | 판정·집계·요약 Lua (정책 v5) |
 | `fluent-bit/kustomization.yaml` | Lua ConfigMap `polaris-fluent-bit-lua` 생성 (v5) |
-| `logging/RUNBOOK-lua-hot-reload-2026-09-16.md` | hot reload 검증 런북 |
+| `logging/RUNBOOK-lua-hot-reload-2026-09-16.md` | hot reload 검증 런북 — **폐기** (hot reload 제거) |
+| `fluent-bit/apply-lua.sh` | Lua 변경 배포 (테스트 → apply → 재시작) |
 | `logging/opensearch/polaris-logs-template.json` | 상세 인덱스 템플릿 |
 | `logging/opensearch/polaris-report-template.json` | 요약 인덱스 템플릿 |
 | `logging/scripts/test-schema-v3.lua`, `test-schema-v4.lua`, `test-schema-v5.lua` | Lua 단위 테스트 |

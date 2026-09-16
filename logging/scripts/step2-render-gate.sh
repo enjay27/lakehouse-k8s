@@ -12,9 +12,10 @@
 #
 # SINCE POLICY v5 (2026-09-16) THE LUA IS NOT IN THE HELM RENDER. It ships as its own
 # ConfigMap `polaris-fluent-bit-lua` (fluent-bit/kustomization.yaml), mounted through
-# extraVolumes and watched by the chart's hot-reload sidecar. So the Lua-content checks
-# moved to the second argument (the kustomize output), and the helm render is checked
-# for the wiring instead: the volume, the mount path, the reloader, --enable-hot-reload.
+# extraVolumes. So the Lua-content checks moved to the second argument (the kustomize
+# output), and the helm render is checked for the wiring instead: the volume and the path.
+# HOT RELOAD WAS REMOVED THE SAME DAY (rev 17 had it): the render must carry NO reloader and
+# NO --enable-hot-reload, and MUST carry checksum/config (so Helm config changes restart).
 #
 # RENDER WITHOUT --debug. --debug prints USER-SUPPLIED and COMPUTED VALUES before
 # the manifest, so every config string appears three times and every count below
@@ -71,18 +72,19 @@ ge "the new parser exists"                  'polaris_stdout_json'     1
 ge "image bumped to 5.1.1"                  'fluent-bit:5.1.1'        1
 
 echo
-echo "=== v5 wiring: Lua ConfigMap + hot reload (helm render) ==="
-# The chart still renders an EMPTY <release>-luascripts ConfigMap and mounts it at
-# /fluent-bit/scripts whenever hotReload is on. Harmless: nothing points a script there.
-eq "hot reload flag on fluent-bit"          '--enable-hot-reload'     1
-eq "reloader sidecar"                       'name: reloader'          1
-ge "reloader image"                         'configmap-reload'        1
-eq "reloader watches the Lua volume"        '-volume-dir=/watch/extra-0' 1
+echo "=== v5 wiring: Lua ConfigMap, read at start -- no hot reload (helm render) ==="
+# chart 0.57.6 _pod.tpl / daemonset.yaml: with hotReload off and luaScripts {} the chart renders
+# no reloader, no flag, no <release>-luascripts ConfigMap or /fluent-bit/scripts mount, and
+# puts checksum/config back on the pod template (checksum/luascripts only if luaScripts is set).
+eq "no hot reload flag"                     '--enable-hot-reload'     0
+eq "no reloader sidecar"                    'name: reloader'          0
+eq "no reloader image"                      'configmap-reload'        0
+eq "no -luascripts ConfigMap / volume"      'luascripts'              0
+eq "checksum/config on the pod template (config change restarts)" 'checksum/config' 1
 eq "volume points at the Lua ConfigMap"     'name: polaris-fluent-bit-lua' 1
 eq "Lua mount path in the fluent-bit container" 'mountPath: /fluent-bit/polaris-lua' 1
 eq "both FILTERs use the mounted script"    'script  */fluent-bit/polaris-lua/polaris_access_log\.lua' 2
 eq "no FILTER left on the old path"         'script  */fluent-bit/scripts/' 0
-eq "no checksum annotation (hot reload, not restart)" 'checksum/config' 0
 eq "no Lua in the Helm render (--set-file gone)" 'APP_ALLOW' 0
 # 3 = 2 real directives + 1 comment in the filters block. A rendered block-scalar comment
 # COUNTS (2026-09-15: a comment naming it made v4's gate read 5). Keep the word out of comments.
@@ -129,8 +131,9 @@ STILL NOT PROVEN BY ANY OF THIS, and each has bitten this pipeline before:
     node-wide collection: confirm k8s-logs is still receiving after the rollout.
   * that the deployed script matches the file: step3 compares the sha of ConfigMap
     polaris-fluent-bit-lua against fluent-bit/polaris_access_log.lua.
-  * that a hot reload leaves the engine running. Invalid-script behaviour on reload is
-    UNMEASURED on 5.1.1: logging/RUNBOOK-lua-hot-reload-2026-09-16.md, section C.
+  * that the pod was RESTARTED after the ConfigMap last changed. Fluent Bit reads the Lua
+    only at start; step3 compares the container start time with the ConfigMap's last change.
+    A Lua-only change goes through fluent-bit/apply-lua.sh (apply + restart in one step).
   * ORDER: `kubectl apply -k fluent-bit/` BEFORE `helm upgrade`. A pod whose volume names a
     ConfigMap that does not exist stays in ContainerCreating.
 EOT

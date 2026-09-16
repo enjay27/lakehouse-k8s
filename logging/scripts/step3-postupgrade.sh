@@ -19,7 +19,7 @@ NS=datahub-hynix
 DS=benchmarks-fluent-bit
 # sha256 (first 16) of the repo script, computed now -- so it cannot go stale. Run from the
 # repo root. Since policy v5 (2026-09-16) the script ships as its own ConfigMap
-# polaris-fluent-bit-lua (`kubectl apply -k fluent-bit/`), not through Helm/--set-file.
+# polaris-fluent-bit-lua (`bash fluent-bit/apply-lua.sh`), not through Helm/--set-file.
 # kustomize v5.4.3 was measured to store the bytes verbatim, so the ConfigMap must hash identically.
 # (v4 as committed dfbbe21: f364c89653dfe481. v3 was the shipper's aa180e90b9f69bda.)
 LUA_CM=polaris-fluent-bit-lua
@@ -35,7 +35,7 @@ huh(){ printf '  ????  %s\n' "$*"; }
 
 echo "=== 1. Is the pod up, and on the right image? ==="
 kubectl -n $NS rollout status ds/$DS --timeout=60s >/dev/null 2>&1 && ok "rollout complete" || bad "rollout NOT complete"
-# Since v5 the pod has two containers (fluent-bit + reloader): select by name, or the list never ends in :5.1.1.
+# Select by name: rev 17 had a reloader sidecar and [*] then listed its image too (never ends in :5.1.1).
 IMG=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[?(@.name=="fluent-bit")].image}')
 case "$IMG" in *:5.1.1) ok "image $IMG";; *) bad "image is $IMG, expected :5.1.1";; esac
 RESTARTS=$(kubectl -n $NS get pods -l app.kubernetes.io/instance=$DS \
@@ -52,30 +52,27 @@ else bad "complaints in the pod log:"; printf '        %s\n' "$BADLINES"; fi
 printf '%s\n' "$LOG" | grep -iE 'lua|polaris' | head -5 | sed 's/^/        /'
 
 echo
-echo "=== 3. Is the DEPLOYED script the one in the repo? And is hot reload wired? ==="
+echo "=== 3. Is the DEPLOYED script the one in the repo -- and has the process LOADED it? ==="
 SHA=$(kubectl -n $NS get configmap $LUA_CM \
       -o jsonpath='{.data.polaris_access_log\.lua}' 2>/dev/null | shasum -a 256 | cut -c1-16)
 EMPTY_SHA=$(printf '' | shasum -a 256 | cut -c1-16)
 if [ -z "$SHA" ] || [ "$SHA" = "$EMPTY_SHA" ]; then bad "no $LUA_CM ConfigMap / no polaris_access_log.lua key (kubectl apply -k fluent-bit/)"
 elif [ "$SHA" = "$LUA_SHA_EXPECT" ]; then ok "ConfigMap lua sha $SHA matches the repo"
 else bad "ConfigMap lua sha $SHA != expected $LUA_SHA_EXPECT — deployed script differs from the file"; fi
-# The ConfigMap is not the file the process reads. kubelet syncs the mount up to ~1 min later.
+# No hot reload since 2026-09-16: Fluent Bit reads the Lua ONCE, at container start. The mounted file is
+# refreshed by kubelet without a restart, so the file inside the pod says nothing about what runs (and the
+# distroless image has no `cat` anyway). The fact that matters is ordering: the fluent-bit container must
+# have STARTED AFTER the ConfigMap's last change. Otherwise `kubectl apply -k` ran without a restart (#13/#20).
 POD=$(kubectl -n $NS get pods -l app.kubernetes.io/instance=$DS -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-# The 5.1.1 image is distroless: there is no `cat`, and the runtime's "executable file not found" message
-# arrives on STDOUT -- which the first version of this check hashed (8c1fb607ef937f3a, the same on a v4 pod
-# where the path did not even exist) and mislabelled "not synced yet" (2026-09-16). Check the exit code first.
-PBODY=$(kubectl -n $NS exec "$POD" -c fluent-bit -- cat /fluent-bit/polaris-lua/polaris_access_log.lua 2>/dev/null); PRC=$?
-PSHA=$(printf '%s\n' "$PBODY" | shasum -a 256 | cut -c1-16)
-if [ "$PRC" -ne 0 ]; then huh "cannot read the script inside the pod (exec rc=$PRC; the image has no cat) -- the ConfigMap sha above is the check"
-elif [ "$PSHA" = "$LUA_SHA_EXPECT" ]; then ok "file inside pod $POD matches the repo"
-else huh "file inside pod is $PSHA -- kubelet may not have synced yet; wait ~60s and re-run"; fi
+CM_T=$(kubectl -n $NS get configmap $LUA_CM -o jsonpath='{range .metadata.managedFields[*]}{.time}{"\n"}{end}' 2>/dev/null | sort | tail -1)
+START_T=$(kubectl -n $NS get pod "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="fluent-bit")].state.running.startedAt}' 2>/dev/null)
+if [ -z "$CM_T" ] || [ -z "$START_T" ]; then huh "could not read ConfigMap change time ($CM_T) or container start ($START_T)"
+elif [[ ! "$START_T" < "$CM_T" ]]; then ok "fluent-bit started $START_T, after the ConfigMap's last change $CM_T -- it runs this script"
+else bad "fluent-bit started $START_T, BEFORE the ConfigMap changed at $CM_T -- the OLD script is running: bash fluent-bit/apply-lua.sh --restart"; fi
 CONTAINERS=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[*].name}')
-case " $CONTAINERS " in *" reloader "*) ok "reloader sidecar present ($CONTAINERS)";; *) bad "no reloader container ($CONTAINERS) — hotReload not rendered";; esac
+[ "$CONTAINERS" = "fluent-bit" ] && ok "one container: fluent-bit (no reloader)" || bad "containers are '$CONTAINERS' -- expected only fluent-bit (hot reload removed)"
 ARGS=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[?(@.name=="fluent-bit")].args}')
-case "$ARGS" in *--enable-hot-reload*) ok "--enable-hot-reload on fluent-bit";; *) bad "fluent-bit args lack --enable-hot-reload";; esac
-RLOG=$(kubectl -n $NS logs "$POD" -c reloader --tail=50 2>/dev/null)
-printf '%s\n' "$RLOG" | grep -iE 'error|fail' | head -5 | sed 's/^/        reloader: /'
-printf '%s\n' "$RLOG" | grep -icE 'webhook|reload' | sed 's/^/        reloader lines mentioning reload: /'
+case "$ARGS" in *--enable-hot-reload*) bad "fluent-bit still has --enable-hot-reload";; *) ok "no --enable-hot-reload";; esac
 
 echo
 echo "=== 4. TIER 1 FIRST — did node-wide collection survive 5.1.1? ==="
@@ -116,8 +113,6 @@ for name,v in (m.get("filter") or {}).items():
     d=v.get("drop_records",0); a=v.get("add_records",0)
     if "polaris" in name: print(f"        filter {name:28s} dropped={d:<8} added={a}")
 ' 2>/dev/null || echo "        (could not parse metrics)"
-  HR=$(curl -sS --max-time 10 http://127.0.0.1:2020/api/v2/reload 2>/dev/null)
-  echo "        hot reload counter (GET /api/v2/reload): ${HR:-no answer}   (0 right after a pod start)"
   echo "        NOTE: a per-item OpenSearch rejection inside an HTTP 200 increments NONE of these."
   echo "        That is what Trace_Error On is for — it lands in the pod log, section 2."
 fi

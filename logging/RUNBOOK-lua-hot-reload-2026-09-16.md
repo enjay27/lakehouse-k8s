@@ -1,6 +1,14 @@
 # RUNBOOK — Lua ConfigMap + hot reload (policy v5)
 
-**Status: WRITTEN 2026-09-16, NOTHING RUN.** Written off-cluster by Claude. Every "expect" below is a
+> **SUPERSEDED 2026-09-16 — hot reload was removed (Kade's decision, `active-issues.md` #28).** Section A
+> was run (rev 17: step2/step3/step9/step11 all PASS). **B and C were never run and no longer apply**;
+> nothing in C was measured, so do not cite this file for how 5.1.1 handles an invalid reload.
+> Fluent Bit now reads the Lua only at start: a Lua change is `bash fluent-bit/apply-lua.sh`
+> (tests → `kubectl apply -k` → `rollout restart`). D's question survives in a new shape — tier-1
+> `sequence` gaps across a **restart** — and its query below still works for that.
+> Kept as the record of what was planned and why.
+
+**Status (original): WRITTEN 2026-09-16, NOTHING RUN.** Written off-cluster by Claude. Every "expect" below is a
 prediction from the chart 0.57.6 templates and the Fluent Bit docs, not a measurement. Record each
 result in `.memory/active-issues.md` (#28) as it is measured.
 

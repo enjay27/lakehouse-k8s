@@ -55,9 +55,9 @@ plausible-looking name.
   **chart `fluent-bit-0.57.6`, `appVersion` 5.0.6, SSA, REVISION 17 deployed 2026-09-16** (policy v5;
   16 upgrades since the 2026-08-19 install — *this line said "REVISION 1, never upgraded" and image
   3.2.2 until 2026-09-16*). `appVersion` is the chart's field, *not* the running image: the running
-  image is **`fluent-bit:5.1.1`** plus the `reloader` sidecar (`configmap-reload:v0.15.0`), so read
-  images off the DaemonSet, not off `helm get metadata`. One pod (DaemonSet, one node); `READY 2/2`
-  is two containers, not two replicas.
+  image is **`fluent-bit:5.1.1`** plus, on rev 17, the `reloader` sidecar (`configmap-reload:v0.15.0`) —
+  removed in the repo (#28), gone once that rolls. Read images off the DaemonSet, not off `helm get
+  metadata`. One pod (DaemonSet, one node); `READY 2/2` on rev 17 is two containers, not two replicas.
 
 ## Secrets
 

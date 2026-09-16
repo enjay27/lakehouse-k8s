@@ -586,7 +586,7 @@ in the step-7 interval have 720 distinct `sequence`, 0 duplicates, and step11 re
 rows — so no Polaris record in that window was lost or duplicated. Fluent Bit chunks are per tag (= per container log
 file), so the dropped chunk is most likely another container's. Which one is unknown. Still real tier-1 loss.
 
-**#28 — Policy v5 (404 counted, not stored) + Lua as its own ConfigMap with hot reload: ROLLED 2026-09-16 (rev 17), POST-ROLL CHECKS OPEN.** 2026-09-16.
+**#28 — Policy v5 (404 counted, not stored) + Lua as its own ConfigMap: ROLLED 2026-09-16 (rev 17) and verified. Hot reload REMOVED in the repo, NOT ROLLED.** 2026-09-16.
 Decisions (Kade): 404 access lines count into `errors_4xx`/`counted_404` and are not stored; the allow-listed
 app lines of a 404 request are dropped too, **matched by `mdc.requestId`** (hold until the access line, 30 s
 orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `polaris-fluent-bit-lua`
@@ -640,8 +640,22 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   PolarisServiceImpl / IcebergExceptionMapper) — **exactly the replay prediction made before the roll**; no 404
   among detail statuses (401 59, 403 45, 204 27, 400 26, 201 17, 409 11, 422 6, 200 5, 500 4); 0 held_orphan docs.
   **So the 404 policy and the request-id drop are verified on live traffic; step 7 PASS.**
-  **Not yet done:** runbook B (comment-only reload) and D (tier-1 `sequence` gaps across a reload); C only with Kade's OK.
-- **NOT verified:** any real `helm` render (no helm in Cowork); hot reload itself; **what 5.1.1 does when a
+- **HOT RELOAD REMOVED — WRITTEN, NOT ROLLED (Kade's decision, 2026-09-16).** Wanted: no reloader, Lua and
+  config read at start only, simple config. Choice among two: *Helm `--set-file`* (one command, chart checksum
+  restarts; the 09-15 outage risk) vs **separate ConfigMap + restart** — **chosen**. Changes:
+  `values.yaml` drops the `hotReload` block (chart default false → no `reloader`, no `--enable-hot-reload`, no
+  empty `-luascripts` CM/mount, `checksum/config` back on the pod template — chart 0.57.6 source);
+  new **`fluent-bit/apply-lua.sh`** = context guard → LuaJIT tests v3–v5 → `kubectl diff -k` (unchanged + pod
+  newer than CM → nothing to do) → `apply -k` → `rollout restart` → `rollout status` → Lua load errors in the
+  new pod's log → CM sha == repo (`--no-restart` for a change that also needs `helm upgrade`; `--restart` to
+  force). step2 flipped (flag 0, reloader 0, `configmap-reload` 0, `luascripts` 0, `checksum/config` 1);
+  step3 drops reloader/args/reload-counter checks and the meaningless in-pod file check, and adds **fluent-bit
+  container `startedAt` ≥ the ConfigMap's last `managedFields` time** — the only outside evidence the process
+  loaded the current script. apply-lua.sh's control flow was exercised with a mocked kubectl/luajit only.
+  Runbook B/C dropped (never run, nothing measured); D becomes "tier-1 gaps across a restart".
+  **Roll (Kade):** step2 on a fresh render → `helm upgrade` (no `--set-file`) → pod restarts once, 1 container
+  → step3. Rollback: `helm rollback benchmarks-fluent-bit 17`. Leaves ConfigMap `polaris-fluent-bit-lua` as is.
+- **NOT verified (as originally written; hot-reload items moot since its removal):** any real `helm` render (no helm in Cowork); hot reload itself; **what 5.1.1 does when a
   reloaded script is invalid** (runbook C — may stop tier 1 like #27); reload loss (runbook D); whether
   Polaris assigns `requestId` without a client header (production question — if not, 404 app lines are kept).
 - **Order:** tests → `kubectl kustomize` + helm dry-run → step2 (two args) → **`kubectl apply -k fluent-bit/`

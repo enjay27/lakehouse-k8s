@@ -1,6 +1,6 @@
 # =====================================================================================
 # Fluent Bit — K8s DaemonSet, 릴리스 `benchmarks-fluent-bit`, namespace datahub-hynix
-# 정책 v5 / 리포트 스키마 v5 — 2026-09-16 작성, 클러스터 미적용 (logging/PLAN-audit-log-todo-2026-09-16.md)
+# 정책 v5 / 리포트 스키마 v5 — 2026-09-16 롤 (rev 17). hot reload 제거는 같은 날 결정 (active-issues #28)
 # =====================================================================================
 #
 # 릴리스 하나, 계층(tier) 셋. 전부 Mac 의 Docker OpenSearch 3.5.0 으로 보낸다
@@ -18,9 +18,9 @@
 #   * Lua 는 Helm 값이 아니라 별도 ConfigMap `polaris-fluent-bit-lua` 로 배포한다.
 #     원본 fluent-bit/polaris_access_log.lua, 래퍼 fluent-bit/kustomization.yaml.
 #     `--set-file` 은 더 이상 쓰지 않는다.
-#   * hotReload 활성화: reloader 사이드카가 ConfigMap 변경을 감지해 파드 재시작 없이
-#     Fluent Bit 을 reload 한다. 차트는 이때 checksum 어노테이션을 빼므로, Helm 으로 config 를
-#     바꿔도 파드가 재시작되지 않고 reload 된다.
+#   * hot reload 는 쓰지 않는다 (2026-09-16, Kade 결정). Fluent Bit 은 설정과 Lua 를 파드 시작 때만
+#     읽는다. 변경은 항상 파드 재시작으로 반영된다 — Helm config 변경은 차트의 checksum/config
+#     어노테이션이 재시작시키고, Lua 변경은 fluent-bit/apply-lua.sh 가 apply 후 재시작한다.
 #   * FILTER 2/3 의 script 경로: /fluent-bit/polaris-lua/polaris_access_log.lua
 #   * FILTER 3 정수 키 목록: counted_404 app_dropped_404 held_orphans held_pending 추가.
 #   판정 규칙(404 집계만 + 요청 ID 보류, 허용 목록, 커밋 시간, 시크릿 가드)은 전부 Lua 에 있다.
@@ -45,9 +45,14 @@
 #   bash logging/scripts/step3-postupgrade.sh
 #   bash logging/scripts/step9-report-index-template.sh
 #
-#   이후 스크립트만 바꿀 때는 0) 과 1) 만 — Helm 은 필요 없다 (hot reload).
-#   ⚠ 1) 은 게이트 없이 곧바로 운영 중인 파드에 반영된다. 잘못된 스크립트의 reload 동작은 미측정
-#     (logging/RUNBOOK-lua-hot-reload-2026-09-16.md C). 0) 을 건너뛰지 말 것.
+#   이후 스크립트만 바꿀 때는 Helm 없이:  bash fluent-bit/apply-lua.sh
+#     (컨텍스트 확인 → Lua 테스트 v3–v5 → kubectl apply -k → rollout restart → rollout status).
+#   ⚠ apply 만 하고 재시작하지 않으면 파드는 이전 스크립트로 계속 돈다 — 아무 경고도 없다 (#13/#20).
+#     step3 는 fluent-bit 컨테이너 시작 시각이 ConfigMap 마지막 변경보다 늦은지 확인한다.
+#   ⚠ 잘못된 스크립트는 재시작 시 filter 초기화 실패 → 입력 전체 정지 → tier 1 도 멈춘다
+#     (2026-09-15 와 같은 모양). 테스트가 게이트다. 복구: 이전 스크립트로 apply-lua.sh.
+#   Lua 와 config(정수 키 목록 등)가 함께 바뀌면: kubectl apply -k 먼저, 그 다음 helm upgrade
+#     (helm 이 재시작시키며 새 ConfigMap 을 읽는다).
 #   step2 는 --debug 없이 렌더한 파일에 돌린다 (--debug 는 값을 세 번 출력해 개수가 틀어진다).
 #   ConfigMap 이 없으면 파드가 ContainerCreating 에 멈춘다 (마운트할 볼륨이 없음).
 #
@@ -129,8 +134,9 @@ tolerations:
 # ── Lua 스크립트 ────────────────────────────────────────────────────────────────────
 # 차트의 luaScripts 는 비워 둔다. 스크립트는 kustomize 가 만드는 ConfigMap
 # `polaris-fluent-bit-lua` 에 있고 (fluent-bit/kustomization.yaml), 아래 extraVolumes 로
-# /fluent-bit/polaris-lua/ 에 마운트된다. subPath 를 쓰지 않아야 ConfigMap 갱신이 파일에 반영된다.
-# (hotReload.enabled 이면 차트가 빈 `<릴리스>-luascripts` ConfigMap 을 여전히 만든다 — 무해.)
+# /fluent-bit/polaris-lua/ 에 마운트된다. 파일은 kubelet 이 갱신하지만 Fluent Bit 은 시작 때만 읽으므로
+# 반영은 재시작으로 한다 (fluent-bit/apply-lua.sh). luaScripts 가 비어 있고 hotReload 가 꺼져 있으면
+# 차트는 `<릴리스>-luascripts` ConfigMap 과 /fluent-bit/scripts 마운트를 만들지 않는다.
 luaScripts: {}
 
 extraVolumes:
@@ -143,19 +149,10 @@ extraVolumeMounts:
     mountPath: /fluent-bit/polaris-lua
     readOnly: true
 
-# ── Hot reload ──────────────────────────────────────────────────────────────────────
-# 차트가 Fluent Bit 을 --enable-hot-reload 로 띄우고 configmap-reload 사이드카를 붙인다.
-# 사이드카는 config / luascripts / extraWatchVolumes 를 감시하다가 바뀌면
-# POST http://localhost:2020/api/v2/reload 를 호출한다.
-#   * reload 는 Lua 상태를 초기화한다: 리포트 윈도우 1개 partial, report_seq 리셋, 보류분 소실.
-#   * 차트는 hotReload 가 켜지면 checksum/config 어노테이션을 빼므로, Helm 으로 config 를 바꿔도
-#     파드가 재시작되지 않는다. 파드 스펙(이미지, 볼륨, env)이 바뀔 때만 재시작된다.
-#   * Lua 와 정수 키 목록(config)이 함께 바뀌는 스키마 변경은 두 ConfigMap 이 따로 갱신되어
-#     reload 가 두 번, 중간 상태로 한 번 일어날 수 있다 — 스키마 변경은 한 번에 조율해서 배포.
-hotReload:
-  enabled: true
-  extraWatchVolumes:
-    - polaris-lua
+# ── Hot reload: 쓰지 않음 ───────────────────────────────────────────────────────────
+# rev 17 (2026-09-16) 에서 켰다가 같은 날 끔. hotReload 키를 두지 않아 차트 기본값(false)이 된다:
+# reloader 사이드카 없음, --enable-hot-reload 없음, checksum/config 어노테이션 있음.
+# 재시작마다 Lua 상태가 초기화된다: 리포트 윈도우 1개 partial, report_seq 1 부터, 보류분 소실.
 
 # ── Fluent Bit 설정 ─────────────────────────────────────────────────────────────────
 config:

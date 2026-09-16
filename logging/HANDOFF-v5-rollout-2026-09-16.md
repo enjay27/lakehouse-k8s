@@ -1,5 +1,11 @@
 # HANDOFF — policy v5 is committed and NOT on the cluster. Start at §2 step 1.
 
+> **UPDATE 2026-09-16 (later the same day).** §2 was run: v5 is live as **rev 17** and verified (step11
+> 67×34, `counted_404` 100 with 0 stored, detail 200/22/78 as predicted — `active-issues.md` #28). Then
+> **hot reload was removed** (Kade): `hotReload` is gone from `values.yaml`, Lua changes go through
+> `bash fluent-bit/apply-lua.sh` (apply + restart). Everything below about the reloader, runbook B/C and
+> "reload" is history. The removal itself is written and **not rolled** — see #28 for its roll.
+
 **Written 2026-09-16 at `aaf7679`, for the next session (Kade + Claude).**
 Read §1 and §2 before touching the cluster. §4 is the remaining plan; §5 is what nobody has measured.
 
@@ -106,7 +112,7 @@ Not Claude's, left uncommitted: `polaris/values.yaml`, `postgresql/values.yaml`,
 
 | # | task | who | depends on |
 |---|---|---|---|
-| 2.5 | `WINDOW_SECONDS` 30 → 1800 — now a Lua-only change via `kubectl apply -k` (reload) | C write · K apply | 2.6 verified |
+| 2.5 | `WINDOW_SECONDS` 30 → 1800 — a Lua-only change via `bash fluent-bit/apply-lua.sh` (restart) | C write · K apply | 2.6 verified |
 | 2.7 | delete the 30 s-window `polaris-report-*` indices — **destructive, explicit OK** | K | 2.5 |
 | 2.8 | ISM policies `ism-polaris-logs-30d.json`, `ism-polaris-report-365d.json` + apply script | C | — (can start any time) |
 | 2.9 | apply ISM | K | 2.7, 2.8 |

@@ -180,12 +180,13 @@ passing on LuaJIT and Lua 5.1 against the extracted script.
 
 ---
 
-# v5 — written 2026-09-16, verified off-cluster, NOT deployed
+# v5 — written 2026-09-16, rolled and verified the same day (rev 17, window 08:41Z)
 
 Decision (Kade 2026-09-16): **404 is counted, not stored**, and the allow-listed app lines of a 404
 request are dropped too, matched by `mdc.requestId`. Proposal §3.9 (Korean) has the rationale.
 Script: `fluent-bit/polaris_access_log.lua`, shipped as ConfigMap `polaris-fluent-bit-lua`
-(`fluent-bit/kustomization.yaml`) with chart hot reload — no `--set-file`.
+(`fluent-bit/kustomization.yaml`), read at pod start — no `--set-file`, no hot reload (removed 2026-09-16);
+change it with `bash fluent-bit/apply-lua.sh`.
 
 | change | field(s) | notes |
 |---|---|---|
@@ -204,7 +205,7 @@ Behaviour notes:
 * An app line arriving **after** its access line is decided from a 30 s status memo (`STATUS_MEMO_SECONDS`, max 20000 ids).
 * Held lines leave with the access line in one Lua return, so their `@timestamp` becomes the
   access line's (ms later) — orphans take the next record's. The original time stays in `_time`.
-* Hot reload or pod restart clears all Lua state: window counters (partial next row, `report_seq`
+* A pod restart (every Lua change) clears all Lua state: window counters (partial next row, `report_seq`
   from 1) **and** held lines.
 * Unmeasured for production: whether Polaris assigns `requestId` when the client sends no request-id header.
 
