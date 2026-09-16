@@ -173,6 +173,75 @@ def test_drive_refuses_a_config_that_cannot_drive():
         mt.drive({"polaris_url": "http://x"}, window_seconds=30)
 
 
+# ----------------------------------------------------------------------
+# the lag: every phase starts clear of the report tick's blind spot
+# ----------------------------------------------------------------------
+_GOOD_CFG = {k: "x" for k in mt._REQUIRED_CONFIG}
+
+
+def test_drive_refuses_to_drive_without_a_tick_interval():
+    # Before 2026-09-16 there was no such argument and every wait used lag=0.5:
+    # inside the tick's blind spot, so each phase was booked one row early.
+    with pytest.raises(mt.ContractError, match="tick_interval_s is required"):
+        mt.drive(dict(_GOOD_CFG), window_seconds=30)
+
+
+def test_the_default_lag_clears_the_whole_tick_interval():
+    assert mt.phase_lag_for(30, tick_interval_s=5) == 5 + mt.PHASE_LAG_MARGIN_S
+    assert mt.phase_lag_for(1800, tick_interval_s=30) == 30 + mt.PHASE_LAG_MARGIN_S
+
+
+def test_an_explicit_lag_inside_the_tick_is_refused():
+    with pytest.raises(mt.ContractError, match="does not clear the tick"):
+        mt.phase_lag_for(30, tick_interval_s=5, phase_lag=0.5)
+
+
+def test_a_lag_that_eats_half_the_window_is_refused():
+    with pytest.raises(mt.ContractError, match="less than half"):
+        mt.phase_lag_for(10, tick_interval_s=5)
+
+
+def test_a_wait_with_the_default_lag_starts_after_the_tick():
+    # Tick phase anywhere in [0, 5): the call must land past boundary + 5.
+    now = 1789008899.0
+    lag = mt.phase_lag_for(30, tick_interval_s=5)
+    start = now + mt.seconds_to_boundary(30, lag=lag, now=now)
+    assert 5 < start % 30 < 15
+
+
+def test_no_boundary_wait_in_make_traffic_uses_a_literal_lag():
+    """The lag=0.5 bug was five literals. A literal lag can only come back by hand."""
+    tree = ast.parse((SRC / "make_traffic.py").read_text())
+    literal = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "seconds_to_boundary"
+        and any(
+            kw.arg == "lag" and isinstance(kw.value, ast.Constant)
+            for kw in node.keywords
+        )
+    ]
+    assert (
+        not literal
+    ), f"seconds_to_boundary called with a literal lag at lines {literal}"
+    sleeps = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "attr", None) == "sleep"
+        and any(
+            isinstance(a, ast.Call)
+            and getattr(a.func, "id", None) == "seconds_to_boundary"
+            for a in node.args
+        )
+    ]
+    assert len(sleeps) == 1, (
+        f"boundary sleeps at lines {sleeps}: every phase must wait through "
+        "_wait_for_window, the one place the validated lag is applied"
+    )
+
+
 def test_check_config_refuses_prod_whatever_else_is_right():
     cfg = {k: "x" for k in mt._REQUIRED_CONFIG}
     assert mt.check_config(dict(cfg)) is not None

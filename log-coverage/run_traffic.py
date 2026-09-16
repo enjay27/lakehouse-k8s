@@ -70,6 +70,15 @@ def main(argv=None):
         "to the shipper's WINDOW_SECONDS if a verifier will "
         "read the result. Default 30.",
     )
+    ap.add_argument(
+        "--tick-interval",
+        type=float,
+        default=5.0,
+        help="The shipper's report tick Interval_Sec. THE CALLER OWNS THIS TOO. "
+        "Every phase starts this many seconds + 1.5 past a window boundary, "
+        "clear of the tick's blind spot. Default 5 (the 30/5 fast-run); "
+        "30 when the shipper runs 1800/30.",
+    )
     ap.add_argument("--run", default=None, help="Run id. Default the epoch second.")
     ap.add_argument(
         "--dry-run",
@@ -102,6 +111,7 @@ def main(argv=None):
     traffic = mt.drive(
         config,
         window_seconds=args.window_seconds,
+        tick_interval_s=args.tick_interval,
         profile=args.profile,
         run=args.run,
         dry_run=args.dry_run,

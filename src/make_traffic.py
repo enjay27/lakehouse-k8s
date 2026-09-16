@@ -113,6 +113,60 @@ def seconds_to_boundary(window_seconds, lag=0.0, now=None):
     return (window_seconds - (now % window_seconds)) + lag
 
 
+#: How far past the tick interval a phase starts. A report window is closed by
+#: the shipper's tick, not by the clock, so a call made between a boundary and
+#: the tick that notices it is booked to the window just closed. The tick's
+#: phase is anywhere in [0, tick_interval_s) and drifts, so waiting the whole
+#: interval plus a margin is the only lag that holds for every phase.
+PHASE_LAG_MARGIN_S = 1.5
+
+
+def phase_lag_for(window_seconds, tick_interval_s=None, phase_lag=None):
+    """The lag every boundary wait uses -- validated, never a literal.
+
+    Until 2026-09-16 every wait in this module used `lag=0.5`: inside the tick's
+    blind spot, so each phase was booked to the PREVIOUS report row, every time
+    (local-k8s #26, measured tick at window_end + 3.673 s). The notebooks were
+    fixed on 2026-09-15; this module was not, which is what this function ends.
+
+    Args:
+        window_seconds: the report window, the caller's number.
+        tick_interval_s: the shipper's `Interval_Sec`, the caller's number.
+        phase_lag: an explicit lag; overrides the default of
+            `tick_interval_s + PHASE_LAG_MARGIN_S`.
+
+    Raises:
+        ContractError: neither number given, a lag that does not clear the
+            tick, or one that leaves less than half the window to drive in.
+    """
+    if phase_lag is None:
+        if not isinstance(tick_interval_s, (int, float)) or tick_interval_s <= 0:
+            raise ContractError(
+                "tick_interval_s is required to drive (the shipper's Interval_Sec, "
+                f"got {tick_interval_s!r}). It is an ARGUMENT, like window_seconds: "
+                "a phase that starts inside the tick's blind spot is booked to the "
+                "previous report row."
+            )
+        phase_lag = tick_interval_s + PHASE_LAG_MARGIN_S
+    if tick_interval_s is not None and phase_lag < tick_interval_s:
+        raise ContractError(
+            f"phase_lag {phase_lag}s does not clear the tick interval "
+            f"{tick_interval_s}s -- the first calls of every phase would be booked "
+            "to the previous report row"
+        )
+    if phase_lag >= window_seconds / 2:
+        raise ContractError(
+            f"phase_lag {phase_lag}s leaves less than half of a {window_seconds}s "
+            "window to drive in"
+        )
+    return phase_lag
+
+
+def _wait_for_window(window_seconds, phase_lag):
+    """Sleep until `phase_lag` seconds past the next window boundary."""
+    time.sleep(seconds_to_boundary(window_seconds, lag=phase_lag))
+
+
 def _iso(epoch):
     return (
         datetime.fromtimestamp(int(epoch), tz=timezone.utc).strftime(
@@ -497,6 +551,8 @@ def drive(
     config,
     *,
     window_seconds,
+    tick_interval_s=None,
+    phase_lag=None,
     profile="full",
     run=None,
     on_row=None,
@@ -510,6 +566,12 @@ def drive(
         config: from `config_from_env()`, or any dict carrying the same keys.
         window_seconds: **the caller's number.** This module aligns phases to
             a grid of this size and has no opinion about what the grid is for.
+        tick_interval_s: **the caller's number too** -- the shipper's report
+            tick `Interval_Sec`. Every phase starts `tick_interval_s + 1.5` s
+            past a boundary, clear of the tick's blind spot. Required to drive;
+            ignored by `dry_run`.
+        phase_lag: an explicit lag instead of the default above. Validated by
+            `phase_lag_for` either way.
         profile: one of `PROFILES`.
         run: the run id. Defaults to the epoch second, which is what every
             document in this repo has called a run since v1.
@@ -540,6 +602,8 @@ def drive(
             "It is an ARGUMENT: this module never reads it from a ConfigMap."
         )
     check_config(config)
+    if not dry_run:
+        phase_lag = phase_lag_for(window_seconds, tick_interval_s, phase_lag)
 
     # Imported here, not at module scope, so the guard test can walk
     # `make_traffic`'s own graph and so `import make_traffic` stays cheap.
@@ -695,6 +759,7 @@ def drive(
                 record,
                 phase_window,
                 len(state["calls"]),
+                phase_lag=phase_lag,
             )
         for name in ("C", "D"):
             if name in wanted:
@@ -711,10 +776,20 @@ def drive(
                     record,
                     phase_window,
                     len(state["calls"]),
+                    phase_lag=phase_lag,
                 )
         if "E" in wanted:
             _phase_commit(
-                state, th, mx, run, run_ic, fx, window_seconds, record, phase_window
+                state,
+                th,
+                mx,
+                run,
+                run_ic,
+                fx,
+                window_seconds,
+                record,
+                phase_window,
+                phase_lag=phase_lag,
             )
         if "F" in wanted:
             _phase_delete(
@@ -729,6 +804,7 @@ def drive(
                 window_seconds,
                 record,
                 phase_window,
+                phase_lag=phase_lag,
             )
         if "G" in wanted:
             denied_pc = PolarisREST(base, realm, token=tokens[mx.DENIED])
@@ -744,6 +820,7 @@ def drive(
                 window_seconds,
                 record,
                 phase_window,
+                phase_lag=phase_lag,
             )
         if "H" in wanted:
             _phase_500(
@@ -758,6 +835,7 @@ def drive(
                 window_seconds,
                 record,
                 phase_window,
+                phase_lag=phase_lag,
             )
     except BaseException as exc:  # noqa: BLE001 - a KeyboardInterrupt still cleans up
         state["incomplete"] = (
@@ -996,6 +1074,8 @@ def _grid_phase(
     record,
     phase_window,
     seq_from,
+    *,
+    phase_lag,
 ):
     """One grid phase, alone in its window.
 
@@ -1007,7 +1087,7 @@ def _grid_phase(
     """
     if not cells_:
         return []
-    time.sleep(seconds_to_boundary(window_seconds, lag=0.5))
+    _wait_for_window(window_seconds, phase_lag)
     t0 = time.time()
     rows = mx.drive(cells_, binding, tokens, base, realm, run, seq_from=2000 + seq_from)
     t1 = time.time()
@@ -1041,7 +1121,9 @@ def _row_from(resp, request_id_, op_id, method, target, principal):
     }
 
 
-def _phase_commit(state, th, mx, run, run_ic, fx, window_seconds, record, phase_window):
+def _phase_commit(
+    state, th, mx, run, run_ic, fx, window_seconds, record, phase_window, *, phase_lag
+):
     """ONE commit, alone in its window. The feature; everything else is plumbing.
 
     The claim is what the verifier resolves: `last_write_bytes` on the table
@@ -1049,7 +1131,7 @@ def _phase_commit(state, th, mx, run, run_ic, fx, window_seconds, record, phase_
     here is what the CLIENT received -- the access log is the authority, and
     the two should agree.
     """
-    time.sleep(seconds_to_boundary(window_seconds, lag=0.5))
+    _wait_for_window(window_seconds, phase_lag)
     t0 = time.time()
     rid = mx.request_id(run, 3001, "gate2-the-commit")
     resp = _tagged(
@@ -1085,6 +1167,8 @@ def _phase_delete(
     window_seconds,
     record,
     phase_window,
+    *,
+    phase_lag,
 ):
     """Gate 2's negative half, which is the one people skip.
 
@@ -1099,7 +1183,7 @@ def _phase_delete(
     """
     doomed = f"mx_{run}_droponly"
     run_ic.create_table(fx.cat, fx.ns, table_payload(doomed, schema))
-    time.sleep(seconds_to_boundary(window_seconds, lag=0.5))
+    _wait_for_window(window_seconds, phase_lag)
     t0 = time.time()
     rid = mx.request_id(run, 3002, "gate2-the-delete")
     resp = _tagged(th, [run_ic], rid, lambda: run_ic.drop_table(fx.cat, fx.ns, doomed))
@@ -1130,6 +1214,8 @@ def _phase_grants(
     window_seconds,
     record,
     phase_window,
+    *,
+    phase_lag,
 ):
     """Grants, and a denied read on the same role, in one window.
 
@@ -1139,7 +1225,7 @@ def _phase_grants(
     and it is the half that makes the count falsifiable.
     """
     crole = binding["catalogRoleName"]
-    time.sleep(seconds_to_boundary(window_seconds, lag=0.5))
+    _wait_for_window(window_seconds, phase_lag)
     t0 = time.time()
     rows, granted_ids = [], []
     for i, priv in enumerate(GATE4_GRANTS):
@@ -1187,6 +1273,8 @@ def _phase_500(
     window_seconds,
     record,
     phase_window,
+    *,
+    phase_lag,
 ):
     """The 500 ladder, in its own pure window.
 
@@ -1208,7 +1296,7 @@ def _phase_500(
         table_payload=lambda name: table_payload(name, schema),
         repeat=3,
     )
-    time.sleep(seconds_to_boundary(window_seconds, lag=0.5))
+    _wait_for_window(window_seconds, phase_lag)
     t0 = time.time()
     result = th.drive_500([adm_pc, run_ic], run, 3200, provokers)
     t1 = time.time()
