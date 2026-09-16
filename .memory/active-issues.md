@@ -614,7 +614,13 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   (`8c1fb607ef937f3a`, identical on the v4 pod where the path did not exist) — the image is distroless. Also
   fixed: section 6 had printed "could not parse metrics" on every run ever — backslashes inside f-string
   braces are a SyntaxError before Python 3.12. **Re-run with the fixed step3: `post-upgrade checks passed`. step9:
-  `PASS -- template stored and every field simulates as declared` (41 fields).** **Not yet done:** one skipped window +
+  `PASS -- template stored and every field simulates as declared` (41 fields).**
+  **step7 (Kade): step11 `PASS: 0 field mismatch(es) over 67 rows x 34 fields`** — 34 = v4's 30 + the four v5
+  fields; PASS also requires the row sets and the detail-docs-by-logger counts to be equal, so the running
+  pipeline reproduces the repo v5 Lua exactly on its own raw tier-1 input. **`polaris-logs-*` docs with
+  `http_status: 404` since 08:36 UTC: 0.** Both are evidence for the 404 policy **only if the window held a
+  404** — `counted_404` / `app_dropped_404` on the summary row not yet read, window label not yet recorded.
+  **Not yet done:** one skipped window +
   traffic + step10/11, runbook B/D, `schema_version` 5 on a summary row, no `http_status: 404` access doc.
 - **NOT verified:** any real `helm` render (no helm in Cowork); hot reload itself; **what 5.1.1 does when a
   reloaded script is invalid** (runbook C — may stop tier 1 like #27); reload loss (runbook D); whether
