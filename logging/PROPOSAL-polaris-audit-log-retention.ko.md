@@ -1,42 +1,83 @@
 # Polaris Audit Log 적재
 
-**목적** — Polaris 의 장애 대응 및 감사를 위해, 현재 5일간 보관 중인 로그를 더 긴 기간 보관할 수 있는
-정책을 수립한다.
+**목적** — Polaris 의 장애 대응과 감사를 위해, 현재 5일만 남는 로그를 더 오래 보관할 수 있는 정책을
+수립한다. 모든 로그를 오래 두는 것이 아니라 **클라이언트 행동 추이와 이슈 추적에 필요한 것만** 남긴다.
 
-**결정 사항** — 상세 로그와 요약 로그를 **하나의 신규 인덱스에 함께 적재하고, 보관 기간은 30일**로 한다.
-(현재 대비 6배. 근거와 대안은 §6, §7 참조.)
+**결정 사항**
+
+- 상세 로그와 요약 로그를 **Polaris 전용 인덱스 2개**(`polaris-logs-*` / `polaris-report-*`)로 분리해
+  적재한다. 인덱스를 2개 만들 수 없는 환경이면 **1개로 합친다** (§5.4).
+- 상세 로그는 **오류·변경·인증 실패 전건**과 **허용 목록의 애플리케이션 로그**만 남긴다.
+  성공한 조회와 데이터 플레인 POST 는 **세기만** 한다.
+- 요약은 30분 윈도우 단위로 리소스·principal 별 행을 남긴다.
 
 | 항목 | 값 |
 |---|---|
 | 대상 | Polaris (`benchmarks-polaris`, namespace `datahub-hynix`) |
-| 신규 인덱스 | `polaris-audit-YYYY.MM.DD` (일 단위) |
-| 보관 기간 | **30일** (ISM `hot -> delete`) |
-| 적재 방식 | Fluent Bit DaemonSet + Lua 필터 -> OpenSearch 3.5.0 |
-| 요약 주기 | 30분 (`WINDOW_SECONDS`, 조정 가능) |
-| 문서 상태 | 제안 — 적용 전. 검증 계획은 §9. **2026-09-15: 정책 v4 가 `fluent-bit/values.yaml` 에 작성됨(미롤)** — 애플리케이션 로그 허용 목록, 커밋 시간, 0 행 제거 |
+| 적재 방식 | Fluent Bit DaemonSet + Lua 필터 → OpenSearch 3.5.0 |
+| 인덱스 | `polaris-logs-YYYY.MM.DD` (상세) · `polaris-report-YYYY.MM.DD` (요약) |
+| 보관 기간 | 상세 **30일** · 요약 **365일** (ISM, §5.3) |
+| 요약 주기 | 30분 (`WINDOW_SECONDS` 1800). 검증 중에는 30초 |
+| 필터 정책 | **정책 v4 / 리포트 스키마 v4** — 2026-09-15 적용 |
+| 문서 상태 | 로컬 환경(OrbStack) 적용 · 1차 실측 완료. 남은 단계는 §10 |
+
+### 현재 상태와 목표
+
+| 항목 | 목표 | 현재 (2026-09-16) |
+|---|---|---|
+| 필터 정책 | v4 | **v4 적용됨** (파드 `benchmarks-fluent-bit-rvm49`) |
+| 인덱스 구성 | 2개 (불가 시 1개) | 2개 — `polaris-logs-*` / `polaris-report-*` |
+| 인덱스 템플릿 | 적용 | **작성됨, 미적용** (§5.2) |
+| ISM 보관 정책 | 상세 30일 · 요약 365일 | **미적용** |
+| 요약 윈도우 | 1800초 | 30초 (검증용 임시값) |
+| 404 처리 | 결정 필요 | 전건 적재 (§3.9, 작성 예정) |
+
+### 버전 이력
+
+| 버전 | 날짜 | 변경 |
+|---|---|---|
+| v2 | 2026-09-07 | 요약 스키마 정리 (`counted_read`, 활성 행만 집계) |
+| v3 | 2026-09-09 | `last_read_bytes` / `last_write_bytes`, `api_kind`, grant 를 롤 행으로 접기 |
+| **v4** | **2026-09-15** | 애플리케이션 로그 허용 목록, `app_dropped`, 테이블 커밋 시간 `commit_ms_*`, 요청 0 행 제거, 자격증명 가드 |
 
 ---
 
 ## 1. 현황과 문제
 
-OpenSearch 에서는 다른 모든 서비스의 로그를 `kube-fb` Index 에 적재하고 있으며, 해당 인덱스는 용량이 커
-적재 기간을 더 늘리기는 어렵다. 즉 **보관 기간은 인덱스 단위로 결정되는데, Polaris 만 길게 두고 싶어도
-같은 인덱스에 묶여 있어 불가능한 상태**이다.
+OpenSearch 에서는 모든 서비스의 로그를 하나의 공용 인덱스(운영 `kube-fb`, 로컬 `k8s-logs`)에 적재하고
+있다. 이 인덱스는 용량이 커서 보관 기간을 늘릴 수 없고, **보관 기간은 인덱스 단위로 정해지므로 Polaris
+만 길게 두는 것도 불가능하다.**
 
 | 문제 | 영향 |
 |---|---|
-| 보관 5일 | 5일이 지난 장애는 로그 자체가 남아 있지 않아 원인 추적 불가 |
+| 보관 5일 | 5일이 지난 장애는 로그가 남아 있지 않아 원인 추적 불가 |
 | 전 서비스 공용 인덱스 | Polaris 만 보관 기간을 늘릴 수 없음 |
-| 전량 적재 | 성공한 조회 요청(2xx GET)이 용량의 대부분을 차지, 감사 가치는 낮음 |
+| 전량 적재 | 액세스 로그 **하루 5,000만 건** 대부분이 성공한 GET. 감사 가치는 낮고 용량은 대부분을 차지 |
+| 애플리케이션 로그 | 요청마다 반복되는 초기화·속성 로그가 원인 분석에 필요한 로그와 섞여 있음 |
 
-따라서 Polaris 의 로그를 적재하는 Index 를 새로 생성하고, Polaris 의 모든 로그를 저장하는 것이 아닌
-**장애 발생 시의 로그와, 현재 활동의 요약만을 기록 및 적재**한다.
+### 1.1 운영 트래픽 프로파일
+
+설계와 용량 산정의 기준값이다.
+
+| 항목 | 일일 건수 | 비고 |
+|---|---:|---|
+| 액세스 로그 전체 | **약 50,000,000** | |
+| └ GET | 대부분 | 성공한 조회는 요약에만 남는다 (규칙 6) |
+| └ POST | GET 다음 | catalog POST 는 요약에만, management POST 는 전건 적재 (규칙 5) |
+| └ PUT + DELETE | **약 5,000 ~ 6,000** | 전건 적재 (규칙 4) — 권한·신원 변경의 대부분이 여기에 속한다 |
+| 404 응답 | **약 400,000** | 현재 전건 적재. **장기 보관 부적합** — 처리 방식은 §3.9 |
+
+### 1.2 요구사항
+
+- **클라이언트 행동 추이** — 누가, 어떤 리소스에, 얼마나 읽고 쓰는지를 30분 단위로 본다.
+- **이슈 추적** — 무엇이 실패했는지(액세스 로그)와 왜 실패했는지(예외 로그)를 요청 단위로 짝지어 본다.
+- 이 두 가지에 쓰이지 않는 로그는 저장하지 않는다. 단, **버린 것은 반드시 개수로 남긴다** (§2 핵심 원칙).
 
 ---
 
 ## 2. 설계 요약
 
-> 편집 가능한 원본: [`logging/polaris-logging.drawio`](polaris-logging.drawio) (draw.io)
+> 편집 가능한 원본: [`logging/polaris-logging.drawio`](polaris-logging.drawio) (draw.io) — v4 반영 필요
 
 ```mermaid
 flowchart TB
@@ -50,7 +91,7 @@ flowchart TB
     I3["INPUT dummy · Tag polaris.report<br/>5초 틱 · 로그 데이터 없음"]
     F1["FILTER parser + modify<br/>CRI unwrap · key rename"]
     F2["FILTER lua · polaris_access_log<br/>액세스 라인 필드 추출"]
-    F3["FILTER lua · polaris_noise_filter<br/>Match polaris.*<br/>규칙 1~7 판정 + 윈도우 집계"]
+    F3["FILTER lua · polaris_noise_filter<br/>Match polaris.*<br/>규칙 0~7 판정 + 윈도우 집계"]
     F4["FILTER record_modifier<br/>field trim"]
   end
 
@@ -60,314 +101,383 @@ flowchart TB
   I3 --> F3
 
   F3 -->|"적재 대상"| F4
-  F3 -->|"집계만 · 개별 문서 없음"| DROP(["drop"])
-  F3 -->|"윈도우 종료 시 요약 3종"| RPT["Tag polaris.report"]
+  F3 -->|"집계만 · 문서 없음<br/>(성공 GET, catalog POST,<br/>허용 목록 밖 앱 로그)"| DROP(["drop"])
+  F3 -->|"윈도우 종료 시<br/>summary · resource · principal · app_dropped"| RPT["Tag polaris.report"]
 
   subgraph OS["OpenSearch"]
-    IDX1["k8s-logs<br/>5일 · 현행 유지"]
-    IDX2["polaris-audit-*<br/>30일 · 신규"]
+    IDX1["k8s-logs / kube-fb<br/>5일 · 현행 유지 · 필터 없음"]
+    IDX2["polaris-logs-*<br/>상세 · 30일"]
+    IDX3["polaris-report-*<br/>요약 · 365일"]
   end
 
-  I1 -->|"kube.* 필터 체인 경유"| IDX1
+  I1 -->|"kube.* 필터 체인"| IDX1
   F4 --> IDX2
-  RPT --> IDX2
+  RPT --> IDX3
 ```
 
 읽을 때 놓치기 쉬운 세 가지를 짚어둔다.
 
-**① 같은 파일을 두 개의 INPUT 이 각자 읽는다.** `kube.*` 는 전체 컨테이너를, `polaris.logs` 는 Polaris
-컨테이너만 tail 한다. 오프셋 DB 는 반드시 분리되어야 하며(`flb_kube.db` / `flb_polaris.db`), 공유하면 양쪽
-오프셋이 모두 깨진다. 따라서 이 설계는 기존 파이프라인의 **교체가 아니라 추가**다 — Polaris 로그는
-`k8s-logs` 에도 계속 적재된다. 필터를 거치지 않은 원본이 남아 있어야 "요약이 원본의 부분집합인가"를
-검증할 수 있기 때문이다. 중복 적재를 원치 않으면 `kube.*benchmarks-polaris*` 전용 OUTPUT 을 제거해야
-하며, 그 순간 위 검증 수단도 함께 사라진다. **별도 결정 사항이다.**
+**① 같은 파일을 두 INPUT 이 각자 읽는다.** `kube.*` 는 전체 컨테이너를, `polaris.logs` 는 Polaris 컨테이너만
+tail 한다. 오프셋 DB 는 반드시 분리한다(`flb_kube.db` / `flb_polaris.db`). 공유하면 양쪽 오프셋이 모두 깨진다.
+이 설계는 기존 파이프라인의 **교체가 아니라 추가**다 — Polaris 로그는 공용 인덱스에도 필터 없이 계속
+들어간다. 요약이 원본과 맞는지 검증할 수단이 그것뿐이기 때문이다. 중복 적재 제거는 **별도 결정 사항**이다.
 
-**② 요약은 로그 스트림에서 나오지 않는다.** 요약 문서를 만드는 것은 로그가 아니라 **5초마다 도는 빈 틱
-(`dummy` INPUT, Tag `polaris.report`)** 이다. 필터가 `polaris.*` 를 매치하므로 이 틱도 같은 Lua 를 통과하고,
-윈도우가 바뀌는 순간의 틱만 요약 문서로 치환되며 그 외의 틱은 버려진다. 즉 **요약 문서의 시각은 로그가
-아니라 틱이 결정한다** — 2026-09-14 에 확인된 3.673초 윈도우 밀림(§9-2)이 정확히 여기서 나온다. 틱이
-빠진 구조도로는 그 현상을 설명할 수 없다.
+**② 요약은 로그 스트림에서 나오지 않는다.** 요약 문서를 만드는 것은 **5초마다 도는 빈 틱** (`dummy` INPUT)
+이다. 틱이 윈도우 경계를 넘었을 때만 요약으로 치환되고 나머지는 버려진다. 따라서 **요약 문서의 시각은
+로그가 아니라 틱이 결정**하며, 경계와 틱 사이(0 ~ 5초)에 들어온 요청은 직전 윈도우에 집계된다 (§4.6-7).
 
-**③ Lua 는 한 파일, 두 단계다.** `polaris_access_log.lua` 하나에 함수가 둘 있고 FILTER 도 둘로 걸린다 —
-`polaris_access_log`(액세스 라인 → 필드 추출)와 `polaris_noise_filter`(적재 판정 + 집계 + 요약 생성).
-전자는 `polaris.logs` 만, 후자는 `polaris.*` 를 매치한다.
+**③ Lua 는 한 파일, 두 단계다.** `fluent-bit/polaris_access_log.lua` 에 함수 두 개가 있고 FILTER 도 둘이다 —
+`polaris_access_log`(액세스 라인 → 필드)와 `polaris_noise_filter`(판정 + 집계 + 요약). 두 번째 필터가
+`polaris.*` 를 매치해야 틱이 같은 필터 인스턴스(= 같은 카운터)를 지난다.
 
-핵심은 **버리는 것이 아니라 세는 것**이다. 적재하지 않기로 판정된 요청도 요약 문서의 카운터에는 반드시
-반영되므로, "기록이 없다 = 요청이 없었다" 가 아니라 "기록이 없다 = 요약에서 집계되었다" 가 된다.
-총량은 언제나 보존된다.
+> **핵심 원칙 — 버리는 것이 아니라 세는 것.** 적재하지 않은 액세스 라인은 리소스·principal 행의 카운터에,
+> 적재하지 않은 애플리케이션 로그는 `app_dropped` 행에 반드시 반영된다. "기록이 없다" 는 "요청이 없었다" 가
+> 아니라 "요약에서 집계되었다" 는 뜻이다.
+
+---
 
 ## 3. 적재 로그
 
-### 3.1 [Info] Access Log (HTTP Status 4xx / 5xx)
+### 3.1 [INFO] Access Log — 오류·변경 요청
 
-Info 레벨이지만 클라이언트의 리소스 접근에 대한 시점 및 장애 원인을 파악할 수 있다. 2xx 성공 케이스에
-대한 로그는 요약 로그만 적재한다.
+클라이언트가 어떤 리소스에 언제 접근했고 실패했는지를 보여준다. 2xx 조회와 catalog POST 는 요약에만 남는다.
 
 ```
 192.168.194.1 - root [14/Sep/2026:07:29:31 +0000] "PUT /api/management/v1/catalogs/nb1789370776stale HTTP/1.1" 409 132
-```
-
-```
-192.168.194.1 - root [14/Sep/2026:07:29:31 +0000] "DELETE /api/management/v1/principals/mx_1789370776_p_doomed HTTP/1.1" 404 133
-```
-
-404 의 경우에는 모니터링 중 발생 횟수가 많은 경우에는 요약 로그로 변환한다.
-
-```
 192.168.194.1 - mx_1789370776_runner [14/Sep/2026:07:27:30 +0000] "POST /api/catalog/v1/apimatrix1789370776_cat/views/rename HTTP/1.1" 500 168
 ```
 
-액세스 라인은 적재 시 다음 필드로 파싱되어 저장되므로, 원문 문자열 검색 없이 조건 검색이 가능하다.
+액세스 라인은 적재 시 다음 필드로 파싱되어, 원문 검색 없이 조건 검색이 가능하다.
 
 | 필드 | 예시 | 용도 |
 |---|---|---|
 | `client_ip` | `192.168.194.1` | 호출 출처 |
 | `user_principal_name` | `root`, `-` | 호출 주체. **`-` 는 미인증 또는 인증 실패**이며 결측이 아니다 |
 | `http_method` | `PUT` | 읽기/쓰기 구분 |
-| `api_path` | `/api/management/v1/catalogs/...` | 원본 경로(쿼리스트링 포함) |
+| `api_path` | `/api/management/v1/catalogs/...` | 원본 경로 (쿼리스트링 포함) |
 | `http_status` | `409` | 숫자형. 범위 검색 가능 |
-| `response_size` | `132` | 숫자형. CLF 의 `-` 는 0 으로 저장 |
-| `access_log_parse_error` | `true` | 파싱 실패 시에만 존재. **패턴 변경 감지용** |
+| `response_size` | `132` | 숫자형. CLF 의 `-` 는 0 |
+| `mdc.requestId` | `bbe6f50a-…_…043` | **요청 ID. 같은 요청의 예외·권한 로그와 조인하는 키** (§3.2, §3.3) |
+| `access_log_parse_error` | `true` | 파싱 실패 시에만 존재. **로그 패턴 변경 감지용** |
 
-### 3.2 [Info] Runtime Exception Handling
+### 3.2 [INFO] Runtime Exception — "왜 실패했나"
 
 ```
 Handling runtimeException TopLevelEntity of type PRINCIPAL_ROLE does not exist: mx_1789370776_prole_doomed
 ```
 
-Polaris Iceberg Request 의 에러에 대한 원인을 파악할 수 있는 로그이다. 액세스 로그가 *무엇이 실패했는지*
-를 알려준다면 이 로그는 *왜 실패했는지* 를 알려주므로, 4xx/5xx 액세스 라인과 **같은 초 단위 시각으로
-짝을 이루어** 조회한다.
+logger `org.apache.polaris.service.exception.IcebergExceptionMapper`. 액세스 로그가 *무엇이* 실패했는지를
+보여준다면, 이 로그는 *왜* 실패했는지를 보여준다. **`mdc.requestId` 로 액세스 문서와 조인**한다
+(2026-09-15 측정: 적재된 예외 로그 180건 전부 조인됨). 5xx 의 경우 같은 logger 의 ERROR 레벨 문서에
+`exception.exceptionType` / `exception.message` 가 붙는다.
 
-### 3.3 [Info] Role / Privilege 생성 / 부여
+### 3.3 [INFO] 권한·신원 변경 — "누가 무엇을 바꿨나"
 
 ```
 Adding grant class AddGrantRequest {
     grant: class CatalogGrant {
-        class GrantResource {
-            type: catalog
-        }
+        class GrantResource { type: catalog }
         privilege: TABLE_READ_DATA
     }
 } to catalogRole mx_1789370776_crole in catalog apimatrix1789370776_cat
 ```
 
-리소스에 대한 권한 부여 여부를 추적할 수 있다. 이 로그는 **여러 줄에 걸쳐 출력**되므로 수집 단계에서
-multiline 병합이 적용되어야 하며, 병합이 깨지면 한 건의 권한 부여가 여러 문서로 쪼개진다(§10 참조).
+logger `org.apache.polaris.service.admin.PolarisServiceImpl`. 관측된 메시지: `Adding grant`, `Revoking grant`,
+`Created new catalog / principal / principalRole / catalogRole`, `Assigning / Revoking … Role`.
+
+- 메시지에는 **부여 대상은 있지만 호출자는 없다.** 호출자는 `mdc.requestId` 로 조인한 액세스 문서의
+  `user_principal_name` 에서 얻는다 (측정: 75건 전부 조인됨).
+- **삭제·수정은 이 logger 가 남기지 않는다** (DELETE 25건에 대응 로그 0건). 삭제 감사는 액세스 로그
+  (규칙 4) 가 담당하므로, 규칙 4 는 이 정책에서 빼면 안 된다.
+- 여러 줄에 걸친 로그이므로 수집 단계 multiline 병합이 깨지면 한 건이 여러 문서로 쪼개진다 (§11).
 
 ### 3.4 WARN / ERROR
 
-WARN / ERROR 레벨은 기본적으로 전부 적재한다. `[WARN] deprecated config` 만 제외한다.
+WARN / ERROR 는 **logger 와 무관하게 전부 적재**한다. 허용 목록 방식의 약점은 "모르는 logger" 이고, 모르는
+logger 의 경고야말로 이슈 추적이 놓치면 안 되는 것이다. WARN/ERROR 는 용량 문제가 아니다.
 
-> **참고** — 현재 `polaris/values.yaml` 에서 `io.quarkus.config: "OFF"` 로 설정되어 있어 해당 경고는
-> 애초에 출력되지 않는다. 2026-09-04 커버리지 측정(122건 호출)에서도 해당 로그는 0건이었다. 즉 제외
-> 규칙은 **방어적 조항**이며, 설정이 되돌려질 경우를 대비해 명시적으로 남긴다.
+> `[WARN] deprecated config` 는 `polaris/values.yaml` 의 `io.quarkus.config: "OFF"` 로 애초에 출력되지
+> 않는다 (2026-09-04 측정 0건). 따로 제외 규칙을 두지 않는다.
 
-### 3.5 적재 판정 규칙 (전체)
+### 3.5 적재 판정 규칙 (정책 v4)
 
-위 예시들이 실제로 어떤 순서로 판정되는지에 대한 확정 규칙이다. **먼저 일치하는 규칙이 이긴다.**
+**위에서부터 평가하며, 먼저 일치한 규칙이 이긴다.**
 
 | 순서 | 조건 | 처리 |
 |---|---|---|
+| 0 | 리포트 틱 (Tag `polaris.report`) | 윈도우가 넘어가면 요약으로 치환, 아니면 버림 |
+| * | 모든 레코드 | 마스킹되지 않은 `clientSecret` 을 `<redacted>` 로 치환 (§3.8) |
 | 1 | level 이 `ERROR` 또는 `WARN` | **적재** |
-| 2 | 액세스 로그가 아닌 레코드 | **v4: 허용 목록만 적재** — `IcebergExceptionMapper`, `PolarisServiceImpl`. 그 외는 logger 별로 세고 버림(`app_dropped`). `Successfully committed to table\|view` 는 버리기 전에 해당 행의 `commit_ms_*` 로 집계 |
-| — | *여기서 모든 액세스 라인이 요약에 집계된다 — 판정보다 먼저* | |
+| 2a | `Successfully committed to table\|view … in N ms` | 해당 table/view 행에 **커밋 시간 집계** 후 2b/2c 로 계속 |
+| 2b | 액세스 로그가 아닌 레코드 & logger 가 **허용 목록**에 있음 | **적재** |
+| 2c | 액세스 로그가 아닌 그 외 레코드 | logger 별로 **세고 버림** (`app_dropped`) |
+| — | *모든 액세스 라인은 여기서 리소스·principal 행에 먼저 집계된다* | |
 | 3 | `http_status >= 400` 또는 파싱 실패 | **적재 — 전건, 상한 없음** |
 | 4 | `PUT` / `DELETE` / `PATCH` | **적재 — 전건** |
-| 5 | `/api/management/` 하위의 `POST` | **적재 — 전건** |
-| 5' | 그 외 경로의 `POST` | 집계만 |
+| 5 | `/api/management/` 하위 `POST` | **적재 — 전건** |
+| 5' | 그 외 경로 `POST` | 집계만 |
 | 6 | `GET` / `HEAD` 이고 2xx | 집계만 |
 | 7 | 그 외 | 적재 |
 
-이 규칙이 보장하는 것은 두 가지다.
+보장하는 것:
 
-- **인증/인가 실패 100% 보존** — 모든 401·403 은 규칙 3에 의해 전문(全文) 문서로 남는다.
-- **신원·권한 변경 100% 보존** — management POST, 모든 PUT, 모든 DELETE.
+- **인증·인가 실패 100% 보존** — 모든 401·403 은 규칙 3 으로 전문 문서가 남는다.
+- **신원·권한 변경 100% 보존** — management POST, 모든 PUT·DELETE (규칙 4·5) + 변경 내용 (§3.3).
+- **총량 보존** — 버린 것은 전부 카운터에 있다.
 
-규칙 5의 management/catalog 분리는 임의 구분이 아니다. Polaris 에서 **POST 는 생성 동사**이며
-`create_principal`, `create_principal_role`, `create_catalog_role`, `reset_principal_credentials`
-가 모두 POST 이다. POST 를 일괄 집계 처리하면 **principal 이 생성될 때는 보이지 않고 삭제될 때만 보이는**
-감사 비대칭이 생긴다. 반대로 catalog POST(`create_table`, `commit_table`, rename, `report_metrics`,
-`oauth/tokens`)는 데이터 플레인 트래픽이므로 집계 대상이다.
+규칙 5 의 management / catalog 분리 이유: Polaris 에서 **POST 는 생성 동사**다 (`create_principal`,
+`create_principal_role`, `create_catalog_role`, `reset_principal_credentials`). POST 를 통째로 집계만 하면
+principal 이 **생성될 때는 안 보이고 삭제될 때만 보이는** 감사 비대칭이 생긴다. 반대로 catalog POST
+(`create_table`, `commit_table`, rename, `report_metrics`, `oauth/tokens`)는 데이터 플레인 반복 트래픽이다.
 
-### 3.6 미적재(제외) 대상
+### 3.6 애플리케이션 로그 허용 목록
 
-문서가 남지 않는 대상을 명시한다. 모두 **요약 카운터에는 반영**된다.
+| logger | 판정 | 측정 건수* | 내용 |
+|---|---|---:|---|
+| `…service.exception.IcebergExceptionMapper` | **적재** | 180 | 4xx/5xx 의 이유 (§3.2) |
+| `…service.admin.PolarisServiceImpl` | **적재** | 75 | grant·create·assign (§3.3) |
+| `…catalog.iceberg.IcebergCatalogHandler` | 버림 | 61 | `Initializing non-federated catalog` — 거의 매 요청 |
+| `org.apache.iceberg.BaseMetastoreCatalog` | 버림 | 37 | `Table properties set/enforced …: {}` |
+| `org.apache.iceberg.CatalogUtil` | 버림 | 30 | `Loading custom FileIO implementation` |
+| `…catalog.iceberg.IcebergCatalog` | 버림 (커밋 시간은 수확) | 24 | `Refreshing table …`, `Successfully committed …` |
+| `org.apache.iceberg.view.BaseMetastoreViewCatalog` | 버림 | 6 | `View properties set/enforced …: {}` |
+| `…config.PolarisIcebergObjectMapperCustomizer` | 버림 | 3 | `Limiting request body size` (기동 시) |
+| DEBUG 레벨 전체 (SQL 등) | 버림 | — | 허용 목록 밖 |
+
+\* 2026-09-15 API 매트릭스 테스트 1회 (액세스 343건). 운영 트래픽 비율이 아니다.
+
+**logger 단위로 허용하는 이유** — 메시지 접두어 목록으로 허용하면, Polaris 업그레이드로 새 메시지
+(`Updating …` 등)가 생겼을 때 조용히 버려진다. 허용한 두 logger 는 본질적으로 요청당 0~1줄이라 logger
+단위로 전부 받아도 양이 적다.
+
+**허용 목록 변경 절차** — §9.4.
+
+### 3.7 미적재 대상과 대체 수단
+
+문서는 남지 않지만 **모두 요약에 반영**된다.
 
 | 대상 | 이유 | 대체 수단 |
 |---|---|---|
-| 2xx `GET`/`HEAD` | 정상 조회. 감사 가치 대비 압도적 다수 | `reads`, `last_read_bytes` |
-| 2xx catalog `POST` (`create_table`, `commit_table`, `report_metrics`, `oauth/tokens`) | 데이터 플레인 반복 트래픽 | `writes`, `counted_post`, `last_write_bytes` |
-| `[WARN] deprecated config` | 설정 경고, 운영 의미 없음 | — |
-| DEBUG 레벨 SQL 로그 | 용량의 실질적 다수 | **v4: 허용 목록 밖이라 버려짐** (`app_dropped` 로 집계) |
-| `IcebergCatalogHandler`, `BaseMetastoreCatalog`, `CatalogUtil`, `IcebergCatalog`, `BaseMetastoreViewCatalog`, `PolarisIcebergObjectMapperCustomizer` INFO | 요청마다 반복되는 초기화·속성·FileIO 로그. 2026-09-15 측정 161/759건 | `app_dropped` 행 (logger 별 개수), 커밋 시간은 `commit_ms_*` |
+| 2xx `GET` / `HEAD` | 하루 수천만 건의 정상 조회 | `reads`, `last_read_bytes` |
+| 2xx catalog `POST` (`create_table`, `commit_table`, `report_metrics`, `oauth/tokens` 등) | 데이터 플레인 반복 트래픽 | `writes`, `counted_post`, `last_write_bytes`, `commit_ms_*` |
+| 허용 목록 밖 애플리케이션 로그 | 추이·이슈 추적에 쓰이지 않음 | `app_dropped` 행 (logger 별 개수) |
+
+### 3.8 자격증명 가드
+
+`Created new principal` 로그는 `PrincipalWithCredentials` 를 통째로 출력하며 `clientSecret` 을 포함한다.
+현재 Polaris 는 이 값을 `*` 로 마스킹한다 (2026-09-15 측정 4건 모두 `*`). **그 마스킹이 회귀하면 평문
+시크릿이 30일 인덱스에 들어가므로** Lua 에서 한 번 더 막는다 — `*` 가 아닌 값은 `<redacted>` 로 바꾸고
+`secret_redacted: true` 를 붙인다. `secret_redacted:true` 문서가 하나라도 생기면 Polaris 측 회귀다.
+
+### 3.9 404 응답 처리 — *작성 예정*
+
+> **이 절은 추후 작성한다.** 아래는 결정에 필요한 현재 사실만 정리한 것이다.
+
+| 사실 | 값 |
+|---|---|
+| 일일 404 건수 (운영) | **약 400,000** |
+| 현재 처리 | 규칙 3 에 의해 **전건 적재** (액세스 문서 + 대부분 예외 로그 1건씩) |
+| 상세 인덱스 용량 중 비중 | **약 98%** — 알려진 항목 기준 (§6.2) |
+| 요약 반영 | `errors`, `errors_4xx` 카운터 (리소스·principal 행) — 404 를 상세에서 빼도 **개수는 남는다** |
+| 요약에서의 귀속 | 존재하지 않는 리소스의 404 는 새 행을 만들지 못하고 `__errors__` 행으로 모인다 (§4.6-4). 상세 문서를 빼면 **어떤 경로였는지** 는 사라지고 `__errors__` 개수와 principal 행만 남는다 |
 
 ---
 
 ## 4. 로그 요약
 
-요약은 30분(조정 가능) 단위로 전송하며, 해당 기간 동안 발생한 로그를 취합하여 전송한다. 같은 요청이
-중복으로 들어오더라도 해당 요청이 전부 로그로 남는 것이 아니라, 요약 로그 한 줄만 남기기 때문에 로그
-적재 시 차지하는 용량을 줄일 수 있다.
+요약은 윈도우(운영 30분) 단위로, 그 기간의 요청을 리소스·principal 별로 합쳐 전송한다. 같은 요청이 1,000번
+와도 문서는 한 줄이다.
 
-> 예) 30분 간 A 테이블에 대한 요청 1000건, 500 reads, 500 writes, 10 errors
+네 종류(`report_type`)가 **같은 윈도우 식별자(`window_start`)** 를 공유하므로 `window_start` 로 묶으면 한
+윈도우 전체가 한 화면이 된다. 모든 쿼리는 **`schema_version` 으로 필터**한다 (버전이 한 인덱스에 공존).
 
-요약 문서는 세 가지 종류(`report_type`)가 **같은 윈도우 식별자(`window_start`)를 공유**하므로,
-`window_start` 로 묶으면 한 윈도우 전체가 하나의 화면이 된다.
-
-### 4.1 전체 요청 요약 (`report_type: summary`)
+### 4.1 전체 요약 (`report_type: summary`)
 
 ```
-polaris shipper report seq=191@benchmarks-fluent-bit-d94qc 2026-09-14T07:29:00Z..2026-09-14T07:29:30Z: 53 access lines, 46 kept, 7 counted (4 read, 3 POST), 25 errors kept (25 4xx, 0 5xx, 0 denied), 27 resources, 2 principals, 1 carried, 7847 bytes, 0 windows skipped
+polaris shipper report seq=4@benchmarks-fluent-bit-rvm49 2026-09-15T09:19:30Z..2026-09-15T09:20:00Z: 76 access lines, 39 kept, 37 counted (30 read, 7 POST), 0 errors kept (0 4xx, 0 5xx, 0 denied), 15 resources, 3 principals, 21 app lines dropped, 202348 bytes, 0 windows skipped
 ```
 
-측정된 기간(30분) 동안 발생한 요청 및 에러의 총 합이다. 윈도우당 정확히 1건.
+윈도우당 정확히 1건. **대시보드에서는 제외하고**(`NOT report_type:summary`) **완결성 검증에만** 쓴다 —
+"리소스 행 합계 = principal 행 합계 = 본 액세스 라인 수" 불변식과 상한 초과·틱 누락 카운터가 여기에만 있다.
 
-### 4.2 Resource Request (`report_type: resource`)
-
-```
-seq=187 resource /api/catalog/v1/apimatrix1789370776_cat/transactions/commit (catalog/transaction): 2 requests, 0 reads, 2 writes, 1 errors (1 4xx, 0 5xx, 0 denied), 110 bytes
-```
-
-API Path 를 Key 로, 해당 리소스에 대한 요청이 몇 건, 그리고 요청 중 에러가 몇 건 발생했는지를 요약하여
-전송한다. 테이블 이외에도 모든 리소스(카탈로그, 네임스페이스, 롤 등)에 대한 성공/실패 요청을 요약한다.
-
-키는 **URL 이 아니라 리소스**이다. `/namespaces/ns/tables/t/metrics` 와 `/namespaces/ns/tables/t` 는
-같은 테이블이므로 한 행으로 합쳐진다. `resource_kind` 로 분류되며 값은
-`table` / `view` / `collection` / `namespace` / `auth` / `config` / `transaction` / `error` / `other`
-이고, API 면(面)은 별도 필드 `api_kind`(`catalog` / `management` / `mixed`)로 분리된다.
-
-**권한 부여는 롤 행에 접힌다.** `/catalogs/{cat}/catalog-roles/{cr}/grants` 는
-`/catalogs/{cat}/catalog-roles/{cr}` 로 키가 잡히므로, **그 행의 `writes` 가 곧 해당 윈도우에서 부여된
-권한 수**이다. §3.3 의 grant 로그와 교차 검증할 수 있다.
-
-### 4.3 Principal Request (`report_type: principal`)
+### 4.2 리소스 요약 (`report_type: resource`)
 
 ```
-seq=185 principal mx_1789370776_runner: 27 requests, 13 reads, 14 writes, 4 errors (4 4xx, 0 5xx, 0 denied), 188475 bytes
+seq=4 resource /api/management/v1/catalogs/apimatrix1789463971_cat/catalog-roles/apimatrix1789463971_shared (management/catalog-role): 50 requests, 25 reads, 25 writes, 0 errors (0 4xx, 0 5xx, 0 denied), 16205 bytes, last read 1254, last write -
+seq=4 resource /api/catalog/v1/apimatrix1789463971_cat/namespaces/probe_ns/tables/probe_tbl (catalog/table): 0 requests, 0 reads, 0 writes, 0 errors (0 4xx, 0 5xx, 0 denied), 0 bytes, commits 1 (min/avg/max 57/57/57 ms)
 ```
 
-해당 클라이언트의 요청에 대한 요약 로그이다. 각 클라이언트별 요청이 비정상적으로 높은 경우와 해당
-클라이언트의 트래픽 추이를 추적한다.
+- **키는 URL 이 아니라 리소스다.** `/tables/t/metrics` 와 `/tables/t` 는 같은 테이블 행이다.
+  `resource_kind`: `table` / `view` / `namespace` / `collection` / `catalog` / `catalog-role` /
+  `principal-role` / `principal` / `auth` / `config` / `transaction` / `error` / `other`.
+  API 면은 `api_kind`: `catalog` / `management` / `mixed`.
+- **권한 부여는 롤 행으로 접힌다.** `/catalog-roles/{cr}/grants` 는 `{cr}` 행에 집계되므로 그 행의
+  `writes` 가 곧 부여 건수다 (측정: `_shared` 롤 25 writes = `Adding grant` 25건).
+- **커밋 시간 (v4).** table/view 행에 `commit_count`, `commit_ms_sum`, `commit_ms_min`, `commit_ms_max`.
+  출처는 `IcebergCatalog` 의 `Successfully committed to table|view <id> in N ms` 이며, 메시지의 식별자
+  (`catalog.ns.table`)를 URL 키로 바꿔 붙인다 (다단계 네임스페이스는 `%1F` 로 연결).
+  - **요청 지연이 아니라 Iceberg 커밋 시간이다** (메타데이터 파일 쓰기 + 메타스토어 갱신). 인증·파싱·응답은
+    포함되지 않는다.
+  - **성공한 커밋만** 집계된다. 실패한 커밋은 로그가 없다.
+  - **요청 0 + 커밋 N 행**이 정상적으로 생긴다: 테이블·뷰 **생성**(요청은 `…/tables` 컬렉션 행, 커밋은
+    새 테이블 행)과 **트랜잭션 커밋**(요청은 `/transactions/commit` 행, 커밋은 각 테이블 행).
 
-### 4.4 요약 스키마 필드 정의
+### 4.3 Principal 요약 (`report_type: principal`)
 
-공통 봉투(envelope) — 세 종류 모두에 존재한다.
+```
+seq=4 principal root: 73 requests, 28 reads, 45 writes, 0 errors (0 4xx, 0 5xx, 0 denied), 22215 bytes
+```
+
+클라이언트별 요청 추이. 비정상적인 요청 급증과 인증 거부(`auth_denied`) 급증을 여기서 본다.
+
+### 4.4 버린 애플리케이션 로그 (`report_type: app_dropped`, v4)
+
+```
+seq=4 app_dropped org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandler: 7 lines
+```
+
+허용 목록 밖이라 버린 로그를 logger 별로 센 행이다 (개수 > 0 인 logger 만). 추이가 아니라 **허용 목록의
+헬스 신호**다 — 처음 보는 `org.apache.polaris.service.*` logger 가 나타나면 Polaris 가 새 로그를 내기
+시작했다는 뜻이고, 허용 목록 검토 대상이다 (§7.5).
+
+### 4.5 스키마 필드 정의 (v4)
+
+**공통 봉투** — 네 종류 모두.
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `app` | string | `polaris-shipper-report` |
-| `level` | string | 항상 `REPORT`. **심각도가 아니라 스트림 선택자** |
-| `schema_version` | int | 배포 3, 작성 4. **항상 필터에 포함할 것** — 버전이 공존한다 |
-| `report_type` | string | `summary` / `resource` / `principal` / `app_dropped`(v4) |
-| `report_seq` | int | **파드 단위 일련번호.** 파드 교체 시 리셋되므로 `hostname` 과 반드시 함께 사용 |
-| `hostname` | string | Fluent Bit 파드명 (Polaris 파드가 아님) |
-| `window_start` / `window_end` | date | RFC3339. 윈도우 그리드에 정렬 |
-| `window_seconds` | int | 30(검증 구간) / 1800(정상 운영) |
+| `level` | string | 항상 `REPORT`. 심각도가 아니라 스트림 선택자 |
+| `schema_version` | int | **4**. 항상 필터에 포함 |
+| `report_type` | string | `summary` / `resource` / `principal` / `app_dropped` |
+| `report_seq` | int | **파드 단위** 일련번호. 파드 교체 시 리셋 → `hostname` 과 함께 사용 |
+| `hostname` | string | Fluent Bit 파드명 (Polaris 파드 아님) |
+| `window_start` / `window_end` | date | RFC3339, 윈도우 그리드에 정렬 |
+| `window_seconds` | int | 1800 (운영) / 30 (검증) |
 
-`summary` 주요 필드.
+**`summary`**
 
 | 필드 | 의미 |
 |---|---|
-| `access_seen` | 필터가 **본** 액세스 라인 수 (판정 이전) |
-| `access_kept` | 개별 문서로 적재된 수 |
-| `access_counted` | 집계만 되고 적재되지 않은 수 |
-| `counted_read` / `counted_post` | 집계분의 규칙 6 / 규칙 5 분해 |
-| `errors_kept`, `errors_4xx`, `errors_5xx`, `auth_denied` | 오류 계열 카운터 |
+| `access_seen` | 필터가 본 액세스 라인 수 (판정 이전) |
+| `access_kept` / `access_counted` | 적재된 수 / 집계만 된 수 |
+| `counted_read` / `counted_post` | 집계분의 규칙 6 / 규칙 5' 분해 |
+| `errors_kept`, `errors_4xx`, `errors_5xx`, `auth_denied` | 오류 계열 |
 | `parse_errors` | 액세스 로그로 인식됐으나 파싱 실패 |
-| `distinct_resources` / `distinct_principals` | **활성(요청>0)** 행 수만 |
-| `carried_rows` | 이번 윈도우에 요청이 0이 된 행 수. **v4 에서 삭제** — zero-carry 제거로 요청 0 행을 내지 않는다 |
-| `app_dropped_total` | **v4.** 허용 목록 밖이라 버린 애플리케이션 로그 수 |
-| `resources_other` / `resources_other_distinct` / `principals_other` | 상한(500 / 200) 초과분 |
-| `role_keys_forced` | 오류 요청이 강제 생성한 롤 행 수. 100이면 상한 도달 |
+| `distinct_resources` / `distinct_principals` | 요청 > 0 인 행 수 (커밋만 있는 행 제외) |
+| `app_dropped_total` | **v4.** 버린 애플리케이션 로그 수 |
+| `resources_other` / `resources_other_distinct` / `principals_other` | 행 상한(리소스 500 / principal 200) 초과분 |
+| `role_keys_forced` | 오류 요청이 강제로 만든 롤 행 수 (100 = 상한 도달) |
 | `windows_skipped` | 틱 누락으로 열리지 못한 윈도우 수 |
-| `min_record_time` / `max_record_time` | 해당 윈도우 레코드의 최소/최대 시각 |
+| `min_record_time` / `max_record_time` | 윈도우 레코드의 최소/최대 시각. 트래픽 없으면 **필드 없음** |
+| ~~`carried_rows`~~ | **v4 에서 삭제** |
 
-`resource` / `principal` 행 필드.
+**`resource` / `principal`**
 
 | 필드 | 의미 |
 |---|---|
-| `resource` (또는 `user_principal_name`) | 집계 키 |
-| `resource_kind`, `api_kind` | 분류 (principal 행에는 `resource_kind` 없음) |
-| `requests`, `reads`, `writes`, `errors` | reads=GET·HEAD, writes=POST·PUT·DELETE·PATCH, errors=status≥400 |
+| `resource` / `user_principal_name` | 집계 키 |
+| `resource_kind`, `api_kind` | 분류 (principal 행에는 없음) |
+| `requests`, `reads`, `writes`, `errors` | reads = GET·HEAD, writes = POST·PUT·DELETE·PATCH, errors = status ≥ 400 |
 | `errors_4xx`, `errors_5xx`, `auth_denied` | 오류 분해 |
-| `response_bytes` | 윈도우 **합계** |
-| `last_read_bytes` / `last_write_bytes` | 윈도우 내 마지막 2xx 이고 크기>0 인 읽기/쓰기의 바이트. **없으면 필드 자체가 없음 — 0이 아님** |
+| `response_bytes` | 윈도우 합계 |
+| `last_read_bytes` / `last_write_bytes` | 윈도우 내 마지막 2xx·크기 > 0 인 읽기/쓰기 크기. **없으면 필드 없음** |
+| `commit_count`, `commit_ms_sum`, `commit_ms_min`, `commit_ms_max` | **v4.** table/view 행만. 커밋 없으면 필드 없음 |
 
-### 4.5 요약 해석 시 주의 (대시보드 작성 전 필독)
+**`app_dropped`** — `logger_name` (string), `dropped` (int).
 
-1. **카운터는 의도적으로 겹친다.** `errors` 는 `reads`/`writes` 와 겹치고, `errors_4xx + errors_5xx` 는
-   `errors` 와 겹치며, `auth_denied`(401·403)는 `errors_4xx` 의 **부분집합**이다. 이 컬럼들을 더하는
-   대시보드는 틀린다. — 2026-09-14 실측으로 확인: 한 윈도우에서 `auth_denied` 101 = 401 59건 + 403 42건,
-   `errors_4xx` 177 에 포함.
-2. **부재는 0이 아니다.** `last_write_bytes` 가 없다는 것은 "쓰기 0바이트"가 아니라 "해당 윈도우에 크기
-   있는 성공 쓰기가 없었다"이다.
-3. **`-` 는 실재하는 주체다.** `user_principal_name: "-"` 는 미인증/인증실패 트래픽이며 결측이 아니다.
-4. **`__errors__` 와 `__other__` 는 서로 다르다.** `__errors__` 는 같은 윈도우에 성공 요청이 없었던
-   리소스의 오류가 모이는 곳(귀속 정보 소실), `__other__` 는 상한 초과분이다. 단 **그 오류의 원본 문서는
-   규칙 3에 의해 전건 보존**되므로 상세에서 복구할 수 있다.
-5. **`report_seq` 는 파드 단위**이므로 `hostname` 없이 연속성을 판단하면 안 된다.
+### 4.6 해석 시 주의 (대시보드 작성 전 필독)
+
+1. **카운터는 의도적으로 겹친다.** `errors` 는 `reads`/`writes` 와, `errors_4xx + errors_5xx` 는 `errors` 와
+   겹치고, `auth_denied`(401·403)는 `errors_4xx` 의 부분집합이다. **이 컬럼들을 더하면 틀린다.**
+2. **부재는 0 이 아니다.** `last_write_bytes`, `commit_*`, `min_record_time` 이 없다는 것은 "표본이 없었다"
+   는 뜻이다.
+3. **`-` 는 실재하는 주체다.** 미인증·인증 실패 트래픽이며 결측이 아니다.
+4. **`__errors__` 와 `__other__` 는 다르다.** `__other__` 는 행 상한 초과분이다. `__errors__` 는 **그 순간
+   행이 없던 리소스의 오류**가 모이는 곳이다 — 같은 윈도우라도 첫 성공 요청 *이전*의 오류는 `__errors__`
+   로, *이후*의 오류는 그 리소스 행으로 간다 (2026-09-15 실측). 원본 문서는 규칙 3 으로 남아 있다.
+5. **`report_seq` 는 파드 단위다.** `hostname` 없이 연속성을 판단하지 않는다.
+6. **요청 0 행은 없다 (v4).** 요청이 0 으로 떨어지면 행 자체가 없어진다. 추이 차트는 **빈 버킷을 0 으로**
+   그리도록 설정하고, "호출이 끊긴 클라이언트" 알림은 `requests == 0` 이 아니라 **문서 부재**로 건다.
+7. **윈도우 라벨은 틱 위상만큼 밀린다.** 행 `[W, W+30분)` 은 실제로 `[W+δ, W+30분+δ)` 를 담는다. δ 는 0~5초
+   이며 파드마다 다르고 천천히 드리프트한다 (3.673s → 2.77s, 새 파드 1.765s 실측). 30분 윈도우에서는 무시할
+   만하지만, **경계 직후를 노리는 테스트는 경계 + 6.5초 이후에 시작**해야 한다.
+8. **평균은 합으로 계산한다.** 커밋 평균은 `sum(commit_ms_sum) / sum(commit_count)`. 윈도우 평균의 평균은
+   틀린다.
 
 ---
 
 ## 5. 인덱스 설계
 
-### 5.1 인덱스
+### 5.1 인덱스 구성 — 1단계: 2개
 
-| 항목 | 값 | 비고 |
+| 항목 | 상세 | 요약 |
 |---|---|---|
-| 이름 | `polaris-audit-YYYY.MM.DD` | 일 단위 신규 인덱스 |
-| 조회 패턴 | `polaris-audit-*` | 대시보드·쿼리는 항상 이 패턴 |
-| 상세/요약 | **동일 인덱스** | `level: REPORT` 또는 `report_type` 존재 여부로 구분 |
-| shard / replica | 1 / 0 | 단일 노드. 다중 노드 전환 시 replica 1 로 상향 |
-| 보관 | **30일** | ISM `hot -> delete` |
+| 이름 | `polaris-logs-YYYY.MM.DD` | `polaris-report-YYYY.MM.DD` |
+| 조회 패턴 | `polaris-logs-*` | `polaris-report-*` |
+| 내용 | 액세스(오류·변경) + 허용 목록 앱 로그 + WARN/ERROR | summary · resource · principal · app_dropped |
+| 보관 | **30일** | **365일** |
+| shard / replica | 1 / 0 (단일 노드) | 1 / 0 |
 
-### 5.2 인덱스 템플릿은 선택이 아니라 필수
+**2개로 나누는 이유**
 
-상세와 요약을 한 인덱스에 담기로 한 이상, **동적 매핑에 맡기면 안 된다.** 두 문서 형태의 필드가 한
-매핑을 공유하므로, 그 인덱스에 **처음 들어온 문서 한 건이 해당 필드 타입을 그 인덱스의 수명 내내
-확정**한다. 실제로 이 파이프라인에서 이미 발생한 사고다 — `polaris-report-2026.09.10` 에서
-`min_record_time` 이 `text` 로 굳어 날짜 범위 쿼리와 date histogram 이 영구히 불가능해졌다.
+- **보관 기간이 다르다.** 요약의 가치는 장기 추이(분기·연간)에 있고 용량이 작다. 상세는 크고 30일이면 충분하다.
+- **매핑이 섞이지 않는다.** 두 문서 형태가 한 매핑을 공유하면 첫 문서가 필드 타입을 확정하는 사고 위험이
+  커진다 (§5.2).
+- 적재 오류가 한쪽에서 나도 다른 쪽은 계속 들어간다 (출력·재시도 버퍼가 분리됨).
 
-템플릿에서 최소한 다음을 명시한다.
+### 5.2 인덱스 템플릿 — 선택이 아니라 필수
 
-- `window_start`, `window_end`, `min_record_time`, `max_record_time` -> `date`
-- 모든 숫자 카운터(`requests`, `reads`, `writes`, `errors`, `errors_4xx`, `errors_5xx`,
-  `auth_denied`, `response_bytes`, `http_status`, `response_size`, `last_read_bytes`,
-  `last_write_bytes`, …) -> `long`
-- 키 필드(`resource`, `user_principal_name`, `api_path`, `resource_kind`, `api_kind`) -> `keyword`
-  (또는 `text` + `.keyword`)
-- 두 날짜 필드에 `ignore_malformed: true` — 값 하나를 잃을지언정 문서 전체가 거부되지 않게 한다
+동적 매핑에 맡기면 **그 인덱스에 처음 들어온 문서가 필드 타입을 인덱스 수명 내내 확정**한다. 이미 겪은
+사고다 — `polaris-report-2026.09.10` 에서 `min_record_time` 이 `text` 로 굳어 날짜 범위 쿼리가 영구히
+불가능해졌다.
 
-> **`term` 쿼리는 반드시 `keyword` 필드에 걸 것.** `text` 필드에 `term` 을 걸면 분석기 출력과 비교되어
-> 대소문자만으로도 매치가 사라진다(`"POST"` 는 `post` 를 찾지 못한다). 이 경우 쿼리는 **0건을 반환하고
-> 조용히 성공**하므로, 검증 게이트가 통과한 것처럼 보인다.
+`logging/opensearch/polaris-report-template.json` (요약 인덱스용, **작성됨·미적용**):
 
-### 5.3 보관 정책 (ISM)
+- `min_record_time`, `max_record_time` → `date` (`ignore_malformed: true`)
+- 모든 정수 카운터 → `long` — v4 의 `app_dropped_total`, `dropped`, `commit_count`, `commit_ms_sum/min/max`
+  포함. `carried_rows` 는 같은 인덱스의 v3 문서 때문에 매핑에 남긴다.
+- 문자열 필드는 동적 매핑(`text` + `.keyword`)을 유지한다 — 기존 쿼리·게이트가 `.keyword` 에 의존.
+
+적용: `logging/scripts/step9-report-index-template.sh`. **새로 생성되는 인덱스부터** 적용된다 (소급 불가).
+
+> **적용 순서: Lua 먼저, 템플릿 나중.** 템플릿이 `date` 로 선언한 필드에 구버전 Lua 가 `""` 를 쓰면,
+> OpenSearch 는 `_bulk` 응답을 **HTTP 200 으로 주면서 문서만 건별로 거부**한다. v4 Lua 는 이미 롤되었으므로
+> 지금은 템플릿을 적용해도 된다.
+
+> **`term` 쿼리는 `.keyword` 필드에.** `text` 필드에 `term` 을 걸면 대소문자만으로 매치가 사라지고,
+> 쿼리는 **0건을 반환하며 조용히 성공**한다 — 검증 게이트가 통과한 것처럼 보인다.
+
+상세 인덱스(`polaris-logs-*`)의 템플릿은 아직 없다. `http_status`, `response_size` 는 Fluent Bit 의
+`type_int_key` 로 정수로 들어가므로 동적 매핑으로도 `long` 이 되지만, 인덱스를 새로 여는 첫 문서가
+애플리케이션 로그일 수 있으므로 **상세용 템플릿 작성을 권장**한다 (§10).
+
+### 5.3 보관 정책 (ISM) — *미적용*
 
 ```
-hot (rollover: 1d 또는 크기 기준) ──▶ delete (min_index_age: 30d)
+polaris-logs-*    hot ──▶ delete (min_index_age: 30d)
+polaris-report-*  hot ──▶ delete (min_index_age: 365d)
 ```
 
-- 상세·요약 모두 30일 후 삭제
-- `kube-fb` 는 변경하지 않는다. Polaris 로그는 신규 인덱스로만 이관되며, 기존 인덱스 정책은 무관
+- 일 단위 인덱스이므로 rollover 없이 `min_index_age` 로 삭제한다.
+- 공용 인덱스(`kube-fb` / `k8s-logs`) 정책은 변경하지 않는다.
+- ⚠ **검증 기간(30초 윈도우)에 만든 `polaris-report-*` 는 운영 데이터가 아니다.** 윈도우당 행이 약 60배이므로
+  365일 정책을 붙이기 전에 삭제한다.
 
-> **repo 기존 계획과의 차이** — `PLAN-opensearch-cutover-2026-09-08.md` §6 은 `polaris-logs-*` 30일 /
-> `polaris-report-*` 365일의 **2-인덱스** 구성을 전제한다. 본 문서는 운영 단순화를 위해 **단일 인덱스
-> 30일**로 결정했으며, 해당 계획 항목은 본 문서로 대체된다.
+### 5.4 2단계 (대안): 인덱스 1개로 통합
 
-### 5.4 단일 인덱스 30일의 트레이드오프
+인덱스를 2개 만들 수 없는 환경이면 `polaris-audit-*` **하나로 합친다.**
 
-정직하게 밝혀둘 점은, 요약 로그의 가치는 **장기 추이**에 있다는 것이다. 30일은 분기·연간 감사에는
-미치지 못한다. 다만 요약은 용량이 매우 작으므로, 필요해지면 **요약만 별도 인덱스로 분리해 1년 보관**하는
-확장이 저렴하다.
+| 항목 | 값 |
+|---|---|
+| 이름 | `polaris-audit-YYYY.MM.DD` |
+| 구분 | 요약 = `level: REPORT` (또는 `report_type` 존재), 상세 = 그 외 |
+| 보관 | **30일** — 한 인덱스에 두 보관 기간을 둘 수 없으므로 상세 기준 |
+| 템플릿 | 상세·요약 필드를 **하나의 템플릿에 모두** 선언 (동적 매핑 사고 위험이 2개 구성보다 크다) |
+| 변경 | Fluent Bit OUTPUT 두 개의 `Logstash_Prefix` 를 `polaris-audit` 로. 필터·Lua 는 변경 없음 |
 
-| 구성 | 추가 용량 | 비고 |
-|---|---|---|
-| 요약 30일 (현 결정) | 약 **50 MB** | 단순, 단일 정책 |
-| 요약만 1년 분리 | 약 **0.6 GB/년** | 분기·연간 감사 가능. 인덱스·정책 2개 관리 |
-
-즉 나중에 되돌릴 수 있는 결정이며, 지금 단일 인덱스로 시작하는 것이 불합리하지 않다.
+**잃는 것** — 요약의 장기 보관. 요약 1년치는 행 상한 기준 최대 약 9 GB (§6.3) 로 작아, 가능하면 요약만
+별도 인덱스로 두는 것이 이득이다.
 
 ---
 
@@ -377,37 +487,59 @@ hot (rollover: 1d 또는 크기 기준) ──▶ delete (min_index_age: 30d)
 
 | 구분 | 일일 문서 수 |
 |---|---|
-| 액세스 상세 | 일 요청 수 × (4xx·5xx 비율 + 쓰기 비율) |
-| 애플리케이션 상세 | WARN/ERROR 라인 수 |
-| 요약 | (86,400 ÷ `window_seconds`) × (1 + 활성 리소스 수 + 활성 principal 수) |
+| 상세 — 액세스 | 4xx·5xx 건수 + PUT·DELETE·PATCH 건수 + management POST 건수 |
+| 상세 — 예외 로그 | 오류 응답 건수 × 약 0.7 (측정: 오류 253건 → 예외 로그 180건) |
+| 상세 — 권한 변경 로그 | 변경 요청 건수 이하 |
+| 요약 | 윈도우 수(48) × (1 + 활성 리소스 + 활성 principal + app_dropped logger 수) |
 
-30분 윈도우면 하루 48 윈도우이므로, 활성 리소스 50 + principal 10 기준
-`48 × 61 ≈ 2,900건/일` 이다. (30초 윈도우로 운영하면 같은 내용이 약 138,000건/일로 부풀어 오른다 —
-검증 구간이 끝나면 1800초로 되돌려야 하는 이유다.)
+문서 크기는 **액세스 1.0 KB / 애플리케이션 1.5 KB / 요약 0.7 KB** 로 가정한다 (원문 + 파싱 필드 + 색인
+오버헤드). **추정치이며 실측으로 대체해야 한다** (§10).
 
-문서 평균 크기는 원문 + 파싱 필드 + 인덱싱 오버헤드를 포함해 **액세스 1.0 KB / 애플리케이션 1.5 KB /
-요약 0.7 KB** 로 가정한다. (**추정치** — 실측으로 대체할 것, §9)
+### 6.2 상세 인덱스 — 운영 트래픽 기준
 
-### 6.2 시나리오
+| 구성 요소 | 일일 문서 | 일일 용량 | 30일 |
+|---|---:|---:|---:|
+| 404 액세스 문서 | 400,000 | 400 MB | 12.0 GB |
+| 404 예외 로그 (× 0.7) | 약 280,000 | 약 420 MB | 약 12.6 GB |
+| **404 소계** | **약 680,000** | **약 820 MB** | **약 24.6 GB** |
+| PUT + DELETE 액세스 문서 | 약 5,500 | 약 5.5 MB | 약 0.17 GB |
+| 권한 변경 로그 (상한 추정) | 약 5,500 | 약 8 MB | 약 0.25 GB |
+| **404 제외 소계 (알려진 항목)** | **약 11,000** | **약 14 MB** | **약 0.4 GB** |
+| 404 외 4xx·5xx, management POST | *미측정* | 건당 약 2 KB (액세스 + 예외 로그) | — |
 
-| 시나리오 | 일 요청 | 오류율 | 쓰기율 | 적재 문서/일 | 용량/일 | **30일** |
-|---|---|---|---|---|---|---|
-| A. 현재 로컬 | 수천 | — | — | 수천 | 수 MB | **< 1 GB** |
-| B. 소규모 운영 | 1,000,000 | 0.5% | 2% | 약 32,000 | 약 40 MB | **약 1.2 GB** |
-| C. 스펙 정상치 | 10,000,000 | 0.5% | 2% | 약 302,000 | 약 380 MB | **약 11 GB** |
+- **알려진 항목 기준, 상세 인덱스 용량의 약 98% 가 404 에서 나온다.** 404 처리 방식(§3.9)이 이 인덱스의 크기를 결정한다.
+- 비교: 필터 없이 액세스 로그 5,000만 건을 적재하면 하루 **약 50 GB**, 30일 **약 1.5 TB** (액세스 문서만).
+  v4 는 404 포함 하루 약 0.83 GB (약 1/60), 404 제외 시 수십 MB 수준이다.
 
-비교 — **필터 없이 전량 적재할 경우** 시나리오 C 는 하루 약 10 GB, 30일 **약 300 GB** 가 된다.
-본 설계는 같은 기간을 **약 11 GB** 로 보관한다. 이것이 "5일 → 30일"을 가능하게 하는 근거다.
+### 6.3 요약 인덱스
 
-### 6.3 이 추정의 한계
+행 수는 트래픽 양이 아니라 **활성 리소스·principal 수**에 비례하고, 윈도우당 상한이 있다.
 
-- 시나리오 B·C 의 오류율·쓰기율은 **가정**이다. 실제 Polaris 트래픽은 테이블 메타데이터 폴링(GET)이
-  압도적이라 쓰기율은 더 낮을 가능성이 크다 — 즉 **추정이 보수적(과대)** 이다.
-- 2026-09-14 커버리지 측정(액세스 433줄 중 343줄 적재, 오류 비중 74%)은 **오류 경로를 일부러 때리는
-  테스트**이므로 운영 트래픽 프로파일이 아니다. 용량 산정 근거로 쓸 수 없다.
-- **애플리케이션 로그 쪽이 실제 용량의 다수**다(2026-09-04 측정: 122건 호출 → 2,026건 레코드 중
-  1,928건이 애플리케이션 라인). 현재 필터는 액세스 스트림만 줄이고 애플리케이션 스트림은 줄이지 않는다.
-  §10 의 최우선 미해결 항목.
+| 조건 | 윈도우당 행 | 일일 문서 | 일일 용량 | 30일 | 365일 |
+|---|---:|---:|---:|---:|---:|
+| 행 상한 도달 (리소스 500+2, principal 200+1, app_dropped 6, summary 1) | 약 710 | 약 34,000 | 약 24 MB | 약 0.7 GB | **약 8.7 GB** |
+| 활성 리소스 50, principal 10 | 약 67 | 약 3,200 | 약 2.3 MB | 약 70 MB | 약 0.8 GB |
+
+> ⚠ **일 5,000만 건 규모에서는 리소스 행 상한(500)에 닿을 수 있다.** 넘친 요청은 `__other__` 로 합쳐져
+> 합계는 맞지만 리소스별 추이가 잘린다. 운영 적용 후 `resources_other > 0` 인 윈도우를 확인하고,
+> 필요하면 `REPORT_MAX_RESOURCES` 를 올린다 (메모리 사용량과 교환).
+
+### 6.4 실측 (로컬, 테스트 트래픽)
+
+| 항목 | v3 | v4 | 비고 |
+|---|---:|---:|---|
+| 상세 문서 (같은 테스트 1회) | 759 | **598** | -21%. 버린 161건 전부 §3.6 의 버림 대상 |
+| 요약 행 (같은 테스트 1회) | 138 | 약 77 (계산) | v3 행 중 요청 0 행 61건 (44%) 이 v4 에서 사라짐 |
+| 커밋 시간 | — | 10 ~ 57 ms | 첫 커밋 1,101 ~ 1,373 ms 는 콜드 스타트 |
+
+### 6.5 추정의 한계
+
+- 테스트는 **오류 경로를 일부러 두드리는** API 매트릭스라 운영 비율이 아니다 (오류 비중 74%).
+- 예외 로그 비율 0.7 은 테스트에서 측정한 값이다. 404 가 라우팅 단계에서 나는 경우(`Unable to find matching
+  target resource method`)와 리소스 조회 단계에서 나는 경우의 비율에 따라 달라진다.
+- **Fluent Bit CPU** — 하루 5,000만 줄은 평균 초당 약 580줄이 Lua 두 단계를 지난다는 뜻이다. 현재 파드
+  제한(`cpu 200m`)에서 처리 가능한지 **부하 측정이 필요**하다. 처리량이 부족하면 입력 버퍼가 차고
+  (`Mem_Buf_Limit`, 파일시스템 버퍼) 수집이 지연된다.
 
 ---
 
@@ -415,84 +547,309 @@ hot (rollover: 1d 또는 크기 기준) ──▶ delete (min_index_age: 30d)
 
 ### 7.1 장애 대응 — "10시경 카탈로그 쓰기가 실패했다"
 
-1. **요약에서 구간 특정** — `report_type: summary` 를 시간순으로 보고 `errors_5xx > 0` 인 윈도우를 찾는다.
-2. **리소스 특정** — 같은 `window_start` 의 `report_type: resource` 에서 `errors_5xx > 0` 인 행을 본다.
-   어느 테이블·카탈로그인지 여기서 나온다.
-3. **상세 조회** — 해당 윈도우 시각 범위 + `http_status >= 500` 으로 액세스 문서 전건을 본다(규칙 3에 의해
-   반드시 남아 있다).
-4. **원인 확인** — 같은 초의 `Handling runtimeException ...` 및 ERROR 문서를 함께 본다.
+1. **구간 특정** — `polaris-report-*` 의 `resource` 행에서 `errors_5xx > 0` 인 `window_start` 를 찾는다.
+2. **리소스 특정** — 같은 윈도우의 행에서 어느 테이블·카탈로그인지 확인한다.
+3. **상세 조회** — `polaris-logs-*` 에서 해당 구간 `http_status >= 500` 문서를 본다 (규칙 3 으로 전건 존재).
+4. **원인 확인** — 그 문서의 `mdc.requestId` 로 예외 로그(ERROR, `exception.*`)를 조인한다.
 
 ```json
-GET polaris-audit-*/_search
+GET polaris-logs-*/_search
 { "query": { "bool": { "filter": [
   { "range": { "@timestamp": { "gte": "2026-09-14T10:00:00Z", "lt": "2026-09-14T10:30:00Z" } } },
   { "range": { "http_status": { "gte": 500 } } } ] } },
-  "sort": [ { "@timestamp": "asc" } ] }
+  "sort": [ { "@timestamp": "asc" } ],
+  "_source": ["@timestamp", "user_principal_name", "http_method", "api_path", "http_status", "mdc.requestId"] }
+
+GET polaris-logs-*/_search
+{ "query": { "term": { "mdc.requestId.keyword": "<위에서 얻은 requestId>" } } }
 ```
 
 ### 7.2 감사 — "누가 언제 어떤 권한을 받았나"
 
-1. `report_type: resource` 에서 `resource_kind: catalog-role` 이고 `writes > 0` 인 윈도우를 찾는다.
-   그 `writes` 가 곧 부여된 권한 수다.
-2. 해당 윈도우 시각으로 상세의 `Adding grant ...` 문서와 `PUT .../grants` 액세스 문서를 대조한다.
-3. 규칙 4·5에 의해 모든 PUT/DELETE/management POST 는 전건 보존되므로, **요약의 숫자와 상세의 건수는
-   일치해야 한다.** 불일치는 곧 결함 신호다.
+1. `resource_kind: catalog-role` 이고 `writes > 0` 인 윈도우를 찾는다 — `writes` 가 부여·회수 건수다.
+2. 상세에서 해당 구간의 `Adding grant` / `Revoking grant` 문서를 보고, `mdc.requestId` 로 조인한 액세스 문서의
+   `user_principal_name` 이 **부여한 사람**이다.
+3. 규칙 4·5 로 모든 PUT·DELETE·management POST 가 남으므로, **요약의 `writes` 와 상세 건수는 일치해야
+   한다.** 불일치는 결함 신호다.
 
-### 7.3 이상 탐지 — 비정상 클라이언트
+### 7.3 이상 클라이언트 탐지
 
-`report_type: principal` 에서 `auth_denied` 급증 또는 `requests` 급증을 추적한다. 개별 요청을 다 저장하지
-않아도 **주체별 추이는 요약만으로 완전히 보인다**는 것이 이 설계의 요점이다.
+`principal` 행에서 `requests` 급증, `auth_denied` 급증을 추적한다. 개별 요청을 저장하지 않아도 **주체별
+추이는 요약만으로 완전히 보인다.** 인증되지 않은 트래픽은 `user_principal_name: "-"` 행으로 모인다.
+
+### 7.4 테이블 커밋 성능 추이 (v4)
+
+```json
+GET polaris-report-*/_search
+{ "size": 0,
+  "query": { "bool": { "filter": [
+    { "term": { "schema_version": 4 } },
+    { "term": { "report_type.keyword": "resource" } },
+    { "exists": { "field": "commit_count" } } ] } },
+  "aggs": { "per_table": { "terms": { "field": "resource.keyword", "size": 50 },
+    "aggs": {
+      "n":   { "sum": { "field": "commit_count" } },
+      "sum": { "sum": { "field": "commit_ms_sum" } },
+      "max": { "max": { "field": "commit_ms_max" } },
+      "avg_ms": { "bucket_script": { "buckets_path": { "s": "sum", "n": "n" }, "script": "params.s / params.n" } } } } } }
+```
+
+평균이 오르는 테이블은 메타데이터 파일이 커지고 있거나(스냅샷·매니페스트 누적) 오브젝트 스토리지 지연이
+늘고 있다는 신호다. `commit_ms_max` 단독 알림은 콜드 스타트로 오탐이 난다.
+
+### 7.5 허용 목록 점검 — 새 logger 등장 감지 (v4)
+
+```json
+GET polaris-report-*/_search
+{ "size": 0,
+  "query": { "bool": { "filter": [
+    { "term": { "report_type.keyword": "app_dropped" } },
+    { "range": { "window_start": { "gte": "now-7d" } } } ] } },
+  "aggs": { "loggers": { "terms": { "field": "logger_name.keyword", "size": 100 },
+    "aggs": { "lines": { "sum": { "field": "dropped" } } } } } }
+```
+
+§3.6 표에 없는 `org.apache.polaris.service.*` logger 가 보이면, 그 로그가 추이·이슈 추적에 필요한지 판단해
+허용 목록에 추가하거나 그대로 둔다. Polaris 업그레이드 직후에는 반드시 확인한다.
 
 ---
 
-## 8. 적용 계획 및 검증
+## 8. 대시보드 · 알림 권고
 
-| 단계 | 작업 | 완료 기준 |
+### 8.1 공통 규칙
+
+- 모든 요약 쿼리에 `schema_version` 필터.
+- 요약 대시보드는 `NOT report_type:summary`.
+- 추이 차트는 빈 버킷을 0 으로 표시 (요청 0 행이 없다).
+- 겹치는 카운터(§4.6-1)는 더하지 않는다.
+
+### 8.2 권장 알림
+
+| 알림 | 조건 | 주의 |
 |---|---|---|
-| 1 | 인덱스 템플릿 적용 (`polaris-audit-*`) | 매핑 조회에서 date/long 타입 확인 |
-| 2 | Lua 필터 롤 (요약 필드 형식) | 파드 재기동 후 신규 문서 생성 확인 |
-| 3 | ISM 정책 등록 (30일) | 정책이 신규 인덱스에 부착됨 |
-| 4 | Fluent Bit 출력 대상 전환 | `polaris-audit-*` 에 문서 유입 |
-| 5 | **윈도우 30초 → 1800초 복귀** | 요약 문서 수가 예상 범위로 감소 |
-| 6 | 하루 실측 | §6 추정치를 실측으로 대체 |
-
-**적용 순서가 중요하다.** Lua 를 먼저 롤하고 그 다음 템플릿을 적용한다. 반대로 하면, 빈 문자열을 쓰는
-구버전 Lua 의 문서가 `date` 필드에서 **`_bulk` 응답은 HTTP 200 인데 항목 단위로 거부**되는 무성 실패가
-발생한다.
-
-검증 게이트(각 항목은 통과/실패가 명확해야 하며, **0건 반환은 통과가 아니다**):
-
-- `access_seen - access_counted == access_kept`
-- `sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors`
-- `max_record_time - min_record_time <= window_seconds`
-- 임의의 30분 구간에서 요약의 `errors_5xx` 합 == 상세의 `http_status >= 500` 문서 수
-- 임의의 롤 행 `writes` == 같은 구간 상세의 `PUT .../grants` 문서 수
+| 서버 오류 | `errors_5xx` 합 > 임계값 | **잘못된 요청에 500 을 주는 4개 오퍼레이션**(`getToken`, `createNamespace`, `renameTable`, `renameView`)이 오탐을 만든다 (§11). 해당 리소스를 제외하거나 별도 임계값 |
+| 인증 거부 급증 | principal 별 `auth_denied` 가 평소 대비 급증 | `-` 주체는 별도 기준 |
+| 새 logger | §7.5 에서 목록에 없는 logger 등장 | Polaris 업그레이드 후 |
+| 자격증명 회귀 | `polaris-logs-*` 에 `secret_redacted: true` 문서 존재 | 즉시 Polaris 측 확인 |
+| 행 상한 도달 | `resources_other > 0` 또는 `role_keys_forced == 100` | 리소스별 추이가 잘리고 있음 |
+| 수집 중단 | 30분 윈도우 동안 `polaris-report-*` 새 문서 없음 | 파드 장애 또는 Lua 로드 실패 (§9.2) |
+| 틱 누락 | `windows_skipped >= 1` **이면서** `max_record_time - min_record_time > window_seconds` | 로컬(OrbStack)은 Mac 절전으로 `windows_skipped` 가 흔하다 — 단독 알림 금지 |
 
 ---
 
-## 9. 알려진 제약과 미해결 항목
+## 9. 운영 절차
 
-적용 전에 인지하고 있어야 할 사항이며, 일부는 본 정책의 정확도에 직접 영향을 준다.
+### 9.1 배포 방식과 `--set-file`
+
+Lua 스크립트는 `fluent-bit/polaris_access_log.lua` 파일이고, `fluent-bit/values.yaml` 의 `luaScripts` 는
+비어 있다. 설치 시 Helm 이 파일 내용을 `luaScripts` 값으로 넣는다.
+
+```bash
+kubectl config current-context        # 반드시 orbstack
+helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
+  --version 0.57.6 -n datahub-hynix -f fluent-bit/values.yaml \
+  --set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/polaris_access_log.lua'
+```
+
+차트는 이 값을 ConfigMap `benchmarks-fluent-bit-luascripts` 로 렌더해 `/fluent-bit/scripts/` 에 마운트한다.
+파드는 저장소 파일을 보지 않는다 — Helm 실행 시점의 내용이 복사된다.
+
+**`--set-file` 은 필수가 아니다.** 스크립트가 `luaScripts` 값으로 들어가기만 하면 방법은 무엇이든 렌더
+결과가 같다.
+
+| 방식 | 장점 | 단점 | 적합한 곳 |
+|---|---|---|---|
+| **A. `--set-file`** (현재) | 스크립트가 독립 파일 — 테스트·diff 가 쉬움 | **플래그를 빠뜨리면 파드 전체가 멈춘다** (§9.2) | 로컬 수동 `helm` |
+| **B. values.yaml 에 인라인** | 명령 하나(`-f values.yaml`)로 끝. 누락 위험 없음 | 스크립트 약 800줄이 values 에 섞임. 테스트는 YAML 에서 추출 | 수동 배포에서 실수를 없애고 싶을 때 |
+| **C. GitOps 선언** (ArgoCD `helm.fileParameters` 등) | 배포 선언에 한 번 쓰면 매번 적용 → 누락 위험 없음. 파일 분리 유지 | ArgoCD 버전별 지원 확인 필요 | 운영 (Bitbucket → Jenkins → ArgoCD) |
+
+권고: **운영은 C** (파일 분리를 유지하면서 누락 위험 제거), **로컬은 A + 렌더 게이트(§9.3) 필수** 또는 B.
+
+### 9.2 사고 사례 — 2026-09-15 `--set-file` 누락
+
+| 항목 | 내용 |
+|---|---|
+| 발생 | v4 첫 롤을 `--set-file` 없이 실행. `helm get values` 결과 `luaScripts: {}` |
+| 증상 | 파드 로그 `cannot access script '/fluent-bit/scripts/polaris_access_log.lua'` → `filter initialization failed` → **모든 INPUT 정지** |
+| 영향 | Polaris 파이프라인뿐 아니라 **tier 1 (노드 전체 컨테이너 로그) 수집도 중단** — Fluent Bit 는 필터 하나라도 로드에 실패하면 엔진 전체를 멈춘다 |
+| 원인 | 플래그 누락. 렌더 게이트(step2)를 건너뜀 — 실행했다면 `APP_ALLOW` 검사가 실패했을 것 |
+| 조치 | 플래그를 포함해 재배포. 게이트 명령과 경고를 `values.yaml` 머리말에 명시 |
+| 교훈 | Lua 변경은 로그 파이프라인 전체의 가용성 문제다. **렌더 게이트는 생략하지 않는다.** 급할 때는 `helm rollback` 이 가장 빠른 복구다 |
+
+### 9.3 배포 순서 (게이트)
+
+```bash
+cd ~/hynix/local-k8s
+# 1. Lua 단위 테스트 — Fluent Bit 과 같은 LuaJIT
+cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua
+luajit logging/scripts/test-schema-v3.lua && luajit logging/scripts/test-schema-v4.lua
+
+# 2. 렌더 + 렌더 게이트 (--debug 없이 렌더할 것)
+helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
+  --version 0.57.6 -n datahub-hynix -f fluent-bit/values.yaml \
+  --set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/polaris_access_log.lua' \
+  --dry-run=client > /tmp/render-after.txt
+bash logging/scripts/step2-render-gate.sh /tmp/render-after.txt
+
+# 3. 적용 (같은 명령, --dry-run 제거)
+
+# 4. 롤 후 점검 — 파드 로그, 배포된 스크립트 sha == 저장소 파일 sha, tier 1 수집 확인
+bash logging/scripts/step3-postupgrade.sh
+```
+
+**롤백**: `helm -n datahub-hynix history benchmarks-fluent-bit` → `helm -n datahub-hynix rollback benchmarks-fluent-bit <N>`.
+
+> **렌더 게이트 주의** — step2 는 렌더 결과에서 문자열이 들어간 **줄 수**를 센다. `config` 블록 안의 주석도
+> 렌더되므로, 설정 이름(`type_int_key` 등)을 주석에 새로 쓰면 개수가 바뀌어 올바른 설정에서도 FAIL 이
+> 난다 (2026-09-15 실제 발생). 또한 차트는 `luaScripts` 값을 Helm 템플릿(`tpl`)으로 한 번 렌더하므로
+> **Lua 안에 `{{` 를 쓰면 렌더가 깨진다.**
+
+### 9.4 허용 목록 · Lua 변경 절차
+
+1. `fluent-bit/polaris_access_log.lua` 의 `APP_ALLOW` (또는 해당 규칙) 수정.
+2. 새 **정수** 필드를 만들었다면 `values.yaml` FILTER 3 의 정수 키 목록과 인덱스 템플릿에 **둘 다** 추가.
+   빠지면 문자열로 저장되어 숫자 쿼리가 **에러 없이 0건**을 반환한다.
+3. 필드 의미가 바뀌면 `SCHEMA_VERSION` 을 올린다.
+4. `logging/scripts/test-schema-v4.lua` 에 케이스 추가 → 테스트 통과.
+5. §9.3 순서로 배포 → §10.2 게이트.
+
+---
+
+## 10. 적용 계획 및 검증
+
+### 10.1 단계
+
+| # | 작업 | 상태 | 완료 기준 |
+|---|---|---|---|
+| 1 | Lua v4 롤 | **완료** (2026-09-15) | 파드 로그 정상, 스크립트 sha 일치 |
+| 2 | v4 1차 실측 (설정 구간) | **완료** | §10.3 |
+| 3 | 테스트 매트릭스 윈도우 요약 검증 | 대기 | 오류·403·커밋 행이 상세와 일치 (G1–G8) |
+| 4 | 요약 인덱스 템플릿 적용 | 대기 | 새 인덱스 매핑에서 `date` / `long` 확인 |
+| 5 | 상세 인덱스 템플릿 작성·적용 | 권장 | `http_status` 등 `long` 확인 |
+| 6 | 404 처리 정책 결정 | **작성 예정** (§3.9) | |
+| 7 | 윈도우 30초 → 1800초 복귀 | 대기 | Lua `WINDOW_SECONDS` 1800, 요약 문서 수 감소 |
+| 8 | 검증용 `polaris-report-*` 삭제 | 대기 | 30초 윈도우 인덱스 제거 |
+| 9 | ISM 정책 적용 | 대기 | 상세 30일 · 요약 365일 부착 확인 |
+| 10 | Fluent Bit 부하 측정 | 권장 | 운영 규모에서 CPU·버퍼 여유 확인 |
+| 11 | 하루 실측 | 대기 | §6 추정치를 실측으로 대체 |
+
+### 10.2 검증 게이트 (G1–G8)
+
+**0건 반환은 통과가 아니다.** 각 게이트는 트래픽이 있었던 구간을 지정해서 본다.
+
+| 게이트 | 통과 조건 |
+|---|---|
+| G1 | `polaris-logs-*` 의 `loggerName` ⊆ {액세스 로그, 허용 목록 2개} ∪ {WARN/ERROR 문서} |
+| G2 | 10개 이상의 연속 윈도우에서, 공용 인덱스의 Polaris 비액세스 INFO 문서 수(허용 목록 외) == `sum(app_dropped.dropped)` (경계 오차 허용) |
+| G3 | 적재된 예외·권한 로그마다 같은 `mdc.requestId` 의 액세스 문서가 존재 |
+| G4 | `clientSecret` 을 포함한 문서의 값이 `*` 또는 `<redacted>` 뿐 |
+| G5 | 새 요약 행 전부 `schema_version: 4`, v4 정수 필드가 `long`, `carried_rows` 없음 |
+| G6 | 구간 합 `sum(commit_count)` == 공용 인덱스의 `Successfully committed to` 라인 수 (경계 오차 허용) |
+| G7 | `commit_count` 있고 `requests: 0` 인 행마다, 같은 윈도우에 해당 컬렉션 쓰기(생성) 또는 `/transactions/commit` 쓰기가 존재 |
+| G8 | `requests: 0` 이고 `commit_count` 없는 행이 없음 |
+
+추가 불변식 (윈도우마다):
+
+- `sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors`
+- `access_seen - access_counted == access_kept`
+- 롤 행 `writes` == 같은 구간 상세의 grant 부여·회수 로그 수
+- **`last_write_bytes` 검증 (Gate 2)** 은 공용 인덱스(`k8s-logs`)에서 한다 — 성공한 catalog POST 는 상세
+  인덱스에 저장되지 않으므로 `polaris-logs-*` 로는 비교 대상이 없다.
+
+### 10.3 1차 실측 결과 (2026-09-15, run `1789463971`)
+
+| 확인 항목 | 결과 |
+|---|---|
+| 상세 문서 구성 | 598 = 액세스 343 + 예외 로그 180 (ERROR 4) + 권한 변경 75. 버림 대상 logger **0건** |
+| `clientSecret` | 4건 모두 `*` |
+| 요약 seq 3 / 4 | `access_kept` 6 / 39 == 틱 사이 상세 문서 수, 오류 2 / 0 일치 |
+| 불변식 | 리소스 합 == principal 합 == 액세스 라인 (8, 76) |
+| 변경 요청 | management 쓰기 39 == 상세 39건, grant 1 + 25 == `Adding grant` 26건 |
+| `app_dropped` | 7 + 4 + 4 + 4 + 2 == `app_dropped_total` 21 |
+| 요청 0 행 | 커밋 없는 요청 0 행 **0건**. 커밋만 있는 3행은 모두 생성 |
+| **미확인** | 테스트 매트릭스 윈도우(seq 5: 액세스 298, 오류 251) 요약, v4 정수 필드 매핑 |
+
+---
+
+## 11. 알려진 제약과 미해결 항목
 
 | # | 항목 | 영향 | 상태 |
 |---|---|---|---|
-| 1 | **애플리케이션 로그(DEBUG SQL)가 분리되지 않음** | 실제 용량의 다수. 액세스 필터만으로는 절감 한계 | **최우선 미해결** |
-| 2 | **요약 윈도우 라벨이 3.673초 밀림** | 경계 직후 트래픽이 직전 윈도우 행에 집계됨. 윈도우 단위 정합성 검증이 어긋남 | 원인 규명 완료(2026-09-14), 수정 전 |
-| 3 | 윈도우 30초로 운영 중 | 요약 문서가 약 60배 부풀어 있음 | 1800초 복귀 필요 (§8 단계 5) |
-| 4 | 인덱스 템플릿 미적용 | 동적 매핑 사고 재발 가능 | §8 단계 1 |
-| 5 | multiline 병합 | 깨지면 §3.3 grant 로그가 쪼개짐 | 수집 설정 확인 필요 |
-| 6 | Polaris 오토스케일 시 로그 파일 공유 | 다중 파드가 한 로그를 append, 요약 `report_seq` 연속성 훼손 | 설계 결정 대기 |
-| 7 | 4개 API 가 잘못된 요청에 500 응답 | `errors_5xx` 가 실제 장애가 아닌 경우 발생 (`getToken`, `createNamespace`, `renameTable`, `renameView`) | Polaris 측 이슈, 재현 확인됨 |
+| 1 | **404 전건 적재** | 상세 인덱스 용량의 약 98% | **정책 작성 예정** (§3.9) |
+| 2 | 인덱스 템플릿 미적용 | 동적 매핑 사고 재발 가능 | §10.1-4, 5 |
+| 3 | ISM 미적용 | 인덱스가 삭제되지 않고 쌓임 | §10.1-9 |
+| 4 | 윈도우 30초로 운영 중 | 요약 행 약 60배 | §10.1-7 |
+| 5 | 틱 위상 드리프트 | 윈도우 라벨이 0~5초 밀림 (§4.6-7) | 설계상 한계. 1800초 윈도우에서는 영향 미미 |
+| 6 | 테스트 phase 가 한 윈도우에 몰림 | phase 별 게이트(롤 grant 수 등)가 전체 매트릭스를 봄 | 테스트 노트북 수정 필요 |
+| 7 | 다단계 네임스페이스 커밋 키 | `a.b` → `a%1Fb` 변환이 실제 트래픽으로 미검증. 틀리면 요청 없는 "유령 행" 생성 | 운영 적용 후 확인 |
+| 8 | `/namespaces/{ns}/register` 분류 규칙 없음 | 오류는 `__errors__` 로, 성공은 `other` 행으로 | 규칙 추가 후보 |
+| 9 | 4개 API 가 잘못된 요청에 500 응답 | `errors_5xx` 오탐 (`getToken`, `createNamespace`, `renameTable`, `renameView`) | Polaris 측 이슈, 재현 확인 |
+| 10 | 리소스 행 상한 500 | 운영 규모에서 `__other__` 로 넘칠 수 있음 | 운영 적용 후 `resources_other` 확인 |
+| 11 | Fluent Bit 처리량 | 일 5,000만 줄 × Lua 2단계, CPU 제한 200m | 부하 측정 필요 |
+| 12 | Lua 로드 실패 = 전체 수집 중단 | tier 1 까지 멈춤 (§9.2) | 배포 게이트로 방지 |
+| 13 | multiline 병합 | 깨지면 grant 로그가 여러 문서로 분리 | 테스트에서는 정상 (75건 단일 문서) |
+| 14 | Polaris 다중 파드 | 여러 Polaris 파드의 로그가 한 Fluent Bit 파드에 합산 — 요약은 노드 단위 | 현재 `maxReplicas` 확인 필요 |
+| 15 | 공용 인덱스 tier 1 출력의 평문 자격증명 | 설정 파일에 비밀번호 | 별도 변경 (Secret 사용자 권한 확인 후) |
+| 16 | Polaris 콘솔 로그 레벨 | DEBUG 가 켜지면 수집·필터 부하만 늘고 저장은 안 됨 | 운영 값 확인 |
 
-7번은 알림 설계에 직접 영향을 준다. **`errors_5xx > 0` 만으로 장애 알림을 걸면 오탐이 난다** — 해당 4개
-오퍼레이션은 제외하거나, 별도 임계값을 둔다.
+**해결됨**
+
+| 항목 | 해결 |
+|---|---|
+| 애플리케이션 로그(DEBUG SQL 포함) 미분리 | v4 허용 목록 (2026-09-15) |
+| 윈도우 라벨 밀림으로 게이트가 한 행씩 어긋남 (#26) | 원인은 테스트 노트북의 경계 직후 실행. 노트북 수정 후 라벨 기준으로 일치 확인 |
+| 요청 0 행(zero-carry)이 요약 행의 40% 이상 | v4 에서 삭제 |
 
 ---
 
-## 10. 요약
+## 12. 요약
 
-- Polaris 전용 인덱스 `polaris-audit-*` 를 신설하고 **보관 30일**로 한다. `kube-fb` 는 건드리지 않는다.
-- 적재 대상은 **오류·변경·인증 실패 전건**과 **30분 단위 요약**이다. 성공한 조회는 세기만 한다.
-- 총량은 언제나 보존된다 — 적재하지 않은 요청도 요약 카운터에 반영된다.
-- 스펙 정상치 기준 30일 보관 용량은 **약 11 GB** 로, 전량 적재 대비 약 1/27 이다.
-- 적용 전 해결이 필요한 항목은 §9 의 1·2·3·4번이다.
+- Polaris 로그를 공용 인덱스와 별도로 **상세 30일 · 요약 365일** 두 인덱스에 적재한다. 두 개가 불가능하면
+  하나(30일)로 합친다.
+- 상세에는 **오류·변경·인증 실패 전건**과 **이유(예외 로그)·변경 내용(권한 로그)** 만 남기고, 둘은
+  `mdc.requestId` 로 조인한다. 성공한 조회와 반복 로그는 **세기만** 한다.
+- 요약은 30분 단위 리소스·principal 추이, 테이블 커밋 시간, 버린 로그 개수를 담는다.
+- 운영 트래픽(일 5,000만 건) 기준 상세 인덱스는 하루 약 0.83 GB 이며 **그 98% 가 404** 다. 404 처리가
+  보관 비용을 결정한다.
+- Lua 는 배포 방식에 관계없이 반드시 함께 배포되어야 하며, 빠지면 **노드 전체 로그 수집이 멈춘다.**
+
+---
+
+## 부록
+
+### A. 용어
+
+| 용어 | 뜻 |
+|---|---|
+| 윈도우 | 요약 집계 단위 시간 (운영 30분). `window_start` 로 식별 |
+| 틱 | 5초마다 들어오는 빈 레코드. 윈도우 경계를 넘은 틱이 요약을 만든다 |
+| 틱 위상 (δ) | 윈도우 경계와 그 경계를 알아챈 틱 사이의 시간 (0~5초) |
+| 집계만 (counted) | 문서를 남기지 않고 카운터에만 반영 |
+| 허용 목록 | 적재할 애플리케이션 logger 목록 (`APP_ALLOW`) |
+| zero-carry | v3 까지 직전 윈도우의 활성 행을 0 으로 한 번 더 내던 동작. v4 에서 삭제 |
+| `__errors__` | 그 순간 행이 없던 리소스의 오류가 모이는 행 |
+| `__other__` | 행 상한을 넘은 요청이 모이는 행 |
+| 렌더 게이트 | 배포 전 렌더 결과를 검사하는 `step2-render-gate.sh` |
+
+### B. 관련 파일
+
+| 파일 | 내용 |
+|---|---|
+| `fluent-bit/values.yaml` | Fluent Bit DaemonSet 설정 (tier 1/2/3) |
+| `fluent-bit/polaris_access_log.lua` | 판정·집계·요약 Lua (정책 v4) |
+| `logging/opensearch/polaris-report-template.json` | 요약 인덱스 템플릿 |
+| `logging/scripts/test-schema-v3.lua`, `test-schema-v4.lua` | Lua 단위 테스트 |
+| `logging/scripts/step2-render-gate.sh` | 렌더 게이트 |
+| `logging/scripts/step3-postupgrade.sh` | 롤 후 점검 |
+| `logging/scripts/step9-report-index-template.sh` | 템플릿 적용 |
+| `logging/PLAN-audit-allowlist-2026-09-15.md` | v4 설계·결정 기록 |
+| `logging/SCHEMA-report.md` | 요약 스키마 레퍼런스 (영문) |
+
+### C. 측정 기록
+
+| 날짜 | run | 내용 |
+|---|---|---|
+| 2026-09-14 | `1789370776` | 틱 위상 3.673초, 윈도우 라벨 어긋남 원인 규명 |
+| 2026-09-15 | `1789436277` | v3 상세 759건 logger 분석 → 허용 목록 결정, `requestId` 조인 100% |
+| 2026-09-15 | `1789460891` | 노트북 수정 후 라벨 기준 일치, 커밋 10–57 ms, 틱 위상 2.77초 |
+| 2026-09-15 | `1789463971` | **v4 첫 운영** — 상세 598건 예측과 일치, 요약 seq 3–4 전 항목 일치, 틱 위상 1.765초 |
