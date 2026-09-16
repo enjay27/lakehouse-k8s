@@ -571,6 +571,21 @@ still its own last step.
 
 ## Resolved, kept because they recur
 
+**#29 — Tier 1 OUTPUT 2 (`opensearch.1`, `kube.*` → k8s-logs) still discards chunks under traffic, on 5.1.1. OPEN, cause unknown.** 2026-09-16.
+One chunk per traffic run, twice today, **before and after the v5 roll**, so not caused by v5:
+- `1-1789535377` (05:09:37 UTC, v4 pod `rvm49`, traffic window readout `050930Z`): warn 05:09:46, 05:10:07, `cannot be retried` 05:10:45.
+- `1-1789548067` (08:41:07 UTC, v5 pod, step-7 traffic window `084100Z`): warn 08:41:19, 08:41:38, `cannot be retried` 08:41:52.
+`Retry_Limit 3` exhausts and the chunk is dropped. **It is not `#19`'s signature as far as step3 shows:** step3's
+grep matches `cannot`, and no `cannot increase buffer` line appeared — but step3 does not print the lines that say
+*why* a flush failed (`[output:opensearch:opensearch.1] http_do=… / HTTP status=…`), and OUTPUT 2 has no `Trace_Error`,
+so per-item `_bulk` rejections are invisible. Candidates, none measured: a per-item mapping rejection (deterministic,
+so every retry fails — fits "one chunk, all retries fail"), OpenSearch 429 under the burst, or `Buffer_Size False`
+behaving differently on 5.1.1 than on 3.2.2 where `#19`'s 7 → 0 gate was taken.
+**What it did not hit (measured from `.scratch/readout-2026-09-16T084100Z/tier1.json`):** the 720 Polaris tier-1 docs
+in the step-7 interval have 720 distinct `sequence`, 0 duplicates, and step11 replays them to the pipeline's exact
+rows — so no Polaris record in that window was lost or duplicated. Fluent Bit chunks are per tag (= per container log
+file), so the dropped chunk is most likely another container's. Which one is unknown. Still real tier-1 loss.
+
 **#28 — Policy v5 (404 counted, not stored) + Lua as its own ConfigMap with hot reload: ROLLED 2026-09-16 (rev 17), POST-ROLL CHECKS OPEN.** 2026-09-16.
 Decisions (Kade): 404 access lines count into `errors_4xx`/`counted_404` and are not stored; the allow-listed
 app lines of a 404 request are dropped too, **matched by `mdc.requestId`** (hold until the access line, 30 s
