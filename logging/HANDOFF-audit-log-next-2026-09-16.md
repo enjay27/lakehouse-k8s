@@ -1,5 +1,7 @@
 # HANDOFF — v5 is live without hot reload. What is left, in order. Start at §3 C (A dropped, B done — 2026-09-16 late).
 
+> **SUPERSEDED 2026-09-16 (late) by [`HANDOFF-pipeline-next-2026-09-16.md`](HANDOFF-pipeline-next-2026-09-16.md).** Since this was written: A dropped, B done, the Lua refactored and rolled (`#31`), thread fields removed (`#30`), and **C/F (ISM) handed to the Monitoring team**.
+
 **Written 2026-09-16 at the end of the Cowork session that rolled v5 (commits `28300b8`..`63cf6e9`).**
 Supersedes [`HANDOFF-v5-rollout-2026-09-16.md`](HANDOFF-v5-rollout-2026-09-16.md) (its §2 roll is done).
 Plan: [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md) · issues

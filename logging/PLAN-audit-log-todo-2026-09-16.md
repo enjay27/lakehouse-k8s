@@ -1,5 +1,10 @@
 # TODO — Polaris audit log, from `PROPOSAL-polaris-audit-log-retention.ko.md` to production
 
+> **Update 2026-09-16 (late): phase 2 rolled except 2.5/2.7.** 2.6 done (v5, rev 17), hot reload removed (rev 18), thread/ndc trim
+> (rev 19, `#30`), Lua refactor with one Lua filter rolled and verified (`#31`). **2.8 / 2.9 (ISM) are no longer ours — the Monitoring
+> team writes and applies retention (Kade).** Whole-pipeline review with pending decisions: `REVIEW-pipeline-2026-09-16.md`.
+> Current order of work: `HANDOFF-pipeline-next-2026-09-16.md` §3.
+
 **Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). **1.5 DONE 2026-09-16** — run `1789535345`: one table row at `probe_ns%1Fnested/…/mx_1789535345_deep` with requests 3 and commit_count 2, no dotted phantom; replay 67×30 PASS. **Phases 0 and 1 complete.**
 **Update 2026-09-16 (later): 2.6 ROLLED and verified as rev 17; hot reload then REMOVED by decision — Lua changes are `bash fluent-bit/apply-lua.sh` (apply + restart), runbook B/C dropped; the removal is written, not rolled. (`active-issues #28`)** Original status: **Phase 2 bundle WRITTEN 2026-09-16, not rolled** — 2.1 decided (404 counted only, app lines dropped by `mdc.requestId`), 2.2 decided (Lua ConfigMap + chart hot reload, no `--set-file`), 2.3 and 2.4 implemented, tests pass. Next: 2.6 roll + `RUNBOOK-lua-hot-reload-2026-09-16.md` B/C/D; 2.5 (1800s) deliberately **not** in this bundle — step11 verification of v5 needs 30 s windows.
 **1.1 DONE 2026-09-16** — step9 PASS: stored 37/37, simulated 37/37, all six v4 integers `long`.
@@ -43,11 +48,11 @@ Scope: local OrbStack first (phases 0–2), then the production port (phase 3). 
 | 2.2 | ~~Decide the deploy method~~ **DECIDED + WRITTEN 2026-09-16:** ConfigMap `polaris-fluent-bit-lua` via `fluent-bit/kustomization.yaml`, `extraVolumes`, `hotReload` (reloader sidecar). step2 takes the kustomize render as arg 2; step3 checks the new ConfigMap sha + reloader. Hot-reload safety unmeasured → runbook | K decide · C implement | — | chosen method in proposal §9.1 and `values.yaml` header |
 | 2.3 | **DONE (written) 2026-09-16** — `/namespaces/{ns}/register` pattern, kind `collection` (the key is the namespace's table collection, like `POST …/tables`), case in `test-schema-v5.lua`. Was: kind `table` | C | — | test case passes |
 | 2.4 | **DONE (written) 2026-09-16** — v5 Lua (hold/memo/orphans, 4 summary fields), `test-schema-v5.lua`, v3/v4 tests expect schema 5, report template +4 `long`, step11 predicts the detail index by logger | C | 2.1 | tests pass on LuaJIT/Lua 5.1; export replay shows the expected keep/drop |
-| 2.5 | **Revert the window to 1800s** (`WINDOW_SECONDS = 1800`; keep `Interval_Sec 5` — proposal §4.6-7) | C write · K `apply-lua.sh` | 2.6 verified (v5 is checked on 30s windows first; then a Lua-only change: apply + restart) | Lua + comments updated, tests adjusted (sed to 30 for tests) |
-| 2.6 | **Roll the bundle** (2.2–2.4; 2.5 follows as a hot-reload-only change): tests → kustomize + helm render → `step2-render-gate.sh render lua` → `kubectl apply -k fluent-bit/` → helm upgrade → step3 → step9 → traffic → step10/11 → runbook B/C/D | K | 2.2–2.4 | step3 all PASS, `k8s-logs` receiving, step11 PASS with detail 200/22/78-style prediction met, no 404 access doc in `polaris-logs-*` |
-| 2.7 | **Delete the 30s-window verification `polaris-report-*` indices** before any 365d policy attaches. *Destructive — explicit OK at execution time.* | K | 2.6 | only 1800s-window report indices remain |
-| 2.8 | Write **ISM policies** (`logging/opensearch/ism-polaris-logs-30d.json`, `ism-polaris-report-365d.json`) + apply script | C | — | JSON valid, committed |
-| 2.9 | Apply ISM | K | 2.7, 2.8 | `_plugins/_ism/explain/polaris-*` shows both policies attached |
+| 2.5 | **OPEN** — **Revert the window to 1800s** (`WINDOW_SECONDS = 1800`; keep `Interval_Sec 5` — proposal §4.6-7) | C write · K `apply-lua.sh` | 2.6 verified (v5 is checked on 30s windows first; then a Lua-only change: apply + restart) | Lua + comments updated, tests adjusted (sed to 30 for tests) |
+| 2.6 | **DONE 2026-09-16** (rev 17; then rev 18 reloader removed, rev 19 `#30`, refactor `#31`) — **Roll the bundle** (2.2–2.4; 2.5 follows as a hot-reload-only change): tests → kustomize + helm render → `step2-render-gate.sh render lua` → `kubectl apply -k fluent-bit/` → helm upgrade → step3 → step9 → traffic → step10/11 → runbook B/C/D | K | 2.2–2.4 | step3 all PASS, `k8s-logs` receiving, step11 PASS with detail 200/22/78-style prediction met, no 404 access doc in `polaris-logs-*` |
+| 2.7 | **OPEN** — **Delete the 30s-window verification `polaris-report-*` indices** before the Monitoring team attaches a retention policy. *Destructive — explicit OK at execution time.* | K | 2.6 | only 1800s-window report indices remain |
+| 2.8 | ~~Write ISM policies~~ **HANDED TO THE MONITORING TEAM 2026-09-16 (Kade)** — recommended values stay in proposal §5.3 (30 d detail, 365 d report) | Monitoring | — | — |
+| 2.9 | ~~Apply ISM~~ **Monitoring team** | Monitoring | 2.7 | — |
 
 ## Phase 3 — production readiness and port
 
@@ -57,7 +62,7 @@ Scope: local OrbStack first (phases 0–2), then the production port (phase 3). 
 | 3.2 | **Row caps** — watch `resources_other`, `principals_other`, `role_keys_forced` under realistic key counts; size `REPORT_MAX_RESOURCES` | K · C | 3.1 or first prod day | caps never hit, or raised with memory re-checked |
 | 3.3 | **One-day measurement** — `_cat/indices` sizes / doc counts for both indices; replace proposal §6 estimates (doc size, exception-lines-per-error ratio) | K measure · C doc | 2.6 (+ prod for real ratios) | §6 carries measured numbers |
 | 3.4 | **Can production have two Polaris indices?** If not: merge into `polaris-audit-*` 30d (proposal §5.4) — one template holding both shapes | K confirm · C config | — | index layout decided for prod |
-| 3.5 | **Port to GitOps** (Bitbucket → Jenkins → ArgoCD): values, Lua, templates, ISM; prod index prefix and OpenSearch endpoint; Secret-based credentials | C files · K pipeline | 2.2, 3.4 | ArgoCD app syncs; step3-equivalent checks pass in prod |
+| 3.5 | **Port to GitOps** (Bitbucket → Jenkins → ArgoCD): values, Lua, templates (ISM is the Monitoring team's; decide the deploy unit first — `REVIEW-pipeline` P5); prod index prefix and OpenSearch endpoint; Secret-based credentials | C files · K pipeline | 2.2, 3.4 | ArgoCD app syncs; step3-equivalent checks pass in prod |
 | 3.6 | **Tier 1 credentials to the Secret** (`#4`) — first verify the Secret's user can write `k8s-logs` | K verify · C change | — | two literal credentials gone; tier 1 still indexing |
 | 3.7 | **Polaris runtime settings in prod** — console threshold (DEBUG would cost filter CPU for nothing), replica count (several Polaris pods on one node aggregate into one report) | K | — | recorded in proposal §11 |
 | 3.8 | **Dashboards and alerts** from proposal §8 (commit mean via sum/count, auth_denied surge, new logger, `secret_redacted`, collection gap, `errors_5xx` minus the four `#24` operations) | C queries · K build | 2.6 (1800s data) | alerts fire on a synthetic trigger |
@@ -79,12 +84,12 @@ Scope: local OrbStack first (phases 0–2), then the production port (phase 3). 
 0.1 → 0.2 → 0.3          0.4   0.5 → 1.1          1.2 → 1.3
           1.4 → 1.5
 2.1 ─┐  2.3 ─┐
-2.2 ─┼──────┼─ 2.4, 2.5 → 2.6 → 2.7 → 2.9 ← 2.8
+2.2 ─┼──────┼─ 2.4, 2.6 → 2.5 → 2.7 → (Monitoring team: retention)
      │      │                   └→ 3.1 → 3.2, 3.3, 3.8
 3.4 ─┴──────┴──────────────────────────────→ 3.5        3.6, 3.7 independent
 ```
 
-**Critical path:** 0.1 → 0.2 → ~~1.4~~ → 1.5 → 2.5 → 2.6 → 2.7 → 2.9. Everything that needs 30-second windows
+**Critical path:** 0.1 → 0.2 → ~~1.4~~ → 1.5 → 2.6 → 2.5 → 2.7 (2.8/2.9 handed over). Everything that needs 30-second windows
 (phase 0, 1.4, 1.5) must finish **before** 2.5 — after the revert, a verification run takes 30 minutes per
 window.
 

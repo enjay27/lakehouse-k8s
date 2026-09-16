@@ -34,7 +34,7 @@ plausible-looking name.
   `/q/health` and `/q/metrics` live there.
 - **Pgpool-II, not PgBouncer.** It load-balances SELECTs across all three
   replicas, so a PostgreSQL server log tailed from one pod misses statements.
-- VictoriaLogs UI/ingest: `9428`, namespace `logging`, LoadBalancer.
+- VictoriaLogs UI/ingest: `9428`, namespace `logging`, LoadBalancer — only while `fb-polaris-shipper` / VictoriaLogs are installed; their uninstall was planned and is unconfirmed (`logging/REVIEW-pipeline-2026-09-16.md` P10).
 - **OpenSearch `3.5.0` runs in Docker**, not in Kubernetes — outside this repo, so no
   compose file is versioned here. It survives a cluster reset because nothing in the
   cluster owns it. **Version measured 2026-09-08** (`GET /`, container

@@ -581,7 +581,8 @@ not the timer. The `Interval_Sec + 1.5` lag is immune; a hardcoded 3.673 is not.
 the whole matrix. Downgrade to MONITOR once phases are one-per-window again.
 [`sessions/2026-09-15-rerun-1789460891-review.md`](sessions/2026-09-15-rerun-1789460891-review.md).
 
-**#27 — Policy v4 / report schema v4 is WRITTEN AND NOT ROLLED. OPEN.** 2026-09-15.
+**#27 — Policy v4 / report schema v4. CLOSED: rolled 2026-09-15, superseded by v5 (`#28`, rev 17) and the refactor (`#31`).** 2026-09-15.
+*(Header corrected 2026-09-16; the body below is the original record, "WRITTEN AND NOT ROLLED" as of 2026-09-15.)*
 `fluent-bit/polaris_access_log.lua` carries it (split out of `values.yaml`'s `luaScripts` the same day;
 **every `helm upgrade` needs `--set-file 'luaScripts.polaris_access_log\.lua=fluent-bit/polaris_access_log.lua'`**,
 or the Lua filters lose their script and the pod CrashLoops). The running pod is v3.
@@ -1033,8 +1034,8 @@ ERROR `IcebergExceptionMapper` "Unhandled exception returning INTERNAL_SERVER_ER
   `JWTBroker.supportsGrantType:169` (42 frames): a request without `grant_type`.
 Polaris 1.3.0-incubating. Enough to file upstream; not filed (Polaris is not to be changed from here).
 
-**#25 — The report index template is WRITTEN AND NOT APPLIED, and the Lua change is written and not
-rolled. OPEN, LIVE.** 2026-09-10. `logging/opensearch/polaris-report-template.json` exists in the
+**#25 — The report index template and the `""`-free Lua. CLOSED 2026-09-16: template applied (step9 PASS), Lua rolled.** 2026-09-10.
+*(Header corrected 2026-09-16; the body keeps the original "WRITTEN AND NOT APPLIED" record and the APPLIED note.)* `logging/opensearch/polaris-report-template.json` exists in the
 repo; nothing has PUT it to OpenSearch. `fluent-bit/values.yaml` no longer writes `""` for
 `min/max_record_time`; the running pod still does. Until both land:
 **2026-09-16 — APPLIED.** `PUT _index_template/polaris-report` acknowledged; a simulated new index maps

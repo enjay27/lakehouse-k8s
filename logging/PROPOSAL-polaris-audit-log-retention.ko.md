@@ -16,22 +16,22 @@
 | 대상 | Polaris (`benchmarks-polaris`, namespace `datahub-hynix`) |
 | 적재 방식 | Fluent Bit DaemonSet + Lua 필터 → OpenSearch 3.5.0 |
 | 인덱스 | `polaris-logs-YYYY.MM.DD` (상세) · `polaris-report-YYYY.MM.DD` (요약) |
-| 보관 기간 | 상세 **30일** · 요약 **365일** (ISM, §5.3) |
+| 보관 기간 | 상세 **30일** · 요약 **365일** (권장값, §5.3). **보관 정책(ISM) 작성·적용은 모니터링팀 담당** (2026-09-16) |
 | 요약 주기 | 30분 (`WINDOW_SECONDS` 1800). 검증 중에는 30초 |
-| 필터 정책 | **정책 v4 / 리포트 스키마 v4** — 2026-09-15 적용 · **v5 작성됨, 미적용** (2026-09-16) |
-| 문서 상태 | 로컬 환경(OrbStack) 적용 · **v5 롤·검증 완료 (2026-09-16)** (404 집계, Lua ConfigMap) · hot reload 제거 롤 완료. 남은 단계는 §10 |
+| 필터 정책 | **정책 v5 / 리포트 스키마 v5** — 2026-09-16 적용 (같은 날 Lua 리팩터까지 롤, §9.1) |
+| 문서 상태 | 로컬 환경(OrbStack) 적용 · **v5 롤·검증 완료 (2026-09-16)** (404 집계, Lua ConfigMap, hot reload 없음) · **Lua 리팩터 롤·검증** (Lua FILTER 2개 → 1개) · 상세 인덱스에서 `threadName`/`threadId`/`ndc` 제거. 남은 단계는 §10, 파이프라인 전체 재검토는 `logging/REVIEW-pipeline-2026-09-16.md` |
 
 ### 현재 상태와 목표
 
 | 항목 | 목표 | 현재 (2026-09-16) |
 |---|---|---|
-| 필터 정책 | v5 | **v4 적용됨** (파드 `benchmarks-fluent-bit-rvm49`). v5 는 저장소에만 있음 |
+| 필터 정책 | v5 | **v5 적용됨** (2026-09-16, 파드 `benchmarks-fluent-bit-qr4br`, Lua 리팩터 포함) |
 | 인덱스 구성 | 2개 (불가 시 1개) | 2개 — `polaris-logs-*` / `polaris-report-*` |
-| 인덱스 템플릿 | 적용 | **적용됨** (2026-09-16, 요약·상세 모두). v5 필드 4개 추가분은 재적용 필요 |
-| ISM 보관 정책 | 상세 30일 · 요약 365일 | **미적용** |
+| 인덱스 템플릿 | 적용 | **적용됨** (2026-09-16, 요약·상세 모두. 상세 템플릿은 `threadId` 제거 후 재적용 — 다음 날 인덱스부터) |
+| ISM 보관 정책 | 상세 30일 · 요약 365일 (권장) | **모니터링팀 담당** — 이 문서·저장소의 범위 밖 (2026-09-16 결정) |
 | 요약 윈도우 | 1800초 | 30초 (검증용 임시값) |
-| 404 처리 | 집계만 (§3.9) | **결정됨** (2026-09-16) · v5 Lua 작성, 미적용 — 현재는 전건 적재 |
-| Lua 배포 | ConfigMap, 시작 시 로드 (§9.1) | **적용됨** (2026-09-16, hot reload 제거까지 롤) |
+| 404 처리 | 집계만 (§3.9) | **적용·검증됨** (2026-09-16) — 윈도우당 404 100건 집계, 적재 0건 |
+| Lua 배포 | ConfigMap, 시작 시 로드 (§9.1) | **적용됨** (2026-09-16, hot reload 없음). Lua 와 config 를 함께 바꿀 때는 §9.1 위험 3 의 순서 |
 
 ### 버전 이력
 
@@ -41,6 +41,7 @@
 | v3 | 2026-09-09 | `last_read_bytes` / `last_write_bytes`, `api_kind`, grant 를 롤 행으로 접기 |
 | **v4** | **2026-09-15** | 애플리케이션 로그 허용 목록, `app_dropped`, 테이블 커밋 시간 `commit_ms_*`, 요청 0 행 제거, 자격증명 가드 |
 | v5 | 2026-09-16 (롤, 검증) | **404 집계만** + 같은 `requestId` 의 앱 로그 폐기 (`counted_404`, `app_dropped_404`, `held_orphans`, `held_pending`), `/namespaces/{ns}/register` 분류, Lua 를 별도 ConfigMap 으로 배포 (hot reload 없음, 재시작으로 반영) |
+| v5 리팩터 | 2026-09-16 (롤, 검증) | **스키마·정책 동일.** 액세스 라인 파싱을 판정 필터에 통합 (Lua FILTER 2개 → 1개), 리소스 분류 가속, 기동 직후 첫 틱 이전 레코드도 집계 (그 윈도우는 `partial_window: "true"`). 상세 인덱스에서 `threadName`·`threadId`·`ndc` 제거. 리팩터 전후 같은 트래픽의 요약 수치 동일 |
 
 ---
 
@@ -92,14 +93,13 @@ flowchart TB
     I2["INPUT tail · Tag polaris.logs<br/>*benchmarks-polaris*.log · DB flb_polaris.db"]
     I3["INPUT dummy · Tag polaris.report<br/>5초 틱 · 로그 데이터 없음"]
     F1["FILTER parser + modify<br/>CRI unwrap · key rename"]
-    F2["FILTER lua · polaris_access_log<br/>액세스 라인 필드 추출"]
-    F3["FILTER lua · polaris_noise_filter<br/>Match polaris.*<br/>규칙 0~7 판정 + 윈도우 집계"]
-    F4["FILTER record_modifier<br/>field trim"]
+    F3["FILTER lua · polaris_noise_filter<br/>Match polaris.*<br/>액세스 라인 필드 추출 + 규칙 0~7 판정 + 윈도우 집계"]
+    F4["FILTER record_modifier<br/>field trim (process·thread·ndc 등)"]
   end
 
   CL --> I1
   CL --> I2
-  I2 --> F1 --> F2 --> F3
+  I2 --> F1 --> F3
   I3 --> F3
 
   F3 -->|"적재 대상"| F4
@@ -108,8 +108,8 @@ flowchart TB
 
   subgraph OS["OpenSearch"]
     IDX1["k8s-logs / kube-fb<br/>5일 · 현행 유지 · 필터 없음"]
-    IDX2["polaris-logs-*<br/>상세 · 30일"]
-    IDX3["polaris-report-*<br/>요약 · 365일"]
+    IDX2["polaris-logs-*<br/>상세 · 30일 권장"]
+    IDX3["polaris-report-*<br/>요약 · 365일 권장"]
   end
 
   I1 -->|"kube.* 필터 체인"| IDX1
@@ -128,9 +128,10 @@ tail 한다. 오프셋 DB 는 반드시 분리한다(`flb_kube.db` / `flb_polari
 이다. 틱이 윈도우 경계를 넘었을 때만 요약으로 치환되고 나머지는 버려진다. 따라서 **요약 문서의 시각은
 로그가 아니라 틱이 결정**하며, 경계와 틱 사이(0 ~ 5초)에 들어온 요청은 직전 윈도우에 집계된다 (§4.6-7).
 
-**③ Lua 는 한 파일, 두 단계다.** `fluent-bit/polaris_access_log.lua` 에 함수 두 개가 있고 FILTER 도 둘이다 —
-`polaris_access_log`(액세스 라인 → 필드)와 `polaris_noise_filter`(판정 + 집계 + 요약). 두 번째 필터가
-`polaris.*` 를 매치해야 틱이 같은 필터 인스턴스(= 같은 카운터)를 지난다.
+**③ Lua 는 한 파일, 한 FILTER 다.** `fluent-bit/polaris_access_log.lua` 의 함수 `polaris_noise_filter` 하나가
+액세스 라인 파싱 → 판정 → 집계 → 요약을 모두 한다 (2026-09-16 리팩터 전에는 파싱 함수 `polaris_access_log` 가 별도
+FILTER 였다. Lua FILTER 는 레코드마다 전체를 Lua 테이블로 변환하므로 하나로 합쳤다). 이 필터가 `polaris.*` 를 매치해야
+틱이 같은 필터 인스턴스(= 같은 카운터)를 지난다.
 
 > **핵심 원칙 — 버리는 것이 아니라 세는 것.** 적재하지 않은 액세스 라인은 리소스·principal 행의 카운터에,
 > 적재하지 않은 애플리케이션 로그는 `app_dropped` 행에 반드시 반영된다. "기록이 없다" 는 "요청이 없었다" 가
@@ -500,7 +501,10 @@ seq=4 app_dropped org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandl
 `type_int_key` 로 정수로 들어가므로 동적 매핑으로도 `long` 이 되지만, 인덱스를 새로 여는 첫 문서가
 애플리케이션 로그일 수 있으므로 **상세용 템플릿 작성을 권장**한다 (§10).
 
-### 5.3 보관 정책 (ISM) — *미적용*
+### 5.3 보관 정책 (ISM) — *모니터링팀 담당*
+
+> **2026-09-16 (Kade): ISM 정책의 작성·적용은 모니터링팀이 한다.** 아래는 이 파이프라인이 전제하는 **권장** 보관 기간이며,
+> 이 저장소에는 ISM 파일을 두지 않는다. 검증용 30초 윈도우 인덱스 삭제(§10.1-8)는 정책을 붙이기 전에 끝낸다.
 
 ```
 polaris-logs-*    hot ──▶ delete (min_index_age: 30d)
@@ -701,7 +705,7 @@ v5 부터 Lua 는 Helm 값이 아니라 **별도 ConfigMap** `polaris-fluent-bit
 |---|---|---|
 | ConfigMap | `fluent-bit/kustomization.yaml` (`configMapGenerator`) | `polaris_access_log.lua` 를 감싸 `polaris-fluent-bit-lua` 생성. 이름 해시 접미사 끔 (DaemonSet 이 고정 이름으로 참조) |
 | 마운트 | `values.yaml` `extraVolumes` / `extraVolumeMounts` | `/fluent-bit/polaris-lua/` |
-| 반영 | `fluent-bit/apply-lua.sh` | 컨텍스트 확인 → Lua 테스트 v3–v5 → `kubectl apply -k` → `rollout restart` → 새 파드 로그 확인 |
+| 반영 | `fluent-bit/apply-lua.sh` | 컨텍스트 확인 → Lua 테스트 v3–v5 + first-tick → `kubectl apply -k` → `rollout restart` → 새 파드 로그 확인 |
 
 ```bash
 bash fluent-bit/apply-lua.sh     # 스크립트만 바꿀 때는 이것뿐. Helm 불필요
@@ -724,6 +728,9 @@ bash fluent-bit/apply-lua.sh     # 스크립트만 바꿀 때는 이것뿐. Helm
    §3.9 의 보류분.
 3. Helm 으로 config 를 바꾸면 차트의 `checksum/config` 어노테이션 때문에 파드가 재시작된다. config 와 Lua 를
    함께 바꿀 때는 **`apply-lua.sh --no-restart` 먼저, Helm upgrade 나중** — 재시작 한 번에 둘 다 반영된다.
+   **중간에 재시작하면 안 된다.** 2026-09-16 리팩터가 그 예다: 새 Lua 에는 파싱 함수가 없고 새 config 에는 파싱 FILTER 가
+   없다. 새 Lua + 옛 config 로 뜨면 filter 초기화 실패(전체 수집 정지), 옛 Lua + 새 config 로 뜨면 모든 액세스 라인이
+   파싱 실패로 적재된다.
 4. 재시작 동안 tier 1 메모리 버퍼의 손실 여부는 미측정.
 
 ### 9.2 사고 사례 — 2026-09-15 `--set-file` 누락
@@ -799,13 +806,14 @@ v4 스크립트가 함께 돌아온다. **엔진이 멈췄다면** 좋은 스크
 | 1 | Lua v4 롤 | **완료** (2026-09-15) | 파드 로그 정상, 스크립트 sha 일치 |
 | 2 | v4 1차 실측 (설정 구간) | **완료** | §10.3 |
 | 3 | 테스트 매트릭스 윈도우 요약 검증 | **완료** (2026-09-16) | G1–G8 + Gate 2 통과, 원본 재생 64행×30필드 불일치 0 (§10.3) |
-| 4 | 요약 인덱스 템플릿 적용 | **완료** (2026-09-16). v5 필드 추가분 재적용 대기 | 새 인덱스 매핑에서 `date` / `long` 확인 |
+| 4 | 요약 인덱스 템플릿 적용 | **완료** (2026-09-16, v5 필드 포함) | 새 인덱스 매핑에서 `date` / `long` 확인 |
 | 5 | 상세 인덱스 템플릿 작성·적용 | **완료** (2026-09-16) | `http_status` 등 `long` 확인 |
-| 6 | 404 처리 정책 결정 | **결정·v5 작성** (§3.9). 롤 대기 | 재생 예측과 상세 문서 수 일치 |
-| 6a | Lua ConfigMap 전환 | **완료** (2026-09-16, rev 17). hot reload 제거도 롤 완료 (§9.1) | step3 PASS (reloader 없음, 시작 시각 > ConfigMap 변경) |
+| 6 | 404 처리 정책 결정 | **완료** (2026-09-16, v5 롤·검증: 404 100건 집계, 적재 0건) | 재생 예측과 상세 문서 수 일치 |
+| 6a | Lua ConfigMap 전환 | **완료** (2026-09-16, rev 17). hot reload 제거도 롤 완료 (rev 18, §9.1) | step3 PASS (reloader 없음, 시작 시각 > ConfigMap 변경) |
+| 6b | Lua 리팩터 (FILTER 통합) · 상세 필드 정리 | **완료** (2026-09-16, rev 19 필드 정리 · 이어서 리팩터) | 같은 트래픽의 요약 수치가 리팩터 전과 동일, 상세 200/22/78, `threadName` 등 0건 |
 | 7 | 윈도우 30초 → 1800초 복귀 | 대기 | Lua `WINDOW_SECONDS` 1800, 요약 문서 수 감소 |
-| 8 | 검증용 `polaris-report-*` 삭제 | 대기 | 30초 윈도우 인덱스 제거 |
-| 9 | ISM 정책 적용 | 대기 | 상세 30일 · 요약 365일 부착 확인 |
+| 8 | 검증용 `polaris-report-*` 삭제 | 대기 (삭제는 실행 시점에 명시 승인) | 30초 윈도우 인덱스 제거 |
+| 9 | ISM 정책 적용 | **모니터링팀 담당** (2026-09-16) | — |
 | 10 | Fluent Bit 부하 측정 | 권장 | 운영 규모에서 CPU·버퍼 여유 확인 |
 | 11 | 하루 실측 | 대기 | §6 추정치를 실측으로 대체 |
 
@@ -854,22 +862,24 @@ v4 스크립트가 함께 돌아온다. **엔진이 멈췄다면** 좋은 스크
 
 | # | 항목 | 영향 | 상태 |
 |---|---|---|---|
-| 1 | **404 전건 적재** | 상세 인덱스 용량의 약 98% | **v5 로 해결 예정** (§3.9) — 롤 대기. `requestId` 없는 요청 동작 운영 확인 필요 |
+| 1 | **404 전건 적재** | 상세 인덱스 용량의 약 98% | **해결 (v5, 2026-09-16)** — 404 적재 0건 확인. `requestId` 없는 요청 동작은 운영 확인 필요 |
 | 2 | 인덱스 템플릿 미적용 | 동적 매핑 사고 재발 가능 | §10.1-4, 5 |
-| 3 | ISM 미적용 | 인덱스가 삭제되지 않고 쌓임 | §10.1-9 |
+| 3 | 보관 정책 (ISM) | 인덱스 삭제 주기 | **모니터링팀 담당** |
 | 4 | 윈도우 30초로 운영 중 | 요약 행 약 60배 | §10.1-7 |
 | 5 | 틱 위상 드리프트 | 윈도우 라벨이 0~5초 밀림 (§4.6-7) | 설계상 한계. 1800초 윈도우에서는 영향 미미 |
 | 6 | 테스트 phase 가 한 윈도우에 몰림 | phase 별 게이트(롤 grant 수 등)가 전체 매트릭스를 봄 | **종결 (2026-09-16)** — 틱 구간 판독(step10) + 원본 재생(step11)으로 대체 |
 | 7 | 다단계 네임스페이스 커밋 키 | `a.b` → `a%1Fb` 변환 | **해결 (2026-09-16)** — run `1789535345` 에서 요청과 커밋 2건이 한 행에 집계, 유령 행 없음 |
-| 8 | `/namespaces/{ns}/register` 분류 규칙 없음 | 오류는 `__errors__` 로, 성공은 `other` 행으로 | **v5 에 추가** (kind `collection`) — 롤 대기 |
+| 8 | `/namespaces/{ns}/register` 분류 규칙 없음 | 오류는 `__errors__` 로, 성공은 `other` 행으로 | **해결 (v5)** — kind `collection` |
 | 9 | 4개 API 가 잘못된 요청에 500 응답 | `errors_5xx` 오탐 (`getToken`, `createNamespace`, `renameTable`, `renameView`) | Polaris 측 이슈, 재현 확인 |
 | 10 | 리소스 행 상한 500 | 운영 규모에서 `__other__` 로 넘칠 수 있음 | 운영 적용 후 `resources_other` 확인 |
-| 11 | Fluent Bit 처리량 | 일 5,000만 줄 × Lua 2단계, CPU 제한 200m | 부하 측정 필요 |
+| 11 | Fluent Bit 처리량 | 일 5,000만 줄 × Lua 1단계 (리팩터 후), CPU 제한 200m | 부하 측정 필요 (§10.1-10). 추가 개선안은 `REVIEW-pipeline-2026-09-16.md` P1 |
 | 12 | Lua 로드 실패 = 전체 수집 중단 | tier 1 까지 멈춤 (§9.2) | `apply-lua.sh` 의 단위 테스트 게이트로 방지 (§9.1) |
 | 13 | multiline 병합 | 깨지면 grant 로그가 여러 문서로 분리 | 테스트에서는 정상 (75건 단일 문서) |
 | 14 | Polaris 다중 파드 | 여러 Polaris 파드의 로그가 한 Fluent Bit 파드에 합산 — 요약은 노드 단위 | 현재 `maxReplicas` 확인 필요 |
 | 15 | 공용 인덱스 tier 1 출력의 평문 자격증명 | 설정 파일에 비밀번호 | 별도 변경 (Secret 사용자 권한 확인 후) |
 | 16 | Polaris 콘솔 로그 레벨 | DEBUG 가 켜지면 수집·필터 부하만 늘고 저장은 안 됨 | 운영 값 확인 |
+| 17 | Lua 와 config 동시 변경 순서 | 순서가 틀리면 전체 수집 정지 또는 전 액세스 라인 파싱 실패 적재 | §9.1 위험 3 의 순서로 방지. 한 Helm 릴리스로 통합하는 안은 `REVIEW-pipeline-2026-09-16.md` P5 (결정 대기) |
+| 18 | 파이프라인 재검토 항목 | tier 1 죽은 출력·자기 로그 재수집, Lua 입력 필드 과다, 상수 필드 저장 등 | `REVIEW-pipeline-2026-09-16.md` P1–P12 (결정 대기) |
 
 **해결됨**
 

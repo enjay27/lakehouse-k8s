@@ -7,7 +7,7 @@
 #
 #   bash fluent-bit/apply-lua.sh
 #
-# 가 하는 일: context 가 orbstack 인지 확인 → Lua 테스트 v3–v5 (LuaJIT) → kubectl apply -k fluent-bit/
+# 가 하는 일: context 가 orbstack 인지 확인 → Lua 테스트 v3–v5 + first-tick (LuaJIT) → kubectl apply -k fluent-bit/
 #   → kubectl rollout restart ds/benchmarks-fluent-bit → rollout status → 파드 로그의 filter 초기화 오류 확인.
 #
 # hot reload 는 쓰지 않는다 (2026-09-16 결정). Fluent Bit 은 Lua 를 시작할 때만 읽는다:
@@ -16,6 +16,9 @@
 #   * 재시작은 Lua 상태를 초기화한다: 다음 리포트 행은 partial, report_seq 는 1 부터, 보류분 소실.
 #   * 잘못된 스크립트면 재시작한 파드가 filter 초기화에 실패하고 입력 전체가 멈춘다 — tier 1(노드
 #     전체 로그)도 함께 (2026-09-15 와 같은 모양). 그래서 테스트는 생략할 수 없다.
+#
+# Lua 와 values.yaml 을 함께 바꿀 때: bash fluent-bit/apply-lua.sh --no-restart → step2 → helm upgrade (그 사이 재시작 금지).
+#   한쪽만 반영된 채 파드가 뜨면 전체 수집 정지 또는 전 액세스 라인 파싱 실패 적재 (active-issues #31).
 #
 # 이름 해시 접미사를 끈 이유: DaemonSet 은 values.yaml 의 extraVolumes 에서 고정 이름
 # `polaris-fluent-bit-lua` 로 참조한다. 접미사를 켜면 이름이 바뀌어도 그 참조는 따라가지 않는다.

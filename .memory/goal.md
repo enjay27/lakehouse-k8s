@@ -21,9 +21,11 @@ Docker / OrbStack host
     │   ├── benchmarks-spark        compute
     │   ├── benchmarks-airflow      / benchmarks-argo   orchestration
     │   ├── benchmarks-jupyter      notebooks
-    │   └── benchmarks-fluent-bit   log shipper (DaemonSet + Polaris log PVC tail)
+    │   ├── benchmarks-fluent-bit   log shipper DaemonSet → OpenSearch (k8s-logs / polaris-logs / polaris-report)
+    │   └── fb-polaris-shipper      Polaris log PVC → VictoriaLogs (planned for uninstall; confirm it still runs)
     └── namespace logging           ← log sink only
         └── VictoriaLogs (vlsingle), 9428
+OpenSearch 3.5.0 runs in Docker on the host, outside Kubernetes and outside this repo.
 ```
 
 Dependency order is real and one-directional: **MinIO → PostgreSQL → Polaris →

@@ -1,4 +1,4 @@
-# Report schema reference — v3 tables; v4 deployed 2026-09-15; v5 written 2026-09-16 (not deployed) — see the end
+# Report schema reference — v3 tables; v4 deployed 2026-09-15; **v5 deployed 2026-09-16 (current)**, refactored the same day without a schema change — see the end
 
 Read off `fluent-bit/values.yaml` (`build_report`, ~line 447) on 2026-09-09, not from intent.
 Three `report_type` values share one envelope and one `_time`, so `stats by (_time)` — or a terms
@@ -222,3 +222,20 @@ Tests: `test-schema-v3.lua`, `test-schema-v4.lua` (both now expect `schema_versi
 2026-09-16 matrix window with `step11-replay-window.py`: detail 300 / 32 / 178 → 200 / 22 / 78
 (access / PolarisServiceImpl / IcebergExceptionMapper). Template: 4 new `long` fields in
 `logging/opensearch/polaris-report-template.json` (41 declared) — re-apply with step9.
+
+---
+
+# v5, refactored — rolled 2026-09-16 (`#31`, `REVIEW-lua-refactor-2026-09-16.md`). No field added, removed or re-typed
+
+`schema_version` stays **5**: every field keeps its meaning. What a reader of the index can notice:
+
+| change | effect on stored rows |
+|---|---|
+| Access-line parsing moved into `polaris_noise_filter` (one Lua filter instead of two) | none — equal output proven offline (0 diffs on real and fuzz input) and on the cluster (window 15:01Z equals 14:44Z / 08:41Z count for count) |
+| **Records before the first tick are now counted** (they were dropped uncounted for up to `Interval_Sec` after every pod start) | the first row after a restart can now carry counts: `partial_window: "true"`, `window_start` is the window the first *record* fell in, and `min_record_time` is later than `window_start`. A partial row is never comparable to a full one |
+| `http_status` / `response_size` get their integer type from FILTER 3's `type_int_key` (was FILTER 2's) | none — still JSON integers in `polaris-logs-*`, including access lines released with held app lines |
+| Detail docs lose `threadName`, `threadId`, `ndc` (values FILTER 4, `#30`) | `polaris-logs-*` only; not a report-schema change. `polaris-logs-template.json` no longer maps `threadId` |
+
+Tests: `test-schema-v3/v4/v5.lua` now feed raw `_msg` access lines through `logging/scripts/test-raw-access-shim.lua`;
+`test-first-tick.lua` covers the start-up counting. All run in `fluent-bit/apply-lua.sh`.
+

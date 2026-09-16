@@ -1,3 +1,5 @@
+> **HISTORICAL (banner added 2026-09-16).** This 2026-09-03 design (Polaris log PVC → Fluent Bit Deployment → VictoriaLogs) is not what was built. The running pipeline is the Fluent Bit DaemonSet → OpenSearch described in `PROPOSAL-polaris-audit-log-retention.ko.md`; see `README.md` for the current set.
+
 # Polaris Log Analytics Pipeline: Comprehensive Architecture & Integration Specification
 
 ---

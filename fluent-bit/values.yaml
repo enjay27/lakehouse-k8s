@@ -1,14 +1,16 @@
 # =====================================================================================
 # Fluent Bit — K8s DaemonSet, 릴리스 `benchmarks-fluent-bit`, namespace datahub-hynix
-# 정책 v5 / 리포트 스키마 v5 — 2026-09-16 롤 (rev 17). hot reload 제거는 같은 날 결정 (active-issues #28)
+# 정책 v5 / 리포트 스키마 v5 — 2026-09-16 롤 (rev 17). 같은 날: hot reload 제거 (rev 18, #28), 상세 필드 정리 (rev 19, #30),
+# Lua 리팩터 — Lua FILTER 하나 (#31). 파이프라인 재검토: logging/REVIEW-pipeline-2026-09-16.md (결정 대기)
 # =====================================================================================
 #
 # 릴리스 하나, 계층(tier) 셋. 전부 Mac 의 Docker OpenSearch 3.5.0 으로 보낸다
 # (https://192.168.194.1:9200 — 일반 파드에서 도달 가능, hostNetwork 불필요):
 #
 #   tier 1  kube.*          -> k8s-logs-*         5일   모든 컨테이너, 필터 없음 (원본)
-#   tier 2  polaris.logs    -> polaris-logs-*    30일   Polaris 로그, 정책 v5 로 선별
-#   tier 3  polaris.report  -> polaris-report-*        윈도우 요약 리포트, 스키마 v5
+#   tier 2  polaris.logs    -> polaris-logs-*    30일*  Polaris 로그, 정책 v5 로 선별
+#   tier 3  polaris.report  -> polaris-report-* 365일*  윈도우 요약 리포트, 스키마 v5
+#   * 권장값. 보관 정책(ISM)은 모니터링팀이 작성·적용한다 (2026-09-16) — 이 저장소에는 없다.
 #
 # tier 1 은 v3 와 동일하다 — 자격증명 평문 두 줄까지 그대로다 (active-issues #4: Secret 으로 옮기려면
 # 먼저 그 사용자의 k8s-logs 쓰기 권한을 확인할 것. 틀리면 노드 전체 로그 수집이 멈춘다). Polaris 로그는 tier 1 에도 "필터 없이" 계속 들어간다 —

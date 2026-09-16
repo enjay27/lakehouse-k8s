@@ -15,22 +15,22 @@
   3 replicas + **Pgpool-II** connection pooler (**not** PgBouncer; corrected 2026-08-18).
 - **MinIO:** local chart — S3 for the Iceberg warehouse (`data-catalog-bucket`) and Argo
   artifacts (`argo-artifacts`).
-- **Fluent Bit — two releases, on purpose, both in `datahub-hynix`:**
-  `fb-polaris-shipper` (chart `fluent-bit-0.58.1`, app **5.1.1**, Deployment) tails the
-  Polaris log PVC into **VictoriaLogs**; the DaemonSet `benchmarks-fluent-bit` (chart
-  `fluent-bit-0.57.6`) tails `/var/log/containers/*.log` into **OpenSearch**. Values: `logging/fb-values.yaml` and
-  `fluent-bit/values.yaml` respectively — different deployments, not duplicates.
-- **VictoriaLogs:** log sink in namespace `logging` (9428).
-- **OpenSearch:** runs in **Docker, outside the cluster and outside this repo** — no compose
-  file is versioned here. **OpenSearch is `3.5.0`** (measured 2026-09-08). It is the DaemonSet's
-  sink; VictoriaLogs is the shipper's. **Both Fluent Bit values files match their live releases** —
-  the shipper's reconciled 2026-09-03 (`active-issues.md` #5); the DaemonSet was **deployed from the
-  committed `fluent-bit/values.yaml` as REVISION 17 on 2026-09-16** (policy v5, `active-issues.md`
-  #28), with step2 passing on the real render and step3 read off the running object: containers
-  `fluent-bit` on `cr.fluentbit.io/fluent/fluent-bit:5.1.1` and `reloader` on
-  `ghcr.io/jimmidyson/configmap-reload:v0.15.0` (hot reload), one pod. **Hot reload was removed and rolled the same
-  day (#28): the pod now runs the single `fluent-bit` container** (step3 PASS). *This line said 3.2.2 until 2026-09-16 — true on 09-09, stale since the 5.1.1 bump.* **The rule stands:** confirm a setting
-  from the running object, not the file — the next `helm upgrade` makes this line history again.
+- **Fluent Bit — two releases, both in `datahub-hynix`:**
+  the DaemonSet `benchmarks-fluent-bit` (chart `fluent-bit-0.57.6`, image `5.1.1`, values `fluent-bit/values.yaml`)
+  tails `/var/log/containers/*.log` into **OpenSearch** in three tiers: tier 1 `k8s-logs-*` (all containers, unfiltered),
+  tier 2 `polaris-logs-*` (Polaris, policy v5), tier 3 `polaris-report-*` (window reports, schema v5).
+  `fb-polaris-shipper` (chart `fluent-bit-0.58.1`, Deployment, `logging/fb-values.yaml`) tails the Polaris log PVC into
+  **VictoriaLogs**; the OpenSearch cutover plan said to uninstall it and nothing records that it happened, so
+  **confirm with `helm list -A` before relying on either statement** (`logging/REVIEW-pipeline-2026-09-16.md` P10).
+- **DaemonSet state, 2026-09-16 (late):** rev 17 v5 → 18 hot reload removed → 19 `threadName`/`threadId`/`ndc` trimmed from
+  `polaris-logs-*` (`active-issues.md` #30) → the Lua refactor (`#31`): **one Lua filter** (FILTER 3 `polaris_noise_filter`
+  parses, decides, counts, reports; the old FILTER 2 `polaris_access_log` no longer exists). Verified on traffic.
+  `WINDOW_SECONDS` is still the verification value 30. **The rule stands:** confirm a setting from the running object,
+  not the file — the next `helm upgrade` makes this line history.
+- **VictoriaLogs:** log sink in namespace `logging` (9428), for the shipper above.
+- **OpenSearch:** runs in **Docker, outside the cluster and outside this repo** — no compose file is versioned here.
+  **`3.5.0`** (measured 2026-09-08). Index templates are ours (`logging/opensearch/`); **retention / ISM belongs to the
+  Monitoring team** (2026-09-16) and is not kept in this repo.
 - **Values-only against upstream charts:** DataHub + prerequisites (Kafka / Elasticsearch /
   MySQL / ZooKeeper), Kafka, Schema Registry, Spark, Airflow, Argo Workflows, Jupyter.
   *Service versions are declared explicitly in each chart's `values.yaml`; several charts
@@ -49,7 +49,9 @@ Full detail in [`.memory/repository-map.md`](.memory/repository-map.md). The sha
   `extraVolumes` at `/fluent-bit/polaris-lua/`. **No hot reload: Fluent Bit reads the Lua only at start.**
   A Lua change is **`bash fluent-bit/apply-lua.sh`** (tests → `kubectl apply -k` → `rollout restart`);
   `apply -k` alone leaves the old script running with no warning. **Not** `--set-file` (v4 and earlier;
-  `luaScripts` is `{}`).
+  `luaScripts` is `{}`). **Lua and values changed together:** `apply-lua.sh --no-restart` → step2 → `helm upgrade`,
+  with no restart in between — one half alone stops every input or stores every access line as a parse error (`#31`).
+  Which `logging/` document is current: `logging/README.md`.
 - **`postgresql/schema/`** — Polaris DDL (`schema_v3.sql` is the ASF-shipped file and the
   authority; `schema.sql` and `bootstrap.sql` are the local variants).
 - **`postgresql/secret/`** — Secret manifests. One of them is stale; see active issues #4.
