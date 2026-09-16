@@ -9,6 +9,8 @@ first table describes the pipeline as it runs**. When a dated document disagrees
 |---|---|
 | [`HANDOFF-pipeline-next-2026-09-16.md`](HANDOFF-pipeline-next-2026-09-16.md) | **start here** — state in sixty seconds, rules, ordered next steps |
 | [`PROPOSAL-polaris-audit-log-retention.ko.md`](PROPOSAL-polaris-audit-log-retention.ko.md) | the design and its rationale (Korean): indices, policy rules 0–7, 404 handling, deploy method, gates |
+| [`GUIDE-sample-data.ko.md`](GUIDE-sample-data.ko.md) | 신규 엔지니어용 샘플 문서 (Korean): 스키마 v6 의 상세·요약 문서를 유형별로, 요청 추적, DQL 예시 |
+| [`polaris-logging.drawio`](polaris-logging.drawio) | pipeline diagram (Korean): three inputs, the tier-2/3 filter chain, two Polaris indices + `k8s-logs` — v6, 2026-09-16 |
 | [`NOTE-monitoring-team-handover-2026-09-16.md`](NOTE-monitoring-team-handover-2026-09-16.md) | what the Monitoring team needs: retention values, verification indices, silent-loss metrics |
 | [`SCHEMA-report.md`](SCHEMA-report.md) | every `polaris-report-*` field, per schema version (**v6 current**) |
 | [`REVIEW-pipeline-2026-09-16.md`](REVIEW-pipeline-2026-09-16.md) | end-to-end review, P1–P12 with before/after — **decided and rolled as schema v6** (P5 open, P10 manual) |
@@ -28,7 +30,6 @@ Not in this repo on purpose: retention / ISM policies — **the Monitoring team 
 | `GUIDE-opensearch-notebook.md` | 09-09 | notebook ↔ OpenSearch workflow | readouts: prefer `scripts/step10` + `step11` |
 | `PLAN-tier1-dedup-2026-09-09.md` | 09-09 | the `Id_Key` trap and options A–C for `#18` | decision still open → `REVIEW-pipeline` P2 |
 | `PLAN-opensearch-cutover-2026-09-08.md` | 09-08 | why two tails, why separate DBs, credentials | "uninstall `fb-polaris-shipper` after cutover" never recorded as done → `REVIEW-pipeline` P10 |
-| `polaris-logging.drawio` | 09-14 | overall shape | pre-v4: two Lua filters, no allow-list/app_dropped |
 | `fb-values.yaml` · `victoria-values.yaml` | 09-07 / 08-21 | the `fb-polaris-shipper` → VictoriaLogs release, if it still runs | not the OpenSearch pipeline |
 
 ## Historical — finished or superseded (kept for the reasoning)

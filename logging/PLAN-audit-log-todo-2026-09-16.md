@@ -72,7 +72,7 @@ Scope: local OrbStack first (phases 0–2), then the production port (phase 3). 
 
 | # | Task | Who | When |
 |---|---|---|---|
-| D.1 | `polaris-logging.drawio` — v4 diagram (tick, allow-list drop, app_dropped, two indices) | C | any time |
+| D.1 | **DONE 2026-09-16** — `polaris-logging.drawio` redrawn for v6 (tick, allow-list drop, trim before Lua, two Polaris indices + k8s-logs) | C | any time |
 | D.2 | Proposal status table (top) and §10.1 after each phase | C | per phase |
 | D.3 | `SCHEMA-report.md` for any schema change (404 policy, register) — **v5 section written 2026-09-16** | C | with 2.4 / 2.3 |
 | D.4 | `.memory/active-issues.md` #25 / #27 closed or updated; `MEMORY.md` *Now* | C | per phase |
