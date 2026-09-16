@@ -1,14 +1,11 @@
-# HANDOFF — refactored v5 is live; schema v6 (review decisions) is written and waits for its roll. Start at §3 step 3.
+# HANDOFF — schema v6 is live and verified. Next: the 1800 s window. Start at §3 step 1.
 
-> **Update 2026-09-16 (later):** steps 1–2 done — Kade decided P1 P2 P3 P4 P6/7 P8 P11/12 (M2 ~1,800 self-log docs/run, M3 yes, M4 yes, M5 out of scope). Written as schema v6, `active-issues.md` **#32** has the gate and the roll. P11 scripts moved to `logging/scripts/attic/`.
-
-**Written 2026-09-16 (late KST) at the end of the Cowork session that refactored and rolled the Lua, removed the thread
-fields and reviewed the whole pipeline (commits `5315e0d`..this one).**
-Supersedes [`HANDOFF-audit-log-next-2026-09-16.md`](HANDOFF-audit-log-next-2026-09-16.md).
-Reviews: [`REVIEW-pipeline-2026-09-16.md`](REVIEW-pipeline-2026-09-16.md) (whole flow, P1–P12, decisions pending) ·
-[`REVIEW-lua-refactor-2026-09-16.md`](REVIEW-lua-refactor-2026-09-16.md) (done, rolled). Issues `#30` `#31` (verified), `#29`
-(dropped), `#18` `#24` `#4` (open). Plan: [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md).
-Docs index: [`README.md`](README.md).
+**Final state of the 2026-09-16 Cowork session** (Lua refactor, thread-field trim, whole-pipeline review, schema v6 — commits
+`5315e0d`..the one that added this line). Supersedes [`HANDOFF-audit-log-next-2026-09-16.md`](HANDOFF-audit-log-next-2026-09-16.md).
+Reviews: [`REVIEW-pipeline-2026-09-16.md`](REVIEW-pipeline-2026-09-16.md) (decided, rolled except P5/P10) ·
+[`REVIEW-lua-refactor-2026-09-16.md`](REVIEW-lua-refactor-2026-09-16.md) (rolled). Issues: `#30` `#31` `#32` verified, `#29` dropped,
+`#18` closed by P2 (the output is gone), `#24` `#4` open. Plan: [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md).
+Docs index: [`README.md`](README.md). Monitoring team: [`NOTE-monitoring-team-handover-2026-09-16.md`](NOTE-monitoring-team-handover-2026-09-16.md).
 
 ---
 
@@ -16,24 +13,26 @@ Docs index: [`README.md`](README.md).
 
 | | state |
 |---|---|
-| Running on OrbStack | DaemonSet `benchmarks-fluent-bit`, pod `qr4br`, one container `fluent-bit` 5.1.1, chart 0.57.6, no hot reload |
-| Helm | rev 17 v5 + reloader · 18 reloader removed · **19** thread/ndc trim (`#30`) · **next** = Lua refactor with FILTER 2 removed (`#31`; number not recorded, expected 20) |
-| Lua | policy/report schema **v5**, **one** Lua filter (FILTER 3 parses, decides, counts, reports). ConfigMap `polaris-fluent-bit-lua`, sha `2fbcfa47c513f5a0`, read at start |
-| Report window | **`WINDOW_SECONDS` 30** (verification value) — 1800 still to do |
-| Detail docs | no `threadName` / `threadId` / `ndc` (0 / 386 verified) |
-| Verified live | window 15:01Z after the refactor = 14:44Z and 08:41Z before it, count for count; detail 200 / 22 / 78; 0 stored 404s, 0 parse errors; `http_status` integer |
-| Retention (ISM) | **not ours** — the Monitoring team writes and applies it (Kade, 2026-09-16) |
-| Dropped | `#29` tier-1 chunk drops — not diagnosed, by decision |
+| Running on OrbStack | DaemonSet `benchmarks-fluent-bit`, pod **`62klp`**, one container `fluent-bit` 5.1.1, chart 0.57.6, no hot reload |
+| Helm | 17 v5+reloader · 18 reloader removed · 19 thread/ndc trim · then the refactor (`#31`) · then **schema v6 (`#32`)** — the last two revision numbers were not recorded |
+| Lua | policy v5 / **report schema 6**, one Lua filter; reads `message`. ConfigMap `polaris-fluent-bit-lua`, read at start |
+| Tier 2 chain | parser → Rename `timestamp`→`_time` → trim (process\*, logger class, thread\*, ndc, stream, CRI time) → Lua → OpenSearch (no tag field) |
+| Tier 1 | one output (`Id_Key` output deleted), Fluent Bit's own log excluded, no parser filters after `kubernetes` |
+| Detail doc fields | `@timestamp _time api_path client_ip exception hostName http_method http_status level loggerName mdc message response_size sequence user_principal_name` |
+| Report rows | no `app` / `level`; sentence `message` on `summary` only |
+| Report window | **`WINDOW_SECONDS` 30** (verification value) |
+| Verified live | window **16:02:30Z** (seq 4): every count equal to the v5 windows (355 / 200 / 155, 404 100 / 110, 67 rows same keys); detail 200 / 22 / 78; 0 stored 404, 0 parse errors; `http_status` int. Doc size (JSON): access 705 → 649 B, app 799 → 743 B, report row 755 → 518 B |
+| Retention (ISM) | Monitoring team |
 
 ## 2. Rules the next session must not relearn
 
-- **Lua only** → `bash fluent-bit/apply-lua.sh` (tests v3/v4/v5 + first-tick → diff → apply → restart → log check → sha).
+- **Lua only** → `bash fluent-bit/apply-lua.sh` (tests v3–v6 + first-tick → diff → apply → restart → log check → sha).
 - **Values only** → step2 on a fresh render (no `--debug`) → `helm upgrade` → step3.
-- **Lua and values together** → `apply-lua.sh --no-restart` → step2 → `helm upgrade` → step3, **with no restart in between**.
-  One half alone either stops every input (tier 1 included) or stores every access line as a parse error (`#31`).
-- **Readouts: use `step10-v4-window-readout.sh <window_start>` then `step11-replay-window.py`** — exact JSON, all three sources, window
-  cut by the tick. Dev Tools panel copies are not JSON, miss tier 1, and cost round trips (review P9).
-  If a panel copy is all there is: `logging/scripts/devtools-json-fix.py`.
+- **Lua and values together** → `apply-lua.sh --no-restart` → step2 → `helm upgrade` → step3, **no restart in between** (`#31`).
+- **Readouts: `step10-v4-window-readout.sh <window_start>` then `step11-replay-window.py`** (exact JSON, tier 1 included). A Dev Tools
+  panel copy is not JSON (`devtools-json-fix.py`) and never includes tier 1, so step11 cannot run on it.
+- **Query strings through `.keyword`** in any index created after the v6 templates (the bare name is not indexed). The raw line and the
+  summary sentence are `message`; indices from before 2026-09-16 16:0xZ still say `_msg`, `app`, `level`.
 - **Cowork has no cluster reach and cannot delete in the mount.** After every git call move `.git/*.lock` into `.git/_to_delete/`.
 - **Polaris is not changed from here.** Verify against the running object, never an intent artifact.
 
@@ -41,34 +40,30 @@ Docs index: [`README.md`](README.md).
 
 | | task | who | depends on | done when |
 |---|---|---|---|---|
-| **1** | **Review measurements M1–M5** (`REVIEW-pipeline` §4, read-only): skip-log count on OUTPUT 1, Fluent Bit self-ingest volume, `log`-field docs in tier 1, shipper still installed?, index sizes | K run · C read | — | numbers filed against P2/P3/P4/P8/P10 |
-| **2** | **Decide review items** — P1 (trim before Lua) + P6 constants, P2/P3/P4 (tier 1), P5 (one deploy unit), P6 `_msg`, P7 report `_msg`, P8 mappings, P10 shipper, P11 script moves | K decide · C write | 1 for P2–P4, P8, P10 | decisions recorded; accepted items planned |
-| 3 | **Roll schema v6 (`#32`)** — Lua + values + templates, while windows are still 30 s: gate (P4 `logger` count) → `apply-lua.sh --no-restart` → step2 → `helm upgrade` → step3 → traffic → step3 → step12 + step9 → step10/11 | C wrote · K roll | 2 ✔ | report counts as before (355/200/155), detail 200/22/78; step3 field checks PASS; step9/12 PASS |
-| 4 | **TODO 2.5 — `WINDOW_SECONDS` 30 → 1800** (Lua-only, `apply-lua.sh`). Do everything that wants 30 s windows first (3, tier-1 items). After it a verification window costs 30 min; step10 takes `[window_seconds]` 1800 | C write · K apply | 3 (preferably) | summary `window_seconds` 1800, `window_start` on :00/:30, step11 PASS on one 1800 s window |
-| 5 | **TODO 2.7 — delete the 30 s-window `polaris-report-*` indices.** *Destructive: explicit OK at execution.* Tell the Monitoring team they are verification data | K | 4 | only 1800 s report indices remain |
-| 6 | ~~Tier-1 roll~~ **folded into step 3** (P2/P3/P4 are in the same values change) | — | — | step3 section 4 PASS (tier 1 still indexing) |
-| 7 | **Phase 3** (plan §3): 3.1 load test (also measures `#31` and P1 CPU) · 3.2 row caps · 3.3 one-day size · 3.4 one vs two prod indices · 3.5 GitOps port (decide P5 first) · 3.6 tier-1 credentials to a Secret (`#4`) · 3.7 prod Polaris log level / replicas · 3.8 dashboards and alerts (hand the P12 buffer-drop metrics to the Monitoring team) | see plan | 4 for 3.3/3.8 | see plan |
-| 8 | `#24` upstream report (four NPEs) — **Kade's call** | K | — | filed or declined |
-| 9 | Docs: `polaris-logging.drawio` is still pre-v4 (two Lua filters, no report tick detail) | C | — | diagram matches review §1 |
-| 10 | Git leftovers: `.git/_to_delete/`, `.git/objects/*/tmp_obj_*` (or grant Claude delete once). Not Claude's, uncommitted: `polaris/values.yaml`, `postgresql/values.yaml`, `Claude outputs/*` | K | — | — |
+| **1** | **TODO 2.5 — `WINDOW_SECONDS` 30 → 1800** (Lua only, `apply-lua.sh`). After it one verification window costs 30 min; step10 takes `[window_seconds]` 1800 | C write · K apply | — | summary `window_seconds` 1800, `window_start` on :00/:30, step11 PASS on one 1800 s window |
+| 2 | **TODO 2.7 — delete the 30 s-window `polaris-report-*` indices.** *Destructive: explicit OK at execution.* Tell the Monitoring team (see the note) | K | 1 | only 1800 s report indices remain |
+| 3 | Uninstall `fb-polaris-shipper` / VictoriaLogs (review P10) — Kade, manually. Then update `CLAUDE.md`, `.memory/environments.md`, `.memory/goal.md` | K · C docs | — | `helm list -A` shows neither |
+| 4 | Decide **P5** (Lua in the Helm release vs separate ConfigMap) before the GitOps port | K | — | decision recorded in the review |
+| 5 | **Phase 3** (plan §3): 3.1 load test (pod CPU for `#31`/P1) · 3.2 row caps · 3.3 one-day size · 3.4 one vs two prod indices · 3.5 GitOps port · 3.6 tier-1 credentials to a Secret (`#4`) · 3.7 prod Polaris log level / replicas · 3.8 dashboards and alerts (use `.keyword` and `message`) | see plan | 1 for 3.3/3.8 | see plan |
+| 6 | `#24` upstream report (four NPEs) — Kade's call | K | — | filed or declined |
+| 7 | `polaris-logging.drawio` is pre-v4 — redraw from review §1 with the v6 chain | C | — | diagram matches §1 of this file |
+| 8 | Git leftovers: `.git/_to_delete/`, `.git/objects/*/tmp_obj_*`. Not Claude's, uncommitted: `polaris/values.yaml`, `postgresql/values.yaml`, `Claude outputs/*` | K | — | — |
 
-## 4. Unmeasured — do not state as fact
+## 4. Not read on the cluster — do not state as fact
 
-- CPU of any of it: the refactor's C-side saving, P1's. Phase 3.1.
-- The start-up window fix (R4) on the cluster: the first window after the refactor restart was not exported.
-- Helm revision number of the refactor roll; step2/step3 output of that roll (only the traffic result was read).
-- Whether `fb-polaris-shipper` / VictoriaLogs still run (review P10) and whether Polaris writes its log file (`#5`).
-- Production: whether Polaris assigns `requestId` without a client header (if not, app lines of 404s are kept).
-- Tier-1 loss across a pod restart.
+- The v6 roll's own outputs: the P4 gate count, step2, step3 (incl. its new absence checks), step9/step12 on the v6 templates, and the
+  helm revision. Only the traffic result (report + detail exports) was read.
+- Tier-1 effects of P2/P3/P4: no `k8s-logs` export after the roll (tier 1 still indexing, no Fluent Bit docs, unchanged DataHub docs).
+- Whether the v6 mappings took: they shape indices created **after** step9/step12 ran; `polaris-logs-2026.09.16` is still dynamic.
+- Pod CPU of anything; the start-up window fix (R4) on a real restart; production `requestId` without a client header.
 
 ## 5. Where things are
 
 | file | what |
 |---|---|
-| `fluent-bit/values.yaml` | the DaemonSet: 3 inputs, tier-1 filters, tier-2 FILTER 0/1/3/4, 4 outputs |
-| `fluent-bit/polaris_access_log.lua` · `kustomization.yaml` · `apply-lua.sh` | v5 Lua (one filter) · its ConfigMap · the Lua roll |
-| `logging/scripts/step2-render-gate.sh` · `step3-postupgrade.sh` · `step10-…` · `step11-…` · `step9-…` · `step12-…` | render gate · post-roll checks · window readout · replay · report / logs templates |
-| `logging/scripts/test-schema-v3/v4/v5.lua` · `test-first-tick.lua` · `test-raw-access-shim.lua` | Lua tests (raw `_msg` input) |
-| `logging/candidates/` | refactor harnesses: `diff-refactor.lua`, `bench-*.lua`, `tier1-to-lua.py`, the applied R1 patch |
-| `logging/opensearch/` | index templates, `devtools-export.console` |
-| `.scratch/readout-2026-09-16T144400Z/` | last full readout (tier1 + report + detail), old script |
+| `fluent-bit/values.yaml` | the DaemonSet: 3 inputs, tier-1 `kubernetes` + env filters, tier-2 parser / rename / trim / Lua, 3 outputs |
+| `fluent-bit/polaris_access_log.lua` · `kustomization.yaml` · `apply-lua.sh` | Lua (schema 6) · its ConfigMap · the Lua roll |
+| `logging/scripts/` | step2 render gate · step3 post-roll (+v6 absence checks) · step9/step12 templates (+`dynamic_templates`) · step10 readout · step11 replay · tests v3–v6, first-tick, shim · `attic/` finished scripts |
+| `logging/opensearch/` | v6 templates, `devtools-export.console` |
+| `logging/candidates/` | harnesses: `diff-v5-v6.lua`, `diff-refactor.lua`, `bench-*.lua`, `tier1-to-lua.py` |
+| `.scratch/readout-2026-09-16T160230Z/` | the v6 verification window (report + detail; no tier 1) |

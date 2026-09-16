@@ -3,6 +3,7 @@
 > **Update 2026-09-16 (late): phase 2 rolled except 2.5/2.7.** 2.6 done (v5, rev 17), hot reload removed (rev 18), thread/ndc trim
 > (rev 19, `#30`), Lua refactor with one Lua filter rolled and verified (`#31`). **2.8 / 2.9 (ISM) are no longer ours — the Monitoring
 > team writes and applies retention (Kade).** Whole-pipeline review with pending decisions: `REVIEW-pipeline-2026-09-16.md`.
+> **Later the same night:** schema v6 (review P1–P4, P6–P8) rolled and verified (`#32`). Next is 2.5 (1800 s).
 > Current order of work: `HANDOFF-pipeline-next-2026-09-16.md` §3.
 
 **Status: Phase 0 DONE 2026-09-16 — all checks PASS** ([`.memory/sessions/2026-09-16-v4-phase0-matrix-window.md`](../.memory/sessions/2026-09-16-v4-phase0-matrix-window.md)). **1.5 DONE 2026-09-16** — run `1789535345`: one table row at `probe_ns%1Fnested/…/mx_1789535345_deep` with requests 3 and commit_count 2, no dotted phantom; replay 67×30 PASS. **Phases 0 and 1 complete.**

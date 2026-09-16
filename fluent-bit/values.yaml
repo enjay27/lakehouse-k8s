@@ -1,7 +1,7 @@
 # =====================================================================================
 # Fluent Bit — K8s DaemonSet, 릴리스 `benchmarks-fluent-bit`, namespace datahub-hynix
 # 정책 v5 / 리포트 스키마 v5 — 2026-09-16 롤 (rev 17). 같은 날: hot reload 제거 (rev 18, #28), 상세 필드 정리 (rev 19, #30),
-# Lua 리팩터 — Lua FILTER 하나 (#31). 스키마 v6 (#32, 작성·미적용): 재검토 P1–P4/P6–P8 반영 — logging/REVIEW-pipeline-2026-09-16.md
+# Lua 리팩터 — Lua FILTER 하나 (#31). 스키마 v6 (#32, 롤·검증 2026-09-16): 재검토 P1–P4/P6–P8 반영 — logging/REVIEW-pipeline-2026-09-16.md
 # =====================================================================================
 #
 # 릴리스 하나, 계층(tier) 셋. 전부 Mac 의 Docker OpenSearch 3.5.0 으로 보낸다

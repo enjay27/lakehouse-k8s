@@ -42,3 +42,9 @@ including core flow inside Fluent Bit. And need to up to date docs. After review
   daily indices; caveat recorded (bare-name queries find nothing on new indices).
 - `json.dump` reformatted `polaris-report-template.json` (blank-line grouping lost) — content diff is the `_meta.v6`, `dynamic_templates`
   and `message` entries only.
+
+## Roll result and final docs (same night)
+- Kade rolled v6 and exported window 16:02:30Z (report + detail). Read: counts equal to v5 field by field over the same 67 row keys;
+  detail field set exactly as designed; sizes −8 % / −7 % / −31 %. Not supplied: gate, step2/3/9/12 output, helm revision, tier 1.
+- Docs brought to the rolled state: HANDOFF rewritten as the final start point (next: 1800 s), `#32` ROLLED, CLAUDE.md, MEMORY.md,
+  README, review status, SCHEMA-report, proposal (ko) status/history/§10.1 6c, plan note, roadmap numbers, values header comment.

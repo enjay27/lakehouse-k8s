@@ -5,7 +5,17 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
-**#32 — Schema v6 + pipeline review P1/P2/P3/P4/P6/P7/P8/P11/P12: WRITTEN, NOT ROLLED. Lua and values change together.** 2026-09-16.
+**#32 — Schema v6 + pipeline review P1/P2/P3/P4/P6/P7/P8/P11/P12: ROLLED 2026-09-16 (~16:01Z) and VERIFIED on traffic (tier 2/3).** 2026-09-16.
+- **Verified from Kade's exports of window 16:02:30Z** (pod `benchmarks-fluent-bit-62klp`, report seq 4; `.scratch/readout-2026-09-16T160230Z/`):
+  67 report rows, all `schema_version` 6, same row keys as the v5 window 15:01Z and **every count field equal** (access 355 / kept 200 /
+  counted 155, 404 counted 100, app_dropped_404 110, errors 247 / 4, denied 104, commit_count per row). No row carries `app`, `level`,
+  `_msg`; `message` only on the summary. Detail (386 docs, 16:02:07–16:02:42Z): field set exactly `@timestamp _time api_path client_ip
+  exception hostName http_method http_status level loggerName mdc message response_size sequence user_principal_name` — no `_msg`,
+  `app`, `stream`, `flb_tag`, thread/process fields; in-window 200 / 22 / 78; 0 stored 404, 0 parse errors, all 243 access docs with
+  every parsed field and `message`, `http_status` integer. JSON doc size vs 15:01Z: access 705 → 649 B (−8 %), app 799 → 743 B (−7 %),
+  report row 755 → 518 B (−31 %).
+- **Not read:** P4 gate count, step2/step3/step9/step12 output, helm revision, any `k8s-logs` doc after the roll (P2/P3/P4 effects).
+Original record:
 Decisions (Kade, 2026-09-16): apply P1 P2 P3 P4 P6/7 P8 P11/12; keep the raw access line but **rename `_msg` → `message`**; drop `app`.
 M2 measured by Kade: ~1,800 Fluent Bit self-log docs per traffic notebook run. M3: tier-1 docs with a `log` field exist. M4: shipper
 exists, Kade uninstalls manually. M5/tier 1 sizing out of scope.
@@ -882,7 +892,8 @@ matched windows 2026-09-09: file 226 + 44 = **270**, stdout **0**. Until #16 is 
 record. Uninstalling the shipper — cutover step 7 — would destroy the capability, not just the
 duplicate. Fallback specified in git at `fb91949`.
 
-**#18 — `Id_Key sequence` skips every record it was meant to dedup. OPEN, LIVE, and it defeats
+**#18 — `Id_Key sequence` skips every record it was meant to dedup. CLOSED 2026-09-16: the output was deleted (review P2, schema v6
+roll `#32`); tier 1 keeps no dedup (option B of `PLAN-tier1-dedup`). Original: OPEN, LIVE, and it defeats
 the dedup it exists for.** Pod log, 2026-09-09 05:07:
 `[output:opensearch:opensearch.0] the value of sequence is not string` followed by
 `skipping record with missing or unsafe Id_Key value`, repeating continuously.

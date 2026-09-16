@@ -3,19 +3,18 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-16 late (refactored v5 live; pipeline review awaits decisions)
+## Now — 2026-09-16 late (schema v6 live and verified; next is the 1800 s window)
 
 **Start here next session:** [`logging/HANDOFF-pipeline-next-2026-09-16.md`](logging/HANDOFF-pipeline-next-2026-09-16.md) — state, rules, ordered tasks. Docs index: [`logging/README.md`](logging/README.md).
 
-**Running:** `benchmarks-fluent-bit` pod `qr4br`, policy/report schema **v5**, one Lua filter (`#31`, sha `2fbcfa47c513f5a0`),
-no thread/ndc fields in `polaris-logs-*` (`#30`, rev 19). Verified on traffic 15:01Z. **`WINDOW_SECONDS` is still 30.**
+**Running:** `benchmarks-fluent-bit` pod `62klp`, policy v5 / **report schema 6** (`#32`): field `message`, trim before the one Lua
+filter, tier-1 `Id_Key` output / self-log / parsers gone. Verified on traffic 16:02:30Z — counts equal to v5, detail 200/22/78,
+report rows −31 % bytes. Query strings via `.keyword`. **`WINDOW_SECONDS` is still 30.**
 
 **Rules:** Lua only → `apply-lua.sh`; values only → step2 → `helm upgrade` → step3; both → `apply-lua.sh --no-restart` → step2 →
 `helm upgrade`, no restart between. Readouts: `step10` + `step11`, not Dev Tools copies.
 
-**Written, not rolled:** `#32` schema v6 — `message` field, trim before Lua, tier-1 dead output / self-log / parsers removed, `.keyword`-only mappings. Gate + one-restart roll in `#32`.
-
-**Next:** (1) roll `#32` while windows are 30 s → (2) 1800 s window → (3) delete 30 s report indices (explicit OK) → phase 3. P5 undecided; shipper: Kade uninstalls.
+**Next:** (1) 1800 s window (`apply-lua.sh`) → (2) delete 30 s report indices (explicit OK) → phase 3. P5 undecided; shipper: Kade uninstalls.
 **ISM / retention: Monitoring team, not ours.** `#29` dropped.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**

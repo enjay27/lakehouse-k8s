@@ -16,15 +16,16 @@ OpenSearch runs in Docker, outside the cluster. Detail in
 ## Next
 
 **Current (2026-09-16, late) — read this first; the table below is the VictoriaLogs-shipper era and mostly historical.**
-The built pipeline is the Fluent Bit DaemonSet → OpenSearch, policy/report schema v5 with the refactored one-filter Lua
-(`active-issues.md` #28, #30, #31, all verified on traffic). The order of work is
+The built pipeline is the Fluent Bit DaemonSet → OpenSearch, policy v5 / report schema 6 with the refactored one-filter Lua
+(`active-issues.md` #28, #30, #31, #32, all verified on traffic). The order of work is
 `logging/HANDOFF-pipeline-next-2026-09-16.md` §3; the task table is `logging/PLAN-audit-log-todo-2026-09-16.md`; open design
 decisions are `logging/REVIEW-pipeline-2026-09-16.md` P1–P12. Retention/ISM is the Monitoring team's.
 
 Numbers from 2026-09-16, one traffic window (30 s, identical on 08:41Z, 14:44Z, 15:01Z): 720 Polaris records → 355 access lines,
 300 detail docs (200 access / 22 PolarisServiceImpl / 78 IcebergExceptionMapper), 67 report rows; 404: 100 counted, 0 stored.
 Lua time per record ~5.8 µs → ~2.1 µs after the refactor (LuaJIT bench, not pod CPU). A record enters the Lua with 16 keys /
-~717 B, 7 of them removed right after (review P1).
+~717 B, 7 of them removed right after (review P1) — fixed in v6. v6 on the same traffic (16:02:30Z): counts identical; JSON doc size
+access 705 → 649 B, app 799 → 743 B, report row 755 → 518 B.
 
 *Historical, 2026-09-03 onward:* Polaris logging is the live thread. The design it is being built against is
 `logging/polaris-logging-architecture-spec.md` (filed 2026-09-03); the audit that found the

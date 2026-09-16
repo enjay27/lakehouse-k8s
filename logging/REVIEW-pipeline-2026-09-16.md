@@ -3,7 +3,7 @@
 **Scope:** every step a Polaris log line goes through, from the container log file to OpenSearch. That covers Fluent Bit's
 input, chunk, filter and routing stages, the config (`fluent-bit/values.yaml`), the Lua, the index templates, the deploy
 path, the verification scripts and the docs.
-**Status: DECIDED 2026-09-16 (Kade) — P1, P2, P3, P4, P6, P7, P8, P11, P12 applied in the repo as schema v6, NOT ROLLED (`#32`).**
+**Status: DECIDED 2026-09-16 (Kade) — P1, P2, P3, P4, P6, P7, P8, P11, P12 applied as schema v6, ROLLED and verified on tier 2/3 the same night (`#32`: window 16:02:30Z counts equal to v5; detail doc −7…8 %, report row −31 % JSON bytes). Tier-1 effects (P2–P4) not yet read on the cluster.**
 P5 not decided. P9 is practice (use step10/step11). P10: the shipper exists; Kade uninstalls it manually later.
 P6 decision on the raw access line: **keep it, renamed `message`** (and the report summary sentence renamed the same way); `app` dropped.
 Measurements: M1 unknown · M2 **~1,800 Fluent Bit docs per traffic notebook run** · M3 yes (tier-1 docs with `log` exist — they are

@@ -1,4 +1,4 @@
-# `logging/` — which document to read (status as of 2026-09-16, late — schema v6 written, not rolled)
+# `logging/` — which document to read (status as of 2026-09-16, late — schema v6 live and verified)
 
 Most files here are dated working documents. They stay because the reasoning in them is still cited, but **only the
 first table describes the pipeline as it runs**. When a dated document disagrees with it, the first table wins.
@@ -9,8 +9,9 @@ first table describes the pipeline as it runs**. When a dated document disagrees
 |---|---|
 | [`HANDOFF-pipeline-next-2026-09-16.md`](HANDOFF-pipeline-next-2026-09-16.md) | **start here** — state in sixty seconds, rules, ordered next steps |
 | [`PROPOSAL-polaris-audit-log-retention.ko.md`](PROPOSAL-polaris-audit-log-retention.ko.md) | the design and its rationale (Korean): indices, policy rules 0–7, 404 handling, deploy method, gates |
-| [`SCHEMA-report.md`](SCHEMA-report.md) | every `polaris-report-*` field, per schema version (v5 current) |
-| [`REVIEW-pipeline-2026-09-16.md`](REVIEW-pipeline-2026-09-16.md) | end-to-end review of the running flow, P1–P12 with current-vs-proposed; **decisions pending** |
+| [`NOTE-monitoring-team-handover-2026-09-16.md`](NOTE-monitoring-team-handover-2026-09-16.md) | what the Monitoring team needs: retention values, verification indices, silent-loss metrics |
+| [`SCHEMA-report.md`](SCHEMA-report.md) | every `polaris-report-*` field, per schema version (**v6 current**) |
+| [`REVIEW-pipeline-2026-09-16.md`](REVIEW-pipeline-2026-09-16.md) | end-to-end review, P1–P12 with before/after — **decided and rolled as schema v6** (P5 open, P10 manual) |
 | [`REVIEW-lua-refactor-2026-09-16.md`](REVIEW-lua-refactor-2026-09-16.md) | the Lua refactor (one filter, R1–R6) and how it was proven equivalent — **rolled** |
 | [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md) | the phase 0–3 task table toward production (ISM handed to the Monitoring team) |
 | [`opensearch/`](opensearch/) | index templates (`polaris-logs-template.json`, `polaris-report-template.json`) and `devtools-export.console` |

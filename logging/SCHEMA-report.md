@@ -1,4 +1,4 @@
-# Report schema reference — v3 tables; v4 deployed 2026-09-15; **v5 deployed 2026-09-16 (running)**; **v6 written 2026-09-16, not rolled** — see the end
+# Report schema reference — v3 tables; v4 deployed 2026-09-15; v5 deployed 2026-09-16; **v6 deployed 2026-09-16 (current)** — see the end
 
 Read off `fluent-bit/values.yaml` (`build_report`, ~line 447) on 2026-09-09, not from intent.
 Three `report_type` values share one envelope and one `_time`, so `stats by (_time)` — or a terms
@@ -241,7 +241,10 @@ Tests: `test-schema-v3/v4/v5.lua` now feed raw `_msg` access lines through `logg
 
 ---
 
-# v6 — written 2026-09-16, NOT ROLLED (`active-issues.md` #32, `REVIEW-pipeline-2026-09-16.md` P6/P7/P8)
+# v6 — rolled 2026-09-16 (~16:01Z) and verified on window 16:02:30Z (`active-issues.md` #32, `REVIEW-pipeline-2026-09-16.md` P6/P7/P8)
+
+Verified: 67 rows, every count equal to the last v5 window; no `app` / `level` / `_msg`; `message` on the summary only; report row
+755 → 518 JSON bytes on average. v5 and v6 rows coexist in `polaris-report-2026.09.16` — filter `schema_version`.
 
 Decisions (Kade 2026-09-16). **Policy unchanged** — the same records are stored, counted and reported. The document shape changes:
 

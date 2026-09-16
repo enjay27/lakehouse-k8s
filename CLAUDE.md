@@ -25,8 +25,9 @@
 - **DaemonSet state, 2026-09-16 (late):** rev 17 v5 → 18 hot reload removed → 19 `threadName`/`threadId`/`ndc` trimmed from
   `polaris-logs-*` (`active-issues.md` #30) → the Lua refactor (`#31`): **one Lua filter** (FILTER 3 `polaris_noise_filter`
   parses, decides, counts, reports; the old FILTER 2 `polaris_access_log` no longer exists). Verified on traffic.
-  **Schema v6 + review P1–P4/P6–P8 is written and NOT rolled (`#32`):** field `message` (not `_msg`), trim before the Lua,
-  tier-1 OUTPUT 1 / self-log / parser filters removed, `.keyword`-only string mappings.
+  → **schema v6 (`#32`), rolled and verified 2026-09-16:** raw line and summary sentence are `message` (not `_msg`), trim before
+  the Lua, report rows without `app`/`level`, tier-1 `Id_Key` output / self-log / parser filters removed, `.keyword`-only string
+  mappings for indices created after step9/step12 (query strings via `.keyword`). Pod `62klp`.
   `WINDOW_SECONDS` is still the verification value 30. **The rule stands:** confirm a setting from the running object,
   not the file — the next `helm upgrade` makes this line history.
 - **VictoriaLogs:** log sink in namespace `logging` (9428), for the shipper above.
