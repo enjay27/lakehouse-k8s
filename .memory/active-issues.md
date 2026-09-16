@@ -581,6 +581,16 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   output byte-identical to the file (sha `80119adc…` before the header-title fix — step3 recomputes); step2
   run against a **simulated** render built from chart 0.57.6 templates + values.yaml: all PASS. step11 replay
   of the 2026-09-16 window predicts detail 300/32/178 → 200/22/78 (access / ServiceImpl / ExceptionMapper).
+- **Pre-roll re-check (2nd Cowork session, 2026-09-16), still off-cluster:** v3/v4/v5 ALL PASS again on LuaJIT
+  2.1 against the committed script (sha256 `bfff86db220036c2`). Chart **source** for 0.57.6 read from
+  `fluent/helm-charts` tag `fluent-bit-0.57.6` (`79fa0f4`): every v5-wiring expectation in step2 is what the
+  templates emit — `--enable-hot-reload` appended to the default args, one `reloader` container
+  (`ghcr.io/jimmidyson/configmap-reload:v0.15.0`, must be pullable on OrbStack) posting to
+  `localhost:2020/api/v2/reload` (values' `HTTP_Server On` / `HTTP_Port 2020` satisfy it), `-volume-dir=/watch/extra-0`
+  mounting `polaris-lua`, `checksum/*` annotations omitted, an empty `-luascripts` CM mounted at `/fluent-bit/scripts`.
+  The reloader also watches `/watch/config`, so a Helm config change reloads rather than restarts. Still **no real
+  render**: get.helm.sh, fluent.github.io and proxy.golang.org are all blocked from Cowork, so helm cannot be
+  obtained or built; step2 on Kade's real render remains the first real run.
 - **NOT verified:** any real `helm` render (no helm in Cowork); hot reload itself; **what 5.1.1 does when a
   reloaded script is invalid** (runbook C — may stop tier 1 like #27); reload loss (runbook D); whether
   Polaris assigns `requestId` without a client header (production question — if not, 404 app lines are kept).
