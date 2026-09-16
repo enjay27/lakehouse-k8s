@@ -20,12 +20,18 @@ Review: `logging/REVIEW-lua-refactor-2026-09-16.md`. Candidate: `logging/candida
   5 mutants are all caught. step11 on `084100Z` PASS for both. Lua CPU ~5.8 → ~2.1 µs/record.
 - **NOT verified:** no helm render of the patch; the C-side marshalling saving of R1 (phase 3.1); cache hit rate at 1800 s.
 
-**#30 — `threadName` / `threadId` / `ndc` removed from `polaris-logs-*`: ROLLED 2026-09-16 (helm upgrade by Kade), step3 PASS — field absence not yet proven on traffic.** 2026-09-16.
-- **Rolled (Kade, 2026-09-16 evening KST):** `helm upgrade` from the committed values (`5315e0d`); the Lua was NOT changed (apply-lua.sh
-  reported the ConfigMap unchanged, pod start 09:07:11Z > CM change 08:28:23Z). step3: `RESULT: post-upgrade checks passed` — **only the
-  RESULT line was recorded.** step3 FAILs on a doc carrying a removed field, but prints `????` (not FAIL) when it cannot count, and a 0
-  on an idle Polaris is vacuous. So still open: the section-5 lines themselves after one traffic run, the helm revision number
-  (expected 19 if the hot-reload removal was 18), step2's output, and step12 (template re-PUT without `threadId`).
+**#30 — `threadName` / `threadId` / `ndc` removed from `polaris-logs-*`: ROLLED as REVISION 19 (2026-09-16 23:38:14 KST), step3 + step12 PASS — field absence on `polaris-logs-*` still not read.** 2026-09-16.
+- **Rolled (Kade):** `helm upgrade` from the committed values (`5315e0d`) → **rev 19**, 23:38:14 KST = 14:38:14Z (`helm history`:
+  17 17:35:46 v5 with reloader, **18 18:07:08 = the hot-reload removal** (closes handoff task B), 19 = this). Pod `benchmarks-fluent-bit-4bxsn`.
+  The Lua was NOT changed (apply-lua.sh: ConfigMap unchanged). step3: `RESULT: post-upgrade checks passed` (only the RESULT line recorded).
+  **step12: PASS** — template stored and simulated 7/7 fields (no `threadId`); applies from tomorrow's index.
+- **Traffic run 14:44:00Z window (readout `.scratch/readout-2026-09-16T144400Z/`, cut by Claude from Kade's Dev Tools export):**
+  summary seq 13, schema 5, access 355 / kept 200 / counted 155, `counted_404` 100, `app_dropped_404` 110, errors 247/4, denied 104 —
+  **identical to the 08:41Z window.** step11 on the 720 tier-1 records in the window: **PASS 67×34 for the live script AND the
+  refactor candidate (`#31`).** No detail export, so the by-logger detail check did not run.
+- **NOT yet proven:** the export named `polaris-logs.json` is `k8s-logs-2026.09.16` (870 docs) — tier 1, where the three fields stay
+  by design (all 870 carry them). No `polaris-logs-*` doc was read, so "the fields are gone" is still inferred from step3's PASS.
+  Close with an `exists` count on `polaris-logs-*` since 14:43Z.
 Decision (Kade): thread name and id carry no tracing value; `ndc` was `""` on all 300 detail docs of readout
 `084100Z`. Scope **tier 2 only** — tier 1 `k8s-logs` and the VictoriaLogs shipper keep them.
 - `fluent-bit/values.yaml` FILTER 4 `polaris_field_trim`: three `Remove_key` lines (C filter, after the Lua, so
