@@ -58,3 +58,10 @@ Added:
 Verified: `pytest` 923 passed / 45 skipped; `black --check` / isort clean; every notebook code cell
 parses. **NOT run against the cluster** — the notebook's Restart & Run All and a `full` CLI drive are
 Kade's; whether Polaris accepts a nested namespace in the probe catalog is therefore unmeasured.
+
+## Result — run `1789535345` (2026-09-16 05:09:42Z)
+
+Notebook Restart & Run All by Kade. Phase J: createNamespace 200, createTable 200, updateTable 200,
+loadTable 200, dropTable 204, dropNamespace 204 — every path after the first carried `probe_ns%1Fnested`.
+local-k8s (`step10` + `step11` on window 05:09:30Z): **one** table row, requests 3, commit_count 2
+(24 + 12 ms), no dotted phantom; replay 67 rows × 30 fields, 0 mismatches. Measured, not asserted.
