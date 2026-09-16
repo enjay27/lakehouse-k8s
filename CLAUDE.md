@@ -28,9 +28,8 @@
   committed `fluent-bit/values.yaml` as REVISION 17 on 2026-09-16** (policy v5, `active-issues.md`
   #28), with step2 passing on the real render and step3 read off the running object: containers
   `fluent-bit` on `cr.fluentbit.io/fluent/fluent-bit:5.1.1` and `reloader` on
-  `ghcr.io/jimmidyson/configmap-reload:v0.15.0` (hot reload), one pod. **The repo has since dropped hot
-  reload (same day, #28) and that is NOT ROLLED** — until it is, the file and rev 17 differ by the
-  `hotReload` block. *This line said 3.2.2 until 2026-09-16 — true on 09-09, stale since the 5.1.1 bump.* **The rule stands:** confirm a setting
+  `ghcr.io/jimmidyson/configmap-reload:v0.15.0` (hot reload), one pod. **Hot reload was removed and rolled the same
+  day (#28): the pod now runs the single `fluent-bit` container** (step3 PASS). *This line said 3.2.2 until 2026-09-16 — true on 09-09, stale since the 5.1.1 bump.* **The rule stands:** confirm a setting
   from the running object, not the file — the next `helm upgrade` makes this line history again.
 - **Values-only against upstream charts:** DataHub + prerequisites (Kafka / Elasticsearch /
   MySQL / ZooKeeper), Kafka, Schema Registry, Spark, Airflow, Argo Workflows, Jupyter.

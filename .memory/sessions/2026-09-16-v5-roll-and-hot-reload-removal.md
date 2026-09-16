@@ -1,4 +1,4 @@
-# 2026-09-16 — v5 rolled and verified; hot reload removed (written, not rolled)
+# 2026-09-16 — v5 rolled and verified; hot reload removed and rolled
 
 Cowork session (no cluster reach). Kade ran every cluster command; Claude read results, fixed scripts, recorded.
 
@@ -31,3 +31,7 @@ checksum restarts) vs separate ConfigMap + restart; **Kade chose ConfigMap + res
 carries — apply without restart leaves the old script running silently — is covered by `apply-lua.sh`
 (apply and restart in one step) and a new step3 check (container start ≥ ConfigMap last change).
 Written, gates adjusted, **not rolled**. Runbook B/C never ran; nothing about invalid-script reload was measured.
+
+## Roll of the removal
+Kade: step3 `RESULT: post-upgrade checks passed` (new checks: single container, no flag, start ≥ CM change).
+step2 output and revision number not pasted.

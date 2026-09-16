@@ -586,7 +586,7 @@ in the step-7 interval have 720 distinct `sequence`, 0 duplicates, and step11 re
 rows — so no Polaris record in that window was lost or duplicated. Fluent Bit chunks are per tag (= per container log
 file), so the dropped chunk is most likely another container's. Which one is unknown. Still real tier-1 loss.
 
-**#28 — Policy v5 (404 counted, not stored) + Lua as its own ConfigMap: ROLLED 2026-09-16 (rev 17) and verified. Hot reload REMOVED in the repo, NOT ROLLED.** 2026-09-16.
+**#28 — Policy v5 (404 counted, not stored) + Lua as its own ConfigMap: ROLLED 2026-09-16 (rev 17) and verified. Hot reload REMOVED and ROLLED the same day.** 2026-09-16.
 Decisions (Kade): 404 access lines count into `errors_4xx`/`counted_404` and are not stored; the allow-listed
 app lines of a 404 request are dropped too, **matched by `mdc.requestId`** (hold until the access line, 30 s
 orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `polaris-fluent-bit-lua`
@@ -640,7 +640,11 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   PolarisServiceImpl / IcebergExceptionMapper) — **exactly the replay prediction made before the roll**; no 404
   among detail statuses (401 59, 403 45, 204 27, 400 26, 201 17, 409 11, 422 6, 200 5, 500 4); 0 held_orphan docs.
   **So the 404 policy and the request-id drop are verified on live traffic; step 7 PASS.**
-- **HOT RELOAD REMOVED — WRITTEN, NOT ROLLED (Kade's decision, 2026-09-16).** Wanted: no reloader, Lua and
+- **HOT RELOAD REMOVED — ROLLED 2026-09-16 (Kade): step3 `RESULT: post-upgrade checks passed`** — with the new
+  checks that means one container (no reloader), no `--enable-hot-reload`, container start ≥ ConfigMap change,
+  CM sha == repo, tier 1 receiving. Only the RESULT line was pasted: step2's output and the new revision
+  number (expected 18) are not recorded. `apply-lua.sh` has still never run for real. Decision record follows.
+- *(as written, Kade's decision 2026-09-16)* Wanted: no reloader, Lua and
   config read at start only, simple config. Choice among two: *Helm `--set-file`* (one command, chart checksum
   restarts; the 09-15 outage risk) vs **separate ConfigMap + restart** — **chosen**. Changes:
   `values.yaml` drops the `hotReload` block (chart default false → no `reloader`, no `--enable-hot-reload`, no
