@@ -591,6 +591,15 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   The reloader also watches `/watch/config`, so a Helm config change reloads rather than restarts. Still **no real
   render**: get.helm.sh, fluent.github.io and proxy.golang.org are all blocked from Cowork, so helm cannot be
   obtained or built; step2 on Kade's real render remains the first real run.
+- **step3 run by Kade, 2026-09-16 (~17:2x KST): the DaemonSet is NOT on v5.** `ds/benchmarks-fluent-bit` has no
+  `reloader` container and no `--enable-hot-reload` — per the 0.57.6 template source both are unconditional under
+  `hotReload.enabled: true`, so the live pod template was not rendered from the committed values. ConfigMap
+  `polaris-fluent-bit-lua` IS applied (sha `bfff86db220036c2` == repo). restartCount 0, and the pod log still holds
+  engine lines from 05:09 UTC (before v5 was written), so the pod was not replaced either. The in-pod script sha
+  (`8c1fb607…`) is unexplained — not any committed version of the Lua; possibly an exec error string (5.1.1 image
+  may lack `cat`). Cause (upgrade not run / failed / other chart or values) **not yet established** — needs
+  `helm history`, `helm get values`, pod age. Tier 1 alive (k8s-logs 22874/10m); report 20 docs/10m.
+  Separately: a tier-1 chunk (tail.0 → opensearch.1, k8s-logs `kube.*`) was dropped after retries at 05:10:45 UTC.
 - **NOT verified:** any real `helm` render (no helm in Cowork); hot reload itself; **what 5.1.1 does when a
   reloaded script is invalid** (runbook C — may stop tier 1 like #27); reload loss (runbook D); whether
   Polaris assigns `requestId` without a client header (production question — if not, 404 app lines are kept).
