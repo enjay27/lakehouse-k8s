@@ -4,7 +4,15 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-15 (sessions 13–14)
+## Now — 2026-09-17 (session 16: replica-staleness probe, written not run)
+
+**Session 16: `diagnostics/polaris_replica_staleness.ipynb` is NEW and NOT EXECUTED.** It settles the *database* half of
+`local-k8s` #15 (create-namespace 500s) without Polaris: pause WAL replay on every standby, write once through Pgpool, read from
+12 brand-new pooled sessions, and have each read report `pg_is_in_recovery()` so routing and staleness are measured together.
+**Topology measured: pg-1 is PRIMARY, pg-0 and pg-2 standbys** — a hand-run that assumed pg-0 paused the wrong pod and left a
+standby live. `delay_threshold` is set nowhere in the chart, templates or values, so pgpool never checks replication lag before
+balancing a read. Only notebook in `diagnostics/` that changes server state: `require_not_prod()` **plus** a hard `ENV == "local"`
+assert, plus a standalone PANIC cell. [`sessions/2026-09-17-replica-staleness-probe.md`](.memory/sessions/2026-09-17-replica-staleness-probe.md)
 
 **Session 14: `log-coverage/polaris_api_traffic_v1.ipynb` is v2's traffic with every verification cell removed** — no OpenSearch, no kubectl, and **one window wait**: it waits once for a fresh window (lag 6.5 s at 30/5 fast-run, edit on revert), then runs B–I back to back (~6 s measured) and reports if the drive crossed a boundary. Kept cells diff against v2 only in printed strings. ~~`src/make_traffic.py` still uses `lag=0.5`~~ **fixed session 15 (2026-09-16): `drive()` requires `tick_interval_s`, one validated `_wait_for_window`, AST-tested**; **phase J added and RUN** (run `1789535345`: 6/6 calls as targeted, Polaris accepts a nested namespace; local-k8s found one table row with commit_count 2 and no phantom) — [`sessions/2026-09-16-phase-lag-and-nested-namespace.md`](.memory/sessions/2026-09-16-phase-lag-and-nested-namespace.md). Not run on the cluster. [`.memory/sessions/2026-09-15-traffic-only-notebook.md`](.memory/sessions/2026-09-15-traffic-only-notebook.md)
 
