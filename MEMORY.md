@@ -66,6 +66,12 @@ the window**, since `PHASE_LAG` becomes 31.5 s at 1800/30.
 **NEXT SESSION STARTS FROM
 [`.memory/sessions/2026-09-15-window-lag-is-the-harness.md`](.memory/sessions/2026-09-15-window-lag-is-the-harness.md)**.
 
+**POLARIS IS BEING UPGRADED 1.3.0 -> 1.6.0 (next session, in `local-k8s`).** When it lands, this repo goes stale in three places:
+`log-coverage/spec/` is vendored **1.3.0** OpenAPI and **is the coverage run's denominator** (`load_spec` builds the 63 operations
+and 286 cells from it) — re-fetch before quoting any coverage number; `src/config/local.yaml` carries `polaris_version: "1.3.0"`
+and `purge_deletes_files: false` ("issue #379 present locally"), both to re-test; and the report/Lua shapes want one window
+compared rather than assumed. Plan: [`local-k8s/polaris/HANDOFF-upgrade-1.6.0-2026-09-17.md`].
+
 ## Where the detail is
 
 | read | when |
