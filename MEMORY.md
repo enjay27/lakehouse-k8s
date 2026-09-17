@@ -17,6 +17,10 @@ report rows −31 % bytes. Query strings via `.keyword`. **`WINDOW_SECONDS` is s
 **Next:** (1) 1800 s window (`apply-lua.sh`) → (2) delete 30 s report indices (explicit OK) → phase 3. P5 undecided; shipper: Kade uninstalls.
 **ISM / retention: Monitoring team, not ours.** `#29` dropped.
 
+**PostgreSQL (2026-09-17):** issue 1 first — `#15` create-namespace 500s are an NPE, not a settled read-after-write;
+`SELECT pg_wal_replay_pause()` on the standbys settles it in one command. The primary-unavailable harness is **planned, not built**:
+[`postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md`](postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md).
+
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 
 ## Where the detail is
