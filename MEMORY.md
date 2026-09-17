@@ -21,6 +21,13 @@ report rows −31 % bytes. Query strings via `.keyword`. **`WINDOW_SECONDS` is s
 `SELECT pg_wal_replay_pause()` on the standbys settles it in one command. The primary-unavailable harness is **planned, not built**:
 [`postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md`](postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md).
 
+**NEXT SESSION = POLARIS 1.3.0 -> 1.6.0.** Start here: [`polaris/HANDOFF-upgrade-1.6.0-2026-09-17.md`](polaris/HANDOFF-upgrade-1.6.0-2026-09-17.md).
+**Run its 15-minute capture BEFORE the first mutating command** — `helm get values benchmarks-polaris` has never been run and its
+evidence is unrecoverable after the upgrade (`#5`), and #15 can only be characterised on 1.3.0 while 1.3.0 is running. Schema
+migration is **manual** (Polaris does not auto-migrate; this repo is on `schema_v3.sql`) and the documented v5 step alters
+`events.catalog_id`, the table the audit event listener writes. 1.7.0 next month: `OPTIMIZED_SIBLING_CHECK` 403s every nested
+namespace (apache/polaris#5521) — 1.6.0 is clear.
+
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 
 ## Where the detail is
