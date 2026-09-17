@@ -103,3 +103,83 @@ LoadBalancer rather than a pod — the notebook prints it and warns, but cannot 
 helpers (`kexec`, `pool_sql`) live in the notebook rather than `src/`, which this repo's own rule
 says is the wrong home; promoting them to `src/pg_replica_probe.py` with a `test_` file is the
 right follow-up, as its own task.
+
+---
+
+# Run 1, and the correction — same day
+
+**Run 1 executed cleanly and its verdict was worthless.** All 12 cells ran, no errors, replay
+resumed on both standbys, probe table dropped. The notebook printed:
+
+> REFUTED - all 12 sessions were served by the PRIMARY, so Pgpool is not load-balancing reads here
+> at all
+
+**That verdict measured the instrument, not the cluster.** The detector was inside the measured
+statement:
+
+```sql
+SELECT pg_is_in_recovery(), count(*), inet_server_addr()::text FROM rw_probe;
+```
+
+`pg_is_in_recovery()` is **VOLATILE**, and Pgpool decides read-vs-write by parsing the statement.
+If it classifies a volatile system function as write-ish, the whole statement goes to the primary
+— so the detector is a plausible cause of the very routing it reported. Every row would read
+`primary` whatever the cluster was doing.
+
+**And nothing proved the connection reached Pgpool at all.** `PG_HOST` is `192.168.139.2`, the
+OrbStack LoadBalancer address that also fronts Polaris on 8181. If port 5432 there reached the
+primary pod directly, run 1's output would be identical. The notebook printed a prose warning and
+checked nothing.
+
+Two candidate explanations for 12/12, only one of which is the printed conclusion — and it is the
+least likely of the three.
+
+## What run 1 did establish
+
+- Topology confirmed live: **pg-1 primary**, pg-0 and pg-2 standbys, `inet_server_addr()` of the
+  serving backend `192.168.194.55`.
+- The pause/resume machinery works end to end; both standbys reached `paused`, and after resume
+  `replay_lag` was 1.65 s / 1.96 s and closing.
+- **2 replication slots exist**, so a pause retains WAL on the primary without bound. Not a risk
+  here: `/bitnami/postgresql` is **203G with 165G free**.
+- **`persistence.size: 10Gi` is not what the filesystem shows.** OrbStack's local-path provisioner
+  does not enforce the requested capacity, so `local-k8s` `.memory/roadmap.md`'s assertion
+  "`persistence.size` -> 10Gi, not 8Gi" **cannot be checked with `df`** and needs re-specifying
+  against the PVC spec. Third dead assertion found in one day.
+
+## What the correction changes
+
+- **§2b refuses to continue unless `SHOW pool_nodes` answers**, and displays `status`, `lb_weight`,
+  `role` and `load_balance_node` per backend, warning on a zero weight or a down node — either of
+  which would explain "no balancing" without any read-after-write behaviour existing.
+- **Routing is measured from Pgpool's own `select_cnt`**, diffed around a loop of plain
+  `SELECT count(*)`. A counter outside the query cannot perturb the decision it reports.
+- **§7b keeps run 1's instrumented query beside it**, purely to show the disagreement if there is
+  one. If the counters say standbys served reads while that query says `primary` 12/12, the
+  confound is demonstrated rather than argued.
+- **§8 and §10 add the symptom**: the #15 ladder — 3 brand-new catalogs, first namespace in each —
+  run once while replay is paused and once against healthy replication. Without the control, a 500
+  rate while paused says nothing, because #15's 500s were seen on a cluster nobody had paused.
+  This also supplies the denominator the log pipeline cannot: the driver records its own statuses.
+- `kexec` connects over TCP to 127.0.0.1 instead of the Unix socket, because `inet_server_addr()`
+  returns NULL on a socket connection — which is why run 1's role table had an empty `addr` column.
+- Outputs cleared. Run 1's result lives in this note, not in the notebook, because keeping a
+  superseded verdict beside corrected code is how a wrong number gets quoted later.
+
+## The lesson worth keeping
+
+The failure was not a typo. **The measurement changed what it measured, and it failed silently —
+producing a clean, confident, wrong verdict with no error anywhere.** It is the same shape as this
+project's window-lag finding (the notebook caused the condition it spent three runs reporting) and
+as `local-k8s` #F1 (a values block inert for months because the observed value matched the
+default). In all three the output looked right.
+
+The general defence, and it is cheap: **make the instrument prove itself before trusting a
+result.** §2b is that assertion. §7b is the receipt.
+
+## Also this session
+
+`log-coverage/polaris-logs.json` (staged but never committed) and `polaris-summary.json`
+(untracked) were untracked and deleted at Kade's request — 407 KB and 61 KB of run output from the
+2026-09-16 16:03 window. Neither was ever in history, so nothing was lost. They are not gitignored,
+so a re-run will bring them back as untracked noise.
