@@ -25,6 +25,11 @@ report rows −31 % bytes. Query strings via `.keyword`. **`WINDOW_SECONDS` is s
 [`polaris/RUNBOOK-upgrade-1.6.0.md`](polaris/RUNBOOK-upgrade-1.6.0.md) — supersedes the 09-17 handoff's ordering (`#33`).
 Tag/Chart 1.6.0, plural `event-listener.types`, console **INFO** + all 13 DEBUG categories demoted. Not rendered, not applied —
 **the running Polaris is 1.3.0 with DEBUG output; do not read the level off the file.** Step 0's capture still goes first (`#5`).
+**Step 0 measured (Kade):** metastore **v3**; **one Polaris pod** (HPA 1/3 idle at 1% cpu) so **`#15` hypothesis C is dead** and
+**`#8` is re-armed**; and **`quarkus.log.console.level=INFO` was ALREADY live at R5** while the file said DEBUG — so `afc88e2`'s
+logging half reconciles the file, it does **not** change the cluster, and **the upgrade will not reduce `polaris-logs-*` volume**
+(`#5` caught in the act; the 10 DEBUG categories have been inert underneath that INFO handler). **`0a` (`helm get values`, plain
+and `--all`) is still unrun and still perishable.**
 Corrections: **1.6.0 needs schema v4, not v5** (the `events.catalog_id` ALTER is 1.7.0) and **v3→v4 is additive only**
 (`postgresql/schema/migrate_v3_to_v4.sql` — transcribed; diff against the shipped file first). "`maxReplicas 3 → 1` already in
 the tree" was **false** — `#8` still armed. New: **1.6.0 rejects entity names with dots/colons/backslashes — screen first**

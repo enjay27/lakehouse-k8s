@@ -43,6 +43,10 @@ helm -n datahub-hynix history benchmarks-polaris
 #     `benchmarks-polaris` and the label is app.kubernetes.io/name=benchmarks-polaris.
 #     `=polaris` matches nothing. (Corrected 2026-09-18 after it returned empty.)
 kubectl -n datahub-hynix get deploy,hpa,pods -l app.kubernetes.io/name=benchmarks-polaris
+#   -> DONE 2026-09-18: deployment 1/1, ONE pod, HPA MINPODS 1 MAXPODS 3 REPLICAS 1,
+#      cpu: 1%/80%, memory: 30%/80%. #15 hypothesis C is DEAD (no second pod's cache to
+#      diverge from). #8 is RE-ARMED though -- the metrics that were <unknown> on 2026-09-09
+#      are back, so the autoscaler can scale; it just has no reason to at 1% CPU.
 
 # 0c. DONE 2026-09-18 -- the live metastore is at schema version 3. CONFIRMED, not inferred.
 #     Exec the PRIMARY pod directly, not pgpool: a read through pgpool can be load-balanced
@@ -62,6 +66,15 @@ rather than asserted:
 kubectl -n datahub-hynix get cm benchmarks-polaris -o jsonpath='{.data.application\.properties}' \
   | grep -E 'quarkus\.log|event-listener' > /tmp/polaris-log-config-1.3.0.properties
 ```
+
+**DONE 2026-09-18, and it found the thing this capture existed to find:**
+`quarkus.log.console.level=INFO` **was already live** (revision 5, 2026-09-15), while the
+committed `polaris/values.yaml` said `DEBUG`. The logging half of `afc88e2` therefore
+reconciles the file to the release; it does not change the cluster. All ten DEBUG category
+lines are live *underneath* that INFO handler, so they have been emitting nothing for days —
+the inference is now measured, not argued. `polaris.event-listener.type` and its two buffer
+settings match the values file exactly, so the plural-`types` rename **is** a real change.
+See `active-issues.md` `#33`.
 
 **`0c` is done: the metastore reports `version|3`.** Step 2's v3 → v4 migration is therefore
 the right migration, and the script's own guard will agree. `0a` and `0b` are still outstanding
@@ -166,9 +179,12 @@ diff <(sort /tmp/polaris-log-config-1.3.0.properties) <(...)   # against the 0c 
 
 **Three things to confirm in the render:**
 
-1. `quarkus.log.console.level=INFO` — and note the upstream **chart default is `ALL`**, so
-   INFO is a genuine narrowing, not a value that happens to match a default. This is the one
-   assertion that discriminates (Configuration Policy).
+1. `quarkus.log.console.level=INFO`. Read this one carefully, because it discriminates
+   against two things and not against a third. It differs from the upstream **chart default
+   `ALL`**, so the block is not silently un-applied. It differs from what the committed file
+   said before `afc88e2` (`DEBUG`). It does **not** differ from the live release — step 0d
+   measured `INFO` already running at revision 5. So seeing INFO here confirms the values
+   are being read; it does **not** confirm that anything changed.
 2. `quarkus.log.category."…".level=DEBUG` appears **nowhere**.
 3. `polaris.event-listener.types=persistence-in-memory-buffer`, with `buffer-time=PT5S` and
    `max-buffer-size=1000` still present.
@@ -222,9 +238,16 @@ psql ... -c "SELECT * FROM polaris_schema.version;"        # 4
 psql ... -c "SELECT count(*), max(timestamp_ms) FROM polaris_schema.events;"
 ```
 
-Then confirm the logging change did what it was for: one window of `polaris-logs-*` after
-the upgrade should be materially smaller than one before. Use `step10` / `step11`, not Dev
-Tools copies (MEMORY.md).
+**Do not expect the log volume to drop.** The original version of this runbook said one
+`polaris-logs-*` window after the upgrade should be materially smaller than one before. That
+was wrong, and step 0d is why: stdout has been INFO-only since revision 5, so there is no
+DEBUG traffic left for the INFO threshold to remove. The right assertion is the opposite —
+**one window after should be comparable to one before**, allowing for whatever 1.6.0's own
+logging changes add or remove. Use `step10` / `step11`, not Dev Tools copies (MEMORY.md).
+
+If a window *does* shrink materially, that is an unexplained change, not a success: something
+other than the threshold moved, and it needs a cause before the report schema v6 counters are
+trusted again.
 
 ---
 
@@ -250,7 +273,15 @@ Nothing here is optional; each one is a number that silently becomes wrong.
 ## Step 7 — then, and only then, the `#15` experiment
 
 Re-run the identical ladder from `polaris-learning/diagnostics/polaris_replica_staleness.ipynb`
-§8 and §10. The reading table in the 2026-09-17 handoff still applies and is not repeated here.
+§8 and §10. The reading table in the 2026-09-17 handoff still applies **minus its hypothesis
+C row**: step 0b measured one Polaris pod, so cross-pod cache divergence is not the mechanism
+on this cluster. That leaves **A** (stale reads through Pgpool) and **B** (a 1.3.0
+resolver/entity-cache bug — and this upgrade is the experiment for B, for free).
+
+Before the ladder run, decide whether to hold C dead for its duration: the HPA is live again
+with `maxReplicas: 3`, so a ladder that loads Polaris past the target can reintroduce a
+second pod mid-experiment and contaminate the result. `replicaCount: 1` with
+`autoscaling.enabled: false` is the handoff's remedy C and also closes `#8`.
 
 **Run the ladder with the DEBUG override**, not on the committed INFO config — the NPE stack
 trace itself is logged at ERROR and survives INFO, but the persistence and storage DEBUG lines
@@ -324,11 +355,24 @@ can proceed.
 - `rateLimiter.type` is `no-op` here, so the `token-bucket.window` key that vanished from the
   upstream 1.6.0 chart is never emitted. Non-issue.
 
-**Measured on the cluster 2026-09-18** (by Kade, not this session): the live metastore is at
-**schema version 3** — `SELECT * FROM polaris_schema.version` → `version|3`, read from the
-primary pg-1. So the v3 → v4 migration applies, and `#F1`'s mistake (inferring the version
-from the file in this repo) has been avoided: the file and the database happen to agree, but
-that is now a fact rather than an assumption.
+**Measured on the cluster 2026-09-18** (by Kade; this session has no cluster reach):
+
+- **Metastore schema version 3** — `SELECT * FROM polaris_schema.version` → `version|3`, read
+  from primary pg-1. The v3 → v4 migration applies. `#F1`'s mistake avoided: the file and the
+  database agree, and that is now a fact rather than an assumption.
+- **One Polaris pod.** Deployment `1/1`, HPA `MINPODS 1 MAXPODS 3 REPLICAS 1` at `cpu: 1%/80%,
+  memory: 30%/80%`, age 30d. Kills `#15` hypothesis C; re-arms `#8` (the metrics that were
+  `<unknown>` on 2026-09-09 are back).
+- **`quarkus.log.console.level=INFO` was already live** at revision 5 (2026-09-15) while the
+  committed file said `DEBUG`. The logging half of `afc88e2` reconciles the file to the
+  release rather than changing it — and all ten DEBUG categories were live underneath that
+  INFO handler, emitting nothing. `#5`, caught in the act.
+- **The event listener matches the file exactly** — `type=persistence-in-memory-buffer`,
+  `buffer-time=PT5S`, `max-buffer-size=1000`. The plural-`types` rename is a real change.
+- **5 release revisions**, R1 2026-08-19 → R5 `deployed` 2026-09-15 17:34, chart
+  `benchmarks-polaris-1.3.0` throughout. The pod is 39m old against a 30d deployment with
+  `RESTARTS 0` — recreated without a Helm revision, so R5's ConfigMap was loaded 39 minutes
+  before the capture, not in September (`#20`).
 
 **Open — everything else that needs the cluster.** In particular: `helm get values
 benchmarks-polaris` has *still* never been run, so the live replica count, the live logging

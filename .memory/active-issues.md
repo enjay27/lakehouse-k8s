@@ -18,12 +18,62 @@ read back from the running object, **the running Polaris is 1.3.0 with DEBUG con
 and the values file describes something else. Do not answer "what log level is Polaris at"
 from the file.
 
+**THE CONSOLE THRESHOLD WAS ALREADY INFO IN THE RUNNING RELEASE. The logging half of
+`afc88e2` changes the FILE, not the cluster.** 2026-09-18, read from the live ConfigMap
+`benchmarks-polaris` (revision 5, deployed 2026-09-15 17:34):
+
+```
+quarkus.log.console.level=INFO          <-- already INFO, while the committed file said DEBUG
+quarkus.log.level=INFO
+quarkus.log.console.enabled=true
+quarkus.log.file.enabled=false
+```
+
+So the repo's `threshold: DEBUG` had not described the running Polaris since at least
+revision 5. **This is `#5` caught in the act** — not a nesting error this time, just a values
+file that drifted from a release nobody diffed. `afc88e2`'s logging change is a
+**reconciliation of the file to reality**, not a change of behaviour, and it should be
+described that way.
+
+**And the inference about the DEBUG categories is now CONFIRMED from the running object, not
+argued.** The same ConfigMap carries all ten `…level=DEBUG` category lines live —
+`org.apache.polaris.service.auth`, `.service.context`, `.service.catalog`,
+`.service.catalog.IcebergRestCatalogAdapter`, `.service.admin`, `core.persistence`,
+`core.storage`, `.service.storage`, `DatasourceOperations`, plus `io.polaris{,.core,.service}`
+— *underneath* `quarkus.log.console.level=INFO`. Quarkus takes the stricter of the two, so
+**every one of them has been emitting nothing for at least three days.** Thirteen lines of
+configuration, live, doing nothing.
+
+**Consequence that must not be missed: the upgrade will NOT reduce `polaris-logs-*` volume.**
+Stdout has been INFO-only since revision 5, so there is no DEBUG traffic left to remove.
+Runbook step 5 originally said to expect a materially smaller window after the upgrade —
+**that expectation was wrong and has been corrected.** If a window *does* shrink, something
+else changed and it needs explaining, not celebrating.
+
+**Also confirmed live, and matching the values file exactly:**
+`polaris.event-listener.type=persistence-in-memory-buffer`, `buffer-time=PT5S`,
+`max-buffer-size=1000`. So the plural-`types` rename in `afc88e2` is a **real** change to the
+rendered config, unlike the logging half. And `quarkus.log.file.enabled=false` is live again,
+which is `#11` (file logging reads as off and ships anyway) still unexplained.
+
+**Release history:** 5 revisions, not the "ten upgrades of configuration" `#5` refers to.
+R1 install 2026-08-19, R5 `deployed` 2026-09-15 17:34, chart `benchmarks-polaris-1.3.0`
+throughout. The pod is 39m old against a 30d deployment with `RESTARTS 0`, so it was
+**recreated** recently without a Helm revision — the running config was loaded from R5's
+ConfigMap 39 minutes before the capture, not in September. Worth knowing before concluding
+that a config change did or did not take (`#20`).
+
 **Step 0 progress, 2026-09-18 (Kade ran these; this session cannot):**
 `0c` **DONE — the live metastore is at schema version 3**, read from primary pg-1:
 `SELECT * FROM polaris_schema.version` → `version|3`. The repo's `schema_v3.sql` and the
 database agree, which is now measured rather than assumed (`#F1`'s mistake avoided). So the
-v3 → v4 migration is the correct one. `0a` (`helm get values`, the perishable one) and `0b`
-(deploy/hpa/pods) are **still outstanding**.
+v3 → v4 migration is the correct one. `0b` **DONE** — one pod, `REPLICAS 1`, HPA idle at `cpu: 1%/80%, memory: 30%/80%`,
+`MAXPODS 3`. This kills `#15` hypothesis C and re-arms `#8`; see both entries.
+`0d` **DONE** — the live log/event-listener config, above.
+**`0a` is STILL NOT RUN**, and it is the perishable one: `helm get values benchmarks-polaris`
+(plain *and* `--all`) is the only thing that can quantify how far the rest of
+`polaris/values.yaml` has drifted from the release, and the console-threshold finding above is
+proof the drift is real and not hypothetical. `helm history` has been run (5 revisions).
 
 **Two command corrections, both mine, both worth keeping:**
 
@@ -238,6 +288,23 @@ Every 500 this cluster has stored is a `java.lang.NullPointerException` logged b
 | `grantee_not_found: grantee={}, [… name='catalog_admin' …]` | 1 | `POST /api/management/v1/catalogs` |
 | `metadata` | 1 | `POST …/namespaces/probe_ns/views` |
 
+*2026-09-18 — HYPOTHESIS C IS DEAD for the current cluster.* The handoff gave hypothesis C
+(the namespace request lands on a *different* Polaris pod than the catalog create, whose
+entity cache never saw it) more weight than A or B, on the grounds that round-robin across
+replicas is deterministic in a way replication lag is not, which fits 3-of-3. Runbook step 0b
+settles it: **there is exactly one Polaris pod**, `REPLICAS 1` with the HPA idle at 1% CPU,
+and the deployment reports `1/1`. With one pod there is no second cache to diverge from. C
+cannot be the mechanism here.
+
+Two caveats before this is treated as closed. `#15`'s evidence came from a differently-seeded
+cluster (run `1788760757`), so what is settled is that C is not the mechanism *now*, not that
+it never was. And the HPA is live again (`#8`, 2026-09-18) — if a future ladder run pushes
+Polaris past the target, C comes back. **Pin `replicaCount` / disable autoscaling before the
+post-upgrade ladder run if you want C held dead for the duration.**
+
+That leaves **A** (stale reads through Pgpool — the `database_redirect_preference_list`
+remedy in the handoff addresses it) and **B** (a 1.3.0 resolver/entity-cache bug, which the
+1.6.0 upgrade is itself the experiment for).
 **The trigger is a fresh parent entity, not load.** Three of the six namespace NPEs are the
 `polaris-learning` 500-ladder's *setup* step — one per rung, `nb1788760757bh`, `…dns`,
 `…nobkt`, **3 of 3 brand-new catalogs**, each 500ing on the first namespace created in it.
@@ -560,6 +627,16 @@ its own filename and let the shipper glob.
 `REPLICAS 1`, age 21d — **no metrics, so it cannot scale at all**. That removes the hazard
 from the notebook run in progress, and it is not a fix: the autoscaler has been inert for an
 unknown span, and the interleaved-write hazard returns the moment metrics come back. Still OPEN.
+
+*2026-09-18 — THE METRICS ARE BACK, so the hazard is armed again.* Measured:
+`cpu: 1%/80%, memory: 30%/80%`, `MINPODS 1  MAXPODS 3  REPLICAS 1`, age 30d, one pod
+(`benchmarks-polaris-777c948595-c2zzg`). The 2026-09-09 reading is superseded: the autoscaler
+can scale now, it simply has no reason to — 1% CPU against an 80% target is enormous
+headroom, and memory at 30% is the closer of the two. So `#8` is **armed but not firing**,
+and it is not "removed by lack of metrics" any more. Unchanged in the 1.6.0 commit
+(`afc88e2`) by choice: `autoscaling.enabled: true`, `maxReplicas: 3`. **This also bites
+mid-upgrade** — runbook step 2d scales the deployment to 0 for the migration and the HPA
+`minReplicas: 1` may scale it straight back up. Check after scaling, do not assume.
 
 **#9 — A plaintext database password in the live release. OPEN.**
 `persistence.relationalJdbc.secret.password: polaris` in `helm get values` output. Same class
