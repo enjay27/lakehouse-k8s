@@ -47,6 +47,11 @@ accumulating across days), and `maxBackupIndex` 5 → **45**, giving `10Mi x 46 
 days or a fortnight of quiet ones. **The cost is gzip** — compression came from the suffix
 ending in `.gz`, so the ring is 460Mi of plaintext where the old scheme held ~23MB compressed.
 
+**DONE 2026-09-18: THE PVC WAS REMOVED.** Runbook executed in full — shipper and VictoriaLogs
+uninstalled, Polaris upgraded without the mount (verified: `ls /deployments/logs` → *No such
+file or directory*), `polaris-shared-logs-pvc` deleted, 27 MB archive gone as chosen. **The
+other half of `#44` — the ISM policies — is still unapplied.** Original note follows:
+
 **SUPERSEDED IN PART, SAME DAY (2026-09-18, Kade): THE PVC IS BEING REMOVED ALTOGETHER.**
 Its only two consumers are going — `fb-polaris-shipper` (which tailed it into VictoriaLogs) and
 the Polaris mount itself. So:
@@ -414,6 +419,19 @@ kubectl -n datahub-hynix logs benchmarks-polaris-6dcf6758f9-5vpmc --previous \
 container, and `#39`'s flapping means pods come and go on their own — this reading is
 perishable in the same way step 0's were, and the replica count is already back to 1.
 
+**#40 — CLOSED UNANSWERED 2026-09-18, AND IT CANNOT BE REOPENED: THE EVIDENCE WAS DELETED
+WITH THE PVC.** Half of it was answered — `#44` established the bound was per-day, because the
+live pod ran `file-suffix: .yyyy-MM-dd.gz` while `values.yaml` said `~`, so `.14` against a
+declared 5 is not a contradiction. **The other half is gone.** Whether the bursts of same-size
+rotations minutes apart were `#8`'s rotation storm or one busy writer needed the rotated files
+themselves, and they were destroyed at runbook step 4. `#8` is closed by removal rather than by
+diagnosis, so nobody will ever know whether it had already bitten.
+
+**That was a known, accepted cost** — the archive deletion was put to Kade with this consequence
+stated and he chose it (2026-09-18). Recorded because "we closed it" and "we made it
+unknowable" are different endings, and only one of them should be reused as a precedent.
+Original entry:
+
 **#40 — OPEN QUESTION. The Polaris log archive carries per-day rotation suffixes up to `.14`
 while `values.yaml` sets `maxBackupIndex: 5`, and several days show a burst of same-size
 rotations minutes apart — which is the shape `#8` predicted.** 2026-09-18.
@@ -576,6 +594,14 @@ A digest pin also makes `imagePullPolicy: Always` harmless, since a digest canno
 edited mid-upgrade. Still OPEN afterwards: this hook runs on **every** future upgrade of this
 chart, so a green pull today is not a green pull next month; that is the standing fragility,
 and one successful check does not close it. Related: `#2` (charts that pin no image at all).
+
+**#38 — CLOSED 2026-09-18 by removal.** The two `QUARKUS_LOG_FILE_JSON_*` variables are deleted
+from `polaris/values.yaml`, the PVC they nominally fed is deleted, and `logging.file.enabled`
+stays `false` with no volume behind it. The entry's one lasting contribution is not the dead
+config: it is that **`enabled: false` was silently load-bearing** — the chart's own
+`logs-storage` volume mounts at the same `/deployments/logs` that `extraVolumes` claimed, so
+turning the handler on would have produced a duplicate mountPath the API server rejects
+outright. Nobody knew that until the mount was removed (`#44`). Original entry:
 
 **#38 — OPEN QUESTION. The file log handler is off, so `extraEnv`'s two file-JSON variables are
 inert, nothing writes the log PVC, and `#8`'s interleaved-write hazard may be inert with it.**

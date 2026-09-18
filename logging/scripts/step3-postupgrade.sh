@@ -171,10 +171,12 @@ NEXT, and NOT covered here:
   * SKIP ONE FULL WINDOW before trusting any report row. The first window after an
     upgrade is a replay, not traffic (#14d). Then check on a report summary row:
         max_record_time - min_record_time  <=  window_seconds
-  * THE COMPLETENESS COMPARISON, and it expires. While fb-polaris-shipper is still
-    installed you have the same traffic filtered from TWO sources -- the shipper from
-    the log FILE into VictoriaLogs, this DaemonSet from STDOUT into OpenSearch.
-    Compare `access_seen` for the same window from both reports. Equal means stdout
-    carries the same access-log set as the file. After the uninstall that number
-    cannot be recovered.
+  * THE COMPLETENESS COMPARISON HAS EXPIRED -- 2026-09-18. It said: while
+    fb-polaris-shipper is installed you have the same traffic from TWO sources (the
+    shipper from the log FILE into VictoriaLogs, this DaemonSet from STDOUT into
+    OpenSearch), so comparing `access_seen` for one window proves stdout carries the
+    same access-log set as the file. The shipper, VictoriaLogs and the log PVC are all
+    gone, so that number can no longer be obtained. IT WAS NEVER TAKEN. Nothing now
+    independently corroborates that stdout == file for the access log; tier 1
+    (`k8s-logs-*`) remains the only cross-check, and it reads the same stdout.
 EOT

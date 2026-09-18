@@ -68,6 +68,12 @@ Never print a token or a client secret into a notebook cell. Notebooks get commi
 
 ### 2.3 The log path
 
+> **HISTORICAL as of 2026-09-18.** The path below no longer exists: `fb-polaris-shipper`,
+> VictoriaLogs and `polaris-shared-logs-pvc` were all removed, and Polaris writes no log file.
+> Polaris logs now reach OpenSearch from **stdout** through the `benchmarks-fluent-bit`
+> DaemonSet only. Kept because the filter chain it documents is still the shipper's Lua.
+> See `logging/RUNBOOK-log-pvc-removal-2026-09-18.md`.
+
 ```
 Polaris (Quarkus, JDK21)
   └─ JSON per line → /deployments/logs/polaris.log        on PVC polaris-shared-logs-pvc

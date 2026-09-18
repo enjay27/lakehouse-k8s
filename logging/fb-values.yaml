@@ -1,4 +1,15 @@
 # ============================================================
+# HISTORY — NOT LIVE CONFIGURATION (2026-09-18).
+# The `fb-polaris-shipper` release was UNINSTALLED, together with VictoriaLogs and
+# `polaris-shared-logs-pvc` (logging/RUNBOOK-log-pvc-removal-2026-09-18.md, executed).
+# Nothing below describes anything running.
+#
+# Kept rather than deleted because it is the only record of how this leg was wired,
+# and of the four silent faults found in it (no tail DB; Skip_Long_Lines Off, which
+# STOPS the tail rather than skipping the line; no Rotate_Wait; no filesystem
+# buffering — .memory/completed.md). Do NOT helm install from it to "restore" the
+# leg: the PVC it tails no longer exists and Polaris writes no log file at all.
+# ============================================================
 # Fluent Bit — Polaris log shipper
 #   release   fb-polaris-shipper
 #   namespace datahub-hynix          (NOT `logging` — the log PVC is namespaced,

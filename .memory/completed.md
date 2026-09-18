@@ -90,3 +90,48 @@ inverted, the principal-keyed dedup key, the flush report) and the whole of the 
 revision are **written and not running** — `active-issues.md` #14. Being finished as a piece
 of work is not the same as being the running object; this repo has now made that mistake
 twice in the same file.
+
+
+---
+
+## The Polaris log file leg, removed entirely — 2026-09-18
+
+The second pipeline is gone: **`fb-polaris-shipper` uninstalled, VictoriaLogs uninstalled,
+`polaris-shared-logs-pvc` deleted**, and Polaris upgraded to mount nothing
+(`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`, executed in full). Polaris now writes no log
+file at all; everything goes to stdout and reaches OpenSearch through the DaemonSet.
+
+**How it started.** A request to delete Polaris logs older than 3 days. There was no way to do
+that: Quarkus/JBoss offers `max-file-size`, `max-backup-index` and `file-suffix` and **no
+age-based deletion of any kind** (`#44`). The count-based bound looked like a day bound because
+the file names carried dates — but the daily roll mints a new basename and nothing deletes the
+previous day, which is how a declared bound of 5 sat over ~130 files and 27 MB reaching back to
+08-21. Asking for retention exposed that the leg had no consumer worth keeping, and it was
+removed instead.
+
+**What it closed.** `#8` (three replicas appending to one RWO log file — closed at the *mount*
+removal, not the claim deletion), `#38` (dead file-JSON config), `#40` (closed **unanswered**;
+see below), the `REVIEW-pipeline` P10 loose end, and a duplicate-mountPath trap nobody had ever
+hit: the chart mounts its own `logs-storage` volume at the same `/deployments/logs` that
+`extraVolumes` claimed, so flipping `logging.file.enabled: true` would have been rejected by the
+API server outright. `enabled: false` was silently load-bearing for the deployment rendering.
+
+**Three things worth carrying forward, and none of them is about logging:**
+
+1. **`ReadWriteOnce` does not serialise writers.** It restricts a volume to one *node*; any
+   number of pods on that node may mount it, which on a single-node cluster is all of them.
+   That misreading is what built `#8`.
+2. **A gate must be able to fail.** The step-3 render gate returned 2 on a correct chart because
+   it grepped `--debug`'s values dumps rather than the manifest; the fix added a positive
+   control (`quarkus.log.file.enabled=false`, want 1) so a mistyped pattern cannot score 0/0 and
+   read as a pass. That is `#43`'s lesson and the proposal's §9.3 warning, seen a **third** time
+   — in a gate written the same day as both citations.
+3. **"Closed" and "unknowable" are different endings.** `#40` asked whether the rotation bursts
+   were `#8` already biting. Answering it needed the rotated files, and step 4 destroyed them.
+   The cost was stated before the choice and accepted; it is filed as closed-unanswered rather
+   than closed, so nobody reuses it as a precedent for deleting evidence.
+
+**Verification grades differ, deliberately.** Step 3 carries its own output (gate armed, then
+`ls /deployments/logs` → *No such file or directory*, exit 2). Steps 1, 2 and 4 are Kade's
+report with no recorded output. **Unconfirmed either way:** whether VictoriaLogs' own 50 Gi PVC
+in namespace `logging` went with the uninstall — `helm uninstall` does not remove it.

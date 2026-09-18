@@ -18,7 +18,8 @@ first table describes the pipeline as it runs**. When a dated document disagrees
 | [`REVIEW-lua-refactor-2026-09-16.md`](REVIEW-lua-refactor-2026-09-16.md) | the Lua refactor (one filter, R1–R6) and how it was proven equivalent — **rolled** |
 | [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md) | the phase 0–3 task table toward production (ISM handed to the Monitoring team) |
 | [`opensearch/`](opensearch/) | index templates (`polaris-logs-template.json`, `polaris-report-template.json`), **ISM retention policies** (`ism-polaris-logs-3d.json`, `ism-polaris-report-30d.json`, `ism-k8s-logs-3d.json` — 2026-09-18, applied with `scripts/step13-ism-apply.sh`) and `devtools-export.console` |
-| [`RUNBOOK-log-pvc-removal-2026-09-18.md`](RUNBOOK-log-pvc-removal-2026-09-18.md) | **current, not yet run** — removing `polaris-shared-logs-pvc` and the VictoriaLogs leg, in the only order that works |
+| [`RUNBOOK-log-pvc-removal-2026-09-18.md`](RUNBOOK-log-pvc-removal-2026-09-18.md) | **EXECUTED 2026-09-18** — removed `polaris-shared-logs-pvc`, `fb-polaris-shipper` and VictoriaLogs. A record now, not a to-do |
+| `fb-values.yaml`, `victoria-values.yaml` | **HISTORY as of 2026-09-18** — values for releases that no longer exist. Kept for the shipper's Lua and the four silent faults documented in it; do not read either as live configuration |
 | [`scripts/`](scripts/) | see *Scripts* below |
 | `../fluent-bit/values.yaml` · `../fluent-bit/polaris_access_log.lua` · `../fluent-bit/apply-lua.sh` | what is deployed, and how the Lua is rolled |
 

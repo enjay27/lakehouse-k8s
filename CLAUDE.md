@@ -7,8 +7,9 @@
   `determined release apply method server_side_apply=true`. **Helm 4 defaults to server-side
   apply**, so field-manager conflicts are a failure mode Helm 3 did not have; existing releases
   already report `previous_release_apply_method=ssa`. Confirm with `helm version`.
-- **Target Namespace:** `datahub-hynix` — strictly enforced for every K8s asset. The one
-  exception is `logging`, which holds the log sink only.
+- **Target Namespace:** `datahub-hynix` — strictly enforced for every K8s asset. The `logging`
+  exception was for the VictoriaLogs sink, **uninstalled 2026-09-18**; unless its 50 Gi PVC is
+  still there, that namespace is now empty and **every asset belongs in `datahub-hynix`**.
 - **Apache Polaris (Iceberg REST catalog):** local chart, v1.3.0-incubating. Management
   port **8182**, not the 8282 upstream docs default to.
 - **PostgreSQL HA:** local umbrella chart wrapping Bitnami `postgresql-ha` 16.3.2 —
@@ -19,12 +20,11 @@
   the DaemonSet `benchmarks-fluent-bit` (chart `fluent-bit-0.57.6`, image `5.1.1`, values `fluent-bit/values.yaml`)
   tails `/var/log/containers/*.log` into **OpenSearch** in three tiers: tier 1 `k8s-logs-*` (all containers, unfiltered),
   tier 2 `polaris-logs-*` (Polaris, policy v5), tier 3 `polaris-report-*` (window reports, schema v5).
-  `fb-polaris-shipper` (chart `fluent-bit-0.58.1`, Deployment, `logging/fb-values.yaml`) tails the Polaris log PVC into
-  **VictoriaLogs**; the OpenSearch cutover plan said to uninstall it and nothing records that it happened, so
-  **confirm with `helm list -A` before relying on either statement** (`logging/REVIEW-pipeline-2026-09-16.md` P10).
-  **Both this leg and `polaris-shared-logs-pvc` are being removed (Kade 2026-09-18).** The repo side is done —
-  `polaris/values.yaml` no longer mounts the claim — and the cluster side is
-  `logging/RUNBOOK-log-pvc-removal-2026-09-18.md`, **not yet run**. The OpenSearch tiers read stdout and are unaffected.
+  **There is no second pipeline any more.** `fb-polaris-shipper` (which tailed the Polaris log PVC into VictoriaLogs)
+  was **uninstalled 2026-09-18**, along with VictoriaLogs and `polaris-shared-logs-pvc` itself
+  (`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`, executed; `REVIEW-pipeline-2026-09-16.md` P10 closed).
+  `logging/fb-values.yaml` is now the values file of a release that does not exist — history, not configuration.
+  **Polaris writes no log file at all: everything goes to stdout and reaches OpenSearch through the DaemonSet.**
 - **DaemonSet state, 2026-09-16 (late):** rev 17 v5 → 18 hot reload removed → 19 `threadName`/`threadId`/`ndc` trimmed from
   `polaris-logs-*` (`active-issues.md` #30) → the Lua refactor (`#31`): **one Lua filter** (FILTER 3 `polaris_noise_filter`
   parses, decides, counts, reports; the old FILTER 2 `polaris_access_log` no longer exists). Verified on traffic.
@@ -33,9 +33,10 @@
   mappings for indices created after step9/step12 (query strings via `.keyword`). Pod `62klp`.
   `WINDOW_SECONDS` is still the verification value 30. **The rule stands:** confirm a setting from the running object,
   not the file — the next `helm upgrade` makes this line history.
-- **VictoriaLogs:** log sink in namespace `logging` (9428), for the shipper above. **Being uninstalled
-  (2026-09-18)** — when it goes the `logging` namespace is empty and the exception below describes nothing.
-  Its 50Gi PVC does not go with `helm uninstall`; decide it deliberately (runbook step 2).
+- **VictoriaLogs:** **UNINSTALLED 2026-09-18** (was the log sink in namespace `logging`, 9428, for the shipper
+  above). `logging/victoria-values.yaml` is history. **The `logging` namespace should now be empty** — if it is
+  not, what remains is VictoriaLogs' own **50 Gi** PVC, which `helm uninstall` does not remove and which nobody
+  has confirmed either way: `kubectl -n logging get pvc`.
 - **OpenSearch:** runs in **Docker, outside the cluster and outside this repo** — no compose file is versioned here.
   **`3.5.0`** (measured 2026-09-08). Index templates are ours (`logging/opensearch/`), and **so is retention for this
   local cluster, since 2026-09-18** — `logging/opensearch/ism-*.json`, applied with `logging/scripts/step13-ism-apply.sh`

@@ -87,7 +87,7 @@ unverified — see `active-issues.md` #33.
 | `events` max `timestamp_ms` after step 4 | `1789574562296` = **2026-09-16T16:02:42Z**, i.e. PRE-upgrade. 2528 rows. Proves survival, **not** that the listener writes on 1.6.0 |
 | event listener on 1.6.0 | **WORKS** — traffic on 2026-09-18 took `events` 2528 → **2536** (+8) and `max(timestamp_ms)` to `1789710542265` = 2026-09-18T05:49:02Z. The plural `event-listener.types` key is being read |
 | Polaris endpoints from the Mac | `192.168.139.2:8181` catalog/REST, `192.168.139.2:8182` mgmt/health (`benchmarks-polaris`, `benchmarks-polaris-mgmt`, both LoadBalancer) — prefer these over `exec` + localhost |
-| `fb-polaris-shipper-fluent-bit` | **still installed** 2026-09-18, age 27d — the OpenSearch cutover plan said to uninstall it and MEMORY.md says Kade will; neither has happened |
+| `fb-polaris-shipper-fluent-bit` | **UNINSTALLED 2026-09-18**, at age 27d, together with VictoriaLogs and `polaris-shared-logs-pvc` (`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`, executed). The cutover plan's long-standing loose end is closed |
 | console output on 1.6.0 | **still JSON** — verified from `kubectl logs` 2026-09-18. `QUARKUS_LOG_CONSOLE_JSON_ENABLED` survives the upgrade; tier-2 Lua and report schema v6 keep parsing |
 | Polaris replicas, an hour after step 4 | **2** (was 3) — the memory metric is **not** monotonic: ZGC uncommits, so the HPA **flaps** at `cpu: 2%` rather than sticking at max (`#39`, correcting an earlier claim) |
 | pod restarts after the upgrade | `…-5vpmc` **restartCount 3** — `Reason: Error`, **exit 1**, dead **4 s** after start at 14:41:12 KST. **NOT an OOMKill** (that reports `OOMKilled`/137). Unexplained — `#41` |

@@ -3,24 +3,20 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-18 (Polaris 1.6.0 live; thread fields ROLLED and VERIFIED; retention WRITTEN, not applied)
+## Now — 2026-09-18 (Polaris 1.6.0 live; the log-file leg REMOVED; OpenSearch retention written, NOT applied)
 
-**THE POLARIS LOG PVC IS BEING REMOVED (2026-09-18, Kade).** `polaris/values.yaml` no longer mounts
-`polaris-shared-logs-pvc` (`extraVolumes`/`extraVolumeMounts` now `[]`, the dead `QUARKUS_LOG_FILE_JSON_*` vars deleted,
-`maxBackupIndex` 45 → **5** because with no PVC `logsDir` is the node's own disk). **The cluster still mounts it** — the
-ordered teardown (shipper → VictoriaLogs → Polaris upgrade → PVC delete, with the finalizer trap) is
-[`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](logging/RUNBOOK-log-pvc-removal-2026-09-18.md) and **step 3 is DONE** (2026-09-18: gate PASS with its positive control, applied, and the pod
-confirms `ls /deployments/logs` → *No such file or directory* — the mount is gone from the running container, not merely
-empty). **Polaris has released the claim; `fb-polaris-shipper` is the last mounter.** Steps 1, 2 and 4 have NOT run —
-the shipper and VictoriaLogs are still installed and the PVC still exists with its 27 MB.
-Step 4 destroys the 27 MB archive; Kade chose no copy. **`#8` is CLOSED as of step 3** (not step 4 — the hazard was the
-mount, not the claim), and a never-fired duplicate-mountPath trap at `/deployments/logs` went with it. The OpenSearch tiers read stdout and are untouched.
+**THE POLARIS LOG FILE LEG IS GONE (2026-09-18, done).** `fb-polaris-shipper` and VictoriaLogs uninstalled,
+`polaris-shared-logs-pvc` deleted, Polaris mounts nothing — `logging/RUNBOOK-log-pvc-removal-2026-09-18.md` is a **record, not
+a to-do**. Polaris writes no log file; stdout → DaemonSet → OpenSearch is the only path. Closed: `#8` (at the mount, not the
+claim), `#38`, `#40` (**unanswered** — step 4 destroyed the evidence), `REVIEW-pipeline` P10. `logging/fb-values.yaml` and
+`victoria-values.yaml` are history, bannered. **Step 3 carries its own output; steps 1/2/4 are Kade's report.**
+**Unconfirmed: VictoriaLogs' own 50 Gi PVC in `logging`** — `helm uninstall` does not remove it (`kubectl -n logging get pvc`).
 
-**RETENTION IS WRITTEN AND NOTHING IS APPLIED (2026-09-18, `#44`).** ISM is **ours locally** now, not the Monitoring team's
-(production still theirs): `logging/opensearch/ism-*.json` — `polaris-logs-*` 3d, `polaris-report-*` **30d (a rehearsal
-figure: that stream is the only record of successful reads)**, `k8s-logs-*` 3d. Run `logging/scripts/step13-ism-apply.sh`
-dry first; `--apply` also deletes the 30 s-window report indices. PVC side: **Quarkus has no age TTL** (`#44`) — which is
-why the PVC is going instead. All of it inert while `logging.file.enabled: false` (`#38`).
+**NEXT, and it is the unfinished half of the same task: the ISM policies are written and NOT applied.**
+`logging/opensearch/ism-*.json` — `polaris-logs-*` 3d, `polaris-report-*` **30d (a rehearsal figure: that stream is the only
+record of successful reads)**, `k8s-logs-*` 3d. `bash logging/scripts/step13-ism-apply.sh` dry-runs and refuses to write if its
+preflight cannot read the cluster; `--apply` also deletes the 30 s-window report indices (handoff task E). Local retention is
+**ours** now, production still the Monitoring team's.
 
 **Start here next session:** `.memory/active-issues.md` `#42` — the thread-field task is **DONE**, and `#42` carries both the
 outcome and the four things that were never read. [`logging/HANDOFF-thread-fields-2026-09-18.md`](logging/HANDOFF-thread-fields-2026-09-18.md)
@@ -52,9 +48,8 @@ filter. **`WINDOW_SECONDS` is still 30** (1800 s is a *Lua* change — combining
 OOMKill. `kubectl logs <pod> --previous`, or the `k8s-logs-*` Dev Tools query in the runbook. **Perishable** — `#39` recycles
 pods. **`#39`:** the HPA flaps on **memory at 2% CPU** (`0→1→3→2→1` in an hour; resting 1) because it measures against the `1Gi`
 request while the JVM commits `1Gi` — so **`#15` hypothesis C is intermittently live: pin `replicaCount` before any ladder run**.
-**`#38`:** the file handler is off, so nothing writes the log PVC and **`fb-polaris-shipper` (still installed) now tails a dead
-file**. Also open: `#36`, `#37`, `#40` (**`#44` answers its question 1: the bound is per-day**), and a **plaintext OpenSearch
-password in `fluent-bit/values.yaml`** against CLAUDE.md.
+**`#38` and `#40` are CLOSED** by the leg removal above (`#40` unanswered). Still open: `#36`, `#37`, and a **plaintext
+OpenSearch password in `fluent-bit/values.yaml`** against CLAUDE.md.
 
 **PostgreSQL (2026-09-17):** `#15` create-namespace 500s are an NPE, not a settled read-after-write; `SELECT
 pg_wal_replay_pause()` on the standbys settles it in one command. The primary-unavailable harness is **planned, not built**:

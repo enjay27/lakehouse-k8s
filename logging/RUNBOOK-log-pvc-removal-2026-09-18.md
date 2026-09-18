@@ -5,9 +5,27 @@ it — `fb-polaris-shipper`, which tailed the log file into VictoriaLogs, and th
 deployment's own mount. Polaris logs reach OpenSearch from **stdout** through the Fluent Bit
 DaemonSet, which never read this volume, so the OpenSearch pipeline is untouched by all of this.
 
+> ## EXECUTED IN FULL — 2026-09-18 (Kade). This is now a record, not a to-do.
+>
+> All four steps run. `polaris-shared-logs-pvc` is **deleted**; `fb-polaris-shipper` and
+> VictoriaLogs are **uninstalled**; Polaris runs with no log mount. The 27 MB archive is gone,
+> as chosen.
+>
+> **Two grades of evidence, and the difference is deliberate.** Step 3 was verified in this
+> session's transcript by its own output — gate armed with a positive control, then
+> `ls /deployments/logs` → *No such file or directory*, exit 2. **Steps 1, 2 and 4 are Kade's
+> report; no command output for them was recorded here.** Nothing suggests otherwise, but a
+> future session comparing this file to the cluster should know which lines carry output behind
+> them. The cheap re-confirmation, if it is ever wanted:
+> `kubectl -n datahub-hynix get pvc polaris-shared-logs-pvc` (want `NotFound`) and
+> `helm list -A | grep -E 'fb-polaris-shipper|victoria'` (want nothing).
+>
+> **Left open on purpose:** whether VictoriaLogs' own **50 Gi** PVC in namespace `logging` went
+> with it. `helm uninstall` does not remove it (step 2), and it is not covered by the report
+> above. `kubectl -n logging get pvc` settles it.
+
 **Repo state vs cluster state.** `polaris/values.yaml` no longer mounts the PVC (committed
-2026-09-18). **Nothing below has been run.** Until it is, the cluster still has the mount, the
-shipper, VictoriaLogs and the PVC.
+2026-09-18), and the cluster matches it.
 
 > This session cannot reach the cluster. Every command here is Kade's to run, and the two marked
 > **DESTRUCTIVE** need explicit authorisation *at the moment of execution* — approving this
