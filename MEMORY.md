@@ -10,17 +10,23 @@ everything else is a link into [`.memory/`](.memory/README.md).
 a to-do**. Polaris writes no log file; stdout → DaemonSet → OpenSearch is the only path. Closed: `#8` (at the mount, not the
 claim), `#38`, `#40` (**unanswered** — step 4 destroyed the evidence), `REVIEW-pipeline` P10. `logging/fb-values.yaml` and
 `victoria-values.yaml` are history, bannered. **Step 3 carries its own output; steps 1/2/4 are Kade's report.**
-**Unconfirmed: VictoriaLogs' own 50 Gi PVC in `logging`** — `helm uninstall` does not remove it (`kubectl -n logging get pvc`).
+**VictoriaLogs' own 50 Gi PVC deleted by hand 2026-09-18** (`helm uninstall` does not remove it), so the teardown is
+complete and **`logging` is an empty namespace — CLAUDE.md's namespace exception no longer has a subject.**
 
-**OPENSEARCH RETENTION IS LIVE (2026-09-18).** Three ISM policies stored, five indices managed:
+**OPENSEARCH RETENTION IS LIVE AND EVALUATING (2026-09-18T08:45Z, readout checked in).** Three ISM policies stored, five
+indices managed, `explain` showing `hot` / `attempt_transition_step` / `condition_not_met` — ISM is working the age
+condition, not just attached. **First deletion 2026-09-20 08:42Z** (`k8s-logs-2026.09.17`); nothing goes before then.
+**Tier 1 is 99.8% of the footprint** — ~950 MB/day → ~2.8 GB at 3d, against ~5 MB and ~165 MB for tiers 2 and 3. Figures,
+dates and the server-added `retry` defaults: [`.memory/roadmap.md`](.memory/roadmap.md). Three ISM policies stored, five indices managed:
 `polaris-logs-*` **3d**, `polaris-report-*` **30d (a rehearsal figure — that stream is the only record of successful reads;
 do not carry it to production)**, `k8s-logs-*` **3d**. Verified by `GET _plugins/_ism/policies` and `_ism/explain`. The first
 `--apply` succeeded and only its *reporting* crashed, which read as a failure for two rounds (`#44`). Deletion happens on the
 ISM sweep (30–60 min), not on apply. Dev Tools equivalents: [`logging/opensearch/devtools-ism.console`](logging/opensearch/devtools-ism.console).
 
 **Still open, and I had it wrong twice: `handoff task E is NOT subsumed`** — at 30d the 30 s-window `polaris-report-*` indices
-survive thirty days, so deleting them is still a manual, by-name, destructive step (console file §D). Also open: VictoriaLogs'
-**50 Gi** PVC in `logging`.
+survive thirty days. Targets identified: `polaris-report-2026.09.17` and `-09.18`, alive until **2026-10-17/18**; deleting them
+early is manual and by name (console file §D). **VictoriaLogs' 50 Gi PVC: deleted manually by Kade 2026-09-18 — the teardown
+is complete and the `logging` namespace should be empty.**
 
 **Start here next session:** `.memory/active-issues.md` `#42` — the thread-field task is **DONE**, and `#42` carries both the
 outcome and the four things that were never read. [`logging/HANDOFF-thread-fields-2026-09-18.md`](logging/HANDOFF-thread-fields-2026-09-18.md)

@@ -95,6 +95,26 @@ not exist. A **self-check compiles every embedded Python block at start-up, with
 every run** and refuses to proceed otherwise — verified by reintroducing the exact bug
 (`f-string expression part cannot include a backslash`, refuses, exit 1) and removing it again.
 
+**CONFIRMED LIVE 2026-09-18T08:45Z, with the readout, and the ISM half of `#44` is DONE.**
+`GET _plugins/_ism/policies` returns all three (`_seq_no` 0/1/2, `_primary_term` 1,
+`schema_version` 27, `ism_template` priority 100). `explain` shows `polaris-logs-2026.09.18`
+managed and in state `hot`, action `transition`, step `attempt_transition_step`,
+`step_status: condition_not_met` — **that last line is the one that matters: ISM is actively
+evaluating the age condition, not merely attached.** Figures and dates in
+[`roadmap.md`](roadmap.md).
+
+**ISM stores more than we wrote, and it is not drift.** The stored `delete` action carries a
+`retry: {count: 3, backoff: exponential, delay: 1m}` block, plus `error_notification: null`,
+`last_updated_time` and `schema_version: 27`. Those are **server-side defaults applied at PUT**.
+The repo JSONs deliberately do **not** chase them: a re-PUT of the file is still idempotent and
+ISM re-adds them. Anyone diffing `logging/opensearch/ism-*.json` against
+`GET _plugins/_ism/policies` will see this difference and it is expected.
+
+**Task E's targets are now identified**, and both are 30 s-window indices:
+`polaris-report-2026.09.17` (58 docs) and `polaris-report-2026.09.18` (1,050 docs). At 30d they
+survive to **2026-10-17 / 10-18**. Everything older is already gone. Deleting them early is
+manual, by name (`devtools-ism.console` §D).
+
 **ANSWERED on the re-run: the PUT had never failed.** Section 1 and 2 of the 2026-09-18 re-run
 show all three policies stored and all five indices managed — `polaris-logs-2026.09.18`,
 `polaris-report-2026.09.17/18`, `k8s-logs-2026.09.17/18`. **The first `--apply` worked; only its

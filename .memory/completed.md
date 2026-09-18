@@ -133,5 +133,6 @@ API server outright. `enabled: false` was silently load-bearing for the deployme
 
 **Verification grades differ, deliberately.** Step 3 carries its own output (gate armed, then
 `ls /deployments/logs` → *No such file or directory*, exit 2). Steps 1, 2 and 4 are Kade's
-report with no recorded output. **Unconfirmed either way:** whether VictoriaLogs' own 50 Gi PVC
-in namespace `logging` went with the uninstall — `helm uninstall` does not remove it.
+report with no recorded output. **Closed 2026-09-18:** VictoriaLogs' own 50 Gi PVC in namespace
+`logging` was deleted manually by Kade — `helm uninstall` does not remove it. The teardown is
+complete end to end, and `logging` is now an empty namespace with no reason to exist.

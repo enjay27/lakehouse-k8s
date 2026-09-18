@@ -7,9 +7,9 @@
   `determined release apply method server_side_apply=true`. **Helm 4 defaults to server-side
   apply**, so field-manager conflicts are a failure mode Helm 3 did not have; existing releases
   already report `previous_release_apply_method=ssa`. Confirm with `helm version`.
-- **Target Namespace:** `datahub-hynix` — strictly enforced for every K8s asset. The `logging`
-  exception was for the VictoriaLogs sink, **uninstalled 2026-09-18**; unless its 50 Gi PVC is
-  still there, that namespace is now empty and **every asset belongs in `datahub-hynix`**.
+- **Target Namespace:** `datahub-hynix` — **strictly enforced for every K8s asset, with no exception
+  as of 2026-09-18.** The `logging` exception existed for the VictoriaLogs sink; release and PVC are
+  both gone, so that namespace is empty and **everything belongs in `datahub-hynix`**.
 - **Apache Polaris (Iceberg REST catalog):** local chart, v1.3.0-incubating. Management
   port **8182**, not the 8282 upstream docs default to.
 - **PostgreSQL HA:** local umbrella chart wrapping Bitnami `postgresql-ha` 16.3.2 —
@@ -33,10 +33,9 @@
   mappings for indices created after step9/step12 (query strings via `.keyword`). Pod `62klp`.
   `WINDOW_SECONDS` is still the verification value 30. **The rule stands:** confirm a setting from the running object,
   not the file — the next `helm upgrade` makes this line history.
-- **VictoriaLogs:** **UNINSTALLED 2026-09-18** (was the log sink in namespace `logging`, 9428, for the shipper
-  above). `logging/victoria-values.yaml` is history. **The `logging` namespace should now be empty** — if it is
-  not, what remains is VictoriaLogs' own **50 Gi** PVC, which `helm uninstall` does not remove and which nobody
-  has confirmed either way: `kubectl -n logging get pvc`.
+- **VictoriaLogs:** **GONE 2026-09-18** — release uninstalled and its **50 Gi** PVC deleted by hand (a
+  `helm uninstall` does not remove it). Was the log sink in namespace `logging`, 9428, for the shipper above;
+  `logging/victoria-values.yaml` is history. **The `logging` namespace is now empty.**
 - **OpenSearch:** runs in **Docker, outside the cluster and outside this repo** — no compose file is versioned here.
   **`3.5.0`** (measured 2026-09-08). Index templates are ours (`logging/opensearch/`), and **so is retention for this
   local cluster, since 2026-09-18** — `logging/opensearch/ism-*.json`, applied with `logging/scripts/step13-ism-apply.sh`

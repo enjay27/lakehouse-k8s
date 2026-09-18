@@ -20,9 +20,9 @@ DaemonSet, which never read this volume, so the OpenSearch pipeline is untouched
 > `kubectl -n datahub-hynix get pvc polaris-shared-logs-pvc` (want `NotFound`) and
 > `helm list -A | grep -E 'fb-polaris-shipper|victoria'` (want nothing).
 >
-> **Left open on purpose:** whether VictoriaLogs' own **50 Gi** PVC in namespace `logging` went
-> with it. `helm uninstall` does not remove it (step 2), and it is not covered by the report
-> above. `kubectl -n logging get pvc` settles it.
+> **CLOSED 2026-09-18:** VictoriaLogs' own **50 Gi** PVC — which `helm uninstall` does not remove
+> (step 2) — was **deleted manually by Kade**. The teardown is complete end to end and the
+> `logging` namespace should now hold nothing.
 
 **Repo state vs cluster state.** `polaris/values.yaml` no longer mounts the PVC (committed
 2026-09-18), and the cluster matches it.
