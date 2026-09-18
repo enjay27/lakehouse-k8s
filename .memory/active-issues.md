@@ -80,12 +80,30 @@ i.e. analysed — so on `polaris-logs-2026.09.18` a bare `threadName` query *doe
 tomorrow's index it will not. **`threadName.keyword` is correct on both**, which is why step3's
 check is written that way; do not let today's permissiveness teach the wrong habit.
 
-**STILL NOT READ:**
-- **`step9` — the `polaris-report-*` template — is in exactly the same position and has NOT been
-  run.** Same `#32` sentence covers both. If the finding above holds for the detail template it
-  almost certainly holds for the report one, so **`polaris-report-*` is probably still on pre-v6
-  mappings**: report `message` not `index:false`, categorical fields not `keyword`. One command
-  settles it: `bash logging/scripts/step9-report-index-template.sh --dry-run`.
+**`step9` RUN AND PASSED 2026-09-18** — `{"acknowledged":true}`, **42/42 fields** stored and
+simulated as declared, `dynamic_templates` matching, the six v4 integer fields confirmed `long`.
+**Both v6 templates are now on the cluster**, which as of this morning neither was.
+
+**Unlike `step12`, step9's output cannot say whether the report template had been applied
+before.** Its informational block prints only `min_record_time` for existing indices (the `#25`
+field), not the full mapping, so there is no `client_ip`-style giveaway. `polaris-report-2026.09.17`
+and `.09.18` both show `min_record_time: date`, which is correct but is what dynamic mapping
+produces anyway since the Lua stopped writing `""` on 2026-09-10 — it discriminates nothing.
+**Treat the report side's prior state as unknown, not as "fine".** Given `#32`'s single unread
+sentence covered both, the likeliest answer is that it was equally un-applied.
+
+**One query settles it, if it is worth settling.** `report_type` is undeclared, so under v6 it
+falls to `strings_keyword_only` — `text` with **`index: false`** plus `.keyword`. Pre-v6 it is
+ordinary analysed `text` + `.keyword`:
+
+```
+GET polaris-report-2026.09.18/_mapping/field/report_type   ->  "index": false  => v6 was applied
+                                                               no "index" key  => it was not
+```
+
+Either way today's report index keeps its mappings for life; the consequence is only that report
+`message` may be analysed where v6 wanted it cheap, and categoricals analysed where v6 wanted
+`keyword`. No data is lost and nothing is unqueryable. **From tomorrow both indices are v6.**
 - helm revision number (expected 21) — not recorded.
 - `step10`/`step11` window readout — not run; the detail-by-logger and report-row equality
   checks of `#32`/`#31` were therefore not re-established on this roll.
@@ -997,7 +1015,9 @@ exists, Kade uninstalls manually. M5/tier 1 sizing out of scope.
 - **RESOLVED 2026-09-18, and the answer was no (`#42`):** the v6 **detail** template was never applied. `polaris-logs-2026.09.18`
   carried `client_ip=text` against the template's `ip`, which means it was still shaped by `#30`'s 7-field pre-v6 template.
   `step12` on 2026-09-18 stored v6 for the first time (11/11); **tomorrow's index is the first with v6 mappings at all.**
-  **`step9` (the report template) has still not been run** — assume `polaris-report-*` is likewise pre-v6 until it is.
+  **`step9` also ran 2026-09-18: PASS 42/42**, so both v6 templates are now stored. Whether the report template had ever been
+  applied before is **undeterminable** from step9's output (it prints only `min_record_time` for existing indices) — unknown, not
+  fine; see `#42` for the one query that would settle it.
 - **Gate before the roll, for P4's Polaris text parser only** (the two JSON parsers repeat Merge_Log's JSON decode and cannot succeed
   where it failed): if `k8s-logs` holds Polaris docs with the regex's capture field `logger`, that parser did work — then restore its
   filter + definition before rolling:

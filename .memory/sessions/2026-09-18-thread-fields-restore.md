@@ -260,3 +260,36 @@ one, so `polaris-report-*` should be presumed to be on pre-v6 mappings — repor
 `bash logging/scripts/step9-report-index-template.sh --dry-run`.
 
 Also still unread: the helm revision (expect 21) and `step10`/`step11`.
+
+---
+
+# Part 4 — step9, and the limit of the same trick
+
+`step9` ran: `{"acknowledged":true}`, **42/42** fields stored and simulated as declared,
+`dynamic_templates` matching, the six v4 integer fields confirmed `long`. **Both v6 templates are
+now on the cluster. This morning neither was.**
+
+**The `step12` trick does not repeat here, and noticing that is the point.** step12's finding came
+from its `BEFORE` block printing the *full* declared-field mapping of the existing index, where
+`client_ip=text` contradicted the template and gave the whole state away. step9's informational
+block prints **only `min_record_time`** — the `#25` field — for `polaris-report-2026.09.17` and
+`.09.18`. Both show `date`, which is correct, and which is also exactly what dynamic mapping
+produces on its own since the Lua stopped writing `""` on 2026-09-10. **It discriminates
+nothing.**
+
+So the report template's prior state is **unknown**, and it would have been easy to let "step9
+PASS" quietly imply "and it was fine before" by symmetry with step12. It does not. Given that
+`#32`'s single unread sentence covered both templates, the likeliest answer is that the report
+one was equally un-applied — but likeliest is not read.
+
+One query would settle it, because `report_type` is undeclared and therefore diagnostic:
+`GET polaris-report-2026.09.18/_mapping/field/report_type` — `"index": false` means v6 was
+applied, no `index` key means it was not. Left open deliberately: today's index keeps its mappings
+for life either way, the consequence is only that report `message` may be analysed where v6 wanted
+it cheap, and no data is lost. From tomorrow both indices are v6 regardless.
+
+**The generalisable bit:** a diagnostic that happens to print current state is worth more than one
+that prints only its own verdict, and the two sibling scripts here differ precisely in that. step12
+printed enough to expose a two-day-old false belief; step9 prints one field and could not have.
+If either script gets touched again, widening step9's informational block to the full mapping is
+the cheap change.
