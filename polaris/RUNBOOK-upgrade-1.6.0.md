@@ -486,11 +486,35 @@ helm upgrade --install benchmarks-polaris ./polaris -f polaris/values.yaml \
 `helm lint` is not a render — both are required (CLAUDE.md). Then read the render, do not
 just check the exit code:
 
+**Note what `--dry-run` prints to stderr and what it does not.** Helm 4 emits its own
+`level=DEBUG msg=...` slog lines — `getting history`, `determined release apply method
+server_side_apply=true previous_release_apply_method=ssa`, `dry run for release`. Those are
+Helm's, they confirm the Helm 4 / SSA facts at the top of `CLAUDE.md`, and they have **nothing
+to do with `quarkus.log`**. Do not read them as Polaris still logging at DEBUG. The rendered
+manifest went to the redirect target, so **seeing those lines and no error means the render
+succeeded, not that the render was checked.** The checks are below.
+
 ```bash
+# What actually rendered. Read it; do not trust the exit code.
 grep -E 'quarkus\.log\.(level|console|file)|quarkus\.log\.category|event-listener' \
   /tmp/polaris-1.6.0.render.txt
-diff <(sort /tmp/polaris-log-config-1.3.0.properties) <(...)   # against the 0c capture
+grep -nE '^[[:space:]]*image:' /tmp/polaris-1.6.0.render.txt     # expect apache/polaris:1.6.0
+
+# The three assertions, as pass/fail rather than as prose.
+grep -c 'quarkus\.log\.category\..*=DEBUG' /tmp/polaris-1.6.0.render.txt   # MUST be 0
+grep -E  'quarkus\.log\.console\.level'     /tmp/polaris-1.6.0.render.txt   # MUST be INFO
+grep -E  'polaris\.event-listener\.types'    /tmp/polaris-1.6.0.render.txt   # MUST be plural
+
+# Against the 0c capture. The render's properties are indented inside the ConfigMap's data
+# block, so strip the leading whitespace or every line reads as changed.
+diff <(sort /tmp/polaris-log-config-1.3.0.properties) \
+     <(grep -E 'quarkus\.log|event-listener' /tmp/polaris-1.6.0.render.txt \
+       | sed 's/^[[:space:]]*//' | sort)
 ```
+
+*(The last command used to read `diff <(sort ...) <(...)` — a literal `<(...)` placeholder that
+cannot run. Written out 2026-09-18, on the same principle as the 2c `kubectl exec`: a step that
+cannot work gets pasted in and run anyway.)*
 
 **Three things to confirm in the render:**
 
