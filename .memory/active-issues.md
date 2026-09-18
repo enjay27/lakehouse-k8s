@@ -141,6 +141,28 @@ that would have protected the create-then-resolve path does not cover it, and wi
 read is balanced onto a standby. The handoff's remedy A —
 `database_redirect_preference_list = 'polaris:primary'` — addresses exactly this.
 
+**The v4 diff is now mechanical: `postgresql/schema/verify_v4_transcription.py`.** 2026-09-18.
+
+A plain `diff` of the shipped `schema-v4.sql` against our `migrate_v3_to_v4.sql` is useless —
+the shipped file is a full schema, ours is a delta plus a guard, so they differ almost
+everywhere while agreeing on everything that matters. The script checks the two claims the
+transcription rests on: **(1) additive-only** — every object v3 and v4 share is declared
+identically; **(2) faithful** — every object v4 adds appears in ours, normalised-identical. It
+also rejects wrong declared versions, any `ALTER TABLE`, a missing transaction, and any object
+ours creates that is in neither file.
+
+**Self-tested, and the self-test mattered.** Round trip (synthetic v4 = v3 + the migration's
+additive statements) → PASS; column type changed in a new table → claim 2 trips; column type
+changed in a *shared* table → claim 1 trips. The first version of the script parsed **zero**
+statements out of the migration: an apostrophe inside a `--` comment ("1.6.0's backend") opened
+a bogus string literal and swallowed every following semicolon. It printed eleven CLAIM 2
+failures, which reads exactly like a bad transcription rather than a bad parser. **A verifier
+not shown to fail on a known-bad input is not evidence** — that is the lesson, and it is the
+same shape as the entity-name screen whose clean result came from a broken predicate.
+
+A PASS means three text files agree. It does not run SQL and does not predict the migration
+will succeed; step 2f still reads `version_value` back from the database.
+
 **STEP 2c ASKED A 1.3.0 POD FOR A 1.6.0 FILE.** 2026-09-18, found by Kade running it.
 
 `kubectl exec deploy/benchmarks-polaris -- sh -c 'unzip -l /deployments/*.jar | grep schema-v'`

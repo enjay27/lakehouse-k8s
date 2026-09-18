@@ -200,8 +200,15 @@ done
 # Then extract it, using the exact inner path the listing above printed:
 #   unzip -l <jar> | grep schema-v
 #   unzip -p <jar> '<inner/path>/schema-v4.sql' > /tmp/schema-v4.shipped.sql
-#   diff /tmp/schema-v4.shipped.sql postgresql/schema/migrate_v3_to_v4.sql   # expect noise;
-#     what matters is that every CREATE in the shipped file appears in ours, identically
+#
+# Check it MECHANICALLY, not by eye -- a plain diff is useless here, because the shipped file
+# is a FULL schema and ours is a delta plus a guard, so they differ almost everywhere while
+# still agreeing on everything that matters:
+python3 postgresql/schema/verify_v4_transcription.py \
+    --v3        postgresql/schema/schema_v3.sql \
+    --v4        /tmp/schema-v4.shipped.sql \
+    --migration postgresql/schema/migrate_v3_to_v4.sql
+# PASS -> either script is safe in 2e. FAIL -> run the SHIPPED file, not ours, and read why.
 #
 # IF THE SHIPPED FILE IS IN HAND, PREFER RUNNING IT DIRECTLY in 2e -- every statement in v4
 # is IF NOT EXISTS, so applying the full v4 script to a v3 database *is* the migration, from
@@ -255,9 +262,37 @@ installed in the image, touches no cluster object, and pre-pulls the image the u
 to need. OrbStack provides the Docker daemon — the same one OpenSearch runs under.
 
 **Do not retry the exec form.** If Docker is unavailable for some reason, the fallback is to
-skip verification, run the transcribed script (it is guarded and additive), and diff the
+skip verification, run the transcribed script (it is guarded and additive), and check the
 shipped file after the upgrade from a 1.6.0 pod — at which point `/deployments/lib/` is the
 place to look, not `/deployments/*.jar`.
+
+### `verify_v4_transcription.py` — what it checks, and what a PASS does not mean
+
+`postgresql/schema/verify_v4_transcription.py` compares three text files and exits non-zero if
+either claim behind the transcribed migration fails:
+
+- **Claim 1, additive-only:** every object v3 and v4 share is declared *identically*, so no
+  `ALTER` and no data rewrite is needed. A violation here means the migration is wrong in
+  principle, not just in detail.
+- **Claim 2, faithful transcription:** every object v4 adds over v3 appears in our migration,
+  normalised-identical (comments, whitespace, case and `IF NOT EXISTS` folded out).
+
+It also refuses a v3 file not declaring 3, a v4 file not declaring 4, a migration not setting
+4, any `ALTER TABLE` in the migration, a missing transaction, and any object our script creates
+that is in neither v3 nor v4.
+
+**Self-tested 2026-09-18** with a round trip (synthetic v4 = v3 + the migration's additive
+statements → PASS) and two negative controls (a column type changed in a new table → claim 2
+trips; a column type changed in a *shared* table → claim 1 trips). That self-test earned its
+keep: the first version of the script read **zero** statements from the migration, because an
+apostrophe inside a `--` comment opened a bogus string literal and swallowed every following
+semicolon. It reported eleven CLAIM 2 failures — which reads exactly like a bad transcription
+rather than a bad parser. **A verifier that has not been shown to fail on a known-bad input is
+not evidence.**
+
+**A PASS is not a green light for the migration.** It says three files agree. It does not run
+SQL, does not connect to anything, and does not predict that the migration will succeed. Step
+2f still reads `version_value` back out of the database.
 
 **Every SQL step in this runbook uses `kubectl exec -i … env PGPASSWORD=polaris psql`**, with
 the statements on stdin via heredoc or `<`. That is the pattern proven to work here on
