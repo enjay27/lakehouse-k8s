@@ -197,17 +197,33 @@ for j in $(find /tmp/polaris-1.6.0-deployments -name '*.jar'); do
   unzip -l "$j" 2>/dev/null | grep -q 'schema-v4\.sql' && echo "FOUND: $j"
 done
 
-# Then extract it, using the exact inner path the listing above printed:
-#   unzip -l <jar> | grep schema-v
-#   unzip -p <jar> '<inner/path>/schema-v4.sql' > /tmp/schema-v4.shipped.sql
+# The jar, found 2026-09-18 (NOTE: if /tmp/polaris-1.6.0-deployments already existed,
+# `docker cp` nests a second identical copy under .../deployments/lib/main/ -- either works):
+JAR=/tmp/polaris-1.6.0-deployments/lib/main/org.apache.polaris.polaris-relational-jdbc-1.6.0.jar
+unzip -l "$JAR" | grep schema-v          # every schema version the jar carries
+
+# Extract v4 AND v3. Extracting v3 is not belt-and-braces -- it closes a real gap, below.
+unzip -p "$JAR" postgres/schema-v4.sql > /tmp/schema-v4.shipped.sql
+unzip -p "$JAR" postgres/schema-v3.sql > /tmp/schema-v3.shipped.sql
+wc -l /tmp/schema-v*.shipped.sql          # 0 lines = wrong inner path; re-read the listing
+
+# CROSS-CHECK THE BASELINE. Everything concluded about this migration was computed against
+# THIS REPO's schema_v3.sql, on CLAUDE.md's claim that it is "the ASF-shipped file and the
+# authority". If that is false, claim 1 was checked against the wrong baseline and the
+# additive-only finding does not hold. This is the first chance anyone has had to test it.
+diff /tmp/schema-v3.shipped.sql postgresql/schema/schema_v3.sql \
+  && echo "BASELINE OK: repo schema_v3.sql is byte-identical to the shipped v3"
+# Whitespace/indentation differences are fine -- the repo copy was reformatted at some point.
+# A difference in any column, type, constraint, index or the version value is NOT: stop.
 #
 # Check it MECHANICALLY, not by eye -- a plain diff is useless here, because the shipped file
 # is a FULL schema and ours is a delta plus a guard, so they differ almost everywhere while
 # still agreeing on everything that matters:
 python3 postgresql/schema/verify_v4_transcription.py \
-    --v3        postgresql/schema/schema_v3.sql \
+    --v3        /tmp/schema-v3.shipped.sql \
     --v4        /tmp/schema-v4.shipped.sql \
     --migration postgresql/schema/migrate_v3_to_v4.sql
+# Baseline is the SHIPPED v3, not the repo copy -- see the note under the script's description.
 # PASS -> either script is safe in 2e. FAIL -> run the SHIPPED file, not ours, and read why.
 #
 # IF THE SHIPPED FILE IS IN HAND, PREFER RUNNING IT DIRECTLY in 2e -- every statement in v4
@@ -289,6 +305,13 @@ apostrophe inside a `--` comment opened a bogus string literal and swallowed eve
 semicolon. It reported eleven CLAIM 2 failures — which reads exactly like a bad transcription
 rather than a bad parser. **A verifier that has not been shown to fail on a known-bad input is
 not evidence.**
+
+**Pass the SHIPPED v3 as `--v3`, not the repo copy.** Every conclusion in this runbook about
+the v3 → v4 delta was computed against `postgresql/schema/schema_v3.sql`, trusting CLAUDE.md's
+claim that it is the ASF-shipped authority. Feeding that same file back as the baseline would
+check the transcription against its own assumption. The jar ships v3 too, so use it — and
+`diff` the two while you are there: if they differ in substance, `#F1`'s mistake has been
+sitting in the baseline all along and the additive-only finding needs redoing.
 
 **A PASS is not a green light for the migration.** It says three files agree. It does not run
 SQL, does not connect to anything, and does not predict that the migration will succeed. Step
