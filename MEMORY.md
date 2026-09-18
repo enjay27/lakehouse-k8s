@@ -23,14 +23,19 @@ report rows −31 % bytes. Query strings via `.keyword`. **`WINDOW_SECONDS` is s
 
 **POLARIS 1.6.0 (2026-09-18): committed, NOTHING APPLIED.** Ordered steps:
 [`polaris/RUNBOOK-upgrade-1.6.0.md`](polaris/RUNBOOK-upgrade-1.6.0.md) (supersedes the 09-17 handoff's ordering, `#33`).
-**Metastore is at schema v4; Polaris is scaled to 0 and the chart still says 1.3.0. STEP 3 IS NEXT, then 4.** Step 2 verified
-from the database: `version|4`, 9 tables, 21 indexes. **Step 4 must scale the deployment back up explicitly** — an HPA cannot
-scale a workload up from 0, so `2d` held and `#8`'s "the HPA may undo it" was wrong (`#8` still armed for 1 → 3 afterwards).
-Nothing ran 1.3.0 against v4, so that combination is **untested, not survived** — a rollback should assume the `2b` dump goes
-back too (`#35`). Console is at **INFO** and emits **JSON**, live since R5 and not readable off the values file. Steps 0, 1, 2
-DONE (step 1's corrected screen still to re-run before the ladder). **New `#36`, no structural risk:** v3's 4 table comments are
-absent from the live DB and `schema.sql` is exactly `schema_v3.sql` minus its 24 comments — the bootstrap's provenance is not
-what the repo assumes. Detail for all of it in [`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#36`, not here.
+**Metastore is at schema v4; Polaris is scaled to 0; steps 0–3 DONE; STEP 4 IS NEXT and has one gate before it.** Step 2
+verified from the database (`version|4`, 9 tables, 21 indexes); step 3's render passes all four assertions and the diff against
+live shows **exactly two changes: the listener key `type` → `types`, and 13 categories DEBUG → INFO** (13, not the "ten" this
+repo said). Those 13 change the ConfigMap, not the console — `console.level` was already INFO at R5.
+**The gate: `docker pull bitnami/kubectl:latest` before step 4.** The chart's `pre-upgrade` hook runs that image with no
+`imagePullPolicy` on a `:latest` tag, so it pulls `Always` from Bitnami's retired public catalog; it is the likeliest step-4
+failure and presents as `ImagePullBackOff` on a Job, not as a Polaris fault (`#37`, with a `--no-hooks` fallback that is safe
+only while `polaris-rsa-key-pair-secret` exists). **Step 4 must also scale the deployment back up explicitly** — an HPA cannot
+scale up from 0, so `2d` held (`#8` still armed for 1 → 3 after). 1.3.0 never ran against v4: **untested, not survived** — a
+rollback should assume the `2b` dump goes back too (`#35`). Also open, no structural risk: `#36` (v3's 4 table comments absent
+from the live DB; `schema.sql` is `schema_v3.sql` minus its 24 comments) and `#38` (file handler off → two `extraEnv` vars inert,
+nothing writes the log PVC, `#8`'s hazard may be inert too — do not close `#8` on it). Detail in
+[`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#38`, not here.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 

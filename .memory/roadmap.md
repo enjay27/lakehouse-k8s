@@ -75,6 +75,11 @@ unverified — see `active-issues.md` #33.
 | `schema.sql` vs `schema_v3.sql` | same 10 objects, **0 differing**, both version 3; differ only by v3's **24 `COMMENT ON`** statements (`#36`) |
 | v3's 4 table comments in the live DB | **absent** — so it was not bootstrapped from `schema_v3.sql` (`#36`) |
 | HPA and a Deployment at 0 replicas | **cannot scale it up** — scaling from 0 needs the alpha `HPAScaleToZero` gate. Scale-to-0 is a safe hold; step 4 must scale back up explicitly |
+| step 3 render, 2026-09-18 | `console.level=INFO`, **0** category lines at DEBUG, `event-listener.types` plural with `PT5S`/`1000`, `apache/polaris:1.6.0` — all PASS |
+| categories demoted DEBUG → INFO | **13**, counted from the step 3 diff (this repo said "ten" until 2026-09-18) |
+| total config change in step 3 vs live | exactly two kinds: the listener key `type` → `types`, and those 13 categories. Nothing else moved |
+| `quarkus.log.file.enabled` | **`false`, live and rendered** — so no log file is written, and `extraEnv`'s two `QUARKUS_LOG_FILE_JSON_*` vars are inert (`#38`) |
+| Polaris chart hook image | `bitnami/kubectl:latest`, `pre-install,pre-upgrade`, no `imagePullPolicy` → pulled `Always` from Bitnami's retired public catalog (`#37`) |
 | v5 (`events.catalog_id` nullable) | **1.7.0**, not 1.6.0 |
 | 1.6.0 image tag | `1.6.0` — no `-incubating`; graduated after 1.3.0 |
 | `polaris.event-listener.type` | deprecated upstream **since 1.5.0**; plural `types` is current |

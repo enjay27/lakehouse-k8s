@@ -76,8 +76,8 @@ kubectl -n datahub-hynix get cm benchmarks-polaris -o jsonpath='{.data.applicati
 **DONE 2026-09-18, and it found the thing this capture existed to find:**
 `quarkus.log.console.level=INFO` **was already live** (revision 5, 2026-09-15), while the
 committed `polaris/values.yaml` said `DEBUG`. The logging half of `afc88e2` therefore
-reconciles the file to the release; it does not change the cluster. All ten DEBUG category
-lines are live *underneath* that INFO handler, so they have been emitting nothing for days —
+reconciles the file to the release; it does not change the cluster. All **thirteen** DEBUG
+category lines (counted from the step 3 diff, 2026-09-18 — "ten" was an estimate) are live *underneath* that INFO handler, so they have been emitting nothing for days —
 the inference is now measured, not argued. `polaris.event-listener.type` and its two buffer
 settings match the values file exactly, so the plural-`types` rename **is** a real change.
 See `active-issues.md` `#33`.
@@ -544,6 +544,96 @@ a failure mode Helm 3 did not have.
 
 ---
 
+### STEP 3 IS DONE — 2026-09-18. All four assertions pass, and the diff quantifies the change.
+
+```
+quarkus.log.console.level=INFO                                    <- assertion 1, PASS
+grep -c 'quarkus.log.category..*=DEBUG'  ->  0                    <- assertion 2, PASS
+polaris.event-listener.types=persistence-in-memory-buffer         <- assertion 3, PASS
+  .buffer-time=PT5S   .max-buffer-size=1000                          both still present
+image: "apache/polaris:1.6.0"   (render line 7433)                <- the tag, PASS
+```
+
+**The diff against the `0c` capture shows exactly two kinds of change and nothing else:**
+
+1. `polaris.event-listener.type` → **`types`**. The plural rename is real, as `0d` predicted.
+2. **Thirteen** category lines DEBUG → INFO. Note the number: this runbook and `#33` said
+   "ten", which was an estimate; the diff counts **13**, matching `values.yaml`. Corrected
+   above.
+
+And the 13 change **the ConfigMap, not the console output** — `console.level` was already INFO
+at revision 5, so those categories have been emitting nothing for days (`#33`). The diff is the
+measurement that confirms it: had anything else moved, it would be in these 40-odd lines.
+
+**Two lines in the render that are not what they look like.** `grep -nE '^ *image:'` returned
+bare `image:` at lines 117 and 422 with no value. Those are `--debug`'s **USER-SUPPLIED VALUES**
+and **COMPUTED VALUES** dumps, where `image:` is a mapping key with `repository`/`tag` nested
+beneath it — not an empty image in a manifest. The chart has only two image references
+(`deployment.yaml`, `secret-rsa-key-hook.yaml`) and both appear as real containers, at render
+lines 7433 and 710. Confirm with `sed -n '115,122p'` if it nags.
+
+---
+
+## Before step 4 — the pre-upgrade hook pulls `bitnami/kubectl:latest`. CHECK IT FIRST.
+
+**This is the most likely way step 4 fails, and it has nothing to do with Polaris.** Found by
+reading the step 3 render, which is the point of reading a render.
+
+`polaris/templates/secret-rsa-key-hook.yaml` registers four objects as
+`helm.sh/hook: pre-install,pre-upgrade` — a ServiceAccount, Role and RoleBinding at weight
+`-10`, then a **Job at weight `0` running `bitnami/kubectl:latest`** (render line 710) that
+creates the RSA key-pair secret. `pre-upgrade` means **it runs before step 4 touches Polaris**,
+with `backoffLimit: 3`.
+
+Two facts make it fragile:
+
+- **The Job sets no `imagePullPolicy`, and the tag is `:latest`.** Kubernetes then defaults to
+  `imagePullPolicy: Always`, so it hits the registry on **every** upgrade. The copy cached on
+  the node from the install 30 days ago will not save it.
+- **Bitnami moved its public Docker Hub catalog to `bitnamilegacy/` effective 2025-08-28**,
+  leaving community users "a reduced number of hardened images … published only under the
+  `latest` tag and intended for development purposes". `bitnami/kubectl` specifically went
+  unavailable, returned, and its future availability is
+  [explicitly unresolved upstream](https://github.com/bitnami/containers/issues/86977).
+
+**Pre-check, one command — Docker is already in hand from 2c:**
+
+```bash
+docker pull bitnami/kubectl:latest && echo "HOOK IMAGE OK"
+```
+
+If it pulls, run step 4 normally. **If it does not**, the failure mode is *safe but
+misleading*: the upgrade stops at the hook with nothing changed, and the error is an
+`ImagePullBackOff` on a Job called `benchmarks-polaris-rsa-keygen`, which reads like an
+unrelated fault. Do not start debugging Polaris.
+
+**The fallback, and why it is safe here specifically.** The Job's own script is idempotent and
+self-skipping:
+
+```
+if kubectl get secret polaris-rsa-key-pair-secret -n datahub-hynix >/dev/null 2>&1; then
+  echo "Secret ... already exists. Skipping."; exit 0
+fi
+```
+
+So if the secret already exists, the hook has no work to do and skipping it changes nothing.
+**Verify that first, then skip the hooks:**
+
+```bash
+kubectl -n datahub-hynix get secret polaris-rsa-key-pair-secret    # must exist
+helm upgrade --install benchmarks-polaris ./polaris -f polaris/values.yaml   -n datahub-hynix --no-hooks
+```
+
+`--no-hooks` is safe **only** because this chart's sole hook is that self-skipping keygen and
+the secret exists. If the secret is missing, do not use `--no-hooks` — Polaris will fail to
+bootstrap its token broker and the error will look like an auth problem
+(`RESET-AND-CLEAN-INSTALL.md` §2.3 is the same trap from the other end).
+
+**Pinning that image is a separate task, not a step-4 decision** — `#37`. Do not change the
+chart mid-upgrade.
+
+---
+
 ## Step 4 — upgrade.
 
 ```bash
@@ -739,7 +829,7 @@ can proceed.
   `<unknown>` on 2026-09-09 are back).
 - **`quarkus.log.console.level=INFO` was already live** at revision 5 (2026-09-15) while the
   committed file said `DEBUG`. The logging half of `afc88e2` reconciles the file to the
-  release rather than changing it — and all ten DEBUG categories were live underneath that
+  release rather than changing it — and all thirteen DEBUG categories were live underneath that
   INFO handler, emitting nothing. `#5`, caught in the act.
 - **The event listener matches the file exactly** — `type=persistence-in-memory-buffer`,
   `buffer-time=PT5S`, `max-buffer-size=1000`. The plural-`types` rename is a real change.

@@ -5,6 +5,73 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#37 — OPEN. The Polaris chart's `pre-upgrade` hook runs `bitnami/kubectl:latest`, pulled
+`Always`, from a catalog Bitnami retired. It is the most likely cause of a step-4 failure and
+it has nothing to do with Polaris.** 2026-09-18, found by reading the step 3 render.
+
+`polaris/templates/secret-rsa-key-hook.yaml` registers four `pre-install,pre-upgrade` objects:
+ServiceAccount / Role / RoleBinding at hook-weight `-10`, then a **Job at weight `0` running
+`bitnami/kubectl:latest`** that creates `polaris-rsa-key-pair-secret`. `backoffLimit: 3`.
+
+- **No `imagePullPolicy` on that Job, and the tag is `:latest`** → Kubernetes defaults to
+  `Always`, so every `helm upgrade` performs a live registry pull. The image cached on the node
+  from the install 30 days ago does not help.
+- **Bitnami moved its public Docker Hub catalog to `bitnamilegacy/` on 2025-08-28**, leaving
+  community users "a reduced number of hardened images … published only under the `latest` tag
+  and intended for development purposes". `bitnami/kubectl` went unavailable, came back, and
+  upstream has left its future availability unresolved (bitnami/containers#86977).
+
+**Failure mode is safe but misleading:** the upgrade stops at the hook with nothing changed,
+and the symptom is `ImagePullBackOff` on a Job named `benchmarks-polaris-rsa-keygen` — it does
+not look like a Polaris problem at all. Pre-check with `docker pull bitnami/kubectl:latest`.
+
+**Fallback if it will not pull:** the Job's script is idempotent and self-skipping (secret
+exists → `exit 0`), so with `polaris-rsa-key-pair-secret` present, `--no-hooks` changes nothing.
+**Verify the secret exists first** — without it, `--no-hooks` leaves the token broker
+unbootstrapped and the failure presents as an auth error, which is
+`RESET-AND-CLEAN-INSTALL.md` §2.3's trap from the other side.
+
+**The fix is to pin the image, and it is NOT a step-4 decision** — do not edit the chart
+mid-upgrade. Note this hook also runs on *every* future upgrade of this chart, so it is a
+standing fragility, not a one-off. Related: `#2` (charts that pin no image at all).
+
+**#38 — OPEN QUESTION. The file log handler is off, so `extraEnv`'s two file-JSON variables are
+inert, nothing writes the log PVC, and `#8`'s interleaved-write hazard may be inert with it.**
+2026-09-18.
+
+`logging.file.enabled: false` in `polaris/values.yaml`, and the step 3 diff shows
+`quarkus.log.file.enabled=false` in **both** the live ConfigMap and the render — unchanged, so
+this is the live state, not a pending one. No `QUARKUS_LOG_FILE_ENABLED` environment variable
+exists to override it (the console's `QUARKUS_LOG_CONSOLE_JSON_ENABLED` trick works at ordinal
+300, but there is no equivalent here). So Quarkus writes **no log file**.
+
+Three consequences, the first settled and the others to check:
+
+1. **Settled: `extraEnv`'s `QUARKUS_LOG_FILE_JSON_ENABLED=true` and
+   `QUARKUS_LOG_FILE_JSON_PRETTY_PRINT=false` are dead config.** They configure the JSON
+   formatting of a handler that is switched off. This is the **third** instance of the pattern
+   in this one chart — after `logging.console.json`/`format` (inert because the env var wins,
+   `#33`) and the `topologySpreadConstraints` selector matching nothing (`#8`). The pattern is
+   the repo's signature fault, and it is worth counting.
+2. **To check: nothing writes `/deployments/logs/polaris.log`**, although
+   `polaris-shared-logs-pvc` is still mounted there via `extraVolumes`/`extraVolumeMounts`.
+3. **To check: `#8`'s hazard may be inert.** `#8` is about three replicas appending to one
+   `ReadWriteOnce` file with independent rotation state. With no file handler there are no
+   writes to interleave. **Do not close `#8` on this** — the PVC may hold content from a period
+   when file logging was on, and this says nothing about the 1 → 3 scaling itself.
+
+Also bears on the **`fb-polaris-shipper`**, which tails that PVC into VictoriaLogs: if nothing
+writes the file, the shipper tails nothing. Independent support for "Kade uninstalls the
+shipper" (MEMORY.md) — and a reason to look before assuming it was ever delivering data.
+
+**Check after step 4, one command, while a pod exists:**
+
+```bash
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -la /deployments/logs/
+```
+
+An empty directory, or a `polaris.log` whose mtime predates the last restart, confirms it.
+
 **#36 — OPEN QUESTION, cheap to settle, no structural risk. The live metastore was not
 bootstrapped from a file carrying v3's table comments, and `schema.sql` is the exact shape of
 what it was.** 2026-09-18.

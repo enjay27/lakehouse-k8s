@@ -179,3 +179,62 @@ Filed as `#36` with a three-command discriminator for the next time the 1.3.0 im
 database should not be "fixed" by adding the four comments — they are the evidence.
 
 NOT VERIFIED: this session ran no cluster command; all three outputs above are Kade's.
+
+## Step 3 — the render passes, and reading it found the step-4 blocker
+
+All four assertions pass: `console.level=INFO`, **zero** category lines at DEBUG,
+`event-listener.types` plural with `PT5S`/`1000` intact, `apache/polaris:1.6.0` at render line
+7433. `helm lint` output was never shown, so that half of the DoD gate is on Kade's word.
+
+**The diff against the 0c capture is the useful artifact.** It shows exactly two kinds of
+change and nothing else: the listener key `type` → `types`, and **13** category lines
+DEBUG → INFO. Two notes on that 13. First, this repo has been saying "ten" in two places in the
+runbook — an estimate that was never counted; corrected. Second, the 13 change the ConfigMap
+and not the console output, because `console.level` was already INFO at revision 5 (`#33`); the
+diff is what turns that from an inference into a measurement, since anything else that had
+moved would appear in these forty-odd lines.
+
+A red herring worth recording: `grep -nE '^ *image:'` returned bare `image:` at render lines
+117 and 422. Those are `--debug`'s USER-SUPPLIED VALUES and COMPUTED VALUES dumps, where
+`image:` is a mapping key with `repository`/`tag` beneath it — not an empty image in a manifest.
+The chart has exactly two image references and both render as real containers.
+
+## #37 — the pre-upgrade hook is the likeliest way step 4 fails
+
+Chasing the *other* image reference is what found it. `secret-rsa-key-hook.yaml` registers four
+`pre-install,pre-upgrade` objects, the last being a Job on **`bitnami/kubectl:latest`** that
+creates the RSA key-pair secret, `backoffLimit: 3`. It runs *before* step 4 touches Polaris.
+
+Two things compound. The Job sets **no `imagePullPolicy`** and the tag is `:latest`, so
+Kubernetes defaults to `Always` — a live registry pull on every upgrade, node cache irrelevant.
+And Bitnami retired its public Docker Hub catalog to `bitnamilegacy/` on 2025-08-28, leaving
+community users a reduced set of hardened images under `latest` only; `bitnami/kubectl` went
+away, came back, and upstream left its future availability unresolved
+(bitnami/containers#86977).
+
+The failure would be safe — nothing changed — but misleading: `ImagePullBackOff` on a Job named
+`benchmarks-polaris-rsa-keygen`, which does not read as a Polaris problem. Hence the one-command
+pre-check, and a `--no-hooks` fallback that is safe *only* because the Job self-skips when the
+secret exists. Pinning the image is a separate task; changing the chart mid-upgrade is not.
+
+## #38 — the file log handler is off, and two env vars configure it anyway
+
+The diff shows `quarkus.log.file.enabled=false` **unchanged** between live and render, and no
+`QUARKUS_LOG_FILE_ENABLED` variable exists to override it. So Quarkus writes no log file, while
+`extraEnv` sets `QUARKUS_LOG_FILE_JSON_ENABLED=true` and `QUARKUS_LOG_FILE_JSON_PRETTY_PRINT=false`
+to format a handler that is switched off.
+
+That is the **third** instance of this pattern in one chart — after `logging.console.json`/
+`format` being inert because the env var wins, and `topologySpreadConstraints` selecting a label
+nothing carries. Three is no longer a coincidence; it is the repo's signature fault and worth
+counting in one place.
+
+Two consequences left as checks rather than conclusions: nothing writes
+`/deployments/logs/polaris.log` even though the PVC is mounted there, and `#8`'s
+interleaved-write hazard may be inert with it. **`#8` is not closed on this** — the PVC may hold
+content from when file logging was on, and none of it speaks to the 1 → 3 scaling itself. It
+also suggests `fb-polaris-shipper` may have been tailing an empty file all along, which is worth
+knowing before assuming it ever delivered anything.
+
+NOT VERIFIED: no cluster command from this session. Step 3's outputs are Kade's; `helm lint` was
+not shown; the `#37` pre-check and the `#38` directory listing are both outstanding.
