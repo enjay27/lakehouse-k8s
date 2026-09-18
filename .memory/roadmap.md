@@ -58,6 +58,38 @@ normal and 140M/day peak at 30-day retention**, with the `GET .../tables/{t}` po
 numbers apply — the local instance is a correctness rehearsal for that design, not a load
 test of it, and sizing should be chosen for the laptop, not copied from the doc.
 
+## Polaris 1.6.0 — the numbers, and what to assert after the upgrade
+
+Established 2026-09-18 by reading upstream at tag `apache-polaris-1.6.0`. Cluster side
+unverified — see `active-issues.md` #33.
+
+| fact | value |
+|---|---|
+| 1.6.0 required metastore schema version | **4** (`DatabaseType.java`, all three DB types) |
+| this install's schema version | **3** (bootstrapped from `schema_v3.sql`) — *read it from `polaris_schema.version` before trusting this* |
+| v3 → v4 new objects | 3 indexes + 3 tables + 5 indexes = **11 objects**, 0 ALTERs |
+| v5 (`events.catalog_id` nullable) | **1.7.0**, not 1.6.0 |
+| 1.6.0 image tag | `1.6.0` — no `-incubating`; graduated after 1.3.0 |
+| `polaris.event-listener.type` | deprecated upstream **since 1.5.0**; plural `types` is current |
+| upstream chart default `logging.console.threshold` | **`ALL`** — so INFO discriminates |
+| 1.7.0 trap | `OPTIMIZED_SIBLING_CHECK` 403s every nested namespace (apache/polaris#5521); 1.6.0 clear |
+
+**Assertions to run after the upgrade** — each reads the running object, not a values file:
+
+1. `kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=polaris -o jsonpath='{.items[*].spec.containers[0].image}'`
+   → every pod `apache/polaris:1.6.0`.
+2. `SELECT version_value FROM polaris_schema.version` → **4**.
+3. ConfigMap `application.properties` contains `quarkus.log.console.level=INFO` and
+   **zero** `quarkus.log.category."…".level=DEBUG` lines.
+4. ConfigMap contains `polaris.event-listener.types=persistence-in-memory-buffer`, with
+   `buffer-time=PT5S` and `max-buffer-size=1000`.
+5. `SELECT count(*), max(timestamp_ms) FROM polaris_schema.events` advances after the
+   upgrade — the listener survived 1.6.0's event-persistence overhaul.
+6. `\dt polaris_schema.*` lists `idempotency_records`, `scan_metrics_report`,
+   `commit_metrics_report`.
+7. One `polaris-logs-*` window after the upgrade is materially smaller than one before
+   (`step10` / `step11`, not Dev Tools copies).
+
 ## PostgreSQL verification assertions
 
 Not run against the rebuilt cluster — Kade's call, to be run if a PostgreSQL setting

@@ -5,6 +5,53 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#33 — Polaris 1.6.0 is committed to the chart and NOT applied. The cluster still runs 1.3.0-incubating.** 2026-09-18.
+
+`polaris/values.yaml` now pins `image.tag: "1.6.0"`, `polaris/Chart.yaml` says
+`version`/`appVersion` 1.6.0, `polaris/templates/configmap.yaml` emits the plural
+`polaris.event-listener.types`, all 13 DEBUG log categories are INFO and console threshold is
+INFO (Kade's decision). **None of it has been rendered, linted or applied** — prepared in a
+Cowork session with no `kubectl`/`helm`/`psql` reach. This is written-not-running
+configuration, which in this repo is the whole game. Until step 3–5 of
+[`polaris/RUNBOOK-upgrade-1.6.0.md`](../polaris/RUNBOOK-upgrade-1.6.0.md) have been run and
+read back from the running object, **the running Polaris is 1.3.0 with DEBUG console output**
+and the values file describes something else. Do not answer "what log level is Polaris at"
+from the file.
+
+Three corrections to `polaris/HANDOFF-upgrade-1.6.0-2026-09-17.md`, all established by
+reading upstream at tag `apache-polaris-1.6.0` (not from the cluster):
+
+1. **1.6.0 requires schema v4, not v5.** `DatabaseType.java` declares latest schema version 4
+   for Postgres/CockroachDB/H2. The v5 step that alters `events.catalog_id` is a **1.7.0**
+   concern; on 1.6.0 that column stays `TEXT NOT NULL`. The handoff's headline risk does not
+   apply to this upgrade.
+2. **The v3 → v4 delta is additive only** — 3 indexes on existing tables, plus
+   `idempotency_records`, `scan_metrics_report`, `commit_metrics_report` and their indexes.
+   No `ALTER`, no column change, no data rewrite; `entities`, `grant_records`,
+   `principal_authentication_data`, `policy_mapping_record` and `events` are byte-identical
+   between our `schema_v3.sql` and upstream `schema-v4.sql`. Script:
+   `postgresql/schema/migrate_v3_to_v4.sql` — **transcribed from upstream, not the shipped
+   file; diff it against the v4 resource in the 1.6.0 image before running it.**
+3. **The handoff claimed the working tree already carried `maxReplicas 3 → 1` uncommitted. It
+   did not.** The only uncommitted change on 2026-09-18 was the console threshold. So `#8`
+   (HPA can scale Polaris to 3 pods sharing one log PVC) is **still open and still armed**:
+   `autoscaling.enabled: true`, `maxReplicas: 3`, unchanged. This also matters mid-upgrade —
+   scaling the deployment to 0 for the migration may be undone by the HPA.
+
+**New, and absent from the handoff: 1.6.0 tightened entity-name validation.** Upstream says
+entities whose names contain control characters, dots, backslashes, colons and similar must be
+**renamed before upgrading**. The catalogs and namespaces here were made by test ladders, so
+this can block the upgrade. Screen query in the runbook, step 1 — and it is a screen written
+from prose, not from 1.6.0's validation code; confirm the real character set before renaming.
+
+**Consequence of the INFO decision, recorded so it is not rediscovered:** Quarkus applies the
+stricter of category level and handler level, so while `console.threshold: INFO` no category
+can emit DEBUG. `#15` and `#24` were both characterised with those DEBUG categories on.
+Re-running either needs the `--set` override written out in the `categories:` comment in
+`polaris/values.yaml`. The NPE stack trace itself is ERROR and survives INFO.
+
+---
+
 **#32 — Schema v6 + pipeline review P1/P2/P3/P4/P6/P7/P8/P11/P12: ROLLED 2026-09-16 (~16:01Z) and VERIFIED on traffic (tier 2/3).** 2026-09-16.
 - **Verified from Kade's exports of window 16:02:30Z** (pod `benchmarks-fluent-bit-62klp`, report seq 4; `.scratch/readout-2026-09-16T160230Z/`):
   67 report rows, all `schema_version` 6, same row keys as the v5 window 15:01Z and **every count field equal** (access 355 / kept 200 /

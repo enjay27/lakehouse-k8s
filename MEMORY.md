@@ -3,7 +3,7 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-16 late (schema v6 live and verified; next is the 1800 s window)
+## Now — 2026-09-18 (Polaris 1.6.0 written, NOT applied; the cluster still runs 1.3.0)
 
 **Start here next session:** [`logging/HANDOFF-pipeline-next-2026-09-16.md`](logging/HANDOFF-pipeline-next-2026-09-16.md) — state, rules, ordered tasks. Docs index: [`logging/README.md`](logging/README.md).
 
@@ -21,12 +21,15 @@ report rows −31 % bytes. Query strings via `.keyword`. **`WINDOW_SECONDS` is s
 `SELECT pg_wal_replay_pause()` on the standbys settles it in one command. The primary-unavailable harness is **planned, not built**:
 [`postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md`](postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md).
 
-**NEXT SESSION = POLARIS 1.3.0 -> 1.6.0.** Start here: [`polaris/HANDOFF-upgrade-1.6.0-2026-09-17.md`](polaris/HANDOFF-upgrade-1.6.0-2026-09-17.md).
-**Run its 15-minute capture BEFORE the first mutating command** — `helm get values benchmarks-polaris` has never been run and its
-evidence is unrecoverable after the upgrade (`#5`), and #15 can only be characterised on 1.3.0 while 1.3.0 is running. Schema
-migration is **manual** (Polaris does not auto-migrate; this repo is on `schema_v3.sql`) and the documented v5 step alters
-`events.catalog_id`, the table the audit event listener writes. 1.7.0 next month: `OPTIMIZED_SIBLING_CHECK` 403s every nested
-namespace (apache/polaris#5521) — 1.6.0 is clear.
+**POLARIS 1.6.0 (2026-09-18): committed, NOTHING RUN.** Ordered steps:
+[`polaris/RUNBOOK-upgrade-1.6.0.md`](polaris/RUNBOOK-upgrade-1.6.0.md) — supersedes the 09-17 handoff's ordering (`#33`).
+Tag/Chart 1.6.0, plural `event-listener.types`, console **INFO** + all 13 DEBUG categories demoted. Not rendered, not applied —
+**the running Polaris is 1.3.0 with DEBUG output; do not read the level off the file.** Step 0's capture still goes first (`#5`).
+Corrections: **1.6.0 needs schema v4, not v5** (the `events.catalog_id` ALTER is 1.7.0) and **v3→v4 is additive only**
+(`postgresql/schema/migrate_v3_to_v4.sql` — transcribed; diff against the shipped file first). "`maxReplicas 3 → 1` already in
+the tree" was **false** — `#8` still armed. New: **1.6.0 rejects entity names with dots/colons/backslashes — screen first**
+(step 1). INFO gates categories, so `#15`/`#24` re-runs need the `--set` override in the `categories:` comment. 1.7.0:
+`OPTIMIZED_SIBLING_CHECK` 403s every nested namespace (apache/polaris#5521) — 1.6.0 is clear.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 

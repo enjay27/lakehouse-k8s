@@ -21,8 +21,8 @@ apiVersion: v2
 name: benchmarks-polaris
 description: A Helm chart for Apache Polaris (incubating)
 type: application
-version: 1.3.0
-appVersion: 1.3.0-incubating
+version: 1.6.0
+appVersion: 1.6.0
 home: https://polaris.apache.org/
 icon: https://raw.githubusercontent.com/apache/polaris/main/site/static/img/logos/polaris-brandmark.png
 sources:

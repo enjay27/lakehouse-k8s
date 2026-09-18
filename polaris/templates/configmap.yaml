@@ -196,7 +196,9 @@ data:
 
     {{- /* Event Listener (Audit Log) */ -}}
     {{- if .Values.eventListener -}}
-    {{- $_ = set $map "polaris.event-listener.type" .Values.eventListener.type -}}
+    {{- /* `polaris.event-listener.type` is deprecated upstream since 1.5.0; 1.6.0 reads the
+         plural `types` list. values.yaml keeps the singular key -- the list is built here. */ -}}
+    {{- $_ = set $map "polaris.event-listener.types" (.Values.eventListener.types | default (list .Values.eventListener.type) | join ",") -}}
     {{- if eq .Values.eventListener.type "aws-cloudwatch" -}}
     {{- $_ = set $map "polaris.event-listener.aws-cloudwatch.log-group" .Values.eventListener.awsCloudwatch.logGroup -}}
     {{- $_ = set $map "polaris.event-listener.aws-cloudwatch.log-stream" .Values.eventListener.awsCloudwatch.logStream -}}

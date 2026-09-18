@@ -1,10 +1,12 @@
 replicaCount: 1
 
-# https://downloads.apache.org/incubator/polaris/helm-chart/1.3.0-incubating/
+# Upstream chart this local chart was forked from (read it before changing templates):
+#   https://github.com/apache/polaris/tree/apache-polaris-1.6.0/helm/polaris
+# Polaris graduated from the incubator after 1.3.0 -- the image tag has no "-incubating" suffix.
 image:
   repository: apache/polaris
   pullPolicy: IfNotPresent
-  tag: "1.3.0-incubating"
+  tag: "1.6.0"
   configDir: /deployments/config
 
 imagePullSecrets: []
@@ -117,7 +119,7 @@ readinessProbe:
   timeoutSeconds: 10
 
 # -- OPA (Open Policy Agent) 인가 설정
-# 참고: https://polaris.apache.org/releases/1.3.0/managing-security/external-pdp/opa/
+# 참고: https://polaris.apache.org/releases/1.6.0/managing-security/external-pdp/opa/
 opa:
   enabled: false
   # -- 인가(Authorization) 설정
@@ -204,8 +206,8 @@ extraVolumeMounts:
 extraInitContainers: []
 
 # -- Event Listener (감사 로그): 모든 API 작업을 PostgreSQL events 테이블에 기록 (create table)
-# -- https://github.com/apache/polaris/blob/apache-polaris-1.3.0-incubating/runtime/service/src/main/java/org/apache/polaris/service/events/listeners/PolarisPersistenceEventListener.java
-# -- https://github.com/apache/polaris/blob/apache-polaris-1.3.0-incubating/runtime/service/src/main/java/org/apache/polaris/service/events/listeners/PolarisEventListener.java
+# -- https://github.com/apache/polaris/blob/apache-polaris-1.6.0/runtime/service/src/main/java/org/apache/polaris/service/events/listeners/PolarisPersistenceEventListener.java
+# -- https://github.com/apache/polaris/blob/apache-polaris-1.6.0/runtime/service/src/main/java/org/apache/polaris/service/events/listeners/PolarisEventListener.java
 eventListener:
   type: persistence-in-memory-buffer
   persistenceBuffer:
@@ -235,14 +237,14 @@ serviceMonitor:
   metricRelabelings: []
 
 # -- Logging configuration
-# 참고: https://polaris.apache.org/releases/1.3.0/configuration/
+# 참고: https://polaris.apache.org/releases/1.6.0/configuration/
 #      https://quarkus.io/guides/logging
 logging:
   level: INFO  # 루트 로그 레벨 (QUARKUS_LOG_LEVEL)
   requestIdHeaderName: Polaris-Request-Id
   console:
     enabled: true
-    threshold: DEBUG
+    threshold: INFO
     json: false
     format: "%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{2.}] (%t) [%X{requestId}] %s%e%n"
   file:
@@ -261,33 +263,52 @@ logging:
       size: 5Gi
       selectorLabels: {}
   # 카테고리별 로그 레벨
+  #
+  # THRESHOLD GATES CATEGORIES. Quarkus applies the stricter of the category level and the
+  # handler level, so while console.threshold is INFO no category below can emit DEBUG --
+  # a category left at DEBUG here is inert configuration, which is the #5 / #F1 shape.
+  # Every entry below is therefore INFO or OFF, and the file states what is in effect.
+  #
+  # To re-run the #15 ladder with the old detail, override at upgrade time instead of
+  # editing this file (and set console.threshold with it, or nothing changes):
+  #   helm upgrade --install benchmarks-polaris ./polaris -n datahub-hynix -f polaris/values.yaml \
+  #     --set logging.console.threshold=DEBUG \
+  #     --set 'logging.categories.org\.apache\.polaris\.core\.persistence=DEBUG' \
+  #     --set 'logging.categories.org\.apache\.polaris\.core\.storage=DEBUG' \
+  #     --set 'logging.categories.org\.apache\.polaris\.service\.storage=DEBUG'
+  # The set that was DEBUG until 2026-09-18, for the record:
+  #   org.apache.polaris.service.auth, .service.auth.JWTRSAKeyPairTokenBroker, .service.context,
+  #   .service.catalog, .service.catalog.IcebergRestCatalogAdapter, .service.admin,
+  #   org.apache.polaris.core.persistence, .service.storage, org.apache.polaris.core.storage,
+  #   org.apache.polaris.persistence.relational.jdbc.DatasourceOperations,
+  #   io.polaris, io.polaris.service, io.polaris.core
   categories:
     # Root
     org.apache.polaris: INFO
 
-    # Auth — DEBUG for 401 investigation
-    org.apache.polaris.service.auth: DEBUG
-    org.apache.polaris.service.auth.JWTRSAKeyPairTokenBroker: DEBUG
-    org.apache.polaris.service.context: DEBUG
+    # Auth — was DEBUG for the 401 investigation; demoted 2026-09-18, see note above
+    org.apache.polaris.service.auth: INFO
+    org.apache.polaris.service.auth.JWTRSAKeyPairTokenBroker: INFO
+    org.apache.polaris.service.context: INFO
 
     # Security — prevent credential exposure in logs
     org.apache.polaris.service.context.ServiceProducers: "OFF"
     io.smallrye.config: "OFF"
 
-    # Catalog / RBAC — DEBUG for 403 investigation
-    org.apache.polaris.service.catalog: DEBUG
-    org.apache.polaris.service.catalog.IcebergRestCatalogAdapter: DEBUG
-    org.apache.polaris.service.admin: DEBUG
+    # Catalog / RBAC — was DEBUG for the 403 investigation; demoted 2026-09-18
+    org.apache.polaris.service.catalog: INFO
+    org.apache.polaris.service.catalog.IcebergRestCatalogAdapter: INFO
+    org.apache.polaris.service.admin: INFO
 
-    # Persistence — DEBUG for 500 entity_version investigation
-    org.apache.polaris.core.persistence: DEBUG
+    # Persistence — was DEBUG for the 500 entity_version investigation; demoted 2026-09-18
+    org.apache.polaris.core.persistence: INFO
 
-    # Storage — DEBUG for NullPointerException investigation
-    org.apache.polaris.service.storage: DEBUG
-    org.apache.polaris.core.storage: DEBUG
+    # Storage — was DEBUG for the #15 NullPointerException investigation; demoted 2026-09-18
+    org.apache.polaris.service.storage: INFO
+    org.apache.polaris.core.storage: INFO
 
     # Noise suppression — INFO for high-frequency per-request loggers
-    org.apache.polaris.persistence.relational.jdbc.DatasourceOperations: DEBUG
+    org.apache.polaris.persistence.relational.jdbc.DatasourceOperations: INFO
     org.apache.polaris.service.context.catalog.PolarisCallContextCatalogFactory: INFO
     org.apache.polaris.service.catalog.validation.IcebergPropertiesValidation: INFO
     org.apache.polaris.service.catalog.iceberg.IcebergCatalogHandler: INFO
@@ -306,10 +327,12 @@ logging:
     org.apache.iceberg.aws.s3: INFO
     software.amazon.awssdk.services.sts: INFO
 
-    # Legacy package aliases
-    io.polaris: DEBUG
-    io.polaris.service: DEBUG
-    io.polaris.core: DEBUG
+    # Legacy package aliases — dead since the org.apache.polaris rename; kept only so a
+    # stray third-party logger in that namespace cannot shout. Were DEBUG, which was
+    # doubly inert: no such logger exists AND the console handler is at INFO.
+    io.polaris: INFO
+    io.polaris.service: INFO
+    io.polaris.core: INFO
 
     # Suppress Quarkus config deprecation warnings
     io.quarkus.config: "OFF"
@@ -358,7 +381,7 @@ storage:
 
 # -- Polaris authentication configuration.
 # -- type: mixed (내부 토큰 우선, 실패 시 외부 OIDC 폴백)
-# -- https://polaris.apache.org/releases/1.3.0/managing-security/external-idp/
+# -- https://polaris.apache.org/releases/1.6.0/managing-security/external-idp/
 authentication:
   type: mixed
   authenticator:
