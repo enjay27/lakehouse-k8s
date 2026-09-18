@@ -141,6 +141,33 @@ that would have protected the create-then-resolve path does not cover it, and wi
 read is balanced onto a standby. The handoff's remedy A —
 `database_redirect_preference_list = 'polaris:primary'` — addresses exactly this.
 
+**STEP 2's SQL INVOCATION WAS WRONG, AND IT BROKE A CLAUDE.md RULE.** 2026-09-18, found by
+Kade running it.
+
+The runbook's step 2e said:
+
+```
+kubectl -n datahub-hynix port-forward pod/...postgresql-1 5433:5432
+psql -h localhost -p 5433 -U polaris -d polaris -f postgresql/schema/migrate_v3_to_v4.sql
+```
+
+Three faults. **`port-forward` is a blocking command** — CLAUDE.md's *Persistent Server Block*
+prohibits exactly this, and in a runbook it turns a paste-able sequence into one that stops dead
+at that line with no error. **It assumes a `psql` on the Mac**, of unknown version. And it was
+inconsistent with the `kubectl exec -i … env PGPASSWORD=polaris psql` pattern that had already
+been proven to work in step 0c and step 1 — I had the working pattern in front of me and wrote a
+different one for the step that mutates the database.
+
+Every SQL step in the runbook and the migration script's own header now use
+`kubectl exec -i …` with the statements on stdin. **`-i`, never `-it`:** a TTY adds carriage
+returns and can corrupt piped SQL. `PGPASSWORD` must be passed or psql prompts and the exec
+hangs with no output. Step 5's `curl` health check had the same port-forward fault and is now an
+`exec`, with the note that a pod reporting `READY 1/1` has already passed its readiness probe.
+
+Note CLAUDE.md's *Direct PostgreSQL* line does give `port-forward` — that is for an interactive
+session a human drives, not for scripted runbook steps. The rule and the example are not in
+conflict; I read the example as licence and skipped the rule.
+
 **STEP 1 CORRECTED: the entity-name tightening is NOT an upgrade blocker, and the first screen
 asked the wrong question.** 2026-09-18.
 

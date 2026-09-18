@@ -198,17 +198,39 @@ kubectl -n datahub-hynix scale deploy/benchmarks-polaris --replicas=0
 # up (kubectl -n datahub-hynix get hpa) before assuming replicas stays at 0.
 
 # 2e. Migrate, against the PRIMARY, not through pgpool's load balancer.
-kubectl -n datahub-hynix port-forward pod/benchmarks-postgresql-postgresql-ha-postgresql-1 5433:5432
-psql -h localhost -p 5433 -U polaris -d polaris -v ON_ERROR_STOP=1 \
-  -f postgresql/schema/migrate_v3_to_v4.sql
+#     `exec -i` with the script on stdin. NOT port-forward + a local psql: port-forward is a
+#     blocking command (CLAUDE.md, Persistent Server Block) and it assumes a psql on the Mac.
+kubectl -n datahub-hynix exec -i benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+  env PGPASSWORD=polaris psql -U polaris -d polaris -v ON_ERROR_STOP=1 \
+  < postgresql/schema/migrate_v3_to_v4.sql
 
 # 2f. Read it back from the database, not from the script's exit code.
-psql -h localhost -p 5433 -U polaris -d polaris -c "SELECT * FROM polaris_schema.version;"
-psql -h localhost -p 5433 -U polaris -d polaris -c "\dt polaris_schema.*"
+kubectl -n datahub-hynix exec -i benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+  env PGPASSWORD=polaris psql -U polaris -d polaris <<'SQL'
+SELECT * FROM polaris_schema.version;
+\dt polaris_schema.*
+SQL
 ```
 
 Expect `version_value = 4` and the three new tables present. The script wraps everything in
 one transaction and writes the version row **last**, so a failure leaves the database at 3.
+
+**Every SQL step in this runbook uses `kubectl exec -i … env PGPASSWORD=polaris psql`**, with
+the statements on stdin via heredoc or `<`. That is the pattern proven to work here on
+2026-09-18. Three reasons it is the only one used:
+
+- **`port-forward` blocks.** It holds the terminal until interrupted, which CLAUDE.md's
+  *Persistent Server Block* prohibits, and in a runbook it silently turns a paste-able sequence
+  into one that stops dead at that line. The original step 2e did exactly that.
+- **`psql` on the Mac is not a given**, and its version need not match the server's.
+- **`exec` on `…-postgresql-1` reaches the primary directly.** Through pgpool the read can be
+  balanced onto a standby — the mechanism `#15` hypothesis A is about — so a version check
+  through pgpool would beg the question it is asked to settle.
+
+`PGPASSWORD` must be passed or psql prompts and the exec hangs with no output. The pod
+defaults to the `postgresql` container, which is the right one; the `Defaulted container`
+notice is normal. Note CLAUDE.md's *Direct PostgreSQL* line still gives `port-forward` — that
+is for an interactive session you drive yourself, not for scripted steps.
 
 ---
 
@@ -301,15 +323,22 @@ kubectl -n datahub-hynix logs deploy/benchmarks-polaris --tail=5
 kubectl -n datahub-hynix logs deploy/benchmarks-polaris | grep -i 'Unrecognized VM option' \
   || echo "GC flags OK"
 
-# The management port is 8182 here, not the 8282 upstream docs use.
-kubectl -n datahub-hynix port-forward deploy/benchmarks-polaris 8182:8182
-curl -s localhost:8182/q/health
+# The management port is 8182 here, not the 8282 upstream docs use. exec, not port-forward --
+# port-forward blocks the terminal (CLAUDE.md, Persistent Server Block).
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
+  curl -sf http://localhost:8182/q/health
+# If curl is absent from the image, the readiness probe already answers this: a pod reporting
+# READY 1/1 has passed it. Do not reach for port-forward to find out.
 
 # Schema version, from the database.
-psql ... -c "SELECT * FROM polaris_schema.version;"        # 4
+kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+  env PGPASSWORD=polaris psql -U polaris -d polaris -tAc \
+  "SELECT * FROM polaris_schema.version"                   # expect version|4
 
 # The events table is still being written -- the listener survived the upgrade.
-psql ... -c "SELECT count(*), max(timestamp_ms) FROM polaris_schema.events;"
+kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+  env PGPASSWORD=polaris psql -U polaris -d polaris -tAc \
+  "SELECT count(*), max(timestamp_ms) FROM polaris_schema.events"
 ```
 
 **Do not expect the log volume to drop.** The original version of this runbook said one

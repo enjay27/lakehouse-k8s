@@ -43,9 +43,21 @@
 --
 -- HOW TO RUN
 --   Take a metastore dump first. Then, against the PRIMARY (pg-1 as of 2026-09-17, confirm
---   with repmgr -- do not assume pg-0):
---     psql -U polaris -d polaris -v ON_ERROR_STOP=1 -f migrate_v3_to_v4.sql
---   Polaris should be scaled to 0 while this runs, and started on 1.6.0 afterwards.
+--   with repmgr -- do not assume pg-0), from the repo root:
+--
+--     kubectl -n datahub-hynix exec -i benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+--       env PGPASSWORD=polaris psql -U polaris -d polaris -v ON_ERROR_STOP=1 \
+--       < postgresql/schema/migrate_v3_to_v4.sql
+--
+--   `exec -i`, NOT `exec -it`: a TTY adds carriage returns and can corrupt piped SQL.
+--   NOT `kubectl port-forward` + a local `psql -f`: port-forward blocks the terminal
+--   (CLAUDE.md, Persistent Server Block), assumes a psql on the Mac, and routes through
+--   nothing useful. `PGPASSWORD` must be passed or psql prompts and the exec hangs silently.
+--   Do NOT run this through pgpool: a read there can be load-balanced onto a standby, which
+--   is the `#15` hypothesis A mechanism, so a version check through pgpool begs the question.
+--
+--   Polaris should be scaled to 0 while this runs, and started on 1.6.0 afterwards. Check the
+--   HPA did not undo the scale-to-0 -- `minReplicas: 1` is live (`#8`).
 --
 -- NOT VERIFIED: nothing below has been executed. This was written in a Cowork session,
 -- which has no kubectl/helm/psql reach.
