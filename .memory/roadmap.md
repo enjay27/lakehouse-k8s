@@ -66,7 +66,7 @@ unverified — see `active-issues.md` #33.
 | fact | value |
 |---|---|
 | 1.6.0 required metastore schema version | **4** (`DatabaseType.java`, all three DB types) |
-| this install's schema version | **3** (bootstrapped from `schema_v3.sql`) — *read it from `polaris_schema.version` before trusting this* |
+| this install's schema version | **3** — MEASURED 2026-09-18 on primary pg-1: `SELECT * FROM polaris_schema.version` → `version|3` |
 | v3 → v4 new objects | 3 indexes + 3 tables + 5 indexes = **11 objects**, 0 ALTERs |
 | v5 (`events.catalog_id` nullable) | **1.7.0**, not 1.6.0 |
 | 1.6.0 image tag | `1.6.0` — no `-incubating`; graduated after 1.3.0 |
@@ -76,7 +76,8 @@ unverified — see `active-issues.md` #33.
 
 **Assertions to run after the upgrade** — each reads the running object, not a values file:
 
-1. `kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=polaris -o jsonpath='{.items[*].spec.containers[0].image}'`
+1. `kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=benchmarks-polaris -o jsonpath='{.items[*].spec.containers[0].image}'`
+   (the label is the **chart** name, `benchmarks-polaris`; `=polaris` matches nothing)
    → every pod `apache/polaris:1.6.0`.
 2. `SELECT version_value FROM polaris_schema.version` → **4**.
 3. ConfigMap `application.properties` contains `quarkus.log.console.level=INFO` and

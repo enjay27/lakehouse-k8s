@@ -18,6 +18,24 @@ read back from the running object, **the running Polaris is 1.3.0 with DEBUG con
 and the values file describes something else. Do not answer "what log level is Polaris at"
 from the file.
 
+**Step 0 progress, 2026-09-18 (Kade ran these; this session cannot):**
+`0c` **DONE — the live metastore is at schema version 3**, read from primary pg-1:
+`SELECT * FROM polaris_schema.version` → `version|3`. The repo's `schema_v3.sql` and the
+database agree, which is now measured rather than assumed (`#F1`'s mistake avoided). So the
+v3 → v4 migration is the correct one. `0a` (`helm get values`, the perishable one) and `0b`
+(deploy/hpa/pods) are **still outstanding**.
+
+**Two command corrections, both mine, both worth keeping:**
+
+* The label selector is **`app.kubernetes.io/name=benchmarks-polaris`**, not `=polaris`.
+  `_helpers.tpl`'s `polaris.name` is `default .Chart.Name`, and this chart's `Chart.yaml`
+  `name:` is `benchmarks-polaris` — so the label follows the chart name, not the upstream
+  project name. `=polaris` returns empty, silently. Fixed everywhere in the runbook and the
+  roadmap assertions.
+* Read the metastore by **exec'ing the primary pod directly with `env PGPASSWORD=...`**, not
+  through pgpool. Through pgpool the read can be load-balanced onto a standby (the whole
+  subject of `#15` hypothesis A), and without `PGPASSWORD` psql prompts and the exec hangs.
+
 Three corrections to `polaris/HANDOFF-upgrade-1.6.0-2026-09-17.md`, all established by
 reading upstream at tag `apache-polaris-1.6.0` (not from the cluster):
 

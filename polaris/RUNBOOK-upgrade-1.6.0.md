@@ -39,11 +39,17 @@ helm -n datahub-hynix get values benchmarks-polaris > /tmp/polaris-values-1.3.0.
 helm -n datahub-hynix history benchmarks-polaris
 
 # 0b. Ten seconds, and it settles #15 hypothesis C (round-robin across replicas).
-kubectl -n datahub-hynix get deploy,hpa,pods -l app.kubernetes.io/name=polaris
+#     NOTE the selector: the chart's name IS `benchmarks-polaris`, so `polaris.name` renders
+#     `benchmarks-polaris` and the label is app.kubernetes.io/name=benchmarks-polaris.
+#     `=polaris` matches nothing. (Corrected 2026-09-18 after it returned empty.)
+kubectl -n datahub-hynix get deploy,hpa,pods -l app.kubernetes.io/name=benchmarks-polaris
 
-# 0c. The live schema version. Do NOT infer it from schema_v3.sql -- that is #F1's mistake.
-kubectl -n datahub-hynix exec <pgpool-pod> -- \
-  psql -U polaris -d polaris -tAc "SELECT * FROM polaris_schema.version;"
+# 0c. DONE 2026-09-18 -- the live metastore is at schema version 3. CONFIRMED, not inferred.
+#     Exec the PRIMARY pod directly, not pgpool: a read through pgpool can be load-balanced
+#     onto a standby, and PGPASSWORD must be passed or psql prompts and the exec hangs.
+kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+  env PGPASSWORD=polaris psql -U polaris -d polaris -tAc "SELECT * FROM polaris_schema.version"
+#   -> version|3     (pg-1 is the primary as of 2026-09-17; re-confirm before the migration)
 
 # 0d. Optional but cheap: the #15 baseline ladder on 1.3.0.
 #     polaris-learning/diagnostics/polaris_replica_staleness.ipynb, sections 8 and 10.
@@ -57,8 +63,9 @@ kubectl -n datahub-hynix get cm benchmarks-polaris -o jsonpath='{.data.applicati
   | grep -E 'quarkus\.log|event-listener' > /tmp/polaris-log-config-1.3.0.properties
 ```
 
-If `0c` reports anything other than **3**, stop. The migration script refuses to run and this
-runbook's step 2 does not apply.
+**`0c` is done: the metastore reports `version|3`.** Step 2's v3 → v4 migration is therefore
+the right migration, and the script's own guard will agree. `0a` and `0b` are still outstanding
+and `0a` is the perishable one.
 
 ---
 
@@ -72,7 +79,9 @@ ladders, so this is a real risk, not a formality.
 Screen the metastore first — read-only:
 
 ```sql
--- against the primary (pg-1 as of 2026-09-17; confirm, do not assume pg-0)
+-- against the primary (pg-1 as of 2026-09-17; confirm, do not assume pg-0). Wrapper:
+--   kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+--     env PGPASSWORD=polaris psql -U polaris -d polaris -c "<the query>"
 SELECT realm_id, catalog_id, id, type_code, sub_type_code, name
 FROM polaris_schema.entities
 WHERE drop_timestamp = 0
@@ -106,14 +115,17 @@ is on v3.
 # 2a. Commit the tree first -- this is the risky step CLAUDE.md's rule is about. (Done: see above.)
 
 # 2b. Dump the metastore. Non-negotiable; this is the rollback.
-kubectl -n datahub-hynix exec <pgpool-pod> -- \
-  pg_dump -U polaris -d polaris -Fc > /tmp/polaris-metastore-pre-v4.dump
+kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+  env PGPASSWORD=polaris pg_dump -U polaris -d polaris -Fc > /tmp/polaris-metastore-pre-v4.dump
+ls -l /tmp/polaris-metastore-pre-v4.dump   # a 0-byte dump is the classic silent failure here
 
 # 2c. Diff the committed script against the v4 script the 1.6.0 image actually ships.
 #     If the shipped file is available, PREFER RUNNING IT DIRECTLY -- every statement in v4
 #     is IF NOT EXISTS, so applying the full v4 script to a v3 database *is* the migration.
 kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
   sh -c 'unzip -l /deployments/*.jar | grep schema-v'
+# (run this while 1.3.0 is still up only to learn the path; the v4 resource lives in the
+#  1.6.0 image, so the authoritative copy needs a 1.6.0 container -- see note below)
 
 # 2d. Scale Polaris to 0. The events table is written on every API call.
 kubectl -n datahub-hynix scale deploy/benchmarks-polaris --replicas=0
@@ -191,7 +203,7 @@ kubectl -n datahub-hynix rollout restart deploy/benchmarks-polaris
 
 ```bash
 # The image that is actually running.
-kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=polaris \
+kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=benchmarks-polaris \
   -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
 # expect apache/polaris:1.6.0
 
@@ -312,7 +324,13 @@ can proceed.
 - `rateLimiter.type` is `no-op` here, so the `token-bucket.window` key that vanished from the
   upstream 1.6.0 chart is never emitted. Non-issue.
 
-**Open — everything that needs the cluster.** In particular: `helm get values
+**Measured on the cluster 2026-09-18** (by Kade, not this session): the live metastore is at
+**schema version 3** — `SELECT * FROM polaris_schema.version` → `version|3`, read from the
+primary pg-1. So the v3 → v4 migration applies, and `#F1`'s mistake (inferring the version
+from the file in this repo) has been avoided: the file and the database happen to agree, but
+that is now a fact rather than an assumption.
+
+**Open — everything else that needs the cluster.** In particular: `helm get values
 benchmarks-polaris` has *still* never been run, so the live replica count, the live logging
 config and the degree of divergence from `polaris/values.yaml` (`#5`) remain unknown; the
 live `polaris_schema.version` has not been read; the entity-name screen has not been run;
