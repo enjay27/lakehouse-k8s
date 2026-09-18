@@ -293,3 +293,57 @@ that prints only its own verdict, and the two sibling scripts here differ precis
 printed enough to expose a two-day-old false belief; step9 prints one field and could not have.
 If either script gets touched again, widening step9's informational block to the full mapping is
 the cheap change.
+
+---
+
+# Part 5 — the report side settled, and the task closed
+
+`GET polaris-report-2026.09.18/_mapping/field/report_type`:
+
+```json
+"report_type": { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } } }
+```
+
+**v6 was not applied here either**, on two independent discriminators. No `"index": false`, which
+`strings_keyword_only` sets. And `ignore_above: 256` where the template says **1024** — 256 is
+OpenSearch's built-in default for dynamically mapped strings, so this is the engine's own mapping
+rather than a partial application of ours. The second discriminator is the better one: absence of
+a key can have several explanations, a wrong *value* that exactly matches the engine default has
+only one.
+
+So `#32`'s single unread sentence was uniformly true. **The v6 mappings lived only in this repo
+from 2026-09-16 until 2026-09-18** — two days in which every document written was indexed under
+mappings nobody believed were running. Both templates were stored today, hours apart, by a task
+that had nothing to do with either.
+
+**The bounded consequence, stated so nobody over-reacts:** indices created 09-17 and 09-18 keep
+pre-v6 mappings for life — report `message` analysed where v6 wanted `index: false`, categoricals
+analysed where v6 wanted `keyword`-only, `client_ip` as `text` so no IP range queries on those two
+detail indices. No data is lost, nothing is unqueryable, and **no query in this repo changes
+shape**, because every one already goes through `.keyword`, which exists under both mappings. From
+2026-09-19 both index families are v6.
+
+## Closing tally
+
+The thread-field task itself was small: two lines deleted, one mapping restored. What it cost, and
+what it found, were both mostly elsewhere:
+
+- the premise it arrived with was half wrong, and the real justification had to be built;
+- the measurement it specified could not be delivered, and saying so was worth more than running
+  a weaker version of it;
+- three gates were wrong in the same way — verdict not tracking subject — and one of those was
+  mine;
+- and a diagnostic block printed in passing exposed that two index templates recorded as applied
+  two days earlier had never been applied at all.
+
+**Nothing in the last item was in scope.** It surfaced because `step12` prints current state
+rather than only its own verdict, which is the single most transferable thing in this session.
+
+## Open at close
+
+- helm revision not recorded (expect 21).
+- `step10`/`step11` never run on this roll, so `#32`/`#31`'s detail-by-logger and report-row
+  equalities were not re-established. This is the one substantive gap.
+- `#43`'s new `bad` branch has never fired.
+- Widening step9's informational block to the full mapping, if either template script is touched
+  again.

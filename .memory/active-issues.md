@@ -92,18 +92,30 @@ produces anyway since the Lua stopped writing `""` on 2026-09-10 — it discrimi
 **Treat the report side's prior state as unknown, not as "fine".** Given `#32`'s single unread
 sentence covered both, the likeliest answer is that it was equally un-applied.
 
-**One query settles it, if it is worth settling.** `report_type` is undeclared, so under v6 it
-falls to `strings_keyword_only` — `text` with **`index: false`** plus `.keyword`. Pre-v6 it is
-ordinary analysed `text` + `.keyword`:
+**SETTLED 2026-09-18: v6 was NOT applied to the report index either.**
+`GET polaris-report-2026.09.18/_mapping/field/report_type` returned:
 
 ```
-GET polaris-report-2026.09.18/_mapping/field/report_type   ->  "index": false  => v6 was applied
-                                                               no "index" key  => it was not
+"report_type": { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } } }
 ```
 
-Either way today's report index keeps its mappings for life; the consequence is only that report
-`message` may be analysed where v6 wanted it cheap, and categoricals analysed where v6 wanted
-`keyword`. No data is lost and nothing is unqueryable. **From tomorrow both indices are v6.**
+**Two independent discriminators, same answer.** No `"index": false` — the v6
+`strings_keyword_only` template sets it. And `ignore_above: 256` where the template says
+**1024**: 256 is OpenSearch's *built-in* default for dynamically mapped strings, so this is the
+engine's own mapping, not ours, with no room for a "maybe it was partly applied" reading.
+
+**So `#32`'s unread sentence was uniformly true of both templates: neither had ever been
+stored.** The v6 mappings existed only in this repo from 2026-09-16 until `step12` and `step9`
+ran on 2026-09-18. Every `polaris-logs-*` and `polaris-report-*` index created in between —
+09-17 and 09-18 — is on pre-v6 mappings **for life**, and today's two are the last of them.
+
+**The cost of the two-day gap is small and bounded**, which is worth stating so nobody
+over-reacts to it: on those indices report `message` is analysed where v6 wanted it
+`index: false`, categoricals are analysed where v6 wanted `keyword`-only, and `client_ip` is
+`text` where v6 wanted `ip` (so no IP range queries on 09-17/09-18 detail indices). **No data is
+lost, nothing is unqueryable, and no query in the repo changes shape** — every one already goes
+through `.keyword`, which exists under both mappings. **From 2026-09-19 both index families are
+v6.**
 - helm revision number (expected 21) — not recorded.
 - `step10`/`step11` window readout — not run; the detail-by-logger and report-row equality
   checks of `#32`/`#31` were therefore not re-established on this roll.
@@ -1015,9 +1027,10 @@ exists, Kade uninstalls manually. M5/tier 1 sizing out of scope.
 - **RESOLVED 2026-09-18, and the answer was no (`#42`):** the v6 **detail** template was never applied. `polaris-logs-2026.09.18`
   carried `client_ip=text` against the template's `ip`, which means it was still shaped by `#30`'s 7-field pre-v6 template.
   `step12` on 2026-09-18 stored v6 for the first time (11/11); **tomorrow's index is the first with v6 mappings at all.**
-  **`step9` also ran 2026-09-18: PASS 42/42**, so both v6 templates are now stored. Whether the report template had ever been
-  applied before is **undeterminable** from step9's output (it prints only `min_record_time` for existing indices) — unknown, not
-  fine; see `#42` for the one query that would settle it.
+  **`step9` also ran 2026-09-18: PASS 42/42**, and a direct mapping query settled the report side too — `report_type` came back
+  as plain dynamic `text` + `.keyword` at `ignore_above: 256` (OpenSearch's default, not the template's 1024, and with no
+  `index: false`). **NEITHER v6 template had ever been stored.** They existed only in this repo from 09-16 until 09-18.
+  Indices created 09-17 and 09-18 keep pre-v6 mappings for life; from 09-19 both families are v6. See `#42`.
 - **Gate before the roll, for P4's Polaris text parser only** (the two JSON parsers repeat Merge_Log's JSON decode and cannot succeed
   where it failed): if `k8s-logs` holds Polaris docs with the regex's capture field `logger`, that parser did work — then restore its
   filter + definition before rolling:

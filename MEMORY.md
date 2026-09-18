@@ -3,26 +3,28 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-18 (Polaris 1.6.0 live; thread fields restored, ROLLED and VERIFIED)
+## Now — 2026-09-18 (Polaris 1.6.0 live; thread fields ROLLED and VERIFIED; v6 templates finally applied)
 
-**Start here next session:** [`logging/HANDOFF-thread-fields-2026-09-18.md`](logging/HANDOFF-thread-fields-2026-09-18.md) — the
-next task, what 1.6.0 changed under the pipeline, and every open item. Docs index: [`logging/README.md`](logging/README.md).
+**Start here next session:** `.memory/active-issues.md` `#42` — the thread-field task is **DONE**, and `#42` carries both the
+outcome and the four things that were never read. [`logging/HANDOFF-thread-fields-2026-09-18.md`](logging/HANDOFF-thread-fields-2026-09-18.md)
+is now a **completed-task record**, not a to-do; read it for *why*, not *what next*. What 1.6.0 changed under the pipeline is in
+its Context section. Docs index: [`logging/README.md`](logging/README.md).
 
 **POLARIS 1.6.0 IS LIVE AND VERIFIED (2026-09-18).** Image `apache/polaris:1.6.0`, metastore **schema v4** (9 tables, 21
 indexes), plural `event-listener.types` **working** (`events` 2528 → 2536, timestamp moved), **console still JSON** so tier-2
 keeps parsing. `#35` closed — 1.3.0 never met v4, so that pairing is *untested, not survived*. Steps 0–5 done; step 1's
 corrected name screen still to re-run before any ladder.
 
-**`#42` ROLLED AND VERIFIED (2026-09-18, pod 07:23:34Z, image 5.1.1).** `threadName`/`threadId` back in `polaris-logs-*`,
-`ndc` out; step3 after traffic **367/367 carry `message`, `threadName.keyword`, `threadId`; 0 carry `ndc`** — the inverse of
-`#30`. Tier-2 `ok=367 errors=0`, Lua drop 57.5 % (policy unchanged), Lua sha unchanged (values-only as planned). Cost accepted,
-**not measured** (+47 B/doc); the before/after was **withdrawn** as undeliverable. **Query `threadName.keyword`, never bare.**
-**`step12` PASS 11/11 (2026-09-18) — and its BEFORE block closed `#32`'s open item negatively: the v6 template had NEVER been
-applied.** `polaris-logs-2026.09.18` carried `client_ip=text` against the template's `ip`, so it still ran `#30`'s 7-field pre-v6
-template. **Tomorrow's index is the first with v6 mappings at all.** **`step9` also PASS 42/42 — both v6 templates are now on the
-cluster, which this morning neither was.** Whether the *report* one had ever been applied is undeterminable from its output:
-unknown, not fine (`#42` has the one query). Also unread: helm revision (expect 21), `step10`/`step11`. **`#43`:** step3's
-presence checks now self-arm (`huh` never set `FAIL`); `bash -n` only.
+**`#42` DONE — `threadName`/`threadId` restored, ROLLED and VERIFIED (2026-09-18, pod 07:23:34Z).** step3 after traffic
+**367/367 carry `message`, `threadName.keyword`, `threadId`; 0 carry `ndc`** — the inverse of `#30`. Values-only (Lua sha
+unchanged), tier-2 `ok=367 errors=0`, Lua drop 57.5 % (policy unchanged). Cost accepted, **not measured** (+47 B/doc): the
+before/after was **withdrawn** as undeliverable. **Query `threadName.keyword`, never bare.**
+
+**`step12` + `step9` PASS (11/11, 42/42) — and they revealed NEITHER v6 template had ever been stored**, only ever in this repo
+from 09-16 to 09-18 (`client_ip=text`; `report_type` at OpenSearch's default `ignore_above: 256`). **Indices created 09-17/09-18
+keep pre-v6 mappings for life; from 09-19 both families are v6.** No data lost, no repo query changes shape (all use `.keyword`).
+**Never read on this roll:** helm revision (expect 21), `step10`/`step11` — so `#32`/`#31`'s equalities were not re-established.
+**`#43`:** step3's presence checks now self-arm (`huh` never set `FAIL`); `bash -n` only.
 
 **Pipeline running:** `benchmarks-fluent-bit` policy v5 / **report schema 6** (`#32`): field `message`, trim before the one Lua
 filter. **`WINDOW_SECONDS` is still 30** (1800 s is a *Lua* change — combining it with the above needs
@@ -40,7 +42,7 @@ file**. Also open: `#36`, `#37`, `#40`, and a **plaintext OpenSearch password in
 pg_wal_replay_pause()` on the standbys settles it in one command. The primary-unavailable harness is **planned, not built**:
 [`postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md`](postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md).
 
-Detail for every `#n` above: [`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#41`. Do not re-summarise it here.
+Detail for every `#n` above: [`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#43`. Do not re-summarise it here.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 
