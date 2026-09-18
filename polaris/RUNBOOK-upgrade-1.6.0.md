@@ -254,6 +254,53 @@ SQL
 Expect `version_value = 4` and the three new tables present. The script wraps everything in
 one transaction and writes the version row **last**, so a failure leaves the database at 3.
 
+### 2c IS DONE — 2026-09-18. Both checks ran, and one of them found something.
+
+Kade extracted both files from
+`/tmp/polaris-1.6.0-deployments/lib/main/org.apache.polaris.polaris-relational-jdbc-1.6.0.jar`
+and ran the verifier with the **shipped** v3 as the baseline.
+
+**The verifier PASSED.** v3 10 objects, v4 21, v4 adds 11, the migration has 11 and no extras;
+the 10 objects v3 and v4 share are declared identically. Declared versions 3 / 4 / 4. So the
+delta is additive-only *measured against the distribution*, not against our own copy of it —
+which is the circularity `ce72bde` existed to remove, and it came out in the runbook's favour.
+
+**The baseline diff came back clean too.** `/tmp/schema-v3.shipped.sql` against
+`postgresql/schema/schema_v3.sql`: **indentation only**, plus a missing trailing newline on the
+repo copy. Every column, type, constraint, index and the version value are identical. The repo
+copy is a reformatted shipped v3 — `CLAUDE.md`'s "ASF-shipped file and the authority" claim was
+never tested before today, and it holds. `#F1`'s mistake is not sitting in the baseline.
+
+**So do NOT vendor the two shipped files into the repo.** That was on the table; the diff
+result removes the reason for it. `schema_v3.sql` *is* the shipped v3, and this repo already
+has a duplicate-files problem (`.memory/repository-map.md`). If you want the v4 file kept, keep
+it outside the repo — it is reproducible from the image in three commands.
+
+**What the PASS did NOT cover, and what that cost.** The verifier's two original claims only
+ever looked at `CREATE TABLE/INDEX/SCHEMA/VIEW`. In the shipped v3, **26 of 36 statements are
+neither** — so "the transcription agrees with the shipped schema" was a statement about DDL
+objects, not about the file. Grepping the shipped v4 for everything else found:
+
+- **no** `CREATE FUNCTION` / `SEQUENCE` / `TYPE` / `TRIGGER`, **no** `GRANT`, **no** `ALTER`,
+  and exactly one `INSERT` (the version row). The additive-only finding is intact.
+- **two `COMMENT ON TABLE` statements the migration omitted** — shipped v4 lines 226 and 295,
+  on `scan_metrics_report` and `commit_metrics_report`. Now added to
+  `postgresql/schema/migrate_v3_to_v4.sql`. (Upstream comments only those two;
+  `idempotency_records` carries none.)
+
+Two table comments are harmless, which is precisely what makes them worth the fix: the blind
+spot that hid them would equally have hidden a `CREATE FUNCTION`. The verifier now has a
+**CLAIM 3** that compares residual statements — failing on a v4-added function, grant, alter
+or seed insert the migration omits, and noting an omitted `COMMENT ON` rather than blocking on
+it. Self-tested 2026-09-18: a round trip against a synthetic v4 reproduces the real run's
+output exactly (PASS, and before the fix, the two notes), and two negative controls — v4 plus a
+`CREATE FUNCTION`, v4 plus a `GRANT` — both trip CLAIM 3.
+
+**Either script is now safe in 2e**, and the shipped file remains the preferable one; ours is
+the fallback that guards the version. **2b, the dump, has still not been run** and is the
+rollback for this step — it is the next thing to do, before 2d. Re-confirm pg-1 is still the
+primary while you are there (`0c`'s note).
+
 ### Why 2c is not a `kubectl exec` into the running pod
 
 The first version of this step was:
@@ -285,13 +332,22 @@ place to look, not `/deployments/*.jar`.
 ### `verify_v4_transcription.py` — what it checks, and what a PASS does not mean
 
 `postgresql/schema/verify_v4_transcription.py` compares three text files and exits non-zero if
-either claim behind the transcribed migration fails:
+any of the three claims behind the transcribed migration fails:
 
 - **Claim 1, additive-only:** every object v3 and v4 share is declared *identically*, so no
   `ALTER` and no data rewrite is needed. A violation here means the migration is wrong in
   principle, not just in detail.
 - **Claim 2, faithful transcription:** every object v4 adds over v3 appears in our migration,
   normalised-identical (comments, whitespace, case and `IF NOT EXISTS` folded out).
+
+- **Claim 3, added 2026-09-18, nothing is invisible:** claims 1 and 2 only see
+  `CREATE TABLE/INDEX/SCHEMA/VIEW`. Claim 3 takes every *other* statement — `COMMENT ON`,
+  `GRANT`, `CREATE FUNCTION`/`SEQUENCE`/`TYPE`/`TRIGGER`, seed `INSERT`s — and fails if v4
+  adds one the migration omits, except for an annotation (`COMMENT ON`), which is reported as
+  a note. The transaction wrapper, `SET search_path`, psql meta-commands and the version-row
+  write are excluded: their shape legitimately differs between a full schema and a delta, and
+  `declared_version` already covers the last of them. **This claim exists because the first
+  real run of this script passed without it while the migration was two statements short.**
 
 It also refuses a v3 file not declaring 3, a v4 file not declaring 4, a migration not setting
 4, any `ALTER TABLE` in the migration, a missing transaction, and any object our script creates

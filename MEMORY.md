@@ -21,26 +21,14 @@ report rows −31 % bytes. Query strings via `.keyword`. **`WINDOW_SECONDS` is s
 `SELECT pg_wal_replay_pause()` on the standbys settles it in one command. The primary-unavailable harness is **planned, not built**:
 [`postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md`](postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md).
 
-**POLARIS 1.6.0 (2026-09-18): committed, NOTHING RUN.** Ordered steps:
-[`polaris/RUNBOOK-upgrade-1.6.0.md`](polaris/RUNBOOK-upgrade-1.6.0.md) — supersedes the 09-17 handoff's ordering (`#33`).
-Tag/Chart 1.6.0, plural `event-listener.types`, console **INFO** + all 13 DEBUG categories demoted. Not rendered, not applied —
-**the running Polaris is 1.3.0 with DEBUG output; do not read the level off the file.** Step 0's capture still goes first (`#5`).
-**STEP 0 COMPLETE (Kade ran it).** Metastore **v3**. **One Polaris pod** (HPA 1/3, idle 1% cpu) → **`#15` hypothesis C dead**,
-**`#8` re-armed**. **`#5` RESOLVED — REFUTED:** the working tree matched live R5 on **all 210 keys** bar `afc88e2`'s 14, and
-`--all` added nothing, so no chart default was in play; the DEBUG-console scare was one uncommitted edit already applied at R5.
-`afc88e2`'s logging half reconciles the file, does **not** change the cluster → **the upgrade will not reduce `polaris-logs-*`
-volume.** **The console emits JSON** (`QUARKUS_LOG_CONSOLE_JSON_ENABLED=true`, ordinal 300 > properties 250), so
-`logging.console.json:false` + `format` are **inert** — that, not the threshold, is the real dead config, and the tier-2 Lua
-depends on the env var. `topologySpreadConstraints` selects `name: polaris` → **0 pods, inert since install** (`#8`'s "spreading"
-is not in effect). JVM: `-XX:+ZGenerational` safe on 1.6.0's **JDK 21** image, removed in JDK 25. **Step 1 reframed:** the 1.6.0 name tightening applies to
-create/register/rename only — pre-existing entities are **unaffected**, so it was never a blocker. Screen returned **0 rows**, but
-on a query that over-tested dots and never tested `#`, `+`, U+0080-U+009F or edge whitespace; corrected query in step 1, re-run
-before the ladder. **Next: step 2, the v3→v4 migration** (dump first; HPA may undo the scale-to-0).
-Corrections: **1.6.0 needs schema v4, not v5** (the `events.catalog_id` ALTER is 1.7.0) and **v3→v4 is additive only**
-(`postgresql/schema/migrate_v3_to_v4.sql` — transcribed; diff against the shipped file first). "`maxReplicas 3 → 1` already in
-the tree" was **false** — `#8` still armed. New: **1.6.0 rejects entity names with dots/colons/backslashes — screen first**
-(step 1). INFO gates categories, so `#15`/`#24` re-runs need the `--set` override in the `categories:` comment. 1.7.0:
-`OPTIMIZED_SIBLING_CHECK` 403s every nested namespace (apache/polaris#5521) — 1.6.0 is clear.
+**POLARIS 1.6.0 (2026-09-18): committed, NOTHING APPLIED.** Ordered steps:
+[`polaris/RUNBOOK-upgrade-1.6.0.md`](polaris/RUNBOOK-upgrade-1.6.0.md) (supersedes the 09-17 handoff's ordering, `#33`).
+**The running Polaris is 1.3.0.** Its console is at **INFO** and emits **JSON** — both live since R5, neither readable off the
+values file. Metastore is at **schema v3**. One pod, HPA 1/3 (`#8` armed — it may undo `2d`'s scale-to-0).
+**Step 0 and step 2c are DONE; step 1's screen needs its corrected query re-run.** Findings from them — `#5` refuted, the dead
+config is the JSON env var and not the threshold, the inert topology selector, the schema-check PASS and the two comments it
+missed — are in [`.memory/active-issues.md`](.memory/active-issues.md) `#33`/`#34` and the runbook. Do not re-summarise them here.
+**Next: `2b`, the metastore dump. Not run, and it is the rollback for step 2.** Then re-confirm pg-1 primary, `2d`, `2e`.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 

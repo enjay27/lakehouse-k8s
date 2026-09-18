@@ -67,7 +67,10 @@ unverified — see `active-issues.md` #33.
 |---|---|
 | 1.6.0 required metastore schema version | **4** (`DatabaseType.java`, all three DB types) |
 | this install's schema version | **3** — MEASURED 2026-09-18 on primary pg-1: `SELECT * FROM polaris_schema.version` → `version|3` |
-| v3 → v4 new objects | 3 indexes + 3 tables + 5 indexes = **11 objects**, 0 ALTERs |
+| v3 → v4 new objects | 3 indexes + 3 tables + 5 indexes = **11 objects**, 0 ALTERs — VERIFIED 2026-09-18 against the shipped files (`#34`) |
+| shipped v3 vs repo `schema_v3.sql` | **indentation only** — the "authority" claim in CLAUDE.md is true, tested 2026-09-18 |
+| shipped v4 object counts | v3 10, v4 21, adds 11; 10 shared objects, **0 differing** |
+| shipped v4 non-object statements our migration lacked | **2** `COMMENT ON TABLE` (lines 226, 295) — added; no GRANT / FUNCTION / ALTER / seed INSERT exists in v4 |
 | v5 (`events.catalog_id` nullable) | **1.7.0**, not 1.6.0 |
 | 1.6.0 image tag | `1.6.0` — no `-incubating`; graduated after 1.3.0 |
 | `polaris.event-listener.type` | deprecated upstream **since 1.5.0**; plural `types` is current |

@@ -5,6 +5,52 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#34 — RESOLVED-INSTRUCTIVE. The v3 → v4 transcription is verified against the shipped
+schema, and `schema_v3.sql` really is the ASF file. But the verifier's PASS was narrower than
+its wording, and the gap held two real omissions.** 2026-09-18.
+
+Three things were settled in one run, all by Kade on his machine (this session has no Docker or
+cluster reach and ran none of it):
+
+1. **The baseline. `CLAUDE.md` calls `postgresql/schema/schema_v3.sql` "the ASF-shipped file
+   and the authority"; nothing had ever tested that.** `diff` against
+   `/tmp/schema-v3.shipped.sql`, extracted from the 1.6.0 jar: **indentation only**, plus a
+   missing trailing newline on the repo copy. No column, type, constraint, index or version
+   value differs. The claim holds, and `#F1`'s mistake is not in the baseline. Everything the
+   runbook concluded about the delta — which was all computed against that file — stands.
+2. **The transcription. PASS.** v3 10 objects, v4 21, v4 adds 11, `migrate_v3_to_v4.sql` has
+   those 11 and nothing else; the 10 shared objects are declared identically. Additive-only is
+   now measured against the distribution rather than against our own copy of it, which was the
+   circularity `ce72bde` was written to remove.
+3. **The instructive part: a PASS on those two claims was not what it appeared to be.** Both
+   claims only inspect `CREATE TABLE/INDEX/SCHEMA/VIEW`. **In the shipped v3, 26 of 36
+   statements are neither** — `COMMENT ON`, `SET search_path`, the version `INSERT`. So the
+   PASS line "the transcription agrees with the shipped schema" described the DDL objects, not
+   the file. Checking the rest by hand found **two `COMMENT ON TABLE` statements the migration
+   omitted** (shipped v4 lines 226 and 295, on `scan_metrics_report` and
+   `commit_metrics_report`; `idempotency_records` has none upstream). Also confirmed absent
+   from shipped v4: any `CREATE FUNCTION`/`SEQUENCE`/`TYPE`/`TRIGGER`, any `GRANT`, any
+   `ALTER`, and any `INSERT` but the version row — so additive-only survives the wider look.
+
+The two comments are cosmetic. **That is the reason to keep this entry**, not a reason to shrug
+at it: the blind spot that hid two table comments would have hidden a `CREATE FUNCTION` just as
+completely, and the verifier would have printed PASS either way. Both are fixed —
+`migrate_v3_to_v4.sql` carries the comments, and `verify_v4_transcription.py` has a **CLAIM 3**
+that compares residual statements and fails on a v4-added function, grant, alter or seed insert
+the migration omits (an omitted `COMMENT ON` is a note, not a failure). Self-tested with a
+round trip and two negative controls.
+
+**The generalisation, which is this repo's recurring one:** a verifier's PASS is scoped to what
+its parser can see, and that scope is rarely what the PASS line says. `verify_v4_transcription.py`
+had already caught itself once this way — its first version read zero statements because an
+apostrophe in a comment swallowed every semicolon. Same lesson at the level up: **ask what the
+check cannot see before trusting what it says.**
+
+**Still outstanding for step 2:** `2b`, the metastore dump, has **not** been run and is the
+rollback. Re-confirm pg-1 is the primary before `2e` (the `0c` note). Not vendoring the shipped
+files into the repo — the baseline diff removes the reason to, and this repo already has a
+duplicate-files problem.
+
 **#33 — Polaris 1.6.0 is committed to the chart and NOT applied. The cluster still runs 1.3.0-incubating.** 2026-09-18.
 
 `polaris/values.yaml` now pins `image.tag: "1.6.0"`, `polaris/Chart.yaml` says
@@ -282,8 +328,8 @@ reading upstream at tag `apache-polaris-1.6.0` (not from the cluster):
    No `ALTER`, no column change, no data rewrite; `entities`, `grant_records`,
    `principal_authentication_data`, `policy_mapping_record` and `events` are byte-identical
    between our `schema_v3.sql` and upstream `schema-v4.sql`. Script:
-   `postgresql/schema/migrate_v3_to_v4.sql` — **transcribed from upstream, not the shipped
-   file; diff it against the v4 resource in the 1.6.0 image before running it.**
+   `postgresql/schema/migrate_v3_to_v4.sql` — transcribed from upstream, not the shipped file.
+   **CHECKED against the shipped files 2026-09-18 — PASS. See `#34`.**
 3. **The handoff claimed the working tree already carried `maxReplicas 3 → 1` uncommitted. It
    did not.** The only uncommitted change on 2026-09-18 was the console threshold. So `#8`
    (HPA can scale Polaris to 3 pods sharing one log PVC) is **still open and still armed**:

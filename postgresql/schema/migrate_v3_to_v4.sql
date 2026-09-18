@@ -28,18 +28,33 @@
 --   events.catalog_id stays TEXT NOT NULL, exactly as v3 has it. The audit event listener
 --   configured in polaris/values.yaml keeps writing the same shape.
 --
--- PROVENANCE, AND THE ONE THING TO DO BEFORE RUNNING THIS
+-- PROVENANCE -- CHECKED AGAINST THE SHIPPED FILE, 2026-09-18. PASS.
 --   The statements below were transcribed from upstream schema-v4.sql at tag
---   apache-polaris-1.6.0. They are NOT the shipped file. Before running this against the
---   metastore, diff it against the v4 script that actually ships in the 1.6.0 image:
+--   apache-polaris-1.6.0. They are NOT the shipped file, so they were verified against it:
 --
---     kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
---       sh -c 'unzip -p /deployments/*.jar postgres/schema-v4.sql' > /tmp/schema-v4.shipped.sql
---     # (if the resource is not at that path, find it:
---     #  unzip -l /deployments/*.jar | grep schema-v)
+--     python3 postgresql/schema/verify_v4_transcription.py \
+--         --v3        /tmp/schema-v3.shipped.sql \
+--         --v4        /tmp/schema-v4.shipped.sql \
+--         --migration postgresql/schema/migrate_v3_to_v4.sql
+--
+--   -> PASS. v3 10 objects, v4 21, v4 adds 11, this file has those 11 and nothing else;
+--      the 10 objects v3 and v4 share are declared identically, so the delta really is
+--      additive. Both shipped files came out of the 1.6.0 image via Docker -- see the
+--      runbook's step 2c, and do NOT use the `kubectl exec deploy/benchmarks-polaris --
+--      unzip -p /deployments/*.jar` form this header used to give: the running pod is
+--      1.3.0, which does not ship schema-v4.sql at all, and a Quarkus thin jar keeps its
+--      resources under /deployments/lib/ regardless. That command hung, and it could not
+--      have answered the question even if it had returned.
+--
+--   The same run also settled a claim nothing had ever tested: CLAUDE.md calls this repo's
+--   schema_v3.sql "the ASF-shipped file and the authority", and every conclusion above was
+--   computed against it. Diffed against the shipped v3 it differs in INDENTATION ONLY (plus
+--   a missing trailing newline) -- no column, type, constraint, index or version value
+--   moves. The baseline holds.
 --
 --   Every statement here is IF NOT EXISTS, so running the shipped schema-v4.sql directly
 --   against a v3 database is itself a valid migration and is preferable if you have it.
+--   The one thing the shipped file does not do is refuse to run on a non-v3 database.
 --
 -- HOW TO RUN
 --   Take a metastore dump first. Then, against the PRIMARY (pg-1 as of 2026-09-17, confirm
@@ -205,7 +220,24 @@ CREATE INDEX IF NOT EXISTS idx_commit_report_timestamp ON commit_metrics_report(
 CREATE INDEX IF NOT EXISTS idx_commit_report_lookup ON commit_metrics_report(realm_id, catalog_id, table_id, timestamp_ms);
 
 -- ---------------------------------------------------------------------------
--- 4. Record the new version LAST, so a failure above leaves the row at 3.
+-- 4. Table comments, verbatim from the shipped schema-v4.sql (its lines 226, 295).
+--
+--    These were missing until 2026-09-18. The verifier's two original claims are about
+--    CREATE TABLE/INDEX/SCHEMA/VIEW and could not see them, so it reported PASS on a
+--    migration that left the database one annotation short of the shipped file's. Harmless
+--    in itself -- which is exactly why it is the useful kind of miss to find: the same blind
+--    spot would have hidden a CREATE FUNCTION or a GRANT. The verifier now checks residual
+--    statements too (its CLAIM 3).
+--
+--    Upstream comments only these two tables; idempotency_records carries none. Do not add
+--    one for symmetry -- the point is to match the shipped file, not to improve on it.
+-- ---------------------------------------------------------------------------
+
+COMMENT ON TABLE scan_metrics_report IS 'Scan metrics reports as first-class entities';
+COMMENT ON TABLE commit_metrics_report IS 'Commit metrics reports as first-class entities';
+
+-- ---------------------------------------------------------------------------
+-- 5. Record the new version LAST, so a failure above leaves the row at 3.
 -- ---------------------------------------------------------------------------
 
 UPDATE polaris_schema.version SET version_value = 4 WHERE version_key = 'version';

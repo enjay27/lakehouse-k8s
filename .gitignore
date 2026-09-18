@@ -7,3 +7,10 @@ postgresql-ha-*.tgz
 # ("exported helm get values dumps"); this makes it hard to do by accident.
 *.render.txt
 .scratch/
+
+# Python bytecode from running postgresql/schema/verify_v4_transcription.py in place.
+__pycache__/
+*.pyc
+
+# Cowork cannot delete inside the mount, so files it needs gone land here.
+_to_delete/

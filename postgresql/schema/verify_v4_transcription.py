@@ -14,13 +14,38 @@ WHY THIS EXISTS
   plus a guard, so the two differ almost everywhere while still agreeing on what matters.
   This script checks the two claims directly and exits non-zero if either fails.
 
+  Both claims are about CREATE TABLE/INDEX/SCHEMA/VIEW and nothing else, which is a narrower
+  guarantee than the PASS line suggests -- in the shipped v3, 26 of 36 statements are neither.
+  So a third check was added 2026-09-18 (see RESIDUAL STATEMENTS below), after the first real
+  run of this script passed on the claims while the migration was in fact missing two
+  statements the shipped file has.
+
+RESIDUAL STATEMENTS -- the claims' blind spot, and why it is checked separately
+  Everything that is not one of those four CREATE forms -- COMMENT ON, GRANT, CREATE FUNCTION
+  / SEQUENCE / TYPE / TRIGGER, seed INSERTs -- is invisible to both claims. If the shipped v4
+  added a function and the migration omitted it, claims 1 and 2 would both still pass and the
+  migration would be incomplete. The residual check compares those statements too:
+
+    * a v4-added statement the migration omits FAILS, unless
+    * it only annotates (COMMENT ON), which is reported as a NOTE -- the database ends up
+      functionally identical, so it is not worth blocking a migration over.
+
+  Statements whose shape legitimately differs between a full schema and a delta -- BEGIN /
+  COMMIT, SET search_path, psql meta-commands, our version guard, and the version row write
+  itself -- are excluded; `declared_version` already covers the last of those.
+
 USAGE
   Extract the shipped file first (runbook step 2c, via Docker -- not from the running pod):
 
     python3 postgresql/schema/verify_v4_transcription.py \\
-        --v3       postgresql/schema/schema_v3.sql \\
-        --v4       /tmp/schema-v4.shipped.sql \\
+        --v3        /tmp/schema-v3.shipped.sql \\
+        --v4        /tmp/schema-v4.shipped.sql \\
         --migration postgresql/schema/migrate_v3_to_v4.sql
+
+  Pass the SHIPPED v3, not this repo's schema_v3.sql. The jar carries both. Feeding the repo
+  copy back as the baseline would check the transcription against the assumption it rests on
+  -- that the repo copy IS the shipped v3. (That assumption was tested on 2026-09-18 and
+  holds: the two differ in indentation only. The shipped file is still the right input.)
 
   PASS means: run either script in step 2e; they agree. Prefer the shipped one -- it is the
   authority -- and keep ours for its version guard.
@@ -144,6 +169,55 @@ def objects(text):
     return found
 
 
+# ---------------------------------------------------------------- residual statements
+
+# Shapes that legitimately differ between a FULL schema and a delta, so they carry no
+# information about the transcription: the transaction wrapper, the search_path, psql
+# meta-commands, and our version guard. The version row write is handled by
+# declared_version() -- the full schema INSERTs it, the migration UPDATEs it.
+RESIDUAL_IGNORE = re.compile(
+    r"^(set\s|\\set\s|begin\b|commit\b|rollback\b|start\s+transaction\b|do\s+\$)", re.I
+)
+VERSION_WRITE = re.compile(
+    r"^(insert\s+into\s+(polaris_schema\.)?version\b"
+    r"|update\s+(polaris_schema\.)?version\s+set)",
+    re.I,
+)
+
+# Annotation only: omitting it leaves the database functionally identical, so it is reported
+# rather than failed. Nothing else gets that treatment.
+COSMETIC = re.compile(r"^comment\s+on\b", re.I)
+
+
+def residual_kind(normalised):
+    m = re.match(r"create\s+(?:or\s+replace\s+)?(\w+)", normalised)
+    if m:
+        return f"create {m.group(1)}"
+    m = re.match(
+        r"(comment|grant|revoke|alter|insert|update|delete|truncate|call|select|with)\b",
+        normalised,
+    )
+    return m.group(1) if m else "other"
+
+
+def residuals(text):
+    """{normalised_statement: kind} for every statement the two object claims cannot see.
+
+    OBJ matches CREATE TABLE/INDEX/SCHEMA/VIEW and nothing else, so both claims are silent
+    about the rest of the file. In the shipped v3 that is 26 statements out of 36. Surfacing
+    them is what makes a PASS mean what it looks like it means.
+    """
+    out = {}
+    for raw in split_statements(text):
+        n = normalise(raw)
+        if not n:
+            continue
+        if OBJ.match(n) or RESIDUAL_IGNORE.match(n) or VERSION_WRITE.match(n):
+            continue
+        out[n] = residual_kind(n)
+    return out
+
+
 def declared_version(text):
     for pat in (
         r"insert\s+into\s+version[^;]*?values\s*\(\s*'version'\s*,\s*(\d+)",
@@ -189,7 +263,7 @@ class Report:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--v3", required=True, help="this repo's schema_v3.sql")
+    ap.add_argument("--v3", required=True, help="schema-v3.sql extracted from the 1.6.0 image")
     ap.add_argument("--v4", required=True, help="schema-v4.sql extracted from the 1.6.0 image")
     ap.add_argument("--migration", required=True, help="migrate_v3_to_v4.sql")
     args = ap.parse_args()
@@ -250,6 +324,25 @@ def main():
             f"the migration creates {kind} {name}, which is in neither v3 nor v4 -- "
             "an invention, remove it"
         )
+
+    # --- claim 3: the statements the object claims cannot see --------------
+    r3, r4, rm = (residuals(texts[k]) for k in ("v3", "v4", "migration"))
+    added_res = {n: k for n, k in r4.items() if n not in r3}
+    r.note(
+        f"non-object statements -- v3 {len(r3)}, v4 {len(r4)}, migration {len(rm)}; "
+        f"v4 adds {len(added_res)}"
+    )
+    for n, kind in sorted(added_res.items()):
+        if n in rm:
+            continue
+        if COSMETIC.match(n):
+            r.note(f"NOTE, annotation only -- v4 has a `{kind}` the migration omits: {n}")
+        else:
+            r.fail(
+                f"CLAIM 3 BROKEN -- v4 adds a `{kind}` statement and the migration omits it. "
+                "Neither object claim can see this, so a PASS on those alone would hide it",
+                n,
+            )
 
     # --- shape checks the claims imply ------------------------------------
     if re.search(r"\balter\s+table\b", strip_sql_comments(texts["migration"]), re.I):
