@@ -90,7 +90,10 @@ unverified — see `active-issues.md` #33.
 | `fb-polaris-shipper-fluent-bit` | **still installed** 2026-09-18, age 27d — the OpenSearch cutover plan said to uninstall it and MEMORY.md says Kade will; neither has happened |
 | console output on 1.6.0 | **still JSON** — verified from `kubectl logs` 2026-09-18. `QUARKUS_LOG_CONSOLE_JSON_ENABLED` survives the upgrade; tier-2 Lua and report schema v6 keep parsing |
 | Polaris replicas, an hour after step 4 | **2** (was 3) — the memory metric is **not** monotonic: ZGC uncommits, so the HPA **flaps** at `cpu: 2%` rather than sticking at max (`#39`, correcting an earlier claim) |
-| pod restarts after the upgrade | `…-5vpmc` **restartCount 3**, `…-fl8jd` 0 — reason NOT yet read. Max heap 1.33Gi in a 2Gi limit, so OOMKill is the first suspect |
+| pod restarts after the upgrade | `…-5vpmc` **restartCount 3** — `Reason: Error`, **exit 1**, dead **4 s** after start at 14:41:12 KST. **NOT an OOMKill** (that reports `OOMKilled`/137). Unexplained — `#41` |
+| replica sequence, 2026-09-18 | `0` → `1` → **`3`** → `2` → **`1`** in about an hour. Resting state is `minReplicas` 1; the scale-up is a JVM warm-up artefact (`#39`) |
+| `QUARKUS_LOG_*` in the running container | exactly three: `FILE_JSON_ENABLED=true`, `FILE_JSON_PRETTY_PRINT=false`, `CONSOLE_JSON_ENABLED=true`. **No `QUARKUS_LOG_FILE_ENABLED`** → the file handler really is off, and the two FILE_JSON vars are inert |
+| Polaris image shell | **no `zcat`** (UBI9 runtime) — so probably no `gunzip`/`tar` either, which rules out `kubectl cp`. `exec -- cat file.gz > local.gz` then decompress on the Mac |
 | `/deployments/logs/` on 1.6.0 | **NOT empty** — active `polaris.log` (mtime Sep 18 **01:35**) + ~130 rotated `.gz` back to **Aug 21**, ~27 MB. Pods started 05:41 and wrote nothing, so the handler is off *now* (`#38` refuted as written) |
 | log rotation suffixes | reach **`.14`** per day against `rotation.maxBackupIndex: 5` — either inert config or multiple writers (`#40`) |
 | v5 (`events.catalog_id` nullable) | **1.7.0**, not 1.6.0 |

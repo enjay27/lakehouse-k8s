@@ -5,6 +5,58 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#41 — OPEN. A 1.6.0 pod crashed three times at rollout: `Reason: Error`, exit code 1, dead
+four seconds after start. NOT an OOMKill.** 2026-09-18.
+
+```
+Last State:  Terminated   Reason: Error   Exit Code: 1
+Started:     Fri, 18 Sep 2026 14:41:12 +0900
+Finished:    Fri, 18 Sep 2026 14:41:16 +0900      <- four seconds
+```
+
+`benchmarks-polaris-6dcf6758f9-5vpmc` carries `restartCount 3`; its sibling `…-fl8jd` has 0.
+14:41 KST is 05:41 UTC, which is the rollout minute, so the three crashes were at start-up and
+the pod has been `Running` since. **The upgrade is verified regardless** — the pod that
+serves traffic is this one, and the listener, console JSON and metastore checks all passed on
+it. This is about an unexplained crash loop, not a broken upgrade.
+
+**OOMKill was my first suspect and it is wrong.** `Reason: Error` with exit code 1 is the
+process exiting, not the kernel killing it; an OOMKill reports `OOMKilled` and exit 137. So the
+`1.33Gi` max heap in a `2Gi` limit is not implicated by this evidence, and the memory-pressure
+story belongs to `#39` alone.
+
+**Four seconds is the useful number.** It is too fast for a JDBC connect timeout and too slow
+for the JVM rejecting a VM option outright, which lands in well under a second. That points at
+Quarkus starting and then failing — a config validation error, a bind failure, or something the
+application does at boot.
+
+**Candidates, in the order the evidence favours them:**
+
+1. **A start-up race between simultaneously starting pods against the metastore.** Three pods
+   came up within the same minute and Polaris does metastore work at boot. This repo already
+   has an entry for intermittent duplicate-key/500s from PG replica lag, and three concurrent
+   bootstraps of realm `POLARIS` is the shape that provokes it. That the *second* pod never
+   crashed fits a race that one loser hits.
+2. **An unrecognized VM option.** `-XX:+ZGenerational` is valid on JDK 21 and the running image
+   is `java-21-openjdk-21.0.11`, so this *should* be clean — but **the runbook's own
+   `Unrecognized VM option` check was never run**, and the runbook predicted precisely this
+   presentation ("CrashLoopBackOff with nothing useful in the Polaris log"). Cheap to exclude.
+3. **A Quarkus config validation failure** on one of the changed keys — the plural
+   `event-listener.types` is read successfully by the surviving pod, so this is unlikely, but a
+   validation error is exit 1 at about this latency.
+
+**One command answers it**, and it also covers candidate 2:
+
+```bash
+kubectl -n datahub-hynix logs benchmarks-polaris-6dcf6758f9-5vpmc --previous
+kubectl -n datahub-hynix logs benchmarks-polaris-6dcf6758f9-5vpmc --previous \
+  | grep -iE 'unrecognized vm option|error|exception|caused by' | head -30
+```
+
+**Run it before that pod is replaced.** `--previous` keeps only the most recent terminated
+container, and `#39`'s flapping means pods come and go on their own — this reading is
+perishable in the same way step 0's were, and the replica count is already back to 1.
+
 **#40 — OPEN QUESTION. The Polaris log archive carries per-day rotation suffixes up to `.14`
 while `values.yaml` sets `maxBackupIndex: 5`, and several days show a burst of same-size
 rotations minutes apart — which is the shape `#8` predicted.** 2026-09-18.
@@ -35,8 +87,12 @@ those days** and whether records interleave inside one file:
 # Were there multiple Polaris pods on 2026-09-09? (#8 needs that; the HPA had no metrics then)
 kubectl -n datahub-hynix get events --field-selector reason=ScalingReplicaSet | head
 # Do records from two hostNames appear inside ONE rotated file?
+# NOT zcat -- the UBI9 runtime image has no zcat (tried 2026-09-18, `command not found`), and
+# probably no gunzip or tar either, which also rules out `kubectl cp`. Stream the bytes out and
+# decompress on the Mac:
 kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
-  sh -c 'zcat /deployments/logs/polaris.log.2026-09-09.5.gz | grep -o "\"hostName\":\"[^\"]*\"" | sort -u'
+  cat /deployments/logs/polaris.log.2026-09-09.5.gz > /tmp/polaris-0909-5.gz
+gunzip -c /tmp/polaris-0909-5.gz | grep -o '"hostName":"[^"]*"' | sort -u
 ```
 
 Two distinct `hostName` values inside one file is direct proof of interleaved writers and
@@ -85,7 +141,13 @@ Two consequences:
    warm-up and GC pressure, down after ZGC returns pages, at `cpu: 2%` throughout. Pod churn
    rather than a stuck maximum. For `#15` that is worse, not better: replica count changes
    under a running ladder, so hypothesis C is **intermittently** live and a run can straddle a
-   scale event. Steady state is somewhere between `minReplicas` and `maxReplicas`, unpredictably.
+   scale event.
+
+   **The full observed sequence, 2026-09-18, inside about one hour:**
+   `0` (step 2d) → `1` (step 4's explicit scale) → **`3`** (HPA, on memory at 2% CPU) → `2` →
+   **`1`**. It is back at `minReplicas` with the cluster idle. So the resting state is 1, the
+   scale-up is a warm-up artefact, and **hypothesis C is live only during the up-phases** —
+   which is exactly the condition under which a ladder run gives an irreproducible answer.
 2. **It was at `maxReplicas` with its target unmet at the moment it was measured**, so at that
    instant it had no headroom for a genuine CPU-load event. Given the flapping above, treat
    this as a recurring condition rather than a permanent one.
@@ -216,9 +278,25 @@ kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- env | grep -i quarkus
 helm -n datahub-hynix get values benchmarks-polaris --revision 4   # and 3, 5 -- when did file.enabled go false?
 ```
 
-The first also closes the remaining doubt about whether an env var is overriding the property
-at ordinal 300; if `QUARKUS_LOG_FILE_ENABLED` is absent from the running container's
-environment, the property stands and the file handler really is off on 1.6.0.
+**RAN 2026-09-18. The running container's environment carries exactly three `QUARKUS_LOG_*`
+variables:**
+
+```
+QUARKUS_LOG_FILE_JSON_ENABLED=true
+QUARKUS_LOG_FILE_JSON_PRETTY_PRINT=false
+QUARKUS_LOG_CONSOLE_JSON_ENABLED=true
+```
+
+**No `QUARKUS_LOG_FILE_ENABLED`.** So nothing overrides the property at ordinal 300, and
+`quarkus.log.file.enabled=false` stands: **the file handler is genuinely off on 1.6.0** and
+nothing writes the PVC from here on. The two `..._FILE_JSON_...` variables are confirmed
+**inert** — they format a handler that does not exist, which was this entry's one surviving
+original claim.
+
+It also leaves `#20` as the **only remaining explanation** for the month of archive: the R5 pod
+must have been running a ConfigMap older than the one `0c` captured. Still not directly proven
+— `helm -n datahub-hynix get values benchmarks-polaris --revision 3|4|5`, looking for when
+`logging.file.enabled` went false, would close it.
 
 **Consequence for the shipper, corrected:** `fb-polaris-shipper` has **not** been tailing an
 empty file — it had real content until today. Uninstalling it now loses nothing *going

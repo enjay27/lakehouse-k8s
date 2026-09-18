@@ -410,3 +410,44 @@ says the HPA had no metrics then and could not scale, which argues for one busy 
 
 NOT VERIFIED: no cluster command from this session; all readings are Kade's. Outstanding: the
 restart reason, `/q/health`, and `#38`'s two commands.
+
+## The crash is not an OOMKill, and #38 is settled
+
+**`#41`.** `…-5vpmc`, `restartCount 3`: `Reason: Error`, exit code **1**, started 14:41:12 KST,
+finished 14:41:16 — **four seconds**. My prediction was OOMKill and it is wrong: an OOMKill
+reports `OOMKilled` with exit 137, so the `1.33Gi`-heap-in-a-`2Gi`-limit story is not implicated
+here at all and belongs to `#39` alone. That is the third of my claims to be refuted by the next
+command today, which is a decent argument for running the next command.
+
+Four seconds is the informative part — too fast for a JDBC connect timeout, too slow for the JVM
+rejecting a VM option (that lands well under a second). So Quarkus started and then failed. The
+candidate I favour is a start-up race: three pods came up in the same minute, Polaris does
+metastore work at boot, this repo already has an entry for intermittent duplicate-key/500s from
+replica lag, and the sibling pod never crashed — which is what a race with one loser looks like.
+`kubectl logs --previous` answers it, and that reading is perishable: `--previous` holds only the
+last terminated container, and `#39`'s flapping recycles pods unprompted. The replica count is
+already back to 1.
+
+Also worth noting the runbook's `Unrecognized VM option` check was never actually run, and the
+runbook had predicted exactly this presentation for it. The same `logs --previous` covers it.
+
+**`#38` is settled.** The running container's environment holds exactly three `QUARKUS_LOG_*`
+variables — `FILE_JSON_ENABLED`, `FILE_JSON_PRETTY_PRINT`, `CONSOLE_JSON_ENABLED` — and **no
+`QUARKUS_LOG_FILE_ENABLED`**. So nothing overrides the property at ordinal 300, the file handler
+is genuinely off on 1.6.0, and the two `FILE_JSON` variables are confirmed inert: formatting for
+a handler that does not exist. That was the entry's one surviving original claim, and it holds.
+
+It also leaves `#20` as the *only* remaining explanation for the month of archived logs — the R5
+pod ran a ConfigMap older than the one `0c` captured. `helm get values --revision 3|4|5` would
+close it properly.
+
+**The replica sequence, for the record:** `0` (2d) → `1` (step 4's explicit scale) → `3` (HPA) →
+`2` → `1`, inside about an hour, with the cluster idle throughout. Resting state is
+`minReplicas`. So the scale-up is a warm-up artefact and hypothesis C is live only during the
+up-phases — the worst version for a ladder run, since the answer depends on when you ask.
+
+**Tooling note that cost a command:** the Polaris image has no `zcat`. UBI9 runtime, so probably
+no `gunzip` or `tar` either, which also rules out `kubectl cp`. `#40`'s check now streams the
+bytes out with `exec -- cat` and decompresses on the Mac.
+
+NOT VERIFIED: no cluster command from this session; all readings are Kade's.

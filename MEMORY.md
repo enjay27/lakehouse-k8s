@@ -42,9 +42,15 @@ So `#8`'s log-interleave mechanism was **live** the whole time it was filed as h
 reach `.14` against `maxBackupIndex: 5`, with same-size bursts minutes apart — either inert config or multiple writers; one
 `zcat | grep hostName` settles it.
 
-**Outstanding:** the **restart reason** for `…-5vpmc` (**restartCount 3**; max heap 1.33Gi in a 2Gi limit, OOMKill first
-suspect), `/q/health` on 8182, and the two `#38` commands (`env | grep quarkus_log`, `helm get values --revision`). Also open:
-`#36`, `#37`, `#40`. Detail in [`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#40`, not here.
+**`#41`, NEW AND THE ONE LIVE LOOSE END:** `…-5vpmc` crashed **3×** at rollout — `Reason: Error`, **exit 1**, dead **4 s** after
+start. **Not** an OOMKill (that is `OOMKilled`/137), so my memory-pressure guess was wrong. Four seconds is too fast for a JDBC
+timeout, too slow for a rejected VM option — likeliest a start-up race between the three simultaneous pods against the metastore.
+**Run `kubectl logs …-5vpmc --previous` before that pod is replaced** — `--previous` keeps only the last terminated container and
+`#39`'s flapping recycles pods on its own. Replica sequence today: `0 → 1 → 3 → 2 → 1`; resting state is 1.
+**`#38` settled:** the container has no `QUARKUS_LOG_FILE_ENABLED`, so the file handler is genuinely off and the two
+`FILE_JSON` vars are inert; `#20` is now the only explanation left for the month of archive. Still open: `#36`, `#37`, `#40`
+(no `zcat` in the image — `exec -- cat *.gz` out and decompress on the Mac), `/q/health` on 8182. Detail in
+[`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#41`, not here.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 
