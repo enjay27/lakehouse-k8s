@@ -331,3 +331,26 @@ inside a `2Gi` limit leaves ~`0.67Gi` for non-heap, and there are now three JVMs
 NOT VERIFIED: no cluster command from this session. Step 5 is **partial** — the console-JSON
 check, pod image and phase, restart counts, `/q/health`, the log-directory listing and the real
 listener check are all still outstanding.
+
+## The event listener works on 1.6.0 — the one assertion a flat count would have muddied
+
+```
+before:  2528 | 1789574562296  = 2026-09-16T16:02:42Z   (pre-upgrade high-water mark)
+after:   2536 | 1789710542265  = 2026-09-18T05:49:02Z   (14:49 KST)
+```
+
++8 rows and the timestamp moved to now. Worth being explicit about why this was the assertion
+to get right: `polaris.event-listener.types` is a **renamed** key. The singular
+`event-listener.type` this cluster ran under 1.3.0 has been deprecated since 1.5.0, and if
+1.6.0 had ignored the plural form, the buffer settings would still be present and nothing would
+be subscribed — `events` would stop growing with no error logged anywhere. That is the same
+failure shape as the console-JSON risk: **quiet, not wrong.** It is also exactly the case the
+earlier version of this check could not have distinguished, because it read a pre-upgrade
+high-water mark and called it proof.
+
+Also noted: 8 rows from a couple of calls, so the listener emits more than one event per
+request and the count is not a request counter.
+
+NOT VERIFIED: no cluster command from this session. Still outstanding from step 5 — the
+console-JSON check, pod image/phase, restart counts, `/q/health`, and `#38`'s
+`/deployments/logs/` listing.

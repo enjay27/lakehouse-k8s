@@ -758,7 +758,27 @@ kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=benchmarks-polaris \
   -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].restartCount}{"\t"}{.status.containerStatuses[0].lastState.terminated.reason}{"\n"}{end}'
 ```
 
-### STEP 5, 2026-09-18 — partial, and the HPA went to three pods
+### STEP 5 — the event listener WORKS on 1.6.0. Verified 2026-09-18 with traffic.
+
+```
+before traffic:  2528 | 1789574562296  = 2026-09-16T16:02:42Z   (pre-upgrade high-water mark)
+after  traffic:  2536 | 1789710542265  = 2026-09-18T05:49:02Z   (14:49 KST)
+                 +8 rows, timestamp moved to now
+```
+
+**This is the assertion that mattered most, and it is the one a flat count would have made
+ambiguous.** `polaris.event-listener.types` is a *renamed* key — the singular
+`event-listener.type` this cluster ran on 1.3.0 is deprecated since 1.5.0, and a renamed
+listener key that 1.6.0 silently ignored would leave the buffer configured and nothing
+subscribed: `events` would simply stop growing, with **no error anywhere**. The audit trail
+would go quiet, not wrong — the same failure shape as the console-JSON risk. +8 rows settles
+it: the plural key is being read and the `persistence-in-memory-buffer` listener is
+subscribed and flushing.
+
+Note the 8 rows from a small number of calls — the listener emits more than one event per
+request, so do not read the count as a request counter.
+
+### STEP 5, 2026-09-18 — still partial, and the HPA went to three pods
 
 **Confirmed from the running objects:** the loaded ConfigMap is the 1.6.0 one —
 `polaris.event-listener.types` (plural) with `PT5S`/`1000`, every category at INFO or OFF with

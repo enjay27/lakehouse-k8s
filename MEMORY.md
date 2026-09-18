@@ -35,8 +35,8 @@ mechanism (three pods, one log file) is **inert** — the file handler is off (`
 
 **Step 5 is PARTIAL. Outstanding, silent-failure first:** (1) console still emits **JSON** — if it reverted to text the tier-2
 pipeline goes *quiet, not wrong*; (2) pod image/phase; (3) `restartCount`; (4) `/q/health` on **8182**; (5)
-`ls /deployments/logs/` (`#38` predicts empty); (6) **the listener check — today's `events` reading was PRE-upgrade**
-(`max(timestamp_ms)` = 2026-09-16T16:02:42Z, two days stale, because Polaris sat at 0 replicas). Needs traffic, then re-read.
+`ls /deployments/logs/` (`#38` predicts empty). **The event listener is VERIFIED** — traffic took `events` 2528 → 2536 and
+`max(timestamp_ms)` to 2026-09-18T05:49:02Z, so the plural `event-listener.types` key is read and the buffer flushes.
 Also open, no structural risk: `#36`, `#37` (hook pulls `bitnami/kubectl:latest` on **every** upgrade; known-good digest filed),
 `#38`. Detail in [`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#39`, not here.
 
