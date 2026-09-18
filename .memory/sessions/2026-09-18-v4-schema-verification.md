@@ -354,3 +354,59 @@ request and the count is not a request counter.
 NOT VERIFIED: no cluster command from this session. Still outstanding from step 5 — the
 console-JSON check, pod image/phase, restart counts, `/q/health`, and `#38`'s
 `/deployments/logs/` listing.
+
+## The last three checks: one clean pass, and two of my own claims refuted
+
+**Console is still JSON.** Every line a JSON object with `timestamp`, `level`, `message`, `mdc`,
+`hostName`. `QUARKUS_LOG_CONSOLE_JSON_ENABLED` survives the upgrade, so the tier-2 Lua and
+report schema v6 keep parsing. That was the last silent-failure risk in the upgrade and it is
+clear. (`threadName`/`threadId`/`ndc` are present at the source, as expected — `#30` trims them
+in Fluent Bit FILTER 4, not upstream.)
+
+**Both pods on `apache/polaris:1.6.0`, both `Running`. And `…-5vpmc` has `restartCount 3`.**
+The reason was not captured — the jsonpath's `lastState.terminated.reason` field came back
+empty — so the OOMKill question is open, and with max heap 1.33Gi inside a 2Gi limit it is the
+first suspect.
+
+### I was wrong about #39: it does scale back down
+
+`kubectl logs` reported "Found 2 pods" and the pod list showed two. So `REPLICAS` went 3 → 2
+within the hour, and the "it cannot come back down" argument was too strong. The mechanism I
+missed: **ZGC uncommits unused heap by default**, so `InitialRAMPercentage` sizes the heap at
+start without pinning the resident set there permanently. The memory metric is not monotonic.
+
+What replaces the ratchet is not better, only different: the metric still tracks heap behaviour
+rather than load, so the HPA **flaps** — up on warm-up, down after ZGC returns pages, at 2% CPU
+throughout. For `#15` that is worse than a stuck maximum, because a ladder run can straddle a
+scale event and hypothesis C is intermittently rather than continuously live.
+
+### I was wrong about #38: the PVC is full of logs
+
+Predicted an empty directory. Got an active `polaris.log` (9594 bytes, mtime **Sep 18 01:35**)
+and ~130 rotated `polaris.log.<date>.N.gz` files back to **Aug 21**, 27 MB total. The file
+handler has been writing for at least a month.
+
+The mtimes do carry the forward-looking half: `polaris.log` last touched 01:35, the 1.6.0 pods
+started 05:41, traffic at 05:47–05:49, nothing written. So the handler is off *now*, which
+`file.enabled=false` predicts — the writing stopped today.
+
+**And that produces a contradiction worth chasing.** The step 3 diff showed
+`quarkus.log.file.enabled=false` in the **R5 ConfigMap as well as** the render, unchanged. Yet
+the R5 pod was writing. `#20` explains it: a `helm upgrade` can change a ConfigMap without
+restarting the pod, and Polaris reads `application.properties` only at start — so R5 likely
+turned file logging off while the running pod carried on with the older config for days, until
+`2d`'s scale-to-0 killed it. If so, **this upgrade did not disable file logging; it delivered a
+change that had been sitting inert in the ConfigMap.** That is the repo's signature fault
+arriving from the opposite direction: not config that never executed, but config that executed
+only when something unrelated restarted the pod.
+
+Two consequences I had stated backwards: `fb-polaris-shipper` has **not** been tailing an empty
+file — it had real content until today. And `#8`'s log-interleave mechanism was **live for the
+entire month it was filed as hypothetical**, which is what `#40` now asks about: rotation
+suffixes reach `.14` against `maxBackupIndex: 5`, with clusters of same-size rotations minutes
+apart. That is either inert rotation config or multiple writers, and one `zcat | grep hostName`
+over a rotated file distinguishes them. Left explicitly unestablished — `#8`'s own 09-09 note
+says the HPA had no metrics then and could not scale, which argues for one busy writer.
+
+NOT VERIFIED: no cluster command from this session; all readings are Kade's. Outstanding: the
+restart reason, `/q/health`, and `#38`'s two commands.

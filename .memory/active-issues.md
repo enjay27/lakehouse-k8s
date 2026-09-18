@@ -5,6 +5,47 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#40 — OPEN QUESTION. The Polaris log archive carries per-day rotation suffixes up to `.14`
+while `values.yaml` sets `maxBackupIndex: 5`, and several days show a burst of same-size
+rotations minutes apart — which is the shape `#8` predicted.** 2026-09-18.
+
+From the `/deployments/logs/` listing (see `#38`): `polaris.log.2026-09-09.1.gz` through
+`.11.gz`, each ~400 KB, with mtimes at 06:03, 06:11, 06:29, 06:35, 06:53, 07:16, 07:21, 07:58,
+09:02 — and the same pattern on 08-21 (`.1`–`.14`), 08-24 (`.1`–`.14`), 08-31 (`.1`–`.14`),
+09-15 (`.1`–`.12`).
+
+Two things to explain, and they may be the same thing:
+
+1. **`rotation.maxBackupIndex: 5`** is set in `polaris/values.yaml`, yet indexes reach `.14`.
+   Either the setting is not in effect (this repo's recurring fault — and `#38`'s finding that
+   the pod ran an older ConfigMap for days makes "not in effect" easy to believe), or the
+   index is per-day rather than global and `maxBackupIndex` bounds something else.
+2. **`#8`'s predicted mechanism is a rotation storm**: several pods with independent JBoss file
+   handlers and independent rotation state on one `ReadWriteOnce` file, each rotating out from
+   under the others. A cluster of same-size rotations minutes apart is what that would look
+   like. **If so, `#8` has already bitten** — repeatedly, from Aug 21 onward — and was recorded
+   as a hypothetical for a month while the evidence sat in the PVC.
+
+**Do not treat this as established.** A single busy writer at `maxFileSize: 10Mi` will also
+rotate many times in a morning, and those dates coincide with heavy notebook ladder runs, which
+is the innocent explanation. The discriminator is **whether more than one pod was running on
+those days** and whether records interleave inside one file:
+
+```bash
+# Were there multiple Polaris pods on 2026-09-09? (#8 needs that; the HPA had no metrics then)
+kubectl -n datahub-hynix get events --field-selector reason=ScalingReplicaSet | head
+# Do records from two hostNames appear inside ONE rotated file?
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
+  sh -c 'zcat /deployments/logs/polaris.log.2026-09-09.5.gz | grep -o "\"hostName\":\"[^\"]*\"" | sort -u'
+```
+
+Two distinct `hostName` values inside one file is direct proof of interleaved writers and
+closes `#8` as *bitten*. One value means the rotation burst was volume, and only the
+`maxBackupIndex` question remains. **Note `#8`'s 2026-09-09 entry says the HPA had no metrics
+then and could not scale at all** — so on that date one pod is the more likely answer, which
+would make this volume rather than interleaving. Check rather than assume; the same entry's
+metrics claim has already been overtaken once today.
+
 **#39 — OPEN, and it has already fired. `targetMemoryUtilizationPercentage: 80` against a
 `1Gi` memory request is a ratchet, not an autoscaler: this JVM exceeds the target at idle, so
 the HPA pins Polaris at `maxReplicas` and cannot come back down.** 2026-09-18, measured minutes
@@ -32,12 +73,22 @@ direction is what matters. **The target is exceeded at idle.**
 
 Two consequences:
 
-1. **It will not scale back down.** Utilisation cannot fall below 80% of a 1Gi request while
-   the JVM holds a 1Gi initial heap, so `REPLICAS 3` is the steady state. Three Polaris pods
-   is now the cluster's normal condition, not a transient.
-2. **The HPA is pegged at `maxReplicas` with its target still unmet**, so it carries no
-   headroom and a genuine CPU-load event has nowhere to go. An autoscaler in permanent
-   deficit is an autoscaler that is not working.
+1. ~~**It will not scale back down.**~~ **WRONG, and corrected within the hour: it scaled
+   3 → 2.** The next `get pods` showed **two** pods. So utilisation *does* fall back below the
+   target, and the reason is that **ZGC uncommits unused heap by default** (`-XX:+ZUncommit`,
+   after `ZUncommitDelay`) — `InitialRAMPercentage` sizes the heap at start but does not pin
+   the resident set there for ever. The memory metric is therefore **not monotonic**, and the
+   "ratchet" reasoning was too strong.
+
+   **What replaces it is not better news, just a different failure.** The metric still has
+   nothing to do with load — it tracks JVM heap behaviour — so the HPA **flaps**: up on
+   warm-up and GC pressure, down after ZGC returns pages, at `cpu: 2%` throughout. Pod churn
+   rather than a stuck maximum. For `#15` that is worse, not better: replica count changes
+   under a running ladder, so hypothesis C is **intermittently** live and a run can straddle a
+   scale event. Steady state is somewhere between `minReplicas` and `maxReplicas`, unpredictably.
+2. **It was at `maxReplicas` with its target unmet at the moment it was measured**, so at that
+   instant it had no headroom for a genuine CPU-load event. Given the flapping above, treat
+   this as a recurring condition rather than a permanent one.
 
 **What it drags in:** `#15` hypothesis C is **alive again** (three entity caches to diverge —
 see that entry's 2026-09-18 note); three writers into `events`; three times the JDBC
@@ -136,13 +187,47 @@ Also bears on the **`fb-polaris-shipper`**, which tails that PVC into VictoriaLo
 writes the file, the shipper tails nothing. Independent support for "Kade uninstalls the
 shipper" (MEMORY.md) — and a reason to look before assuming it was ever delivering data.
 
-**Check after step 4, one command, while a pod exists:**
+**RAN 2026-09-18 — `#38` AS WRITTEN IS REFUTED. The directory is not empty; it holds a month
+of log archive.** `/deployments/logs/` contains an active `polaris.log` (9594 bytes, mtime
+**Sep 18 01:35**) and ~130 rotated `polaris.log.<date>.N.gz` files running back to **Aug 21**,
+27 MB in total. So the file handler has been writing for at least a month. The half of this
+entry that said "nothing writes the log PVC" was wrong, and the prediction that the directory
+would be empty was wrong.
+
+**What the mtimes do show, and it is the more interesting fact:** `polaris.log` was last
+touched at **01:35**, the 1.6.0 pods started at **05:41**, and they served traffic at
+**05:47–05:49**. So **under 1.6.0 nothing is writing the file** — which is what
+`file.enabled=false` predicts. The writing stopped today, when the old pod died.
+
+**Leading hypothesis, and it is `#20` exactly:** the step 3 diff showed
+`quarkus.log.file.enabled=false` in the **R5 ConfigMap as well as the render** — unchanged. Yet
+the R5 pod was writing the file. A `helm upgrade` can change a ConfigMap **without restarting
+the pod**, and Polaris reads `application.properties` only at start. So R5 most likely turned
+file logging off in the ConfigMap while the running pod carried on with the older config, for
+days, until `2d`'s scale-to-0 finally killed it. If so, this upgrade did not disable file
+logging — **it delivered a change that had been sitting inert in the ConfigMap**, which is this
+repo's signature fault arriving from the opposite direction: not config that never executed,
+but config that executed only when something unrelated restarted the pod.
+
+**Settle it with two commands:**
 
 ```bash
-kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -la /deployments/logs/
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- env | grep -i quarkus_log
+helm -n datahub-hynix get values benchmarks-polaris --revision 4   # and 3, 5 -- when did file.enabled go false?
 ```
 
-An empty directory, or a `polaris.log` whose mtime predates the last restart, confirms it.
+The first also closes the remaining doubt about whether an env var is overriding the property
+at ordinal 300; if `QUARKUS_LOG_FILE_ENABLED` is absent from the running container's
+environment, the property stands and the file handler really is off on 1.6.0.
+
+**Consequence for the shipper, corrected:** `fb-polaris-shipper` has **not** been tailing an
+empty file — it had real content until today. Uninstalling it now loses nothing *going
+forward*, because nothing writes the file any more, but that is a different statement from the
+one this entry made and the difference matters if anyone is looking for recent Polaris file
+logs in VictoriaLogs.
+
+**And a new question the archive raises — see `#40`.** The per-day suffixes run to `.14` while
+`values.yaml` sets `rotation.maxBackupIndex: 5`.
 
 **#36 — OPEN QUESTION, cheap to settle, no structural risk. The live metastore was not
 bootstrapped from a file carrying v3's table comments, and `schema.sql` is the exact shape of
@@ -1115,13 +1200,23 @@ shipper's inode. Unbitten only because nothing has pushed Polaris past 80% CPU. 
 `replicaCount` and disable autoscaling while the shared-file design stands, or give each pod
 its own filename and let the shipper glob.
 
-**FIRED 2026-09-18, minutes after step 4: `REPLICAS 3`.** The prediction was right; the stated
-mechanism was not. It scaled on **memory at 2% CPU**, which is `#39`'s ratchet rather than load,
-and the shared-log-file hazard this entry is built on is **inert** because the file handler is
-off (`#38`). So three pods is now the steady state, and what it actually costs is `#15`
-hypothesis C coming back, three `events` writers and three times the Pgpool connections — not
-interleaved log records. Read `#39` and `#38` with this entry; the fix it has always
-recommended (pin `replicaCount`, disable autoscaling) is also `#39`'s fix.
+**FIRED 2026-09-18, minutes after step 4: `REPLICAS 3` — then 2 within the hour.** The
+prediction was right. It scaled on **memory at 2% CPU**, which is JVM heap behaviour and not
+load (`#39`), and it **flaps** rather than sticking. So the replica count now moves on its own,
+which is what matters for `#15` hypothesis C.
+
+**Two corrections to what was written here earlier today, both mine:**
+
+- I called the shared-log-file hazard **inert** on the strength of `file.enabled=false`.
+  **`#38` is refuted** — the PVC holds a month of rotated archive and an active `polaris.log`
+  written until 01:35 today. The handler was on for at least a month; it appears to be off only
+  from this upgrade onward, and likely only because the pod finally restarted (`#20`). So this
+  entry's mechanism was **live for the whole period it was filed as hypothetical**, and
+  `#40` asks whether the archive already contains its fingerprints.
+- "Three pods is the steady state" — no; see `#39`. It oscillates.
+
+The fix this entry has always recommended (pin `replicaCount`, disable autoscaling) is also
+`#39`'s fix.
 
 *2026-09-09:* the HPA currently reports `cpu: <unknown>/80%, memory: <unknown>/80%` at
 `REPLICAS 1`, age 21d — **no metrics, so it cannot scale at all**. That removes the hazard

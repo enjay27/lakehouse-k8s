@@ -25,20 +25,26 @@ report rows −31 % bytes. Query strings via `.keyword`. **`WINDOW_SECONDS` is s
 INFO, `file.enabled=false`; metastore reads `version_value 4`. `#35` closed — 1.3.0 never ran against v4, so that pairing is
 **untested, not survived**.
 
-**`#8` FIRED: `REPLICAS 3`, on `memory: 88%/80%` at `cpu: 2%`.** Not load — the HPA measures memory against the **1Gi request**
-while `-XX:InitialRAMPercentage=50` commits **1Gi** (50% of the 2Gi limit) before the first call, so the target is exceeded at
-idle and **cannot fall back**. Three pods is the steady state until fixed (`#39`, with the options; *Polaris is not to be
-changed* — needs its own plan). **`#15` hypothesis C is ALIVE again** — step 0b killed it on one pod this morning and `#39`
-revived it: **pin `replicaCount` / disable autoscaling before any ladder run**, or it cannot separate C from A. `#8`'s predicted
-mechanism (three pods, one log file) is **inert** — the file handler is off (`#38`). Watch `restartCount`: max heap 1.33Gi in a
-2Gi limit, three JVMs on one node.
+**`#8` FIRED: `REPLICAS 3` after step 4, then 2 within the hour.** It scales on **memory at `cpu: 2%`** — JVM heap behaviour,
+not load: the HPA measures against the **1Gi request** while `-XX:InitialRAMPercentage=50` commits **1Gi** at start. It **flaps**
+(ZGC uncommits), so replica count moves on its own; an earlier claim here that it sticks at 3 was wrong (`#39`). **`#15`
+hypothesis C is therefore intermittently live — pin `replicaCount` / disable autoscaling before any ladder run**, or a run can
+straddle a scale event. Fix options in `#39`; *Polaris is not to be changed*, so it needs its own plan.
 
-**Step 5 is PARTIAL. Outstanding, silent-failure first:** (1) console still emits **JSON** — if it reverted to text the tier-2
-pipeline goes *quiet, not wrong*; (2) pod image/phase; (3) `restartCount`; (4) `/q/health` on **8182**; (5)
-`ls /deployments/logs/` (`#38` predicts empty). **The event listener is VERIFIED** — traffic took `events` 2528 → 2536 and
-`max(timestamp_ms)` to 2026-09-18T05:49:02Z, so the plural `event-listener.types` key is read and the buffer flushes.
-Also open, no structural risk: `#36`, `#37` (hook pulls `bitnami/kubectl:latest` on **every** upgrade; known-good digest filed),
-`#38`. Detail in [`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#39`, not here.
+**Console is still JSON** (verified from `kubectl logs`) and **the event listener works** (`events` 2528 → 2536, timestamp moved)
+— so the plural `event-listener.types` key is read and the tier-2 pipeline keeps parsing. Those were the two silent-failure
+risks; both are clear.
+
+**`#38` REFUTED, and it matters.** `/deployments/logs/` is **not** empty: active `polaris.log` (mtime **01:35** today) plus ~130
+rotated `.gz` back to **Aug 21**. The 1.6.0 pods started 05:41 and have written nothing, so the handler is off *now* — but it ran
+for a month, probably because R5 turned it off in the ConfigMap while the pod kept the older config until `2d` killed it (`#20`).
+So `#8`'s log-interleave mechanism was **live** the whole time it was filed as hypothetical. **New `#40`:** rotation suffixes
+reach `.14` against `maxBackupIndex: 5`, with same-size bursts minutes apart — either inert config or multiple writers; one
+`zcat | grep hostName` settles it.
+
+**Outstanding:** the **restart reason** for `…-5vpmc` (**restartCount 3**; max heap 1.33Gi in a 2Gi limit, OOMKill first
+suspect), `/q/health` on 8182, and the two `#38` commands (`env | grep quarkus_log`, `helm get values --revision`). Also open:
+`#36`, `#37`, `#40`. Detail in [`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#40`, not here.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 
