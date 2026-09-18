@@ -95,3 +95,34 @@ thing to do. Re-confirm pg-1 is the primary before `2e`. The HPA may undo `2d`'s
 NOT VERIFIED: no cluster, Docker or psql command was run from this session. The verifier was
 re-run here only against synthetic inputs; the run against the real shipped files was Kade's,
 before these edits, and it should be repeated after them if the files are still in `/tmp`.
+
+## Later the same day — step 2 ran
+
+Kade ran all of step 2. `2f` returned `version | 4` and nine tables in `polaris_schema`: the
+six from v3 plus `idempotency_records`, `scan_metrics_report`, `commit_metrics_report`.
+
+Two observations about that readback, recorded because the first is a design feature worth
+reusing and the second is a hole in the step as written:
+
+* **The `4` implies the indexes.** The migration is one transaction and the version write is
+  its last statement before `COMMIT`, so a `version_value` of 4 means everything ahead of it
+  committed — the 8 indexes included. That ordering was deliberate (it was written so a failure
+  leaves the row at 3) and it pays off twice: as a rollback property and as a proof obligation
+  discharged for free.
+* **`\dt` lists tables only.** Step 2f asked for `\dt polaris_schema.*` and called it
+  verification, so the 8 indexes were never actually listed, and neither were the two table
+  comments `935c7ed` added. The inference above covers the indexes; the comments depend on
+  *which* script ran, since step 2c deliberately sanctioned both ours and the shipped file, and
+  ours only acquired the comments in `935c7ed`. Added a `pg_indexes` + `obj_description` query
+  to the runbook that settles both, plus the two standalone `COMMENT ON` statements to apply if
+  they are missing — re-running the migration is not an option, the guard now refuses v4, which
+  is correct.
+
+**New open issue `#35`: the metastore is v4 and the server is still 1.3.0.** Additive-only
+means nothing 1.3.0 reads has moved, so this is not expected to bite; whether 1.3.0 *asserts*
+`version_value = 3` at bootstrap is undocumented. Upstream's relational-JDBC page covers only
+the reverse direction (a newer server finding an older schema, the v5 placeholder case).
+Because `2d` scaled to 0, the current pod state answers it for free — and step 4 destroys the
+reading, so it is perishable in the same way step 0's captures were. Direction is forward.
+
+NOT VERIFIED: this session ran no cluster command. The step 2 output above is Kade's.

@@ -301,6 +301,75 @@ the fallback that guards the version. **2b, the dump, has still not been run** a
 rollback for this step — it is the next thing to do, before 2d. Re-confirm pg-1 is still the
 primary while you are there (`0c`'s note).
 
+### STEP 2 IS DONE — 2026-09-18. `version_value = 4`, nine tables.
+
+2f read back `version | 4` from primary pg-1, and `\dt polaris_schema.*` listed nine tables —
+the six from v3 plus `idempotency_records`, `scan_metrics_report`, `commit_metrics_report`.
+
+**That readback is stronger evidence than it looks, and weaker in one specific place.**
+
+Stronger: the migration is a single transaction whose **last** statement before `COMMIT` is the
+version write. `version_value = 4` therefore means every statement ahead of it committed too —
+including the **8 indexes**, which `\dt` does not list at all (`\dt` is tables only; `\di` is
+indexes). So the indexes do not need a separate act of faith. They are implied by the 4.
+
+Weaker: that inference is about *whichever script ran*, and step 2c deliberately left you two
+that both work — ours, and the shipped `schema-v4.sql`. Both create all 11 objects, so the
+objects are fine either way. The one thing that differs is the **two `COMMENT ON TABLE`
+statements**: the shipped file has always had them, ours only acquired them in `935c7ed`. If
+you ran our script from a checkout predating that commit, the two comments are absent.
+
+One command settles which script ran and confirms the indexes directly rather than by
+inference:
+
+```bash
+kubectl -n datahub-hynix exec -i benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+  env PGPASSWORD=polaris psql -U polaris -d polaris <<'SQL'
+SELECT indexname FROM pg_indexes WHERE schemaname = 'polaris_schema' ORDER BY 1;
+SELECT c.relname, obj_description(c.oid, 'pg_class') AS comment
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'polaris_schema' AND c.relkind = 'r' ORDER BY 1;
+SQL
+```
+
+Expect the 8 new index names, and comments on `scan_metrics_report` and
+`commit_metrics_report`. **Two NULLs there are not a problem to fix by re-running a
+migration** — the guard now refuses a v4 database, correctly. Apply the two statements alone:
+
+```sql
+COMMENT ON TABLE polaris_schema.scan_metrics_report IS 'Scan metrics reports as first-class entities';
+COMMENT ON TABLE polaris_schema.commit_metrics_report IS 'Commit metrics reports as first-class entities';
+```
+
+### The window step 2 opened: a v4 metastore under a 1.3.0 server
+
+**This is now the live state and it is not a state anyone has characterised.** Upstream
+documents the *opposite* direction only — a 1.7.0 server detecting a pre-v5 schema and writing
+the legacy placeholder until upgraded. For a server **older** than its schema, the docs say
+nothing, and the guides repeat only that Polaris runs no automated migrations, so the operator
+owns the ordering.
+
+The delta being additive-only is the reason not to panic: every table, column, constraint and
+index 1.3.0 reads is present and byte-identical, so nothing it needs has moved. Whether 1.3.0
+*asserts* `version_value = 3` at bootstrap and refuses on 4 is the open question, and it is
+cheap to answer because `2d` already scaled the deployment to 0:
+
+```bash
+kubectl -n datahub-hynix get deploy,hpa,pods -l app.kubernetes.io/name=benchmarks-polaris
+```
+
+- **0 pods, HPA not restoring** → the clean case. Go straight to step 3, then 4. Do **not**
+  scale 1.3.0 back up to "check it still works"; that tests a combination you are about to
+  leave behind and risks a crash loop for no information you need.
+- **A pod running on 1.3.0** (the HPA has `minReplicas: 1`, `#8`) → read its log before step 4.
+  Healthy means 1.3.0 tolerates a v4 schema, which is worth knowing for the rollback path.
+  `CrashLoopBackOff` with a schema-version error means the rollback from here is *not* just
+  `helm rollback` — it would need the `2b` dump restored as well. **Either reading is
+  perishable: step 4 destroys it.** Capture it, the same way step 0 captured its own.
+
+Either way the direction is forward, not back: the metastore is migrated, and the chart that
+matches it is the one already committed. **Step 3 next.**
+
 ### Why 2c is not a `kubectl exec` into the running pod
 
 The first version of this step was:

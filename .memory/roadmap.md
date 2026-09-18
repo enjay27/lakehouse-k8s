@@ -66,7 +66,7 @@ unverified — see `active-issues.md` #33.
 | fact | value |
 |---|---|
 | 1.6.0 required metastore schema version | **4** (`DatabaseType.java`, all three DB types) |
-| this install's schema version | **3** — MEASURED 2026-09-18 on primary pg-1: `SELECT * FROM polaris_schema.version` → `version|3` |
+| this install's schema version | **4** — MIGRATED and MEASURED 2026-09-18 on primary pg-1: `version|4`, 9 tables in `polaris_schema` (was 3 / 6 tables before step 2e) |
 | v3 → v4 new objects | 3 indexes + 3 tables + 5 indexes = **11 objects**, 0 ALTERs — VERIFIED 2026-09-18 against the shipped files (`#34`) |
 | shipped v3 vs repo `schema_v3.sql` | **indentation only** — the "authority" claim in CLAUDE.md is true, tested 2026-09-18 |
 | shipped v4 object counts | v3 10, v4 21, adds 11; 10 shared objects, **0 differing** |

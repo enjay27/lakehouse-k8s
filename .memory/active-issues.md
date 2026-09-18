@@ -5,6 +5,30 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#35 — OPEN. The metastore is at schema v4 and the running Polaris is 1.3.0. Upstream
+documents no behaviour for a server older than its schema.** 2026-09-18.
+
+Step 2 executed: `version_value = 4` read back from primary pg-1, nine tables in
+`polaris_schema`. The chart carrying 1.6.0 is committed but **not applied** (`#33`), so until
+step 3–4 run, the database is ahead of the server.
+
+Not expected to bite, and the reason is `#34`: the v3 → v4 delta is additive-only and verified
+as such against the shipped files, so every table, column, constraint and index 1.3.0 reads is
+present and byte-identical. Nothing it needs moved. **The open part is whether 1.3.0 asserts
+`version_value = 3` at bootstrap and refuses on 4.** Upstream's relational-JDBC docs describe
+only the other direction — a newer server detecting an older schema (the v5 placeholder case) —
+and otherwise say only that Polaris runs no automated migrations, so the operator owns the
+ordering. No documented answer, so do not assume one.
+
+`2d` scaled the deployment to 0, so the answer is one `kubectl get deploy,hpa,pods` away, and
+**the reading is perishable — step 4 destroys it.** 0 pods is the clean case (go to step 3). A
+running 1.3.0 pod means the combination is tolerated, which matters for the rollback path; a
+crash loop with a schema-version error means rollback from here needs the `2b` dump restored,
+not just `helm rollback`. Do not scale 1.3.0 up deliberately to find out.
+
+**Closes when step 4 puts 1.6.0 on the cluster.** Note also that the migration's guard now
+refuses a v4 database by design, so re-running it is not the way to fix anything from here.
+
 **#34 — RESOLVED-INSTRUCTIVE. The v3 → v4 transcription is verified against the shipped
 schema, and `schema_v3.sql` really is the ASF file. But the verifier's PASS was narrower than
 its wording, and the gap held two real omissions.** 2026-09-18.
@@ -46,10 +70,13 @@ had already caught itself once this way — its first version read zero statemen
 apostrophe in a comment swallowed every semicolon. Same lesson at the level up: **ask what the
 check cannot see before trusting what it says.**
 
-**Still outstanding for step 2:** `2b`, the metastore dump, has **not** been run and is the
-rollback. Re-confirm pg-1 is the primary before `2e` (the `0c` note). Not vendoring the shipped
-files into the repo — the baseline diff removes the reason to, and this repo already has a
-duplicate-files problem.
+**Step 2 has since RUN (2026-09-18) — `version_value = 4`, nine tables.** Not vendoring the
+shipped files into the repo: the baseline diff removes the reason to, and this repo already has
+a duplicate-files problem. One loose end from this entry: `\dt` lists tables only, so the 8 new
+indexes were never listed — they are implied by the version write being the transaction's last
+statement, and the runbook now carries a `pg_indexes` query that confirms them directly, along
+with whether the two table comments made it in (absent if the script that ran predates
+`935c7ed`). See `#35` for the state step 2 leaves behind.
 
 **#33 — Polaris 1.6.0 is committed to the chart and NOT applied. The cluster still runs 1.3.0-incubating.** 2026-09-18.
 
