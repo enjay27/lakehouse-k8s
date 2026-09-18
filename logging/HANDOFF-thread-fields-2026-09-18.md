@@ -4,8 +4,15 @@
 [`HANDOFF-pipeline-next-2026-09-16.md`](HANDOFF-pipeline-next-2026-09-16.md) as the start-here
 document for `logging/`; that file's state section is now two Polaris versions out of date.
 
-**Nothing in this document has been applied.** Prepared in a Cowork session with no `kubectl`,
-`helm` or `docker` reach (CLAUDE.md).
+**STATUS 2026-09-18 (updated): decision B taken (Kade). The file changes below are WRITTEN AND
+COMMITTED; NOTHING IS APPLIED to the cluster.** What remains is the roll itself — `step2` →
+`helm upgrade` → `step3`. Prepared in a Cowork session with no `kubectl`, `helm` or `docker`
+reach (CLAUDE.md), so no render and no cluster command backs any of it.
+
+**Two things changed in this document after the decision:** the cost is now quantified (it did
+not need a cluster), and the before/after measurement in *Verification* is **withdrawn** — worked
+through, it cannot deliver the number it promised. Both are below, and the full record is
+`.memory/active-issues.md` `#42`.
 
 ---
 
@@ -56,9 +63,30 @@ Lua script, so I requested removal. But threadId and threadName don't cost CPU t
   seven fields moved ahead of the Lua were measured at **~32% of record bytes**.
 
 So restoring two of those seven puts their share of both the conversion cost and the index
-bytes back. Their individual share was **never measured separately** — which makes the
-before/after measurement below the point of the exercise, not a formality. The decision is
-still Kade's; it is a cost/value trade, not a free change.
+bytes back.
+
+**Correction to this document's own claim: the individual share HAD effectively been measured.**
+P1's table breaks the 717 B pre-trim record down per key, and the two fields are in it:
+`threadName` **4.7 % ≈ 34 B**, `threadId` **≈ 13 B** (inside the 4.7 % it shares with
+`processId` and `ndc`). Both check out against the literal JSON —
+`"threadName":"executor-thread-3",` is 33 B, `"threadId":46,` is 14 B. So:
+
+- **stored detail doc +47 B: +7.2 % (access, 649 B) / +6.3 % (app, 743 B)** — almost exactly the
+  −7…8 % schema v6 bought (`#32`). **This change hands back the v6 document-size win.**
+- **into the Lua: ~488 B / 9 keys → ~535 B / 11 keys (+9.6 % bytes, +22 % keys)** on every one of
+  the ~720 records per window.
+- on disk it is less than that: `threadName` becomes one keyword index over ~5 distinct values,
+  and `_source` is compressed. The `_source` figure is the ceiling, not the disk number.
+
+**DECIDED (Kade, 2026-09-18): option B — restore both fields, as written below.** Taken with
+those numbers in hand. An option A (`threadName` only, 34 B, no template edit, `threadId` being
+strictly 1:1 with `threadName` in every sample in this repo) was offered and declined.
+
+**What it buys, since the original premise doesn't carry it:** `mdc.requestId` is already the
+per-request key, so the value is elsewhere — records with **no MDC at all** (start-up,
+background, pool/JVM logs) have no other correlation handle in tier 2; and tier 1 carries the
+thread fields but not `api_path` / `http_status` / `user_principal_name`, so *"which thread
+served the 404s for principal X"* is answerable in **tier 2 only**.
 
 ### `ndc` — leave it removed
 
@@ -70,7 +98,7 @@ out: it was `""` in all 300 detail documents sampled on 2026-09-16, and it is `"
 
 ## What to change
 
-### 1. `fluent-bit/values.yaml` — the `polaris_field_trim` filter
+### 1. `fluent-bit/values.yaml` — the `polaris_field_trim` filter — **DONE**
 
 ```
     [FILTER]
@@ -88,14 +116,25 @@ out: it was `""` in all 300 detail documents sampled on 2026-09-16, and it is `"
         Remove_key    ndc             <- KEEP
 ```
 
-Update the Korean comment above it in the same edit: it currently states the 2026-09-16
-decision ("스레드 이름·ID 는 추적 가치가 없어 제거"), which becomes false the moment the lines
-go. Say what was decided and when, and that `ndc` stays out for a different reason.
+The Korean comment above it was rewritten in the same edit — it stated the 2026-09-16 decision
+("스레드 이름·ID 는 추적 가치가 없어 제거"), which went false the moment the lines did. It now
+carries the 2026-09-18 decision, the accepted byte cost, and `ndc`'s separate reason for staying
+out.
+
+**A step this document did not list, and it would have broken the roll: the `#30` verification
+gates had to be INVERTED.** `step2-render-gate.sh` asserted `Remove_key threadName` and
+`Remove_key threadId` were each present exactly **1** time; `step3-postupgrade.sh` asserted **0**
+docs carried either field since pod start. Left alone, both would have FAILED on a correct
+change — and step2 is the gate in front of `helm upgrade`. Now: step2 expects **0** for the two
+lines (kept as counts rather than deleted, so a silent reappearance is still caught) and 1 for
+`ndc`; step3 drops them from its absence loop and asserts them **present** instead.
+`step12` needed no change — it iterates the file's declared fields, so it picks up `threadId` by
+itself and should report **8/8** where `#30` recorded 7/7.
 
 **Tier 1 and the shipper are unaffected.** `polaris_field_trim` matches `polaris.logs` only, so
 `k8s-logs-*` has always carried these fields and still will.
 
-### 2. `logging/opensearch/polaris-logs-template.json` — restore the `threadId` mapping
+### 2. `logging/opensearch/polaris-logs-template.json` — restore the `threadId` mapping — **DONE**
 
 The template records its own removal:
 
@@ -103,10 +142,15 @@ The template records its own removal:
 > polaris_field_trim (fluent-bit/values.yaml FILTER 4). Indices created before the upgrade still
 > hold them."`
 
-Put the explicit `threadId` integer mapping back and update that note. `threadId` arrives as a
-JSON integer so dynamic mapping would probably reach `long` on its own — but the template exists
-because *"each daily index's field types are decided by chance"* depending on which document
-arrives first, and an explicit mapping is the whole point of the file.
+**DONE.** The explicit `threadId: long` mapping is back, `_meta.removed_2026-09-16` is replaced
+by `_meta.restored_2026-09-18`, and `measured_from` no longer reads "(removed 2026-09-16)".
+
+**Correction while doing it: this mapping is defensive, not load-bearing.** `threadId` arrives as
+a JSON integer and `dynamic_templates.strings_keyword_only` matches `match_mapping_type: string`
+only — so dynamic mapping reaches `long` unaided, and nothing breaks without the declaration. It
+is declared because the template exists so that *"each daily index's field types are decided by
+chance"* is not true, which is a good enough reason on its own; but it is not what makes the
+change safe, and this document previously implied it was.
 
 **`threadName` needs no mapping and must not get one**, but note the consequence: as an
 undeclared string it falls to `dynamic_templates.strings_keyword_only`, i.e. **`text` with
@@ -151,14 +195,31 @@ field is simply absent.
 2. **Roll a window** and use `scripts/step10` + `step11` for the readout — **not** Dev Tools
    copies (`MEMORY.md`).
 3. **Assert the reverse of `#30`:** every detail document carries `threadName` and `threadId`,
-   and **none** carries `ndc`. Use `threadName.keyword` for the `exists`/`term`.
-4. **Measure the cost**, which is the reason this is worth doing carefully:
-   - average detail-document size before and after, from the same query shape;
-   - Fluent Bit's Lua filter CPU, the metric `REVIEW-lua-refactor-2026-09-16.md` used to show
-     the refactor was 2.8× cheaper — the comparable figure here;
-   - **record the replica count at both readings** (`#39`).
-5. If the byte increase is larger than the value of the fields, that is a real answer and the
-   change can be reverted by restoring the two lines. Say so in the commit either way.
+   and **none** carries `ndc`. Use `threadName.keyword` for the `exists`/`term` — the bare field
+   finds nothing. **`step3` now does this for you**: the two fields moved out of its absence loop
+   into a presence check that names `threadName.keyword` and bare `threadId` (mapped `long`).
+4. ~~**Measure the cost**~~ — **WITHDRAWN 2026-09-18.** This was written as "the point of the
+   exercise." Worked through before rolling, it cannot deliver what it promised, and the
+   reasoning is worth keeping so nobody re-proposes it:
+   - **`_source` bytes** — already derived to within ~5 B from P1's per-key table (+47 B/doc,
+     above). A live before/after reproduces a known number while fighting `#39`'s replica
+     flapping, which is why this document demanded the replica count at both readings in the
+     first place.
+   - **On-disk store size** — *not obtainable on a same-day roll at all.* The index template
+     shapes only **tomorrow's** index, so before- and after-shaped documents land in the **same**
+     daily index, and `_index/_stats` store size cannot be attributed to a subset of its
+     documents. A trustworthy figure needs a full day's separation.
+   - **Lua filter CPU** — out of reach by `REVIEW-pipeline` P1's own words (*"Cannot be measured
+     from Cowork: CPU. It is a phase 3.1 load-test number."*). Worse, `helm upgrade` restarts
+     Fluent Bit, so the first window after the roll is `#31`'s R4 partial window and unusable as
+     the "after" reading regardless.
+
+   So this was settled as **decide-then-accept-47 B**, not measure-then-decide. Building the
+   scaffolding would have cost more than the information it could produce.
+5. **The revert is still one edit**, if the fields turn out not to earn their 7 %: restore the
+   two `Remove_key` lines and re-invert the two gates. The cost is known in advance, so that
+   decision does not need a measurement either — it needs someone to have tried querying
+   `threadName.keyword` for a month and found they never did.
 
 ---
 

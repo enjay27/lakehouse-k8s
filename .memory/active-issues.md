@@ -5,6 +5,113 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#42 — `threadName` / `threadId` RESTORED to `polaris-logs-*`, REVERSING `#30`. WRITTEN, NOT
+APPLIED.** 2026-09-18. Decision B (Kade), taken on the cost analysis below rather than on the
+original premise, which was half wrong.
+
+**The premise that produced the request was wrong in its second half.** Kade asked for the
+fields back reasoning *"I had them removed believing the Lua parsed them; they cost no CPU to
+ship."* The first half holds — the Lua reads only `loggerName`, `level`, `message`, `_time`,
+`mdc`, and `5315e0d` dropped these in the `record_modifier`, not in Lua. **The second half does
+not:** `REVIEW-pipeline-2026-09-16.md` P1 moved `polaris_field_trim` *ahead* of the Lua
+precisely because the Lua converts every record msgpack -> Lua table -> msgpack, so every
+surviving field is paid for in that conversion whether the Lua reads it or not. Shipping them
+is a cost; the decision was taken anyway, with the cost quantified and accepted.
+
+**The cost, derived - not guessed, and not worth re-measuring on the cluster.** `#30`'s handoff
+called the per-field share "never measured separately." It effectively was: P1's table breaks
+the 717 B pre-trim record down per key.
+
+| field | P1 share | bytes | literal JSON check |
+|---|---|---|---|
+| `threadName` | 4.7 % | **~34 B** | `"threadName":"executor-thread-3",` = 33 B |
+| `threadId` | (in the 4.7 % shared with `processId`, `ndc`) | **~13 B** | `"threadId":46,` = 14 B |
+
+- **Stored detail doc: +47 B -> +7.2 % (access, 649 B) / +6.3 % (app, 743 B).** That is
+  almost exactly the -7...8 % schema v6 bought (`#32`). **This change gives back the v6
+  document-size win.** Accepted knowingly.
+- **Into the Lua:** post-trim record ~488 B / 9 keys -> **~535 B / 11 keys (+9.6 % bytes,
+  +22 % keys)**, on all ~720 records per window (the inbound conversion runs on every record;
+  the return trip only on the 42 % kept).
+- **On disk this is an over-estimate.** `threadName` falls to `text index:false` + `.keyword`,
+  i.e. one keyword index over ~5 distinct values (`executor-thread-N`, `vert.x-eventloop-thread-N`),
+  ordinal-compressed doc_values; `_source` is stored compressed. The `_source` figure is the
+  honest ceiling, not the disk number.
+
+**Why the handoff's before/after measurement is NOT being run - this is the part to keep.** The
+handoff made the measurement "the point of the exercise." Worked through, it cannot deliver:
+
+1. **`_source` bytes** - already derived above to within ~5 B; a live reading reproduces it
+   while fighting `#39`'s replica flapping.
+2. **On-disk store size** - *not obtainable on a same-day roll.* The template shapes only
+   tomorrow's index, so before- and after-shaped docs land in the **same** index and
+   `_index/_stats` store size cannot be attributed to a subset of documents. A trustworthy
+   figure needs a full day's separation.
+3. **Lua CPU** - out of reach by `REVIEW-pipeline` P1's own words (*"Cannot be measured from
+   Cowork: CPU. It is a phase 3.1 load-test number."*), and the `helm upgrade` restarts Fluent
+   Bit, so the first window after the roll is `#31`'s R4 partial window and unusable as the
+   "after" reading anyway.
+
+So this was decided as **decide-then-accept-47 B**, not measure-then-decide. Building the
+scaffolding would have cost more than the information.
+
+**`ndc` stays removed** - different reason, not a cost one: `""` on all 300 sampled detail docs
+(`084100Z`) and `""` in 1.6.0's console output too. An always-empty field on every document.
+
+**`threadId` is redundant with `threadName` here, and Kade took B knowing that.** Both are
+per-thread identifiers and they are strictly 1:1 in every sample in this repo
+(`executor-thread-3`<->`44`, `executor-thread-6`<->`48`, `vert.x-eventloop-thread-1`<->`33`,
+`-0`<->`32`). Option A (name only, 34 B, no template edit) was offered and declined in favour of
+matching the handoff as written.
+
+**What it buys, which `#30` did not weigh.** Not "tracing value" in the abstract -
+`mdc.requestId` is already the correct per-request key. Two things it does not cover:
+1. **Records with no MDC at all** - start-up, background tasks, pool and JVM-adjacent logs.
+   `threadName` is their only correlation handle in tier 2.
+2. **Thread identity joined to the parsed access fields.** Tier 1 `k8s-logs-*` carries the
+   thread fields on 870/870 records, but only on the raw line - it has no `api_path`,
+   `http_status` or `user_principal_name`. *"Which thread served the 404s for principal X"* is
+   answerable in **tier 2 only.** That is the real argument, and it is stronger than the one
+   the request arrived with.
+
+**Changed (all committed, none applied):**
+- `fluent-bit/values.yaml` - the two `Remove_key` lines deleted from `polaris_field_trim`;
+  `Remove_key ndc` kept. Korean comment rewritten: it stated the 2026-09-16 decision and would
+  have been false the moment the lines went.
+- `logging/opensearch/polaris-logs-template.json` - `threadId: long` restored;
+  `_meta.removed_2026-09-16` replaced by `_meta.restored_2026-09-18`; `measured_from` no longer
+  says "(removed 2026-09-16)".
+- **`logging/scripts/step2-render-gate.sh` and `step3-postupgrade.sh` - the `#30` assertions
+  INVERTED.** This is the part that would have broken the roll silently: step2 asserted
+  `Remove_key threadName|threadId` present **1**, step3 asserted 0 docs carrying either field.
+  Both would now FAIL on a correct change. step2 expects **0** for the two lines (kept as
+  counts, so a silent reappearance is still caught) and 1 for `ndc`; step3 drops them from its
+  absence loop and asserts them **present** instead.
+- `step12` needed **no** change - it iterates the file's declared fields, so it picks `threadId`
+  up on its own and should now report 8/8 where `#30` recorded 7/7.
+
+**`threadName` must be queried as `threadName.keyword`, never bare.** It gets no explicit
+mapping (and must not get one), so under the v6 template it is `text` with `index:false` plus a
+`.keyword` sub-field: a `term`, `exists` or `match` on the bare field finds nothing. step3's new
+presence check names `threadName.keyword` for exactly this reason - the bare field would have
+failed it for the wrong reason. `threadId` is mapped `long`, so the bare field is right for it.
+
+**The `threadId: long` mapping is defensive, not load-bearing** - a correction to the handoff,
+which implied otherwise. `threadId` arrives as a JSON integer (template `_meta.measured_from`,
+508-doc readout) and `dynamic_templates.strings_keyword_only` matches `match_mapping_type:
+string` only, so dynamic mapping reaches `long` unaided. It is declared because this file exists
+so that a daily index's types are not decided by whichever document arrives first.
+
+**Apply path - values-only, NOT `apply-lua.sh`:** `step2` -> `helm upgrade` -> `step3`. The Lua is
+untouched. If `WINDOW_SECONDS 30 -> 1800` is landed too, that *is* a Lua change and the pair takes
+`apply-lua.sh --no-restart` -> `step2` -> `helm upgrade` with **no restart between** (`#31`);
+**prefer landing them separately.** The template is not retroactive - `threadId`'s mapping
+arrives with the next daily index, and indices created 2026-09-16...18 simply lack both fields.
+
+**NOT VERIFIED:** no `helm lint`, no `--dry-run` render, no cluster command of any kind - this
+was written in a Cowork session with no `helm`/`kubectl`/`docker` reach (CLAUDE.md). The
+inverted gates have had `bash -n` only; neither has been run against a render or a cluster.
+
 **#41 — OPEN. A 1.6.0 pod crashed three times at rollout: `Reason: Error`, exit code 1, dead
 four seconds after start. NOT an OOMKill.** 2026-09-18.
 
@@ -802,6 +909,7 @@ Review: `logging/REVIEW-lua-refactor-2026-09-16.md`. Candidate: `logging/candida
 - **NOT verified:** no helm render of the patch; the C-side marshalling saving of R1 (phase 3.1); cache hit rate at 1800 s.
 
 **#30 — `threadName` / `threadId` / `ndc` removed from `polaris-logs-*`: ROLLED as REVISION 19 (2026-09-16 23:38:14 KST) and VERIFIED on traffic.** 2026-09-16.
+**PARTLY REVERSED 2026-09-18 by `#42`: `threadName` and `threadId` are shipped again (written, not applied); `ndc` stays removed.** The decision line below — "thread name and id carry no tracing value" — is what `#42` overturned; read it as the 2026-09-16 belief, not as current. Everything else here still stands, including the verification method, which `#42` inverts rather than discards.
 - **Rolled (Kade):** `helm upgrade` from the committed values (`5315e0d`) → **rev 19**, 23:38:14 KST = 14:38:14Z (`helm history`:
   17 17:35:46 v5 with reloader, **18 18:07:08 = the hot-reload removal** (closes handoff task B), 19 = this). Pod `benchmarks-fluent-bit-4bxsn`.
   The Lua was NOT changed (apply-lua.sh: ConfigMap unchanged). step3: `RESULT: post-upgrade checks passed` (only the RESULT line recorded).

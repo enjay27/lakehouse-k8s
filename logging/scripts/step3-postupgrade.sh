@@ -95,7 +95,8 @@ for idx in polaris-logs polaris-report; do
 done
 
 # 2026-09-16: fields that must NOT be on docs written after this pod started. Older docs in the same daily index still
-# carry them, so only the time filter makes this a check. #30 (thread/ndc), P1/P6 + schema v6 (_msg renamed to message,
+# carry them, so only the time filter makes this a check. ndc (#42; #30's thread fields were RESTORED 2026-09-18 and
+# are asserted PRESENT further down), P1/P6 + schema v6 (_msg renamed to message,
 # app / stream / flb_tag constants gone), P7 (report envelope without app / level, sentence only on summary rows).
 count_since(){ "${OS[@]}" "${OS_URL}/$1/_count" -H 'Content-Type: application/json' \
     -d "{\"query\":{\"bool\":{\"filter\":[{\"range\":{\"@timestamp\":{\"gt\":\"${START_T}\"}}}$2]}}}" 2>/dev/null \
@@ -105,12 +106,21 @@ none_since(){ N=$(count_since "$1" "$2")
     elif [ -z "$N" ]; then huh "$1: could not count docs $3"
     else bad "$1: $N docs $3 since pod start -- $4"; fi; }
 if [ -n "${START_T:-}" ]; then
-  for f in threadName threadId ndc processName stream flb_tag app _msg; do
+  for f in ndc processName stream flb_tag app _msg; do
     none_since "polaris-logs-*" ",{\"exists\":{\"field\":\"$f\"}}" "with $f" "the tier-2 trim / v6 rename is not in effect"
   done
   M=$(count_since "polaris-logs-*" ",{\"exists\":{\"field\":\"message\"}}")
   if [ -n "$M" ] && [ "$M" -gt 0 ] 2>/dev/null; then ok "polaris-logs-*: $M docs carry message since pod start"
   else huh "polaris-logs-*: ${M:-no answer} docs with message since pod start -- run traffic, then re-run"; fi
+  # 2026-09-18 (#42, reverses #30): the thread fields are shipped again and must now be PRESENT on new docs.
+  # threadName is an UNDECLARED string under the v6 template -- text with index:false plus a .keyword sub-field --
+  # so exists MUST name threadName.keyword; the bare field finds nothing and would fail this check for the wrong
+  # reason. threadId is mapped long (template properties), so the bare field is the right one for it.
+  for f in threadName.keyword threadId; do
+    N=$(count_since "polaris-logs-*" ",{\"exists\":{\"field\":\"$f\"}}")
+    if [ -n "$N" ] && [ "$N" -gt 0 ] 2>/dev/null; then ok "polaris-logs-*: $N docs carry $f since pod start"
+    else huh "polaris-logs-*: ${N:-no answer} docs with $f since pod start -- run traffic, then re-run (#42)"; fi
+  done
   for f in app level _msg; do
     none_since "polaris-report-*" ",{\"exists\":{\"field\":\"$f\"}}" "with $f" "the Lua is not schema v6"
   done

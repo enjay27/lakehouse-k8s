@@ -3,7 +3,7 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-18 (Polaris 1.6.0 live and verified; next task is the thread fields)
+## Now — 2026-09-18 (Polaris 1.6.0 live and verified; thread-field restore written, NOT applied)
 
 **Start here next session:** [`logging/HANDOFF-thread-fields-2026-09-18.md`](logging/HANDOFF-thread-fields-2026-09-18.md) — the
 next task, what 1.6.0 changed under the pipeline, and every open item. Docs index: [`logging/README.md`](logging/README.md).
@@ -13,11 +13,11 @@ indexes), plural `event-listener.types` **working** (`events` 2528 → 2536, tim
 keeps parsing. `#35` closed — 1.3.0 never met v4, so that pairing is *untested, not survived*. Steps 0–5 done; step 1's
 corrected name screen still to re-run before any ladder.
 
-**NEXT TASK: restore `threadName`/`threadId` to `polaris-logs-*`** — delete two `Remove_key` lines from `polaris_field_trim`
-(`fluent-bit/values.yaml`), restore the `threadId` mapping, keep `ndc` out. **Values-only path: step2 → `helm upgrade` → step3,
-NOT `apply-lua.sh`.** The premise needs one correction: the Lua never parsed these fields, but the trim runs *before* the Lua and
-the Lua round-trips every surviving field, so shipping them is not free — measure before/after. Query `threadName.keyword`, never
-bare. Full plan in the handoff.
+**NEXT TASK: roll `#42` — `threadName`/`threadId` restored (decision B, Kade). WRITTEN AND COMMITTED, NOT APPLIED.** Both fields
+back, `ndc` stays out. **Values-only path: step2 → `helm upgrade` → step3, NOT `apply-lua.sh`.** Cost accepted, do not re-measure:
+**+47 B/doc, +7.2 %** — it hands schema v6's −7…8 % back. The handoff's before/after measurement is **WITHDRAWN** (on-disk size is
+unattributable on a same-day roll; Lua CPU is a phase 3.1 number). **The `#30` assertions in step2/step3 were INVERTED** —
+unchanged they would have failed the roll, step2 being the gate in front of `helm upgrade`. Query `threadName.keyword`, never bare.
 
 **Pipeline running:** `benchmarks-fluent-bit` policy v5 / **report schema 6** (`#32`): field `message`, trim before the one Lua
 filter. **`WINDOW_SECONDS` is still 30** (1800 s is a *Lua* change — combining it with the above needs

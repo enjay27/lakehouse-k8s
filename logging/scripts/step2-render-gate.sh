@@ -114,10 +114,13 @@ eq "WINDOW_SECONDS still 30 (flip to 1800 is TODO 2.5)" 'local WINDOW_SECONDS = 
 # Measured 2026-09-16 with kustomize v5.4.3: the rendered data is byte-identical to the file.
 
 echo
-echo "=== polaris-logs-* field trim (2026-09-16: thread name/id and ndc removed, tier 2 only) ==="
-eq "threadName removed in polaris_field_trim" 'Remove_key    threadName' 1
-eq "threadId removed in polaris_field_trim"   'Remove_key    threadId'   1
-eq "ndc removed in polaris_field_trim"        'Remove_key    ndc$'       1
+echo "=== polaris-logs-* field trim (2026-09-18 decision B: thread fields restored, ndc still removed; tier 2 only) ==="
+# INVERTED 2026-09-18 (#42, reverses #30): the two thread fields must NOT be trimmed any more, so the expected
+# count is 0. Left as counts rather than deleted, because a silent reappearance of either Remove_key line is
+# exactly the regression this gate exists to catch.
+eq "threadName NOT trimmed in polaris_field_trim" 'Remove_key    threadName' 0
+eq "threadId NOT trimmed in polaris_field_trim"   'Remove_key    threadId'   0
+eq "ndc still trimmed in polaris_field_trim"      'Remove_key    ndc$'       1
 
 echo
 echo "=== 2026-09-16 pipeline review: P1 P2 P3 P4 P6 (schema v6) ==="
