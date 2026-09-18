@@ -86,12 +86,33 @@ helm lint ./polaris
 helm upgrade --install benchmarks-polaris ./polaris -n datahub-hynix \
   -f polaris/values.yaml --dry-run=client --debug > /tmp/polaris-render.txt
 
-# The render gate for THIS change: the claim must be gone, and /deployments/logs with it.
-grep -c 'polaris-shared-logs-pvc' /tmp/polaris-render.txt     # want 0
-grep -c '/deployments/logs'       /tmp/polaris-render.txt     # want 0
+# GATE THE MANIFEST, NOT THE WHOLE FILE. `--debug` echoes USER-SUPPLIED VALUES and
+# COMPUTED VALUES before the manifest, and `logging.file.logsDir: /deployments/logs` is
+# still a legitimate value in both -- it is simply not mounted anywhere. Grepping the whole
+# render therefore returns 2 for a perfectly correct chart, which is what happened the
+# first time this gate was run (2026-09-18). The proposal's step2 gate says the same thing
+# in one word: render the gate WITHOUT `--debug` (§9.3).
+awk '/^MANIFEST:/{m=1} m' /tmp/polaris-render.txt > /tmp/polaris-manifest.txt
+
+# Arm the gate before trusting it (#43): a zero from an empty file is not a pass.
+grep -q 'kind: Deployment' /tmp/polaris-manifest.txt \
+  && echo "ARMED: manifest section found" \
+  || echo "NOT ARMED: no MANIFEST section -- the greps below prove nothing"
+
+grep -c 'polaris-shared-logs-pvc'        /tmp/polaris-manifest.txt   # want 0
+grep -c '/deployments/logs'              /tmp/polaris-manifest.txt   # want 0
+grep -c 'quarkus.log.file.enabled=false' /tmp/polaris-manifest.txt   # want 1
+
+# That last one is the positive control. It proves the ConfigMap rendered AND that the file
+# handler is off, so the two zeros above mean "absent because disabled", not "absent because
+# I grepped the wrong thing". Without it, a typo in the path would also score 0/0.
 
 helm upgrade --install benchmarks-polaris ./polaris -n datahub-hynix -f polaris/values.yaml
 ```
+
+> If you already ran the earlier version of this gate and got **2**, that was the gate, not
+> the chart: both hits are in the values dumps. `grep -n '/deployments/logs' /tmp/polaris-render.txt`
+> shows them above the `MANIFEST:` line.
 
 Verify against the running object, not the file (CLAUDE.md's Configuration Policy):
 

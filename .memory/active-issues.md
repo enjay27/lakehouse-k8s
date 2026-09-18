@@ -70,6 +70,17 @@ the Polaris mount itself. So:
 **The finding above is unaffected.** Quarkus still has no age-based retention; that is why "3
 days" could never have been a rotation setting in the first place, whichever volume it wrote to.
 
+**Gate defect, found by Kade on first run and fixed the same day.** The runbook's step-3 gate
+grepped the whole `--dry-run=client --debug` output for `/deployments/logs` and wanted 0. It
+returns **2** on a correct chart: `--debug` echoes USER-SUPPLIED VALUES and COMPUTED VALUES
+before the manifest, and `logging.file.logsDir` is still a legitimate *value* — it is simply
+mounted nowhere. Both template uses (`deployment.yaml:268`, `configmap.yaml:135`) are inside
+`{{- if .Values.logging.file.enabled }}`, which is false, so the manifest carries neither. The
+gate now slices from `MANIFEST:` first, checks it found a Deployment before trusting a zero
+(`#43`), and carries a **positive control** (`quarkus.log.file.enabled=false`, want 1) so that
+a mistyped pattern cannot score 0/0 and read as a pass. `PROPOSAL §9.3` already said to gate
+without `--debug`; this repeats `#43`'s lesson in a third place.
+
 **WHAT REMAINS OPEN (the original list, minus what deletion settles):**
 
 - ~~The ~130 dated `.gz` orphans need a one-time `find -delete`.~~ **Closed by the PVC removal**
