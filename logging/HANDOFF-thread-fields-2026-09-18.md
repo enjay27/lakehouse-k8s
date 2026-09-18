@@ -10,9 +10,11 @@ DONE.** step3 after traffic: **367/367 detail docs carry `threadName.keyword` an
 tier-2 output `ok=367 errors=0`, Lua ConfigMap sha unchanged (values-only, as planned). Full
 record: `.memory/active-issues.md` `#42`.
 
-**Still open from the roll:** `step12`'s output was not read, so it is unknown whether the index
-template was applied — if it was not, tomorrow's index is shaped by dynamic mapping again. Also
-unread: the helm revision (expect 21) and `step10`/`step11`.
+**`step12` has since run: PASS, 11/11 declared fields**, and its `BEFORE` block revealed that the
+**v6 template had never actually been applied** — today's index still carried `#30`'s 7-field
+pre-v6 mappings (`client_ip=text` against the template's `ip`). Tomorrow's index is the first
+shaped by v6 at all. **`step9`, the report template, has still not been run and is presumed to be
+in the same state.** Also unread: the helm revision (expect 21) and `step10`/`step11`.
 
 Everything below is kept as the reasoning behind the change, not as instructions to carry out.
 

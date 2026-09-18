@@ -42,12 +42,50 @@ cleanly anyway. That is direct confirmation of this entry's claim below that the
 has held since `#31`. The two extra fields changed what each record carries, not what the filter
 decides.
 
-**NOT READ, and one of them matters:**
-- **`step12` output was not pasted, so it is unknown whether the index template was applied.**
-  If it was not, the `threadId: long` declaration is still only in the repo and **tomorrow's
-  index will be shaped by dynamic mapping again.** Harmless on today's evidence (dynamic reaches
-  `long` on its own), but the file's whole purpose is that this not be left to chance. Run
-  `step12` and expect **8/8** where `#30` recorded 7/7.
+**`step12` RUN AND PASSED 2026-09-18** — `{"acknowledged":true}`, **11/11 declared fields** stored
+and simulated, `dynamic_templates` 1/1. *"tomorrow's `polaris-logs-*` index is the first one
+shaped by it."*
+
+**My prediction of "8/8" was wrong, and the way it was wrong matters.** I extrapolated from
+`#30`'s 7/7 by adding `threadId`. But `#32` (schema v6) expanded this template *after* `#30` —
+`client_ip`, `message`, `exception.message` were added — so the file has declared **10** leaf
+fields since v6, and 11 with `threadId` back. **Never carry a count forward across a schema
+change**; count the file.
+
+**The `BEFORE` block closed `#32`'s open item, negatively — this is the real find.** It printed
+today's index mappings:
+
+```
+polaris-logs-2026.09.18   _time=date  access_log_parse_error=boolean  client_ip=text
+  exception.message=text  exception.refId=long  http_status=long  message=text
+  response_size=long  secret_redacted=boolean  sequence=long  threadId=long
+```
+
+**`client_ip` is `text`, but the v6 template declares it `ip`.** Today's index was created at
+00:00Z on 2026-09-18, long after the 09-16 rolls, so if the v6 template had been stored it would
+be `ip`. It is not. Therefore **the v6 detail template was never actually applied to the cluster
+until this run** — today's index is still shaped by the **7-field pre-v6 template** `#30` stored
+on 2026-09-16, which declared no `client_ip`, no `message` and no `exception.message` (the three
+that now show as plain dynamic `text`). That is exactly the count: 7.
+
+`#32` said as much and nobody read it: *"NOT verified: … OpenSearch acceptance of the v6 mappings
+(step9/step12 on the cluster)"* and *"Not read: … step9/step12 output"*. **It was not verified
+because it had not happened.** This is the repo's own recurring lesson — an intent artifact
+(the file) mistaken for an applied state — caught this time by a diagnostic block printed for a
+different purpose.
+
+**Consequence worth knowing: `dynamic_templates.strings_keyword_only` is a v6 addition, so it is
+NOT on today's index either.** Undeclared strings there are ordinary dynamic `text` + `.keyword`,
+i.e. analysed — so on `polaris-logs-2026.09.18` a bare `threadName` query *does* work. From
+tomorrow's index it will not. **`threadName.keyword` is correct on both**, which is why step3's
+check is written that way; do not let today's permissiveness teach the wrong habit.
+
+**STILL NOT READ:**
+- **`step9` — the `polaris-report-*` template — is in exactly the same position and has NOT been
+  run.** Same `#32` sentence covers both. If the finding above holds for the detail template it
+  almost certainly holds for the report one, so **`polaris-report-*` is probably still on pre-v6
+  mappings**: report `message` not `index:false`, categorical fields not `keyword`. One command
+  settles it: `bash logging/scripts/step9-report-index-template.sh --dry-run`.
 - helm revision number (expected 21) — not recorded.
 - `step10`/`step11` window readout — not run; the detail-by-logger and report-row equality
   checks of `#32`/`#31` were therefore not re-established on this roll.
@@ -956,6 +994,10 @@ exists, Kade uninstalls manually. M5/tier 1 sizing out of scope.
   (and 24 diffs when `schema_version` is not normalised — the harness sees reports); step2 on a stand-in render built from the values
   blocks: all PASS; step9/step12 comparers PASS against the template files; YAML/JSON valid.
 - **NOT verified:** no helm render; OpenSearch acceptance of the v6 mappings (step9/step12 on the cluster); anything on traffic.
+- **RESOLVED 2026-09-18, and the answer was no (`#42`):** the v6 **detail** template was never applied. `polaris-logs-2026.09.18`
+  carried `client_ip=text` against the template's `ip`, which means it was still shaped by `#30`'s 7-field pre-v6 template.
+  `step12` on 2026-09-18 stored v6 for the first time (11/11); **tomorrow's index is the first with v6 mappings at all.**
+  **`step9` (the report template) has still not been run** — assume `polaris-report-*` is likewise pre-v6 until it is.
 - **Gate before the roll, for P4's Polaris text parser only** (the two JSON parsers repeat Merge_Log's JSON decode and cannot succeed
   where it failed): if `k8s-logs` holds Polaris docs with the regex's capture field `logger`, that parser did work — then restore its
   filter + definition before rolling:

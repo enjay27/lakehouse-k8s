@@ -17,8 +17,11 @@ corrected name screen still to re-run before any ladder.
 `ndc` out; step3 after traffic **367/367 carry `message`, `threadName.keyword`, `threadId`; 0 carry `ndc`** — the inverse of
 `#30`. Tier-2 `ok=367 errors=0`, Lua drop 57.5 % (policy unchanged), Lua sha unchanged (values-only as planned). Cost accepted,
 **not measured** (+47 B/doc); the before/after was **withdrawn** as undeliverable. **Query `threadName.keyword`, never bare.**
-**Loose end: `step12` unread — if it never ran, tomorrow's index is dynamic-mapped again; expect 8/8.** Also unread: helm
-revision (expect 21), `step10`/`step11`. **`#43`:** step3's presence checks now self-arm (`huh` never set `FAIL`); `bash -n` only.
+**`step12` PASS 11/11 (2026-09-18) — and its BEFORE block closed `#32`'s open item negatively: the v6 template had NEVER been
+applied.** `polaris-logs-2026.09.18` carried `client_ip=text` against the template's `ip`, so it still ran `#30`'s 7-field pre-v6
+template. **Tomorrow's index is the first with v6 mappings at all.** **`step9` (report template) has still not been run — assume
+`polaris-report-*` is pre-v6 until it is.** Also unread: helm revision (expect 21), `step10`/`step11`. **`#43`:** step3's presence
+checks now self-arm (`huh` never set `FAIL`); `bash -n` only.
 
 **Pipeline running:** `benchmarks-fluent-bit` policy v5 / **report schema 6** (`#32`): field `message`, trim before the one Lua
 filter. **`WINDOW_SECONDS` is still 30** (1800 s is a *Lua* change — combining it with the above needs

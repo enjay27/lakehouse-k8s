@@ -203,3 +203,60 @@ verdict not tracking its subject — and only the first was caught before it cos
   which is precisely the state this roll did not produce.
 - Average document size: **deliberately not measured.** See `#42` for why the measurement was
   withdrawn rather than skipped.
+
+---
+
+# Part 3 — step12, and a diagnostic block that answered a different question
+
+`step12` ran: `{"acknowledged":true}`, **11/11** declared fields stored and simulated,
+`dynamic_templates` 1/1, *"tomorrow's `polaris-logs-*` index is the first one shaped by it."*
+
+## I predicted 8/8 and it was 11/11
+
+I got the number by taking `#30`'s recorded "7/7" and adding `threadId`. But `#32` — schema v6 —
+expanded this same template *after* `#30`, adding `client_ip`, `message` and `exception.message`.
+The file has declared 10 leaf fields since v6, 11 with `threadId` back. **A count recorded before
+a schema change does not survive it.** The fix is not to be more careful with arithmetic; it is
+to count the file, which takes one command and cannot be stale.
+
+## The BEFORE block was the actual finding
+
+step12 prints existing index mappings first, as context — labelled "a type here that differs from
+the template is not a fault." Today's index:
+
+```
+polaris-logs-2026.09.18   _time=date  access_log_parse_error=boolean  client_ip=text
+  exception.message=text  exception.refId=long  http_status=long  message=text
+  response_size=long  secret_redacted=boolean  sequence=long  threadId=long
+```
+
+**`client_ip` is `text`. The v6 template declares it `ip`.** The index was created at 00:00Z on
+2026-09-18, a day and a half after the 09-16 rolls, so a stored v6 template would have made it
+`ip`. It did not. Therefore **the v6 detail template had never been applied to the cluster** —
+today's index was still shaped by the **7-field pre-v6 template** `#30` stored on 09-16, which
+declared no `client_ip`, no `message` and no `exception.message`: precisely the three that show
+as plain dynamic `text`, and precisely the count, 7.
+
+`#32` had said so in its own words — *"NOT verified: … OpenSearch acceptance of the v6 mappings
+(step9/step12 on the cluster)"*, *"Not read: … step9/step12 output"* — and it sat unread for two
+days. **It was not verified because it had not happened.** This is Fault 1's shape again: a
+values-or-template file taken as a statement of cluster state. What made it visible was not a
+check designed to catch it but a context block printed for something else, which is an argument
+for diagnostics that print the *current* state even when nobody asked.
+
+**A corollary about the `.keyword` advice.** `dynamic_templates.strings_keyword_only` is itself a
+v6 addition, so it is not on today's index either: undeclared strings there are ordinary dynamic
+`text` + `.keyword`, analysed, so a **bare `threadName` query actually works on
+`polaris-logs-2026.09.18`** and will stop working on tomorrow's index. `threadName.keyword` is
+correct on both. Anyone who tries the bare field today and concludes the caveat was overblown
+will be wrong tomorrow — the caveat was right, today's index is just accidentally permissive.
+
+## What this leaves open
+
+**`step9`, the report-index template, has still not been run**, and the same `#32` sentence covers
+it. If the finding above holds for the detail template it almost certainly holds for the report
+one, so `polaris-report-*` should be presumed to be on pre-v6 mappings — report `message` not
+`index:false`, categorical fields not `keyword`. One command settles it:
+`bash logging/scripts/step9-report-index-template.sh --dry-run`.
+
+Also still unread: the helm revision (expect 21) and `step10`/`step11`.
