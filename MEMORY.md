@@ -9,7 +9,8 @@ everything else is a link into [`.memory/`](.memory/README.md).
 `polaris-shared-logs-pvc` (`extraVolumes`/`extraVolumeMounts` now `[]`, the dead `QUARKUS_LOG_FILE_JSON_*` vars deleted,
 `maxBackupIndex` 45 → **5** because with no PVC `logsDir` is the node's own disk). **The cluster still mounts it** — the
 ordered teardown (shipper → VictoriaLogs → Polaris upgrade → PVC delete, with the finalizer trap) is
-[`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](logging/RUNBOOK-log-pvc-removal-2026-09-18.md) and **none of it has run.**
+[`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](logging/RUNBOOK-log-pvc-removal-2026-09-18.md) and **only step 3's render gate has run** (2026-09-18, PASS: claim 0, `/deployments/logs` 0 in the manifest,
+`file.enabled=false` control 1 — the manifest is correct; **nothing has been applied or deleted**).
 Step 4 destroys the 27 MB archive; Kade chose no copy. **`#8` closes when it does**, and a never-fired duplicate-mountPath
 trap at `/deployments/logs` went with the mount. The OpenSearch tiers read stdout and are untouched.
 

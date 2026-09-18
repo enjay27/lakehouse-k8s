@@ -114,6 +114,13 @@ helm upgrade --install benchmarks-polaris ./polaris -n datahub-hynix -f polaris/
 > the chart: both hits are in the values dumps. `grep -n '/deployments/logs' /tmp/polaris-render.txt`
 > shows them above the `MANIFEST:` line.
 
+**RUN 2026-09-18 (Kade): the corrected gate PASSES** — armed, `polaris-shared-logs-pvc` 0,
+`/deployments/logs` 0, `quarkus.log.file.enabled=false` 1. The render is clean, which is the
+only claim this establishes. **It does not say the upgrade was applied**, and the steps after it
+— the rollout check, the `ls /deployments/logs` that must return *No such file or directory*,
+and steps 1, 2 and 4 — are unrecorded. Do not read this line as "the mount is gone from the
+cluster"; read it as "the manifest that would remove it is correct".
+
 Verify against the running object, not the file (CLAUDE.md's Configuration Policy):
 
 ```bash
