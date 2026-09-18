@@ -71,6 +71,10 @@ unverified — see `active-issues.md` #33.
 | shipped v3 vs repo `schema_v3.sql` | **indentation only** — the "authority" claim in CLAUDE.md is true, tested 2026-09-18 |
 | shipped v4 object counts | v3 10, v4 21, adds 11; 10 shared objects, **0 differing** |
 | shipped v4 non-object statements our migration lacked | **2** `COMMENT ON TABLE` (lines 226, 295) — added; no GRANT / FUNCTION / ALTER / seed INSERT exists in v4 |
+| live `polaris_schema` after step 2 | 9 tables, **21 indexes** (8 new + v3's 3 + 9 PKs + `constraint_name`), `version_value` 4 — MEASURED 2026-09-18 |
+| `schema.sql` vs `schema_v3.sql` | same 10 objects, **0 differing**, both version 3; differ only by v3's **24 `COMMENT ON`** statements (`#36`) |
+| v3's 4 table comments in the live DB | **absent** — so it was not bootstrapped from `schema_v3.sql` (`#36`) |
+| HPA and a Deployment at 0 replicas | **cannot scale it up** — scaling from 0 needs the alpha `HPAScaleToZero` gate. Scale-to-0 is a safe hold; step 4 must scale back up explicitly |
 | v5 (`events.catalog_id` nullable) | **1.7.0**, not 1.6.0 |
 | 1.6.0 image tag | `1.6.0` — no `-incubating`; graduated after 1.3.0 |
 | `polaris.event-listener.type` | deprecated upstream **since 1.5.0**; plural `types` is current |

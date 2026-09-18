@@ -5,6 +5,51 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#36 — OPEN QUESTION, cheap to settle, no structural risk. The live metastore was not
+bootstrapped from a file carrying v3's table comments, and `schema.sql` is the exact shape of
+what it was.** 2026-09-18.
+
+`obj_description` over `polaris_schema` after the migration: `scan_metrics_report` and
+`commit_metrics_report` carry their comments (so the script that ran was post-`935c7ed` or the
+shipped file — that part is confirmed good). But **all four comments v3 defines are absent** —
+`version`, `entities`, `grant_records`, `principal_authentication_data`. Not a random subset:
+it is exactly the set. (`events` and `policy_mapping_record` are correctly blank; v3 never
+comments them.)
+
+**No structural risk, and this is the part to read first.** Compared object by object with the
+verifier's parser, `postgresql/schema/schema.sql` and `schema_v3.sql` declare the **same 10
+objects, 0 differing**, both version 3. The difference between them is **24 `COMMENT ON`
+statements and nothing else** — `schema.sql` has zero, `bootstrap.sql` has zero and declares no
+version at all. The live database is structurally complete v3: all 21 indexes present,
+including v3's `idx_entities`, `idx_locations`, `idx_policy_mapping_record` and the
+`CONSTRAINT constraint_name` unique index on `entities` (an upstream naming wart, in both
+files — not a defect here). So the v3 → v4 migration was applied to a correct baseline and
+`#34`'s finding is unaffected.
+
+**What is open is provenance, and there are two candidates:**
+
+1. the metastore was bootstrapped by applying `postgresql/schema/schema.sql` by hand — it is
+   *precisely* v3-minus-comments, which is *precisely* the live shape; or
+2. Polaris 1.3.0 bootstrapped it from its own jar's `schema-v3.sql`, and upstream added those
+   comments between 1.3.0 and 1.6.0 — the file we diffed in `#34` came from the **1.6.0** jar.
+
+`RESET-AND-CLEAN-INSTALL.md` points at (2): it bootstraps through `bootstrapCredentials` and
+`persistence.relationalJdbc` and **never applies a repo SQL file**. No chart template, values
+file or script in this repo references any of the three SQL files either. But (1) matches the
+observed shape exactly, so neither is settled.
+
+**The discriminator, three commands, worth doing at the next `docker pull` and not before:**
+extract `postgres/schema-v3.sql` from the **1.3.0** image and count its `COMMENT ON` lines.
+24 → the database came from `schema.sql`, and `schema.sql` is load-bearing history rather than
+a "local variant". 0 → upstream added them after 1.3.0, and `schema.sql` is probably a copy of
+1.3.0's own v3.
+
+**Either way, two things to fix in the docs once known:** `CLAUDE.md` calls `schema.sql` and
+`bootstrap.sql` "the local variants" without saying that one of them is v3 minus comments and
+may be what built this database; and `RESET-AND-CLEAN-INSTALL.md` never names a schema file, so
+the next clean install cannot reproduce this one deliberately. **Do not add the four missing
+comments to the live database** — they are the evidence, and cosmetic.
+
 **#35 — OPEN. The metastore is at schema v4 and the running Polaris is 1.3.0. Upstream
 documents no behaviour for a server older than its schema.** 2026-09-18.
 
@@ -20,11 +65,16 @@ only the other direction — a newer server detecting an older schema (the v5 pl
 and otherwise say only that Polaris runs no automated migrations, so the operator owns the
 ordering. No documented answer, so do not assume one.
 
-`2d` scaled the deployment to 0, so the answer is one `kubectl get deploy,hpa,pods` away, and
-**the reading is perishable — step 4 destroys it.** 0 pods is the clean case (go to step 3). A
-running 1.3.0 pod means the combination is tolerated, which matters for the rollback path; a
-crash loop with a schema-version error means rollback from here needs the `2b` dump restored,
-not just `helm rollback`. Do not scale 1.3.0 up deliberately to find out.
+**MEASURED 2026-09-18 — the clean case, and the question stays unanswered by design.**
+`deployment 0/0`, HPA `REPLICAS 0`. No 1.3.0 pod ever came up against the v4 metastore, so
+nothing exercised the combination and nothing needs to: the window is empty rather than
+survived. Whether 1.3.0 asserts `version_value = 3` is therefore **still unknown, and now
+unknowable without deliberately provoking it** — which is not worth doing. Recorded so a
+future reader does not mistake "no incident" for "tested".
+
+The one thing that follows for the **rollback path**: `helm rollback` to 1.3.0 alone is not
+known to be sufficient from here, because the metastore would stay at v4 under a 1.3.0 server —
+the untested combination. A rollback should assume the `2b` dump has to be restored with it.
 
 **Closes when step 4 puts 1.6.0 on the cluster.** Note also that the migration's guard now
 refuses a v4 database by design, so re-running it is not the way to fix anything from here.
@@ -916,6 +966,18 @@ its own filename and let the shipper glob.
 `REPLICAS 1`, age 21d — **no metrics, so it cannot scale at all**. That removes the hazard
 from the notebook run in progress, and it is not a fix: the autoscaler has been inert for an
 unknown span, and the interleaved-write hazard returns the moment metrics come back. Still OPEN.
+
+*2026-09-18, and this retires one worry that was repeated in three documents:* the runbook's
+step 2d and step 4 both warned that the HPA (`minReplicas: 1`) might undo the scale-to-0.
+**It did not, and it could not.** Measured after `2d`: `deployment 0/0`, HPA `REPLICAS 0`,
+`cpu: <unknown>/80%`. **A HorizontalPodAutoscaler does not scale a workload up from 0
+replicas** — scaling to zero is the documented way to take a workload out of an HPA's hands,
+and scaling *from* zero needs the alpha `HPAScaleToZero` feature gate, which is off on this
+cluster as on any default one. `<unknown>` here is a consequence, not the 09-09 metrics
+regression: there are no pods to collect metrics from. **So scale-to-0 is a safe, reversible
+way to hold Polaris down for a migration**, and the warning has been corrected in the runbook.
+`#8` itself is untouched and still OPEN: the hazard is the HPA going 1 → 3 once a pod is back
+and CPU crosses 80%, which has nothing to do with zero.
 
 *2026-09-18 — THE METRICS ARE BACK, so the hazard is armed again.* Measured:
 `cpu: 1%/80%, memory: 30%/80%`, `MINPODS 1  MAXPODS 3  REPLICAS 1`, age 30d, one pod

@@ -126,3 +126,56 @@ Because `2d` scaled to 0, the current pod state answers it for free — and step
 reading, so it is perishable in the same way step 0's captures were. Direction is forward.
 
 NOT VERIFIED: this session ran no cluster command. The step 2 output above is Kade's.
+
+## The three confirmations, and a fourth thing nobody was looking for
+
+`pg_indexes` + `obj_description` + `get deploy,hpa,pods`, all Kade's:
+
+1. **21 indexes**, containing all 8 new ones, v3's three, nine primary keys, and
+   `constraint_name` — a `CONSTRAINT constraint_name UNIQUE` on `entities`, an upstream naming
+   wart present in the shipped file too. The transaction inference is now a direct measurement.
+2. **Both new table comments present**, so the script that ran was post-`935c7ed` or the
+   shipped file.
+3. **`deployment 0/0`, HPA `REPLICAS 0`.** The clean case.
+
+**On (3), a warning in three documents turned out to be false rather than lucky.** Step 2d,
+step 4 and `#8`'s mid-upgrade note all said the HPA might undo the scale-to-0 because
+`minReplicas: 1`. **An HPA does not scale a workload up from 0 replicas** — scaling to zero is
+the documented way to take a workload out of an autoscaler's hands, and scaling back from zero
+needs the alpha `HPAScaleToZero` gate. So `2d` is a safe reversible hold, and the "scale back up
+if the HPA hasn't" line in step 4 is not a fallback but the required step. Deleted the warning
+rather than hedging it. `cpu: <unknown>` is "no pods to measure", not the 09-09 regression.
+
+Also worth stating plainly: the window `#35` described is **empty, not survived**. No 1.3.0 pod
+met the v4 metastore, so nothing was learned about whether 1.3.0 asserts `version_value = 3`,
+and "no incident" must not be recorded as "tested". The consequence is for the rollback path:
+`helm rollback` alone would leave that untested combination running, so assume the `2b` dump
+goes back with it.
+
+## The fourth thing: v3's table comments are missing from the live database
+
+`obj_description` showed the two new tables commented and **all four tables v3 comments —
+`version`, `entities`, `grant_records`, `principal_authentication_data` — blank.** Exactly that
+set; `events` and `policy_mapping_record` are correctly blank, v3 never comments them.
+
+Chased it in the repo. `postgresql/schema/schema.sql` declares the **same 10 objects** as
+`schema_v3.sql`, **0 differing**, both version 3, and differs only by those **24 `COMMENT ON`
+statements** — it has none. `bootstrap.sql` has none and declares no version. So `schema.sql`
+is *exactly* v3-minus-comments, which is *exactly* the live shape.
+
+**No structural risk, which is worth saying before the speculation:** the live database is
+complete v3 — all v3 objects and indexes present — so the migration went onto a correct
+baseline and `#34` is unaffected.
+
+Two candidate provenances, neither settled: the database was bootstrapped from `schema.sql` by
+hand, or Polaris 1.3.0's own jar shipped a v3 without comments that upstream added by 1.6.0 —
+and the file diffed in `#34` came from the **1.6.0** jar, so it cannot speak to 1.3.0.
+`RESET-AND-CLEAN-INSTALL.md` favours the second: it bootstraps via `bootstrapCredentials` and
+`persistence.relationalJdbc` and never applies a repo SQL file, and no template, values file or
+script in the repo references any of the three. But the shape match favours the first.
+
+Filed as `#36` with a three-command discriminator for the next time the 1.3.0 image is pulled
+(count `COMMENT ON` in its `postgres/schema-v3.sql`). **Not a gate on step 3**, and the live
+database should not be "fixed" by adding the four comments — they are the evidence.
+
+NOT VERIFIED: this session ran no cluster command; all three outputs above are Kade's.

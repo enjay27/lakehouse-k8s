@@ -332,14 +332,22 @@ SELECT c.relname, obj_description(c.oid, 'pg_class') AS comment
 SQL
 ```
 
-Expect the 8 new index names, and comments on `scan_metrics_report` and
-`commit_metrics_report`. **Two NULLs there are not a problem to fix by re-running a
-migration** — the guard now refuses a v4 database, correctly. Apply the two statements alone:
+**RUN 2026-09-18 — both clean, and it found a third thing.** 21 indexes, containing all 8 new
+ones plus v3's three and the nine primary keys and `constraint_name` (a `CONSTRAINT
+constraint_name UNIQUE` on `entities` — an upstream naming wart, present in the shipped file
+too, not a defect here). So the transaction inference is confirmed directly. Both new table
+comments are present, which also settles that the script that ran was the post-`935c7ed` one
+or the shipped file.
 
-```sql
-COMMENT ON TABLE polaris_schema.scan_metrics_report IS 'Scan metrics reports as first-class entities';
-COMMENT ON TABLE polaris_schema.commit_metrics_report IS 'Commit metrics reports as first-class entities';
-```
+**The third thing: all four table comments v3 defines are missing from the live database** —
+`version`, `entities`, `grant_records`, `principal_authentication_data`. Exactly that set.
+`postgresql/schema/schema.sql` declares the same 10 objects as `schema_v3.sql` with 0 differing
+and **differs from it only by those 24 `COMMENT ON` statements**, which is precisely the live
+shape. So either the database was bootstrapped from `schema.sql` by hand, or 1.3.0's own jar
+shipped a v3 without the comments that 1.6.0's has. **No structural risk either way** — the
+live baseline is complete v3, so `#34` and this migration stand. Filed as `#36` with a
+three-command discriminator; it is not a gate on step 3, and **do not "fix" the live database
+by adding the four comments**, they are the evidence.
 
 ### The window step 2 opened: a v4 metastore under a 1.3.0 server
 
@@ -358,17 +366,23 @@ cheap to answer because `2d` already scaled the deployment to 0:
 kubectl -n datahub-hynix get deploy,hpa,pods -l app.kubernetes.io/name=benchmarks-polaris
 ```
 
-- **0 pods, HPA not restoring** → the clean case. Go straight to step 3, then 4. Do **not**
-  scale 1.3.0 back up to "check it still works"; that tests a combination you are about to
-  leave behind and risks a crash loop for no information you need.
-- **A pod running on 1.3.0** (the HPA has `minReplicas: 1`, `#8`) → read its log before step 4.
-  Healthy means 1.3.0 tolerates a v4 schema, which is worth knowing for the rollback path.
-  `CrashLoopBackOff` with a schema-version error means the rollback from here is *not* just
-  `helm rollback` — it would need the `2b` dump restored as well. **Either reading is
-  perishable: step 4 destroys it.** Capture it, the same way step 0 captured its own.
+**MEASURED 2026-09-18: `deployment 0/0`, HPA `REPLICAS 0`, `cpu: <unknown>/80%`.** The clean
+case. No 1.3.0 pod ever met the v4 metastore, so the window is *empty*, not *survived* — do
+not read this as evidence that 1.3.0 tolerates v4 (`#35`). The consequence worth carrying: a
+rollback from here should assume the `2b` dump goes back with it, because `helm rollback` alone
+would leave that untested combination running.
 
-Either way the direction is forward, not back: the metastore is migrated, and the chart that
-matches it is the one already committed. **Step 3 next.**
+**And the HPA warning in 2d and step 4 was wrong — deleted rather than hedged.** It said the
+HPA might undo the scale-to-0 because `minReplicas: 1`. **A HorizontalPodAutoscaler does not
+scale a workload up from 0 replicas.** Scaling to zero is the documented way to take a workload
+out of an HPA's hands; scaling *from* zero needs the alpha `HPAScaleToZero` gate, off here as
+on any default cluster. So `2d` is a safe, reversible hold, and **step 4 must scale back up
+explicitly** — that line in step 4 is not a fallback, it is the required step. The
+`cpu: <unknown>` reading is just "no pods to measure", not the 09-09 metrics regression.
+`#8` is untouched: its hazard is 1 → 3 once a pod is back, which has nothing to do with zero.
+
+Direction is forward: the metastore is migrated and the chart that matches it is committed.
+**Step 3 next.**
 
 ### Why 2c is not a `kubectl exec` into the running pod
 

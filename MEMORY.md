@@ -23,13 +23,14 @@ report rows −31 % bytes. Query strings via `.keyword`. **`WINDOW_SECONDS` is s
 
 **POLARIS 1.6.0 (2026-09-18): committed, NOTHING APPLIED.** Ordered steps:
 [`polaris/RUNBOOK-upgrade-1.6.0.md`](polaris/RUNBOOK-upgrade-1.6.0.md) (supersedes the 09-17 handoff's ordering, `#33`).
-**The metastore is at schema v4 (migrated 2026-09-18, read back as `version|4`, 9 tables) while the running Polaris is still
-1.3.0** — a combination nothing has characterised, and upstream documents no behaviour for a server older than its schema.
-**Step 3 next, then 4, promptly.** Check whether the HPA restored a 1.3.0 pod after `2d`'s scale-to-0 (`#8`) and whether it is
-healthy — that reading is perishable, it disappears at step 4. Console is at **INFO** and emits **JSON**, live since R5 and not
-readable off the values file. **Steps 0, 1 and 2 are DONE** (step 1's corrected screen still to re-run before the ladder).
-Findings — `#5` refuted, the dead config is the JSON env var not the threshold, the inert topology selector, the schema-check
-PASS and the two comments it missed — are in [`.memory/active-issues.md`](.memory/active-issues.md) `#33`/`#34`. Not here.
+**Metastore is at schema v4; Polaris is scaled to 0 and the chart still says 1.3.0. STEP 3 IS NEXT, then 4.** Step 2 verified
+from the database: `version|4`, 9 tables, 21 indexes. **Step 4 must scale the deployment back up explicitly** — an HPA cannot
+scale a workload up from 0, so `2d` held and `#8`'s "the HPA may undo it" was wrong (`#8` still armed for 1 → 3 afterwards).
+Nothing ran 1.3.0 against v4, so that combination is **untested, not survived** — a rollback should assume the `2b` dump goes
+back too (`#35`). Console is at **INFO** and emits **JSON**, live since R5 and not readable off the values file. Steps 0, 1, 2
+DONE (step 1's corrected screen still to re-run before the ladder). **New `#36`, no structural risk:** v3's 4 table comments are
+absent from the live DB and `schema.sql` is exactly `schema_v3.sql` minus its 24 comments — the bootstrap's provenance is not
+what the repo assumes. Detail for all of it in [`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#36`, not here.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 
