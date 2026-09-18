@@ -5,6 +5,66 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#39 — OPEN, and it has already fired. `targetMemoryUtilizationPercentage: 80` against a
+`1Gi` memory request is a ratchet, not an autoscaler: this JVM exceeds the target at idle, so
+the HPA pins Polaris at `maxReplicas` and cannot come back down.** 2026-09-18, measured minutes
+after step 4.
+
+```
+benchmarks-polaris   cpu: 2%/80%   memory: 88%/80%   MINPODS 1   MAXPODS 3   REPLICAS 3
+```
+
+**Three pods at 2% CPU.** The scale-up was entirely the memory metric, and the arithmetic says
+it was inevitable:
+
+| quantity | value | source |
+|---|---|---|
+| memory **request** | `1Gi` | `values.yaml` `resources.requests.memory` — **HPA utilisation is measured against the REQUEST**, not the limit |
+| memory **limit** | `2Gi` | `resources.limits.memory` — this is what the JVM sees as available |
+| JVM **initial** heap | 50% of the limit = **`1Gi`** | `JAVA_TOOL_OPTIONS: -XX:InitialRAMPercentage=50.0` |
+| JVM **max** heap | 65% of the limit = **`1.33Gi`** | `-XX:MaxRAMPercentage=65.0` |
+
+The JVM commits a **1Gi initial heap — exactly the whole memory request — before serving a
+single API call**, and then adds metaspace, code cache, thread stacks and direct buffers on
+top. So memory utilisation starts near or above 100% of the request and stays there. The
+observed 88% is a working-set figure and slightly under that estimate, which fits; the
+direction is what matters. **The target is exceeded at idle.**
+
+Two consequences:
+
+1. **It will not scale back down.** Utilisation cannot fall below 80% of a 1Gi request while
+   the JVM holds a 1Gi initial heap, so `REPLICAS 3` is the steady state. Three Polaris pods
+   is now the cluster's normal condition, not a transient.
+2. **The HPA is pegged at `maxReplicas` with its target still unmet**, so it carries no
+   headroom and a genuine CPU-load event has nowhere to go. An autoscaler in permanent
+   deficit is an autoscaler that is not working.
+
+**What it drags in:** `#15` hypothesis C is **alive again** (three entity caches to diverge —
+see that entry's 2026-09-18 note); three writers into `events`; three times the JDBC
+connections through Pgpool. `#8`'s *specific* hazard — three pods appending one shared log
+file — is the one thing that is **not** live, because `#38` establishes the file handler is off.
+**`#8`'s prediction was right and its stated mechanism was wrong**, which is worth more than
+either fact alone.
+
+**Watch for OOMKills.** Max heap is 1.33Gi against a 2Gi limit, which leaves ~0.67Gi for
+everything non-heap. That is not obviously enough, and three pods on one OrbStack node
+multiplies the node-level pressure. Check `restartCount` and `lastState.terminated.reason`.
+
+**Do not fix this mid-verification.** *Polaris is not to be changed* still stands, and this is a
+values change that needs its own plan. The options, for that plan and not for now:
+
+- **drop `targetMemoryUtilizationPercentage` entirely** and keep CPU only — scaling a JVM on
+  memory is the anti-pattern that produced this, since a JVM's footprint reflects its heap
+  settings rather than its load;
+- **raise `requests.memory`** to above the real footprint (≥`1.5Gi`) so the ratio means
+  something;
+- **`autoscaling.enabled: false` with `replicaCount: 1`**, which is what `#8` recommended
+  before any of this and would have prevented it.
+
+Note `replicaCount: 1` *is* already in `values.yaml` and does nothing: `deployment.yaml` emits
+`replicas:` only when autoscaling is disabled. That is correct chart behaviour, not a bug — but
+it is why "replicaCount is 1" must never be read as "there is one pod".
+
 **#37 — OPEN. The Polaris chart's `pre-upgrade` hook runs `bitnami/kubectl:latest`, pulled
 `Always`, from a catalog Bitnami retired. It is the most likely cause of a step-4 failure and
 it has nothing to do with Polaris.** 2026-09-18, found by reading the step 3 render.
@@ -453,7 +513,7 @@ POSIX classes or `chr()` instead.
 `SELECT * FROM polaris_schema.version` → `version|3`. The repo's `schema_v3.sql` and the
 database agree, which is now measured rather than assumed (`#F1`'s mistake avoided). So the
 v3 → v4 migration is the correct one. `0b` **DONE** — one pod, `REPLICAS 1`, HPA idle at `cpu: 1%/80%, memory: 30%/80%`,
-`MAXPODS 3`. This kills `#15` hypothesis C and re-arms `#8`; see both entries.
+`MAXPODS 3`. This killed `#15` hypothesis C and re-armed `#8` — **both reversed the same day: the HPA went to `REPLICAS 3` after step 4, so C is live again and `#8` has fired (`#39`).**
 `0d` **DONE** — the live log/event-listener config, above.
 **`0a` DONE — all three captures.** `helm get values` (plain and `--all`) and
 `helm get manifest`, plus `helm history` (5 revisions). This closes `#5` (refuted, see above)
@@ -687,6 +747,20 @@ cluster (run `1788760757`), so what is settled is that C is not the mechanism *n
 it never was. And the HPA is live again (`#8`, 2026-09-18) — if a future ladder run pushes
 Polaris past the target, C comes back. **Pin `replicaCount` / disable autoscaling before the
 post-upgrade ladder run if you want C held dead for the duration.**
+
+> ### *2026-09-18, LATER THE SAME DAY — HYPOTHESIS C IS ALIVE AGAIN. This paragraph outlived its truth by about six hours.*
+>
+> **`REPLICAS 3`.** The HPA scaled Polaris to three pods within minutes of step 4, on
+> **memory** (`memory: 88%/80%`) at **`cpu: 2%`** — so not from a ladder run, and not from
+> load at all. See `#39`: it is arithmetic, and it will not come back down. The caveat above
+> named the right risk and the wrong trigger, and the mitigation it recommended was never
+> applied.
+>
+> **So C is back on the table for any `#15` work from now on**, and it is no longer
+> conditional: three pods is the steady state until `#39` is fixed. Anything that reads
+> "hypothesis C is dead" — including MEMORY.md as it stood — is stale. **Pin `replicaCount`
+> and disable autoscaling before the post-upgrade ladder run**, or the run measures a
+> three-cache cluster and cannot distinguish C from A.
 
 That leaves **A** (stale reads through Pgpool — the `database_redirect_preference_list`
 remedy in the handoff addresses it) and **B** (a 1.3.0 resolver/entity-cache bug, which the
@@ -1040,6 +1114,14 @@ and a rotation by one pod pulling the file out from under the other and from und
 shipper's inode. Unbitten only because nothing has pushed Polaris past 80% CPU. Fix: pin
 `replicaCount` and disable autoscaling while the shared-file design stands, or give each pod
 its own filename and let the shipper glob.
+
+**FIRED 2026-09-18, minutes after step 4: `REPLICAS 3`.** The prediction was right; the stated
+mechanism was not. It scaled on **memory at 2% CPU**, which is `#39`'s ratchet rather than load,
+and the shared-log-file hazard this entry is built on is **inert** because the file handler is
+off (`#38`). So three pods is now the steady state, and what it actually costs is `#15`
+hypothesis C coming back, three `events` writers and three times the Pgpool connections — not
+interleaved log records. Read `#39` and `#38` with this entry; the fix it has always
+recommended (pin `replicaCount`, disable autoscaling) is also `#39`'s fix.
 
 *2026-09-09:* the HPA currently reports `cpu: <unknown>/80%, memory: <unknown>/80%` at
 `REPLICAS 1`, age 21d — **no metrics, so it cannot scale at all**. That removes the hazard

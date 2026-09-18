@@ -80,6 +80,11 @@ unverified — see `active-issues.md` #33.
 | total config change in step 3 vs live | exactly two kinds: the listener key `type` → `types`, and those 13 categories. Nothing else moved |
 | `quarkus.log.file.enabled` | **`false`, live and rendered** — so no log file is written, and `extraEnv`'s two `QUARKUS_LOG_FILE_JSON_*` vars are inert (`#38`) |
 | Polaris chart hook image | `bitnami/kubectl:latest`, `pre-install,pre-upgrade`, no `imagePullPolicy` → pulled `Always` from Bitnami's retired public catalog (`#37`) |
+| Polaris replicas after step 4 | **3** — HPA scaled on `memory: 88%/80%` at `cpu: 2%`, MEASURED 2026-09-18 (`#39`) |
+| why 3 and not 1 | HPA measures memory against the **`1Gi` request**; `-XX:InitialRAMPercentage=50` commits **`1Gi`** (50% of the `2Gi` limit) at startup → target exceeded at idle, and it cannot fall back |
+| JVM heap vs container | initial `1Gi`, max `1.33Gi` (65% of `2Gi` limit) → ~`0.67Gi` for all non-heap. Watch `restartCount` for OOMKills |
+| `#15` hypothesis C | **ALIVE again** as of 2026-09-18 — killed at step 0b on one pod, revived six hours later by `#39` |
+| `events` max `timestamp_ms` after step 4 | `1789574562296` = **2026-09-16T16:02:42Z**, i.e. PRE-upgrade. 2528 rows. Proves survival, **not** that the listener writes on 1.6.0 |
 | v5 (`events.catalog_id` nullable) | **1.7.0**, not 1.6.0 |
 | 1.6.0 image tag | `1.6.0` — no `-incubating`; graduated after 1.3.0 |
 | `polaris.event-listener.type` | deprecated upstream **since 1.5.0**; plural `types` is current |

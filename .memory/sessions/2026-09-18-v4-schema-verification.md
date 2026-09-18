@@ -272,3 +272,62 @@ a pod is already running.
 
 NOT VERIFIED: no cluster command from this session. The pull output is Kade's; step 4 has not
 been run.
+
+## Step 4 ran, and #8 fired within minutes
+
+Confirmed from running objects: the loaded ConfigMap is the 1.6.0 one (plural
+`event-listener.types` with `PT5S`/`1000`, every category INFO or OFF with no DEBUG,
+`console.level=INFO`, `file.enabled=false`), and the metastore reads `version_value = 4`. `#35`
+closes — as **never exercised**, not as survived.
+
+Then the HPA:
+
+```
+benchmarks-polaris   cpu: 2%/80%   memory: 88%/80%   MINPODS 1  MAXPODS 3  REPLICAS 3
+```
+
+**`#8` has fired, and the arithmetic says it had to.** HPA memory utilisation is measured
+against the **request** (`1Gi`), while `-XX:InitialRAMPercentage=50.0` sizes the initial heap
+from the **limit** (`2Gi`) — so the JVM commits `1Gi`, the entire request, before serving one
+API call, then adds metaspace, code cache, stacks and direct buffers. The 80% target is
+exceeded **at idle**, which is why it scaled at `cpu: 2%`. And utilisation cannot fall below
+80% of a `1Gi` request while a `1Gi` initial heap is held, so this does not come back down:
+three pods is the steady state, and the HPA sits pegged at `maxReplicas` with its target still
+unmet, carrying no headroom for a real load event. Filed as `#39` with the three fix options,
+none applied — *Polaris is not to be changed*, and this needs its own plan.
+
+Three things worth separating out:
+
+* **`#8`'s prediction was right and its mechanism was wrong.** It called the scale-up; its
+  hazard was three pods appending one `ReadWriteOnce` log file, and `#38` establishes the file
+  handler is off, so there are no writes to interleave. What three pods actually costs is
+  elsewhere.
+* **`#15` hypothesis C is alive again**, six hours after step 0b killed it on a one-pod
+  reading. The entry had even named the risk — "if a future ladder run pushes Polaris past the
+  target, C comes back" — and got the trigger wrong: it was the JVM's startup footprint, not a
+  ladder. Its recommended mitigation was never applied. Anything reading "hypothesis C is dead"
+  is now stale, MEMORY.md included; fixed.
+* **`replicaCount: 1` is in `values.yaml` and means nothing here**, since `deployment.yaml`
+  emits `replicas:` only when autoscaling is off. Correct chart behaviour — but it is why
+  "replicaCount is 1" must never be read as "there is one pod".
+
+## The events reading was pre-upgrade, and step 5 asked the wrong question
+
+`count(*), max(timestamp_ms)` returned `2528 | 1789574562296`. That timestamp is
+**2026-09-16T16:02:42Z** — two days old, and it matches the 09-16 traffic window that verified
+report schema v6. Polaris then sat at 0 replicas through the migration and nothing has called
+it since the upgrade.
+
+So the number proves the table survived and says **nothing** about whether the listener writes
+on 1.6.0 — yet step 5 labelled it "the events table is still being written — the listener
+survived the upgrade". A high-water mark from before the change cannot answer a question about
+after it. Corrected: generate one API call, `sleep 10` for the `PT5S` buffer, then re-read and
+require the count to **rise**. If it stays flat, the plural `event-listener.types` rename is
+the first suspect, being the only listener config that moved.
+
+Added a `restartCount` / `lastState.terminated.reason` check while there: max heap `1.33Gi`
+inside a `2Gi` limit leaves ~`0.67Gi` for non-heap, and there are now three JVMs on one node.
+
+NOT VERIFIED: no cluster command from this session. Step 5 is **partial** — the console-JSON
+check, pod image and phase, restart counts, `/q/health`, the log-directory listing and the real
+listener check are all still outstanding.

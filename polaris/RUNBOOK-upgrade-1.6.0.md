@@ -715,11 +715,62 @@ kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -
   env PGPASSWORD=polaris psql -U polaris -d polaris -tAc \
   "SELECT * FROM polaris_schema.version"                   # expect version|4
 
-# The events table is still being written -- the listener survived the upgrade.
+# The events table SURVIVED the migration. This does NOT show the listener works on 1.6.0 --
+# corrected 2026-09-18, when it returned max(timestamp_ms) = 1789574562296 = 2026-09-16T16:02:42Z,
+# two days stale, because Polaris had been at 0 replicas and nothing had called it since. A
+# pre-upgrade high-water mark proves nothing about the post-upgrade listener.
 kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
   env PGPASSWORD=polaris psql -U polaris -d polaris -tAc \
   "SELECT count(*), max(timestamp_ms) FROM polaris_schema.events"
+
+# THE ACTUAL LISTENER CHECK: generate one API call, wait out the buffer, then re-read.
+# `buffer-time=PT5S`, so sleep longer than that or the row is still in memory.
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
+  curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8181/api/catalog/v1/config
+sleep 10
+kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+  env PGPASSWORD=polaris psql -U polaris -d polaris -tAc \
+  "SELECT count(*), max(timestamp_ms) FROM polaris_schema.events"
+# The count must RISE and max(timestamp_ms) must move to now. If the count is flat, the
+# event listener is not writing on 1.6.0 -- and the plural `event-listener.types` rename is
+# the first thing to suspect, since that key is the only listener config that changed.
+
+# Restart counts -- OOMKill watch. Max heap is 1.33Gi against a 2Gi limit (#39), three pods
+# on one node.
+kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=benchmarks-polaris \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].restartCount}{"\t"}{.status.containerStatuses[0].lastState.terminated.reason}{"\n"}{end}'
 ```
+
+### STEP 5, 2026-09-18 — partial, and the HPA went to three pods
+
+**Confirmed from the running objects:** the loaded ConfigMap is the 1.6.0 one —
+`polaris.event-listener.types` (plural) with `PT5S`/`1000`, every category at INFO or OFF with
+**no DEBUG**, `console.level=INFO`, `console.enabled=true`, `file.enabled=false`. Metastore
+reads `version_value = 4`. `#35` therefore closes — as **never exercised**, not as survived:
+no 1.3.0 pod ever met the v4 schema.
+
+**`#8` FIRED. `REPLICAS 3`, on `memory: 88%/80%` at `cpu: 2%`.** Not load — arithmetic. The HPA
+measures memory against the **`1Gi` request** while `-XX:InitialRAMPercentage=50` commits a
+**`1Gi`** heap (50% of the `2Gi` limit) before the first API call, so the 80% target is exceeded
+at idle and cannot fall back. Three pods is the steady state until it is fixed. Full workings
+in `#39`. **`#15` hypothesis C, which step 0b killed this morning, is alive again** — pin
+`replicaCount` and disable autoscaling before the post-upgrade ladder run or the run cannot
+distinguish C from A. `#8`'s own shared-log-file mechanism is inert (`#38`), so its prediction
+was right and its stated mechanism wrong.
+
+**Still outstanding, and the first is the one that fails silently:**
+
+1. **the console-JSON check** — if output reverted to plain text the tier-2 pipeline goes quiet
+   rather than wrong;
+2. the pod list with image and phase (`apache/polaris:1.6.0`, `Running`);
+3. `restartCount` — OOMKill watch, now that three JVMs share one node;
+4. the `/q/health` probe on **8182**;
+5. `ls -la /deployments/logs/` — `#38` predicts an empty directory, and three pods make it
+   worth settling;
+6. the real listener check: traffic, then re-read `max(timestamp_ms)`. The reading taken today
+   was **pre-upgrade** (see the corrected command above).
+
+---
 
 **Do not expect the log volume to drop.** The original version of this runbook said one
 `polaris-logs-*` window after the upgrade should be materially smaller than one before. That
