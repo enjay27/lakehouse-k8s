@@ -29,14 +29,20 @@ logging decision.
 
 ## Step 0 — the perishable capture. Before the first mutating command.
 
-Unchanged from the handoff, and still the thing that cannot be recovered afterwards.
+**STEP 0 IS DONE as of 2026-09-18.** Kept in full for the record and for the next upgrade.
 
 ```bash
 kubectl config current-context        # must equal orbstack -- halt if not
 
-# 0a. THE ONE THAT CANNOT BE RECOVERED. Closes or narrows #5.
-helm -n datahub-hynix get values benchmarks-polaris > /tmp/polaris-values-1.3.0.yaml
-helm -n datahub-hynix history benchmarks-polaris
+# 0a. THE ONE THAT CANNOT BE RECOVERED. DONE -- and it CLOSED #5: the working tree matched
+#     the live release on all 210 keys, and `--all` added nothing over the supplied values,
+#     so no setting was being served from a chart default. Take all three: the two
+#     `get values` forms answer different questions (supplied vs in effect) and the manifest
+#     is the before-state of every rendered object.
+helm -n datahub-hynix get values benchmarks-polaris       > /tmp/polaris-values-1.3.0.yaml
+helm -n datahub-hynix get values benchmarks-polaris --all > /tmp/polaris-values-1.3.0-all.yaml
+helm -n datahub-hynix get manifest benchmarks-polaris     > /tmp/polaris-manifest-1.3.0.yaml
+helm -n datahub-hynix history benchmarks-polaris          # 5 revisions; R5 deployed 2026-09-15
 
 # 0b. Ten seconds, and it settles #15 hypothesis C (round-robin across replicas).
 #     NOTE the selector: the chart's name IS `benchmarks-polaris`, so `polaris.name` renders
@@ -189,6 +195,16 @@ diff <(sort /tmp/polaris-log-config-1.3.0.properties) <(...)   # against the 0c 
 3. `polaris.event-listener.types=persistence-in-memory-buffer`, with `buffer-time=PT5S` and
    `max-buffer-size=1000` still present.
 
+**Do not assert on `quarkus.log.console.format`.** It is dead config: `extraEnv` sets
+`QUARKUS_LOG_CONSOLE_JSON_ENABLED=true`, environment variables sit at SmallRye ordinal 300
+against `application.properties`' 250, so the console emits **JSON** and the format string in
+`values.yaml` is ignored. The tier-2 Lua and report schema v6 parse that JSON, so the env var
+— not `logging.console.json` — is what the pipeline depends on. 1.6.0 pins **Quarkus 3.36.3**
+and upstream's own 1.6.0 chart emits `quarkus.log.console.json.enabled`, the property that env
+var maps to, so JSON survives the upgrade. Confirm from the running pod in step 5 regardless:
+if console output silently reverts to plain text, the tier-2 pipeline goes **quiet rather than
+wrong**, which is harder to notice.
+
 Helm 4 defaults to server-side apply and the existing release already reports
 `previous_release_apply_method=ssa`, so watch for field-manager conflicts on the upgrade —
 a failure mode Helm 3 did not have.
@@ -226,6 +242,18 @@ kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=benchmarks-polaris \
 # The log config that is actually loaded.
 kubectl -n datahub-hynix get cm benchmarks-polaris -o jsonpath='{.data.application\.properties}' \
   | grep -E 'quarkus\.log|event-listener'
+
+# THE CONSOLE IS STILL JSON. This is the one that breaks the tier-2 pipeline silently.
+kubectl -n datahub-hynix logs deploy/benchmarks-polaris --tail=5
+#   -> every line must be a JSON object. Plain `2026-.. INFO [..]` text means
+#      QUARKUS_LOG_CONSOLE_JSON_ENABLED stopped being honoured; stop and fix before trusting
+#      any polaris-logs-* window or report counter.
+
+# The JVM accepted the GC flags. -XX:+ZGenerational is valid on JDK 21 and REMOVED in JDK 25;
+# 1.6.0's image is ubi9/openjdk-21-runtime so this should be clean -- but an unrecognized VM
+# option presents as CrashLoopBackOff with nothing useful in the Polaris log, so check.
+kubectl -n datahub-hynix logs deploy/benchmarks-polaris | grep -i 'Unrecognized VM option' \
+  || echo "GC flags OK"
 
 # The management port is 8182 here, not the 8282 upstream docs use.
 kubectl -n datahub-hynix port-forward deploy/benchmarks-polaris 8182:8182
@@ -373,6 +401,29 @@ can proceed.
   `benchmarks-polaris-1.3.0` throughout. The pod is 39m old against a 30d deployment with
   `RESTARTS 0` — recreated without a Helm revision, so R5's ConfigMap was loaded 39 minutes
   before the capture, not in September (`#20`).
+- **`#5` IS CLOSED, REFUTED.** `polaris/values.yaml` (working tree) matched the live release on
+  **all 210 keys** bar the 14 `afc88e2` changed, and `--all` added nothing over the supplied
+  values — so nothing was being served from a chart default either. The file *did* describe the
+  running Polaris. The DEBUG-console scare was one uncommitted edit already applied at R5, and
+  calling it "`#5` caught in the act" was wrong; retracted in `#33`.
+- **The console emits JSON and `values.yaml` says it does not.**
+  `QUARKUS_LOG_CONSOLE_JSON_ENABLED=true` in `extraEnv` (ordinal 300) beats
+  `application.properties` (250), so `logging.console.json: false` and the whole
+  `logging.console.format` string are inert. This is the genuine inert-config finding of the
+  capture. Survives 1.6.0 (Quarkus 3.36.3; upstream's 1.6.0 chart emits the same
+  `quarkus.log.console.json.enabled`).
+- **`topologySpreadConstraints` selects `app.kubernetes.io/name: polaris` — zero pods.** The
+  constraint has never influenced scheduling, in the file or the release. `#8`'s reasoning
+  invokes `ScheduleAnyway` spreading that is not in effect. Left unchanged deliberately.
+- **JVM flags safe.** `-XX:+UseZGC -XX:+ZGenerational` is valid on JDK 21 and 1.6.0's image is
+  `ubi9/openjdk-21-runtime`. The flag is **removed in JDK 25** — watch it on any later release.
+- **`bootstrapCredentials` renders empty**, so `POLARIS_BOOTSTRAP_CREDENTIALS` is an empty
+  string. Fine while bootstrapped; supply it if the migration ever needs a re-bootstrap. The
+  same manifest confirms `#9` — `password: "polaris"` plaintext in the rendered Secret.
+- **`QUARKUS_DATASOURCE_JDBC_MAX_SIZE=300` per pod** — a write and its follow-up read almost
+  certainly use different Agroal connections, so pgpool's `disable_load_balance_on_write`
+  (session-scoped) cannot cover the create-then-resolve path. Strengthens `#15` hypothesis A
+  and the case for the handoff's remedy A.
 
 **Open — everything else that needs the cluster.** In particular: `helm get values
 benchmarks-polaris` has *still* never been run, so the live replica count, the live logging

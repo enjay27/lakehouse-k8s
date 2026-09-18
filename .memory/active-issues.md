@@ -18,6 +18,13 @@ read back from the running object, **the running Polaris is 1.3.0 with DEBUG con
 and the values file describes something else. Do not answer "what log level is Polaris at"
 from the file.
 
+**RETRACTION, same day.** The block below called the console-threshold discrepancy "`#5`
+caught in the act". **It is not.** `helm get values` has since been run and the working tree
+matched the live release on all 210 keys; the committed file lagged by one uncommitted edit
+Kade had already applied at R5. See `#5`, now RESOLVED and refuted. What survives below is
+correct and still matters: the threshold was already INFO, so `afc88e2`'s logging half does
+not change the cluster, and the DEBUG categories were measurably inert.
+
 **THE CONSOLE THRESHOLD WAS ALREADY INFO IN THE RUNNING RELEASE. The logging half of
 `afc88e2` changes the FILE, not the cluster.** 2026-09-18, read from the live ConfigMap
 `benchmarks-polaris` (revision 5, deployed 2026-09-15 17:34):
@@ -63,6 +70,77 @@ throughout. The pod is 39m old against a 30d deployment with `RESTARTS 0`, so it
 ConfigMap 39 minutes before the capture, not in September. Worth knowing before concluding
 that a config change did or did not take (`#20`).
 
+**THE CONSOLE IS EMITTING JSON, AND `values.yaml` SAYS IT IS NOT.** This is the inert-config
+finding the threshold scare was mistaken for, and it is real. `extraEnv` carries:
+
+```
+QUARKUS_LOG_CONSOLE_JSON_ENABLED=true      # "JSON logging for Fluent Bit (Quarkus 3.29.4 new key)"
+QUARKUS_LOG_FILE_JSON_ENABLED=true
+QUARKUS_LOG_FILE_JSON_PRETTY_PRINT=false
+```
+
+Environment variables sit at SmallRye Config ordinal **300**; `application.properties` sits at
+**250**. So the env var wins, and **`logging.console.json: false` plus the entire
+`logging.console.format` string are dead configuration** — the ConfigMap dutifully renders
+`quarkus.log.console.format=%d{...} %-5p [%c{2.}] (%t) [%X{requestId}] %s%e%n` and the running
+Polaris ignores it. The tier-2 Lua and report schema v6 parse JSON, so the pipeline depends on
+the env var, not on the two values-file keys that appear to govern it. **Anyone editing
+`logging.console.format` is editing nothing.**
+
+*Good news for the upgrade, and it is checked rather than hoped:* upstream's own 1.6.0 chart
+emits `quarkus.log.console.json.enabled`, which is exactly the property
+`QUARKUS_LOG_CONSOLE_JSON_ENABLED` maps to, and 1.6.0 pins **Quarkus 3.36.3** — later than the
+3.29.4 the repo comment cites, same key family. So JSON console output survives 1.6.0. Confirm
+from the running pod anyway; if it ever silently reverts to plain text, the entire tier-2
+pipeline breaks and the report counters go quiet rather than wrong.
+
+**THE `topologySpreadConstraints` SELECTOR MATCHES NOTHING.** In both the file and the live
+release:
+
+```
+topologySpreadConstraints:
+  - labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: polaris      # <-- the label is `benchmarks-polaris`
+```
+
+The chart labels its pods `app.kubernetes.io/name: benchmarks-polaris` (`polaris.name` =
+`default .Chart.Name`). So this constraint has selected zero pods for its entire life and has
+never influenced scheduling. **This matters to `#8`**, whose text reasons about "a single-node
+cluster with `ScheduleAnyway` spreading" — the spreading it invokes is not in effect. Same bug
+class as the `=polaris` runbook selector fixed in `82525c3`; the pattern is that
+`app.kubernetes.io/name` here is the *chart* name, and nothing errors when it matches nothing.
+**Not changed in `afc88e2`** — it is Polaris runtime shape, and fixing it would arm a
+constraint that has never run, which CLAUDE.md's Configuration Policy says to review line by
+line first.
+
+**JVM FLAGS: CHECKED, AND NOT A RISK FOR 1.6.0.** `extraEnv` sets
+`GC_CONTAINER_OPTIONS=-XX:+UseZGC -XX:+ZGenerational`. `-XX:+ZGenerational` was introduced in
+JDK 21, deprecated in 23, obsolete in 24 and **removed in 25** — on a JDK 25 image it is an
+unrecognized VM option and the JVM refuses to start, which would present as CrashLoopBackOff
+with nothing useful in the Polaris log. Polaris 1.6.0's image is
+`registry.access.redhat.com/ubi9/openjdk-21-runtime` (`Dockerfile.jvm` at tag
+`apache-polaris-1.6.0`), the same JDK 21 family as 1.3.0, so the flag stays valid. **Forward
+watch item:** any future Polaris release that moves its base image to JDK 25 turns this env
+var into a hard startup failure.
+
+**`bootstrapCredentials` RENDERS EMPTY.** `polaris/values.yaml` has `bootstrapCredentials`
+commented out while `persistence.relationalJdbc.createSecret: true`, so the rendered Secret
+carries the key with no value (`bootstrapCredentials:` in the manifest) and
+`POLARIS_BOOTSTRAP_CREDENTIALS` resolves to an empty string. Harmless while the metastore is
+already bootstrapped; **relevant if the v3 → v4 migration ever goes wrong badly enough to
+want a re-bootstrap**, because the credentials would have to be supplied at that moment. The
+same manifest confirms `#9` — `password: "polaris"` in plaintext in the rendered Secret.
+
+**`QUARKUS_DATASOURCE_JDBC_MAX_SIZE=300` per pod, MIN_SIZE 10 — this strengthens `#15`
+hypothesis A.** With up to 300 Agroal connections, a write and the read that immediately
+follows it are almost certainly on *different* connections, and pgpool's
+`disable_load_balance_on_write = always` pins only *within* one session. So the one mechanism
+that would have protected the create-then-resolve path does not cover it, and with
+`delay_threshold` unset (pgpool default 0, checked nowhere) lag is never consulted before a
+read is balanced onto a standby. The handoff's remedy A —
+`database_redirect_preference_list = 'polaris:primary'` — addresses exactly this.
+
 **Step 0 progress, 2026-09-18 (Kade ran these; this session cannot):**
 `0c` **DONE — the live metastore is at schema version 3**, read from primary pg-1:
 `SELECT * FROM polaris_schema.version` → `version|3`. The repo's `schema_v3.sql` and the
@@ -70,10 +148,11 @@ database agree, which is now measured rather than assumed (`#F1`'s mistake avoid
 v3 → v4 migration is the correct one. `0b` **DONE** — one pod, `REPLICAS 1`, HPA idle at `cpu: 1%/80%, memory: 30%/80%`,
 `MAXPODS 3`. This kills `#15` hypothesis C and re-arms `#8`; see both entries.
 `0d` **DONE** — the live log/event-listener config, above.
-**`0a` is STILL NOT RUN**, and it is the perishable one: `helm get values benchmarks-polaris`
-(plain *and* `--all`) is the only thing that can quantify how far the rest of
-`polaris/values.yaml` has drifted from the release, and the console-threshold finding above is
-proof the drift is real and not hypothetical. `helm history` has been run (5 revisions).
+**`0a` DONE — all three captures.** `helm get values` (plain and `--all`) and
+`helm get manifest`, plus `helm history` (5 revisions). This closes `#5` (refuted, see above)
+and is where the JSON-console, topology-selector, ZGC and pool-size findings came from.
+**Step 0 is now complete.** Next is step 1, the entity-name screen — the only remaining
+pre-flight that can block the upgrade.
 
 **Two command corrections, both mine, both worth keeping:**
 
@@ -575,8 +654,40 @@ is a Secret plus `${VAR}` expansion in the Fluent Bit config, not a different li
 `polaris/values.yaml:408-409` (`minioadmin`/`minioadmin`) is the same class of problem and
 should go the same way.
 
-**#5 — `polaris/values.yaml` does not describe the running Polaris. OPEN — and NARROWER
-than it was written.**
+**#5 — RESOLVED 2026-09-18, AND THE CLAIM IS REFUTED. `polaris/values.yaml` DOES describe the
+running Polaris.**
+
+`helm get values benchmarks-polaris` was finally run — the command this issue waited on since
+2026-09-03. Flattened and diffed key by key against the working tree:
+
+| comparison | result |
+|---|---|
+| repo working tree vs live R5 user-supplied | **identical on all 210 keys** except the 14 `afc88e2` changed |
+| live user-supplied vs live computed (`--all`) | **209 of 210 identical**; the only difference is `revisionHistoryLimit: null` present in supplied and absent from computed, which is Helm coalescing a null |
+
+Two conclusions, and the second is the structural one:
+
+1. **The file matched the release.** The 14 differing keys are exactly `image.tag` plus the 13
+   log categories from `afc88e2` — i.e. the changes made *after* the capture. Nothing else
+   diverged. `logging.console.threshold` does **not** appear in the diff: the working tree said
+   INFO and so did the release.
+2. **There is no chart-default layer hiding anything.** `--all` adding nothing over the supplied
+   values means the release was installed with the whole file, so no setting is being served
+   quietly from a chart default. This is the structural fear behind `#F1` and the `postgresql:`
+   nesting, and for Polaris it is now measured as absent.
+
+**What the DEBUG-console confusion actually was.** The *committed* file said
+`threshold: DEBUG` while the release ran INFO — but the *working tree* said INFO, uncommitted.
+So the drift was one uncommitted edit Kade had already applied at revision 5 (2026-09-15) and
+not committed, not a file describing something else. An earlier session note in `#33` called
+this "`#5` caught in the act"; **that was wrong and is retracted** — it inferred file/cluster
+divergence from a ConfigMap reading before the values comparison existed to check it against.
+
+*Historical, kept because the reasoning is instructive:* filed first as "the VictoriaLogs path
+has no input" (wrong — it runs), then rewritten as "the repo and the cluster disagree", which
+over-reached: it said *the repo*, on evidence about *one file*. Every file it named has now
+reconciled. The lesson is not "the repo is fine"; it is that **"the file is probably wrong" is
+itself a claim needing evidence**, and three times running it has failed to find any.
 
 Filed first as "the VictoriaLogs path has no input" (wrong — it runs), then rewritten as
 "the repo and the cluster disagree", which over-reached: it said *the repo*, on evidence

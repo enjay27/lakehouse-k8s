@@ -74,6 +74,20 @@ unverified — see `active-issues.md` #33.
 | upstream chart default `logging.console.threshold` | **`ALL`** — so INFO discriminates |
 | 1.7.0 trap | `OPTIMIZED_SIBLING_CHECK` 403s every nested namespace (apache/polaris#5521); 1.6.0 clear |
 
+**Measured on 1.3.0, 2026-09-18 — step 0 complete:**
+
+| measurement | value |
+|---|---|
+| `polaris/values.yaml` (working tree) vs live R5 user-supplied | **identical on 210 keys** bar the 14 `afc88e2` changed → `#5` REFUTED |
+| live user-supplied vs computed (`--all`) | 209/210 identical → **no chart-default layer** |
+| Polaris pods / HPA | **1 pod**, `MINPODS 1 MAXPODS 3 REPLICAS 1`, `cpu 1%/80% memory 30%/80%` |
+| release revisions | 5; R5 `deployed` 2026-09-15 17:34 |
+| console output format | **JSON** — `QUARKUS_LOG_CONSOLE_JSON_ENABLED=true` (ordinal 300) beats the ConfigMap `format` (250) |
+| `topologySpreadConstraints` selector | `app.kubernetes.io/name: polaris` → **matches 0 pods**, inert since install |
+| Agroal pool per pod | `MIN_SIZE 10`, `MAX_SIZE 300` |
+| 1.6.0 base image | `registry.access.redhat.com/ubi9/openjdk-21-runtime` → `-XX:+ZGenerational` valid (removed in JDK 25) |
+| 1.6.0 Quarkus | **3.36.3** |
+
 **Assertions to run after the upgrade** — each reads the running object, not a values file:
 
 1. `kubectl -n datahub-hynix get pods -l app.kubernetes.io/name=benchmarks-polaris -o jsonpath='{.items[*].spec.containers[0].image}'`
@@ -88,8 +102,14 @@ unverified — see `active-issues.md` #33.
    upgrade — the listener survived 1.6.0's event-persistence overhaul.
 6. `\dt polaris_schema.*` lists `idempotency_records`, `scan_metrics_report`,
    `commit_metrics_report`.
-7. One `polaris-logs-*` window after the upgrade is materially smaller than one before
-   (`step10` / `step11`, not Dev Tools copies).
+7. One `polaris-logs-*` window after the upgrade is **comparable to** one before — *not*
+   smaller. Stdout has been INFO-only since R5, so there is no DEBUG traffic for the
+   threshold to remove. A material shrink is an unexplained change, not a success.
+   (`step10` / `step11`, not Dev Tools copies.)
+8. `kubectl logs deploy/benchmarks-polaris --tail=5` still returns **JSON objects**. Plain
+   text means `QUARKUS_LOG_CONSOLE_JSON_ENABLED` stopped being honoured and the tier-2 Lua
+   is parsing nothing.
+9. No `Unrecognized VM option` in the pod log — the ZGC flags survived the image change.
 
 ## PostgreSQL verification assertions
 
