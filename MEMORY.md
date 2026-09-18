@@ -5,12 +5,19 @@ everything else is a link into [`.memory/`](.memory/README.md).
 
 ## Now — 2026-09-18 (Polaris 1.6.0 live; thread fields ROLLED and VERIFIED; retention WRITTEN, not applied)
 
+**THE POLARIS LOG PVC IS BEING REMOVED (2026-09-18, Kade).** `polaris/values.yaml` no longer mounts
+`polaris-shared-logs-pvc` (`extraVolumes`/`extraVolumeMounts` now `[]`, the dead `QUARKUS_LOG_FILE_JSON_*` vars deleted,
+`maxBackupIndex` 45 → **5** because with no PVC `logsDir` is the node's own disk). **The cluster still mounts it** — the
+ordered teardown (shipper → VictoriaLogs → Polaris upgrade → PVC delete, with the finalizer trap) is
+[`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](logging/RUNBOOK-log-pvc-removal-2026-09-18.md) and **none of it has run.**
+Step 4 destroys the 27 MB archive; Kade chose no copy. **`#8` closes when it does**, and a never-fired duplicate-mountPath
+trap at `/deployments/logs` went with the mount. The OpenSearch tiers read stdout and are untouched.
+
 **RETENTION IS WRITTEN AND NOTHING IS APPLIED (2026-09-18, `#44`).** ISM is **ours locally** now, not the Monitoring team's
 (production still theirs): `logging/opensearch/ism-*.json` — `polaris-logs-*` 3d, `polaris-report-*` **30d (a rehearsal
 figure: that stream is the only record of successful reads)**, `k8s-logs-*` 3d. Run `logging/scripts/step13-ism-apply.sh`
-dry first; `--apply` also deletes the 30 s-window report indices. PVC side: **Quarkus has no age TTL**, so `polaris/values.yaml`
-states a byte cap instead (`fileSuffix` null, `maxBackupIndex` 45 = 460Mi ring) — and **the ~130 dated `.gz` orphans it cannot
-reach need `#44`'s one-time command.** All inert while `logging.file.enabled: false` (`#38`).
+dry first; `--apply` also deletes the 30 s-window report indices. PVC side: **Quarkus has no age TTL** (`#44`) — which is
+why the PVC is going instead. All of it inert while `logging.file.enabled: false` (`#38`).
 
 **Start here next session:** `.memory/active-issues.md` `#42` — the thread-field task is **DONE**, and `#42` carries both the
 outcome and the four things that were never read. [`logging/HANDOFF-thread-fields-2026-09-18.md`](logging/HANDOFF-thread-fields-2026-09-18.md)

@@ -47,20 +47,39 @@ accumulating across days), and `maxBackupIndex` 5 → **45**, giving `10Mi x 46 
 days or a fortnight of quiet ones. **The cost is gzip** — compression came from the suffix
 ending in `.gz`, so the ring is 460Mi of plaintext where the old scheme held ~23MB compressed.
 
-**STILL OPEN, and it is the part the values change does not touch:**
+**SUPERSEDED IN PART, SAME DAY (2026-09-18, Kade): THE PVC IS BEING REMOVED ALTOGETHER.**
+Its only two consumers are going — `fb-polaris-shipper` (which tailed it into VictoriaLogs) and
+the Polaris mount itself. So:
 
-- **The existing ~130 dated `.gz` files are orphans.** They do not match `polaris.log.N`, so the
-  size ring will never see them. They sit there for ever unless deleted by hand. One-time,
-  destructive, needs explicit authorisation at the moment of execution:
-  ```bash
-  kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
-    find /deployments/logs -name 'polaris.log.2*.gz' -mtime +3 -print      # LOOK FIRST
-  kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
-    find /deployments/logs -name 'polaris.log.2*.gz' -mtime +3 -delete
-  ```
-- **None of it runs while `logging.file.enabled: false`** (`#38`, settled). The ring is config
-  for a handler that is off. If file logging comes back, `#8` comes back with it — three
-  replicas, one RWO file, independent rotation state — so pin `replicaCount` first (`#39`).
+- **The orphan problem below is resolved by deletion, not by a sweep.** Deleting the claim takes
+  the ~130 dated `.gz` files with it. Kade chose explicitly not to keep a copy.
+- **`maxBackupIndex` is back to 5**, reversing the 45 committed hours earlier. 45 (a 460Mi ring)
+  was sized against a 5Gi PVC; with no PVC, `logsDir` is the container's writable layer — node
+  disk on the single OrbStack node — where 460Mi is worse than the 60Mi it replaced.
+- **`extraVolumes` / `extraVolumeMounts` are now `[]`**, and the two `QUARKUS_LOG_FILE_JSON_*`
+  variables `#38` called dead config are deleted.
+- **A trap went with them, and it had never fired.** The chart mounts its own `logs-storage`
+  volume at `.Values.logging.file.logsDir` when `logging.file.enabled` is true — the *same*
+  `/deployments/logs` that `extraVolumeMounts` claimed. Both at once is a duplicate mountPath,
+  which the API server rejects outright. `enabled: false` is the only reason nobody hit it. So
+  **`#38`'s "the handler is off" was also load-bearing for the deployment rendering at all.**
+- Sequence, finalizer trap and per-step verification:
+  [`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](../logging/RUNBOOK-log-pvc-removal-2026-09-18.md).
+  **Nothing has been run** — the repo no longer mounts the PVC, the cluster still does.
+
+**The finding above is unaffected.** Quarkus still has no age-based retention; that is why "3
+days" could never have been a rotation setting in the first place, whichever volume it wrote to.
+
+**WHAT REMAINS OPEN (the original list, minus what deletion settles):**
+
+- ~~The ~130 dated `.gz` orphans need a one-time `find -delete`.~~ **Closed by the PVC removal**
+  — the claim takes them with it (runbook step 4). The `find -delete` is only wanted if you
+  want them gone *before* the teardown.
+- **None of it runs while `logging.file.enabled: false`** (`#38`, settled), and after the
+  teardown there is no volume either. The ring is config for a handler that is off writing to a
+  disk that would now be the node's. **If file logging ever comes back, set
+  `logging.file.storage` and let the chart provision its own claim** — do not point it at node
+  ephemeral storage, and pin `replicaCount` first (`#39`).
 - **Never confirm the ring from this values file.** It is the file that was wrong for a month:
   `exec ... grep rotation /deployments/config/application.properties`.
 
@@ -1602,7 +1621,12 @@ What remains open is narrower and still real:
 The generalisable part: a claim about "the repo" needed evidence about the repo. One file
 diffing clean is exactly the outcome that a broad claim could not have predicted.
 
-**#8 — HPA can scale Polaris to 3 pods sharing one log file. OPEN.**
+**#8 — HPA can scale Polaris to 3 pods sharing one log file. CLOSING — the shared file is being
+removed (2026-09-18).** The mount is out of `polaris/values.yaml`; the claim goes in
+[`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](../logging/RUNBOOK-log-pvc-removal-2026-09-18.md).
+With no shared file there is no shared rotation state and this mechanism cannot bite again —
+**but it is not closed until step 4 of that runbook has actually run**, and the HPA flapping
+underneath it (`#39`) is a separate issue that this does not touch. Original entry:
 `autoscaling.enabled: true`, `maxReplicas: 3` at 80% CPU — and every replica mounts
 `polaris-shared-logs-pvc` and appends to the same `/deployments/logs/polaris.log`.
 `ReadWriteOnce` does **not** prevent this: RWO allows many pods on the *same node*, and this

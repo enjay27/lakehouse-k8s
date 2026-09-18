@@ -22,6 +22,9 @@
   `fb-polaris-shipper` (chart `fluent-bit-0.58.1`, Deployment, `logging/fb-values.yaml`) tails the Polaris log PVC into
   **VictoriaLogs**; the OpenSearch cutover plan said to uninstall it and nothing records that it happened, so
   **confirm with `helm list -A` before relying on either statement** (`logging/REVIEW-pipeline-2026-09-16.md` P10).
+  **Both this leg and `polaris-shared-logs-pvc` are being removed (Kade 2026-09-18).** The repo side is done —
+  `polaris/values.yaml` no longer mounts the claim — and the cluster side is
+  `logging/RUNBOOK-log-pvc-removal-2026-09-18.md`, **not yet run**. The OpenSearch tiers read stdout and are unaffected.
 - **DaemonSet state, 2026-09-16 (late):** rev 17 v5 → 18 hot reload removed → 19 `threadName`/`threadId`/`ndc` trimmed from
   `polaris-logs-*` (`active-issues.md` #30) → the Lua refactor (`#31`): **one Lua filter** (FILTER 3 `polaris_noise_filter`
   parses, decides, counts, reports; the old FILTER 2 `polaris_access_log` no longer exists). Verified on traffic.
@@ -30,7 +33,9 @@
   mappings for indices created after step9/step12 (query strings via `.keyword`). Pod `62klp`.
   `WINDOW_SECONDS` is still the verification value 30. **The rule stands:** confirm a setting from the running object,
   not the file — the next `helm upgrade` makes this line history.
-- **VictoriaLogs:** log sink in namespace `logging` (9428), for the shipper above.
+- **VictoriaLogs:** log sink in namespace `logging` (9428), for the shipper above. **Being uninstalled
+  (2026-09-18)** — when it goes the `logging` namespace is empty and the exception below describes nothing.
+  Its 50Gi PVC does not go with `helm uninstall`; decide it deliberately (runbook step 2).
 - **OpenSearch:** runs in **Docker, outside the cluster and outside this repo** — no compose file is versioned here.
   **`3.5.0`** (measured 2026-09-08). Index templates are ours (`logging/opensearch/`), and **so is retention for this
   local cluster, since 2026-09-18** — `logging/opensearch/ism-*.json`, applied with `logging/scripts/step13-ism-apply.sh`
