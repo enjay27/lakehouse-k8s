@@ -9,10 +9,12 @@ everything else is a link into [`.memory/`](.memory/README.md).
 `polaris-shared-logs-pvc` (`extraVolumes`/`extraVolumeMounts` now `[]`, the dead `QUARKUS_LOG_FILE_JSON_*` vars deleted,
 `maxBackupIndex` 45 → **5** because with no PVC `logsDir` is the node's own disk). **The cluster still mounts it** — the
 ordered teardown (shipper → VictoriaLogs → Polaris upgrade → PVC delete, with the finalizer trap) is
-[`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](logging/RUNBOOK-log-pvc-removal-2026-09-18.md) and **only step 3's render gate has run** (2026-09-18, PASS: claim 0, `/deployments/logs` 0 in the manifest,
-`file.enabled=false` control 1 — the manifest is correct; **nothing has been applied or deleted**).
-Step 4 destroys the 27 MB archive; Kade chose no copy. **`#8` closes when it does**, and a never-fired duplicate-mountPath
-trap at `/deployments/logs` went with the mount. The OpenSearch tiers read stdout and are untouched.
+[`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](logging/RUNBOOK-log-pvc-removal-2026-09-18.md) and **step 3 is DONE** (2026-09-18: gate PASS with its positive control, applied, and the pod
+confirms `ls /deployments/logs` → *No such file or directory* — the mount is gone from the running container, not merely
+empty). **Polaris has released the claim; `fb-polaris-shipper` is the last mounter.** Steps 1, 2 and 4 have NOT run —
+the shipper and VictoriaLogs are still installed and the PVC still exists with its 27 MB.
+Step 4 destroys the 27 MB archive; Kade chose no copy. **`#8` is CLOSED as of step 3** (not step 4 — the hazard was the
+mount, not the claim), and a never-fired duplicate-mountPath trap at `/deployments/logs` went with it. The OpenSearch tiers read stdout and are untouched.
 
 **RETENTION IS WRITTEN AND NOTHING IS APPLIED (2026-09-18, `#44`).** ISM is **ours locally** now, not the Monitoring team's
 (production still theirs): `logging/opensearch/ism-*.json` — `polaris-logs-*` 3d, `polaris-report-*` **30d (a rehearsal

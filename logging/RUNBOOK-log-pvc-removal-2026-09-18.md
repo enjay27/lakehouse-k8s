@@ -114,12 +114,18 @@ helm upgrade --install benchmarks-polaris ./polaris -n datahub-hynix -f polaris/
 > the chart: both hits are in the values dumps. `grep -n '/deployments/logs' /tmp/polaris-render.txt`
 > shows them above the `MANIFEST:` line.
 
-**RUN 2026-09-18 (Kade): the corrected gate PASSES** — armed, `polaris-shared-logs-pvc` 0,
-`/deployments/logs` 0, `quarkus.log.file.enabled=false` 1. The render is clean, which is the
-only claim this establishes. **It does not say the upgrade was applied**, and the steps after it
-— the rollout check, the `ls /deployments/logs` that must return *No such file or directory*,
-and steps 1, 2 and 4 — are unrecorded. Do not read this line as "the mount is gone from the
-cluster"; read it as "the manifest that would remove it is correct".
+**STEP 3 IS DONE AND VERIFIED ON THE RUNNING OBJECT (Kade, 2026-09-18).**
+
+- Gate: armed, `polaris-shared-logs-pvc` 0, `/deployments/logs` 0,
+  `quarkus.log.file.enabled=false` 1 (positive control fired).
+- Applied, and the pod confirms it:
+  `ls /deployments/logs` → `No such file or directory`, exit 2.
+
+That is the strong form, and the distinction matters: an **empty** directory would have meant
+the volume was still mounted and merely unwritten, which is indistinguishable from the state
+before the change. A **missing path** means the mount is gone from the running container.
+
+**Polaris has released the claim.** One mounter remains — `fb-polaris-shipper` (step 1).
 
 Verify against the running object, not the file (CLAUDE.md's Configuration Policy):
 
@@ -166,7 +172,7 @@ find the pod still holding it.
 
 | item | after this runbook |
 |---|---|
-| `#8` — 3 replicas appending to one RWO log file | **closed permanently.** No shared file, no shared rotation state. It fired on 09-18 (`REPLICAS 3`) and can no longer bite |
+| `#8` — 3 replicas appending to one RWO log file | **CLOSED at step 3, 2026-09-18** — earlier notes said step 4, which was wrong: the hazard was the *mount*, not the claim. With no mount no replica can open that file, whatever the HPA does and whether or not the PVC still exists |
 | `#44` — orphaned dated `.gz` archive no ring can reach | **closed by deletion.** The one-time `find -delete` is no longer needed |
 | duplicate mountPath at `/deployments/logs` | **closed.** Chart `logs-storage` + `extraVolumes` could never collide again |
 | `#38` — file handler off, file-JSON env vars inert | **closed.** Both variables removed; there is now no volume either |

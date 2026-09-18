@@ -1632,12 +1632,30 @@ What remains open is narrower and still real:
 The generalisable part: a claim about "the repo" needed evidence about the repo. One file
 diffing clean is exactly the outcome that a broad claim could not have predicted.
 
-**#8 — HPA can scale Polaris to 3 pods sharing one log file. CLOSING — the shared file is being
-removed (2026-09-18).** The mount is out of `polaris/values.yaml`; the claim goes in
-[`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](../logging/RUNBOOK-log-pvc-removal-2026-09-18.md).
-With no shared file there is no shared rotation state and this mechanism cannot bite again —
-**but it is not closed until step 4 of that runbook has actually run**, and the HPA flapping
-underneath it (`#39`) is a separate issue that this does not touch. Original entry:
+**#8 — RESOLVED-INSTRUCTIVE 2026-09-18. The shared log mount is gone from the running pod;
+three replicas can no longer share a log file because there is no log file.**
+
+Verified the strong way, not by reading a values file: `kubectl exec deploy/benchmarks-polaris
+-- ls /deployments/logs` returns **`No such file or directory`, exit 2**. An *empty* directory
+would have proven nothing — that is what a still-mounted, unwritten volume looks like, and it is
+exactly the state this pipeline was in all morning.
+
+**Correcting my own note from hours earlier in the same day:** I wrote that `#8` closes when the
+PVC is deleted (runbook step 4). Wrong. The hazard was three JBoss handlers with independent
+rotation state on one **mount**; removing the mount ends it regardless of whether the claim
+still exists. Step 4 disposes of an unused object, which is housekeeping, not the fix. Filing the
+close one step later than it happened would have left a live-looking issue describing something
+already impossible.
+
+**What this does NOT close:** `#39`, the HPA flapping on memory at 2% CPU, which is the same
+`maxReplicas: 3` and is untouched by any of this. `#8` fired on 2026-09-18 (`REPLICAS 3`) before
+the mount came out; that it never corrupted a log file is luck plus `#38`'s handler being off,
+not design.
+
+**Kept because the failure mode recurs:** a `ReadWriteOnce` claim does **not** serialise writers.
+RWO restricts a volume to one *node*, and many pods on that node may mount it — which on a
+single-node cluster is every pod. Anyone reading "ReadWriteOnce" as "one writer" will build this
+again. Original entry:
 `autoscaling.enabled: true`, `maxReplicas: 3` at 80% CPU — and every replica mounts
 `polaris-shared-logs-pvc` and appends to the same `/deployments/logs/polaris.log`.
 `ReadWriteOnce` does **not** prevent this: RWO allows many pods on the *same node*, and this
