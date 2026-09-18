@@ -1,4 +1,4 @@
-# `logging/` — which document to read (status as of 2026-09-16, late — schema v6 live and verified)
+# `logging/` — which document to read (status as of 2026-09-18 — schema v6 live; Polaris now 1.6.0)
 
 Most files here are dated working documents. They stay because the reasoning in them is still cited, but **only the
 first table describes the pipeline as it runs**. When a dated document disagrees with it, the first table wins.
@@ -7,7 +7,8 @@ first table describes the pipeline as it runs**. When a dated document disagrees
 
 | file | read it for |
 |---|---|
-| [`HANDOFF-pipeline-next-2026-09-16.md`](HANDOFF-pipeline-next-2026-09-16.md) | **start here** — state in sixty seconds, rules, ordered next steps |
+| [`HANDOFF-thread-fields-2026-09-18.md`](HANDOFF-thread-fields-2026-09-18.md) | **START HERE** — the next task (restore `threadName`/`threadId`), what the 1.6.0 upgrade changed under the pipeline, and every open item |
+| [`HANDOFF-pipeline-next-2026-09-16.md`](HANDOFF-pipeline-next-2026-09-16.md) | the rules and the ordered step list — **but its state section predates Polaris 1.6.0**; where the two disagree, the 09-18 handoff wins |
 | [`PROPOSAL-polaris-audit-log-retention.ko.md`](PROPOSAL-polaris-audit-log-retention.ko.md) | the design and its rationale (Korean): indices, policy rules 0–7, 404 handling, deploy method, gates |
 | [`GUIDE-sample-data.ko.md`](GUIDE-sample-data.ko.md) | 신규 엔지니어용 샘플 문서 (Korean): 스키마 v6 의 상세·요약 문서를 유형별로, 요청 추적, DQL 예시 |
 | [`polaris-logging.drawio`](polaris-logging.drawio) | pipeline diagram (Korean): three inputs, the tier-2/3 filter chain, two Polaris indices + `k8s-logs` — v6, 2026-09-16 |

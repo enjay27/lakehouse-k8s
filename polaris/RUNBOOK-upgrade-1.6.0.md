@@ -828,6 +828,67 @@ trusted again.
 
 ---
 
+## THE UPGRADE IS COMPLETE AND VERIFIED — 2026-09-18
+
+Every assertion this upgrade rested on has passed, each read from a running object or the
+database rather than from a values file:
+
+| check | result |
+|---|---|
+| image | `apache/polaris:1.6.0` on both pods, `Running` |
+| metastore schema | `version_value = 4`, 9 tables, 21 indexes |
+| loaded ConfigMap | plural `polaris.event-listener.types` with `PT5S`/`1000`; every category INFO or OFF, **no DEBUG**; `console.level=INFO` |
+| **event listener** | **WORKS** — traffic took `events` 2528 → **2536** and `max(timestamp_ms)` to 2026-09-18T05:49:02Z. The renamed plural key is being read |
+| **console format** | **still JSON** — `QUARKUS_LOG_CONSOLE_JSON_ENABLED` survives, so tier-2 Lua and report schema v6 keep parsing |
+| service | access log shows `GET /api/management/v1/catalogs … 200 656697` through the LoadBalancer — stronger than a health probe, which was therefore not run separately |
+| `#35` | **closed** — and closed as *never exercised*: no 1.3.0 pod ever met the v4 schema |
+
+**Handoff for what comes next:**
+[`../logging/HANDOFF-thread-fields-2026-09-18.md`](../logging/HANDOFF-thread-fields-2026-09-18.md).
+
+### The one loose end — `#41`, and the Dev Tools query for it
+
+`benchmarks-polaris-6dcf6758f9-5vpmc` crashed **3×** at rollout: `Reason: Error`, exit 1,
+dead **4 seconds** after start at 14:41:12 KST (05:41:12Z). Not an OOMKill. The pod has been
+`Running` since and is the one that passed every check above.
+
+`kubectl logs <pod> --previous` is the direct route but keeps only the **last** terminated
+container. **Tier 1 has all three**, because `k8s-logs-*` takes every container unfiltered and
+`polaris_field_trim` never touches it. In OpenSearch Dev Tools:
+
+```json
+GET k8s-logs-*/_search
+{
+  "size": 100,
+  "sort": [{ "@timestamp": "asc" }],
+  "_source": ["@timestamp", "level", "message", "log", "loggerName", "kubernetes.pod_name"],
+  "query": {
+    "bool": {
+      "filter": [
+        { "term":  { "kubernetes.pod_name.keyword": "benchmarks-polaris-6dcf6758f9-5vpmc" } },
+        { "range": { "@timestamp": { "gte": "2026-09-18T05:38:00Z", "lte": "2026-09-18T05:45:00Z" } } }
+      ]
+    }
+  }
+}
+```
+
+If that returns nothing, drop `.keyword` from the field name — tier 1's mapping is not the
+`strings_keyword_only` template that governs `polaris-logs-*`, so the bare field may be the
+analysed one there. Then look for, in order:
+
+1. `Unrecognized VM option` — the `-XX:+ZGenerational` check this runbook specified in step 5
+   and that **was never actually run**. Should be clean on the JDK 21 image, but exclude it.
+2. a duplicate-key or constraint violation from the metastore — three pods bootstrapping realm
+   `POLARIS` in the same minute is the start-up race this repo already has form for, and the
+   sibling pod not crashing fits a race with one loser.
+3. a Quarkus config validation error naming one of the changed keys.
+
+Four seconds is the constraint that ranks these: too slow for the JVM rejecting a flag
+outright, too fast for a JDBC connect timeout.
+
+---
+
 ## Step 6 — what the upgrade invalidates downstream
 
 Nothing here is optional; each one is a number that silently becomes wrong.

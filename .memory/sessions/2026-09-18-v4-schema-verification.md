@@ -451,3 +451,49 @@ no `gunzip` or `tar` either, which also rules out `kubectl cp`. `#40`'s check no
 bytes out with `exec -- cat` and decompresses on the Mac.
 
 NOT VERIFIED: no cluster command from this session; all readings are Kade's.
+
+## Closed out
+
+**The upgrade is complete and verified.** Image 1.6.0 on both pods, metastore v4 with 9 tables
+and 21 indexes, plural `event-listener.types` proven by traffic, console still JSON. `/q/health`
+was never run separately and does not need to be: the access log shows
+`GET /api/management/v1/catalogs … 200 656697` arriving through the LoadBalancer, which is a
+stronger statement than a health probe.
+
+Handoff written: [`../../logging/HANDOFF-thread-fields-2026-09-18.md`](../../logging/HANDOFF-thread-fields-2026-09-18.md),
+and `logging/README.md`'s start-here pointer moved to it — the 09-16 handoff's state section is
+now two Polaris versions stale, so leaving it as the entry point would have been the same
+dangerous-stale pattern this session kept finding.
+
+### The next task needs one correction carried into it
+
+Kade's request: restore `threadName`/`threadId` to `polaris-logs-*`, on the reasoning that he
+had them removed believing the Lua parsed them, and they cost no CPU to ship.
+
+Half of that holds. The Lua genuinely never parsed them — it reads `loggerName`, `level`,
+`message`, `_time`, `mdc` only, and they were dropped by the `polaris_field_trim`
+`record_modifier`, exactly as `5315e0d` says. But **shipping them is not free**:
+`REVIEW-pipeline-2026-09-16.md` P1 moved that trim *ahead* of the Lua precisely because the Lua
+converts the whole record to a Lua table and back on every line, so every surviving field is
+paid for in the conversion whether the Lua reads it or not. The seven fields moved ahead of it
+measured ~32% of record bytes, and the thread fields' individual share was never measured
+separately.
+
+So the handoff frames it as a cost/value trade with a before/after measurement as the point of
+the exercise, not a formality — and notes that `#39`'s flapping means the replica count must be
+recorded at both readings or a byte difference may just be a different number of writers. It
+also keeps `ndc` out (empty in all 300 sampled docs and empty in 1.6.0's output too), flags that
+`threadName` will only be queryable as `threadName.keyword` under the v6 template, and points at
+the values-only apply path rather than `apply-lua.sh`.
+
+### Tally for this session
+
+Six things I asserted were refuted by the next command: `#38`'s empty log directory, `#39`'s
+"cannot scale down", the OOMKill guess, the verifier's PASS meaning more than it did, the "ten"
+DEBUG categories, and step 4's `rollout status` ordering being fine. Each is corrected in place
+with the reversal left visible rather than overwritten, because in this repo the record of a
+wrong belief is most of the value — Fault 1 was undiagnosable precisely because nobody could say
+when the belief had changed.
+
+NOT VERIFIED: no cluster command was run from this session at any point. Every reading in this
+document is Kade's.
