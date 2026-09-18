@@ -184,13 +184,29 @@ kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -
   env PGPASSWORD=polaris pg_dump -U polaris -d polaris -Fc > /tmp/polaris-metastore-pre-v4.dump
 ls -l /tmp/polaris-metastore-pre-v4.dump   # a 0-byte dump is the classic silent failure here
 
-# 2c. Diff the committed script against the v4 script the 1.6.0 image actually ships.
-#     If the shipped file is available, PREFER RUNNING IT DIRECTLY -- every statement in v4
-#     is IF NOT EXISTS, so applying the full v4 script to a v3 database *is* the migration.
-kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
-  sh -c 'unzip -l /deployments/*.jar | grep schema-v'
-# (run this while 1.3.0 is still up only to learn the path; the v4 resource lives in the
-#  1.6.0 image, so the authoritative copy needs a 1.6.0 container -- see note below)
+# 2c. Get the AUTHORITATIVE schema-v4.sql, from the 1.6.0 image, via Docker -- NOT from the
+#     running pod. See "Why 2c is not a kubectl exec" below. This also pre-pulls the image,
+#     which stops the step-4 rollout stalling on a cold pull.
+docker pull apache/polaris:1.6.0
+cid=$(docker create apache/polaris:1.6.0)
+docker cp "$cid":/deployments /tmp/polaris-1.6.0-deployments
+docker rm "$cid"
+
+# Find the jar carrying the resource (macOS has unzip; the image may not).
+for j in $(find /tmp/polaris-1.6.0-deployments -name '*.jar'); do
+  unzip -l "$j" 2>/dev/null | grep -q 'schema-v4\.sql' && echo "FOUND: $j"
+done
+
+# Then extract it, using the exact inner path the listing above printed:
+#   unzip -l <jar> | grep schema-v
+#   unzip -p <jar> '<inner/path>/schema-v4.sql' > /tmp/schema-v4.shipped.sql
+#   diff /tmp/schema-v4.shipped.sql postgresql/schema/migrate_v3_to_v4.sql   # expect noise;
+#     what matters is that every CREATE in the shipped file appears in ours, identically
+#
+# IF THE SHIPPED FILE IS IN HAND, PREFER RUNNING IT DIRECTLY in 2e -- every statement in v4
+# is IF NOT EXISTS, so applying the full v4 script to a v3 database *is* the migration, from
+# the authoritative source. Our transcribed script is the fallback. The one thing the shipped
+# file does NOT do is refuse to run on a non-v3 database; ours guards that.
 
 # 2d. Scale Polaris to 0. The events table is written on every API call.
 kubectl -n datahub-hynix scale deploy/benchmarks-polaris --replicas=0
@@ -214,6 +230,34 @@ SQL
 
 Expect `version_value = 4` and the three new tables present. The script wraps everything in
 one transaction and writes the version row **last**, so a failure leaves the database at 3.
+
+### Why 2c is not a `kubectl exec` into the running pod
+
+The first version of this step was:
+
+```
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- sh -c 'unzip -l /deployments/*.jar | grep schema-v'
+```
+
+It hung past 30s when run on 2026-09-18 and was abandoned — correctly, per CLAUDE.md's
+*Timeout & Hang Guard*. But the hang is the less interesting fault. **That command could not
+have answered the question even if it had returned:** the running pod is **1.3.0**, and
+`schema-v4.sql` is a resource of the **1.6.0** distribution. 1.3.0 ships v3 at best. The
+original text admitted as much in a parenthetical *underneath the command* and still put the
+command first, which is how a step that cannot work gets run anyway.
+
+Two smaller faults in it, worth remembering: `unzip` is not guaranteed in a UBI9 runtime image,
+and `/deployments/*.jar` is a Quarkus thin jar (`quarkus-run.jar`) whose classes and resources
+live under `/deployments/lib/`, so even on a 1.6.0 pod that glob is the wrong target.
+
+The Docker route above avoids all of it: it reads the 1.6.0 image directly, needs nothing
+installed in the image, touches no cluster object, and pre-pulls the image the upgrade is about
+to need. OrbStack provides the Docker daemon — the same one OpenSearch runs under.
+
+**Do not retry the exec form.** If Docker is unavailable for some reason, the fallback is to
+skip verification, run the transcribed script (it is guarded and additive), and diff the
+shipped file after the upgrade from a 1.6.0 pod — at which point `/deployments/lib/` is the
+place to look, not `/deployments/*.jar`.
 
 **Every SQL step in this runbook uses `kubectl exec -i … env PGPASSWORD=polaris psql`**, with
 the statements on stdin via heredoc or `<`. That is the pattern proven to work here on

@@ -141,6 +141,26 @@ that would have protected the create-then-resolve path does not cover it, and wi
 read is balanced onto a standby. The handoff's remedy A —
 `database_redirect_preference_list = 'polaris:primary'` — addresses exactly this.
 
+**STEP 2c ASKED A 1.3.0 POD FOR A 1.6.0 FILE.** 2026-09-18, found by Kade running it.
+
+`kubectl exec deploy/benchmarks-polaris -- sh -c 'unzip -l /deployments/*.jar | grep schema-v'`
+hung past 30s and was abandoned, correctly, under CLAUDE.md's *Timeout & Hang Guard*. **The
+hang is the lesser fault.** The command could not have answered its question if it had
+returned: the running pod is 1.3.0 and `schema-v4.sql` is a **1.6.0** resource. I wrote that
+caveat into a parenthetical *below* the command and left the command first — which is exactly
+how a step that cannot work gets run anyway. Two further faults: `unzip` is not guaranteed in a
+UBI9 runtime image, and `/deployments/*.jar` is the Quarkus thin jar, with resources under
+`/deployments/lib/`, so the glob is the wrong target even on a 1.6.0 pod.
+
+Replaced with a Docker route against the 1.6.0 image — `docker create` + `docker cp
+/deployments`, then `unzip` on the Mac, which has it. It reads the right image, needs nothing
+installed in the container, touches no cluster object, and **pre-pulls the image the upgrade is
+about to need**, which removes a cold-pull stall from step 4. OrbStack supplies the daemon.
+
+Standing note: **do not retry the exec form.** If Docker is unavailable, skip the verification,
+run the transcribed script (guarded, additive, refuses on a non-v3 database) and diff the
+shipped file after the upgrade from a 1.6.0 pod, looking in `/deployments/lib/`.
+
 **STEP 2's SQL INVOCATION WAS WRONG, AND IT BROKE A CLAUDE.md RULE.** 2026-09-18, found by
 Kade running it.
 
