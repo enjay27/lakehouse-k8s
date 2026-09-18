@@ -178,7 +178,7 @@ fi
 echo "== 3. PUT the policies =="
 FAIL=0
 for spec in "${POLICIES[@]}"; do
-  PID="${spec%:*}"; REST="${spec#*:}"; FILE="${REST%:*}"
+  PID="${spec%%:*}"; REST="${spec#*:}"; FILE="${REST%%:*}"
   # An existing policy needs its seq_no/primary_term, or OpenSearch answers 409.
   CUR=$("${OS[@]}" "${OS_URL}/_plugins/_ism/policies/${PID}")
   Q=$(python3 - "$CUR" <<'PY'

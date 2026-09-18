@@ -1,0 +1,222 @@
+# =====================================================================================================
+# OpenSearch Dev Tools — ISM retention for the Polaris log pipeline
+# =====================================================================================================
+# Paste into OpenSearch Dashboards -> Dev Tools. Cursor inside a request, Ctrl/Cmd+Enter.
+# Cluster: OpenSearch 3.5.0. API verified against the ISM docs AND against this cluster's own
+# responses on 2026-09-18 (GET policies and GET explain both answered).
+#
+# STATE, 2026-09-18: ALL THREE POLICIES ARE ALREADY STORED AND ALL FIVE INDICES ARE ALREADY
+# MANAGED. The first `step13-ism-apply.sh --apply` succeeded; only its reporting crashed, which
+# is why it looked like a failure. Section A below is what you actually want -- verification.
+# Section B is the apply, kept for a rebuild or a policy change; PUT is idempotent.
+#
+# ENDPOINTS (3.x, unchanged since 1.x):
+#   PUT  _plugins/_ism/policies/<id>                create or replace (update needs if_seq_no+if_primary_term)
+#   GET  _plugins/_ism/policies                     list
+#   POST _plugins/_ism/add/<index-or-pattern>       attach to indices that ALREADY exist
+#   GET  _plugins/_ism/explain/<index-or-pattern>   what manages an index, and its current state
+#   POST _plugins/_ism/remove/<index-or-pattern>    detach
+#   POST _plugins/_ism/change_policy/<index>        move a managed index to a different policy
+#
+# THE ID LIVES IN THE URL, not the body. These bodies also carry `policy_id`, which this cluster
+# accepted and stores; if the two ever disagree the URL wins. The body is `{"policy": {...}}`.
+#
+# TWO THINGS ISM WILL NOT DO:
+#   1. `ism_template` binds at INDEX CREATION. A policy stored today does not reach yesterday's
+#      index -- that is what _ism/add is for. Tomorrow's daily index picks it up by itself.
+#   2. Deletion happens on the ISM sweep (every 30-60 min by default), not when you press run.
+#
+# RETENTION, and the one that is not a recommendation:
+#   polaris-logs-*    3d   detail tier
+#   polaris-report-*  30d  LOCAL REHEARSAL FIGURE. The design says 365d because successful reads
+#                          and catalog POSTs are counted and never stored -- this stream is their
+#                          only record. Do not carry 30d to production.
+#   k8s-logs-*        3d   shared tier-1, was 5d
+#
+# =====================================================================================================
+# A. VERIFY  (read-only -- run these first, they answer "is retention actually on?")
+# =====================================================================================================
+
+# A1. Do the three policies exist, and what age does each delete at?
+GET _plugins/_ism/policies
+
+# A2. Which index is managed by which policy, and what state is it in?
+#     Look for: "index.plugins.index_state_management.policy_id" set, and "state" -> name.
+#     An index with no policy_id is UNMANAGED -- it will never be deleted by ISM.
+GET _plugins/_ism/explain/polaris-logs-*
+GET _plugins/_ism/explain/polaris-report-*
+GET _plugins/_ism/explain/k8s-logs-*
+
+# A3. What exists right now, oldest first -- this is what retention will actually eat.
+GET _cat/indices/polaris-logs-*,polaris-report-*,k8s-logs-*?v&s=index&h=index,docs.count,store.size,creation.date.string
+
+# A4. One index in full detail (swap the name), when A2 shows something unexpected.
+GET _plugins/_ism/explain/polaris-logs-2026.09.18?show_policy=true
+
+# =====================================================================================================
+# B. APPLY  (only needed for a rebuild or a retention change -- already done on 2026-09-18)
+# =====================================================================================================
+# B0. UPDATING an existing policy needs its seq_no and primary_term, or OpenSearch answers 409.
+#     Get them from A1, then:  PUT _plugins/_ism/policies/<id>?if_seq_no=N&if_primary_term=M
+#     Creating a policy that does not exist needs neither.
+
+# B: polaris-logs-3d -- delete at 3d. Source of truth: logging/opensearch/ism-polaris-logs-3d.json
+PUT _plugins/_ism/policies/polaris-logs-3d
+{
+  "policy": {
+    "policy_id": "polaris-logs-3d",
+    "description": "polaris-logs-* (tier 2, detail): delete 3 days after index creation. Kade 2026-09-18, replacing the 30-day recommendation in PROPOSAL-polaris-audit-log-retention.ko.md 5.3. Daily indices, no rollover, so min_index_age on the hot state is the whole policy.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          {
+            "state_name": "delete",
+            "conditions": {
+              "min_index_age": "3d"
+            }
+          }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [
+          {
+            "delete": {}
+          }
+        ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      {
+        "index_patterns": [
+          "polaris-logs-*"
+        ],
+        "priority": 100
+      }
+    ]
+  }
+}
+
+# B: polaris-report-30d -- delete at 30d. Source of truth: logging/opensearch/ism-polaris-report-30d.json
+PUT _plugins/_ism/policies/polaris-report-30d
+{
+  "policy": {
+    "policy_id": "polaris-report-30d",
+    "description": "polaris-report-* (tier 3, summary): delete 30 days after index creation. Kade 2026-09-18, LOCAL DEVICE ONLY -- the design figure is 365 days because this stream is the only record of successful reads and catalog POSTs, which are counted and never stored. Do not carry 30d to production without re-deciding that.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          {
+            "state_name": "delete",
+            "conditions": {
+              "min_index_age": "30d"
+            }
+          }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [
+          {
+            "delete": {}
+          }
+        ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      {
+        "index_patterns": [
+          "polaris-report-*"
+        ],
+        "priority": 100
+      }
+    ]
+  }
+}
+
+# B: k8s-logs-3d -- delete at 3d. Source of truth: logging/opensearch/ism-k8s-logs-3d.json
+PUT _plugins/_ism/policies/k8s-logs-3d
+{
+  "policy": {
+    "policy_id": "k8s-logs-3d",
+    "description": "k8s-logs-* (tier 1, every container unfiltered): delete 3 days after index creation. Kade 2026-09-18, down from the 5 days this index carried. NOTE: this is the shared index; PROPOSAL 5.3 said the shared policy is not changed, and that sentence is now superseded for the local cluster only.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          {
+            "state_name": "delete",
+            "conditions": {
+              "min_index_age": "3d"
+            }
+          }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [
+          {
+            "delete": {}
+          }
+        ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      {
+        "index_patterns": [
+          "k8s-logs-*"
+        ],
+        "priority": 100
+      }
+    ]
+  }
+}
+
+# B4. Attach to indices that ALREADY exist. New daily indices do not need this.
+#     Response: {"updated_indices": N, "failures": false}. An index that already has the
+#     policy comes back under "failed_indices" with a reason -- that is not an error.
+POST _plugins/_ism/add/polaris-logs-*
+{ "policy_id": "polaris-logs-3d" }
+
+POST _plugins/_ism/add/polaris-report-*
+{ "policy_id": "polaris-report-30d" }
+
+POST _plugins/_ism/add/k8s-logs-*
+{ "policy_id": "k8s-logs-3d" }
+
+# B5. Re-run A2 afterwards. "updated_indices" is what ISM accepted, not what it now manages.
+
+# =====================================================================================================
+# C. UNDO / CHANGE
+# =====================================================================================================
+# Detach (stops ISM managing them; deletes nothing that already happened):
+# POST _plugins/_ism/remove/polaris-report-*
+
+# Move already-managed indices onto a different policy -- editing a policy does NOT move indices
+# already running the old version; they keep the version they started with until you do this:
+# POST _plugins/_ism/change_policy/polaris-report-*
+# { "policy_id": "polaris-report-30d" }
+
+# =====================================================================================================
+# D. THE 30-SECOND-WINDOW REPORT INDICES ARE **NOT** SWEPT BY THIS -- handoff task E still stands
+# =====================================================================================================
+# An earlier note in this repo said the 30d policy would delete the verification-era
+# polaris-report-* indices "on the first sweep". THAT IS WRONG, and it was wrong the moment the
+# figure moved from 3d to 30d: 30d means they survive thirty days from creation, not that they go.
+# If you want them gone now, that is a manual, DESTRUCTIVE delete -- list first:
+#
+# GET _cat/indices/polaris-report-*?v&s=creation.date&h=index,docs.count,store.size,creation.date.string
+#
+# then delete the specific ones you identify, by name, never by wildcard:
+# DELETE polaris-report-2026.09.09

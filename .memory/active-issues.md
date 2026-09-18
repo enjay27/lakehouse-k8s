@@ -95,9 +95,35 @@ not exist. A **self-check compiles every embedded Python block at start-up, with
 every run** and refuses to proceed otherwise — verified by reintroducing the exact bug
 (`f-string expression part cannot include a backslash`, refuses, exit 1) and removing it again.
 
-**Still unknown: why the PUT failed.** The response was swallowed, so no cause is recorded. The
-re-run reports it in full. If it fails again, look first at whether ISM rejects `policy_id`
-inside the request body — that is a guess, not a finding.
+**ANSWERED on the re-run: the PUT had never failed.** Section 1 and 2 of the 2026-09-18 re-run
+show all three policies stored and all five indices managed — `polaris-logs-2026.09.18`,
+`polaris-report-2026.09.17/18`, `k8s-logs-2026.09.17/18`. **The first `--apply` worked; only its
+reporting crashed**, and section 5's `0/5` was read before the attach had settled. So the visible
+failure was entirely manufactured by the broken error path. My guess about `policy_id` in the
+body was wrong too: this cluster accepts and stores it (the docs put the id in the URL, which is
+authoritative if they ever disagree).
+
+**A SECOND BUG, mine, introduced by the fix itself (`ffc11a2`) and caught by Kade's re-run.** I
+rewrote section 3 through a Python `%`-format template, which collapsed `${spec%%:*}` to
+`${spec%:*}` — shortest-suffix instead of longest. `PID` became
+`polaris-logs-3d:/Users/kade/.../ism-polaris-logs-3d.json` and OpenSearch answered *no handler
+found for uri*. Fixed and proved by parsing the three specs and printing the triples. **The
+self-check could not catch this**: it compiles embedded Python, and this was shell. A fix
+delivered under time pressure introduced a defect of a kind the new guard does not cover.
+
+**ISM API confirmed for 3.5.0** — `PUT _plugins/_ism/policies/<id>` (update needs
+`if_seq_no`+`if_primary_term`), `POST _plugins/_ism/add/<pattern>`,
+`GET _plugins/_ism/explain/<pattern>`, `POST _plugins/_ism/remove`, `POST _plugins/_ism/change_policy`.
+Unchanged since 1.x, and two of them answered on this cluster. Dev Tools equivalents, generated
+from the policy files and checked body-for-body against them:
+`logging/opensearch/devtools-ism.console`.
+
+**AND A THIRD ERROR, in prose rather than code: `handoff task E is NOT subsumed by F`.** I wrote
+that the report policy would sweep the 30 s-window verification indices "on the first sweep".
+That was true when the figure was **3 d** and became false the moment Kade set **30 d** — they now
+survive thirty days from creation. I carried the sentence across the change without rechecking
+it. Corrected in the handoff, the proposal §5.3 and the console file §D; deleting them is still
+manual, by name, never by wildcard.
 
 **Gate defect, found by Kade on first run and fixed the same day.** The runbook's step-3 gate
 grepped the whole `--dry-run=client --debug` output for `/deployments/logs` and wanted 0. It

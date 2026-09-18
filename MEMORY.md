@@ -12,11 +12,15 @@ claim), `#38`, `#40` (**unanswered** — step 4 destroyed the evidence), `REVIEW
 `victoria-values.yaml` are history, bannered. **Step 3 carries its own output; steps 1/2/4 are Kade's report.**
 **Unconfirmed: VictoriaLogs' own 50 Gi PVC in `logging`** — `helm uninstall` does not remove it (`kubectl -n logging get pvc`).
 
-**NEXT, and it is the unfinished half of the same task: the ISM policies are written and NOT applied.**
-`logging/opensearch/ism-*.json` — `polaris-logs-*` 3d, `polaris-report-*` **30d (a rehearsal figure: that stream is the only
-record of successful reads)**, `k8s-logs-*` 3d. `bash logging/scripts/step13-ism-apply.sh` dry-runs and refuses to write if its
-preflight cannot read the cluster; `--apply` also deletes the 30 s-window report indices (handoff task E). Local retention is
-**ours** now, production still the Monitoring team's.
+**OPENSEARCH RETENTION IS LIVE (2026-09-18).** Three ISM policies stored, five indices managed:
+`polaris-logs-*` **3d**, `polaris-report-*` **30d (a rehearsal figure — that stream is the only record of successful reads;
+do not carry it to production)**, `k8s-logs-*` **3d**. Verified by `GET _plugins/_ism/policies` and `_ism/explain`. The first
+`--apply` succeeded and only its *reporting* crashed, which read as a failure for two rounds (`#44`). Deletion happens on the
+ISM sweep (30–60 min), not on apply. Dev Tools equivalents: [`logging/opensearch/devtools-ism.console`](logging/opensearch/devtools-ism.console).
+
+**Still open, and I had it wrong twice: `handoff task E is NOT subsumed`** — at 30d the 30 s-window `polaris-report-*` indices
+survive thirty days, so deleting them is still a manual, by-name, destructive step (console file §D). Also open: VictoriaLogs'
+**50 Gi** PVC in `logging`.
 
 **Start here next session:** `.memory/active-issues.md` `#42` — the thread-field task is **DONE**, and `#42` carries both the
 outcome and the four things that were never read. [`logging/HANDOFF-thread-fields-2026-09-18.md`](logging/HANDOFF-thread-fields-2026-09-18.md)
