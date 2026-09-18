@@ -238,3 +238,37 @@ knowing before assuming it ever delivered anything.
 
 NOT VERIFIED: no cluster command from this session. Step 3's outputs are Kade's; `helm lint` was
 not shown; the `#37` pre-check and the `#38` directory listing are both outstanding.
+
+## The hook gate is green, and step 4's own ordering was wrong
+
+`docker pull bitnami/kubectl:latest` → `Status: Image is up to date`, digest
+`sha256:b29d8c1665b70817259ceecaea16ab27aab6368b48daf485d19436c809067492`. The registry serves
+it, which is exactly what `imagePullPolicy: Always` needs, so step 4 runs with hooks.
+
+**Captured that digest into `#37` as the known-good pin.** It cost nothing to record and it is
+the thing the eventual fix should point at — taken while `:latest` still resolved to a working
+image, which is the only window in which it is obtainable. `#37` stays open regardless: the
+hook re-pulls on every future upgrade, so today's green says nothing about next month's.
+
+**Checking the chart to write that up found a worse problem in step 4 than the one being
+checked.** `deployment.yaml` emits `replicas:` only when `autoscaling.enabled` is false
+(lines 31-32), and it is true here. So:
+
+* `helm upgrade` does **not** set replicas — the deployment stays at the 0 that `2d` left.
+* The HPA cannot lift it off 0 (established earlier today).
+* **`kubectl rollout status` on a deployment with `spec.replicas: 0` reports "successfully
+  rolled out" immediately**, with no pods and no image pull attempted.
+
+Step 4 as written ran `helm upgrade` then `rollout status`, with "if the HPA has not restored
+it, scale back up before waiting on the rollout" as a conditional afterthought underneath. Run
+in that order it would have printed a successful rollout of 1.6.0 while nothing was running —
+a false green of exactly the kind this repo keeps finding, and this one was in the runbook's
+own happy path. Reordered so `scale --replicas=1` sits between the two, unconditionally.
+
+Also noted while there: `#20`'s "a helm upgrade can change a ConfigMap without restarting the
+pod, so restart it" caveat **does not apply to this upgrade** — the pod is created from zero and
+reads the new ConfigMap by construction. It applies to any later values-only change made while
+a pod is already running.
+
+NOT VERIFIED: no cluster command from this session. The pull output is Kade's; step 4 has not
+been run.

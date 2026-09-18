@@ -27,11 +27,12 @@ report rows −31 % bytes. Query strings via `.keyword`. **`WINDOW_SECONDS` is s
 verified from the database (`version|4`, 9 tables, 21 indexes); step 3's render passes all four assertions and the diff against
 live shows **exactly two changes: the listener key `type` → `types`, and 13 categories DEBUG → INFO** (13, not the "ten" this
 repo said). Those 13 change the ConfigMap, not the console — `console.level` was already INFO at R5.
-**The gate: `docker pull bitnami/kubectl:latest` before step 4.** The chart's `pre-upgrade` hook runs that image with no
-`imagePullPolicy` on a `:latest` tag, so it pulls `Always` from Bitnami's retired public catalog; it is the likeliest step-4
-failure and presents as `ImagePullBackOff` on a Job, not as a Polaris fault (`#37`, with a `--no-hooks` fallback that is safe
-only while `polaris-rsa-key-pair-secret` exists). **Step 4 must also scale the deployment back up explicitly** — an HPA cannot
-scale up from 0, so `2d` held (`#8` still armed for 1 → 3 after). 1.3.0 never ran against v4: **untested, not survived** — a
+**The step-4 hook gate is GREEN** (`bitnami/kubectl:latest` pulls; digest `sha256:b29d8c16…67492` recorded in `#37` as the
+known-good pin — `#37` stays open, the hook re-pulls on every future upgrade). **Step 4's order is load-bearing: upgrade →
+`scale --replicas=1` → `rollout status`.** The chart omits `replicas` while autoscaling is on, so the upgrade leaves the
+deployment at `2d`'s 0, the HPA cannot lift it off 0, and **`rollout status` on 0 replicas reports success immediately with no
+pods** — a false green. `#20`'s restart caveat does not apply: the pod starts from zero and reads the new ConfigMap by
+construction. 1.3.0 never ran against v4: **untested, not survived** — a
 rollback should assume the `2b` dump goes back too (`#35`). Also open, no structural risk: `#36` (v3's 4 table comments absent
 from the live DB; `schema.sql` is `schema_v3.sql` minus its 24 comments) and `#38` (file handler off → two `extraEnv` vars inert,
 nothing writes the log PVC, `#8`'s hazard may be inert too — do not close `#8` on it). Detail in

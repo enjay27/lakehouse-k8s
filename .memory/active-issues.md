@@ -31,9 +31,21 @@ exists → `exit 0`), so with `polaris-rsa-key-pair-secret` present, `--no-hooks
 unbootstrapped and the failure presents as an auth error, which is
 `RESET-AND-CLEAN-INSTALL.md` §2.3's trap from the other side.
 
-**The fix is to pin the image, and it is NOT a step-4 decision** — do not edit the chart
-mid-upgrade. Note this hook also runs on *every* future upgrade of this chart, so it is a
-standing fragility, not a one-off. Related: `#2` (charts that pin no image at all).
+**CHECKED 2026-09-18: it pulls.** `Status: Image is up to date for bitnami/kubectl:latest`,
+digest **`sha256:b29d8c1665b70817259ceecaea16ab27aab6368b48daf485d19436c809067492`**. So step 4
+was cleared to run with hooks. **Record that digest — it is the known-good pin**, captured
+while `:latest` still resolved to a working image, and it is what the fix should point at:
+
+```yaml
+image: bitnami/kubectl@sha256:b29d8c1665b70817259ceecaea16ab27aab6368b48daf485d19436c809067492
+```
+
+A digest pin also makes `imagePullPolicy: Always` harmless, since a digest cannot move.
+
+**The fix is to pin the image, and it was NOT a step-4 decision** — the chart must not be
+edited mid-upgrade. Still OPEN afterwards: this hook runs on **every** future upgrade of this
+chart, so a green pull today is not a green pull next month; that is the standing fragility,
+and one successful check does not close it. Related: `#2` (charts that pin no image at all).
 
 **#38 — OPEN QUESTION. The file log handler is off, so `extraEnv`'s two file-JSON variables are
 inert, nothing writes the log PVC, and `#8`'s interleaved-write hazard may be inert with it.**

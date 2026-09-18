@@ -636,21 +636,46 @@ chart mid-upgrade.
 
 ## Step 4 — upgrade.
 
+**The hook gate is GREEN as of 2026-09-18:** `docker pull bitnami/kubectl:latest` returned
+`Status: Image is up to date`, digest
+`sha256:b29d8c1665b70817259ceecaea16ab27aab6368b48daf485d19436c809067492`. The registry serves
+it, which is what `imagePullPolicy: Always` needs. Run step 4 normally — no `--no-hooks`.
+**That digest is recorded in `#37` because it is the known-good pin**, and `:latest` will move.
+
+**The order below is not cosmetic. `scale` comes before `rollout status`.**
+
 ```bash
-kubectl config current-context        # again
+kubectl config current-context        # again -- must equal orbstack
+
 helm upgrade --install benchmarks-polaris ./polaris -f polaris/values.yaml -n datahub-hynix
+
+# deployment.yaml emits `replicas:` ONLY when autoscaling.enabled is false (line 31-32), and
+# it is true here. So the upgrade does not set replicas, the deployment stays at the 0 that
+# 2d left, and the HPA cannot lift it off 0 (#8, 2026-09-18). Scale explicitly.
+kubectl -n datahub-hynix scale deploy/benchmarks-polaris --replicas=1
+
 kubectl -n datahub-hynix rollout status deploy/benchmarks-polaris
 ```
 
-If step 2d scaled to 0 and the HPA has not restored it, scale back up before waiting on the
-rollout.
+**Why the order matters, and it is a false-green trap:** `kubectl rollout status` on a
+deployment whose `spec.replicas` is **0** reports *successfully rolled out* immediately, with
+no pods and no image pull attempted. Run it straight after the `helm upgrade` and it will tell
+you the 1.6.0 upgrade succeeded while nothing at all is running. The earlier wording here —
+"if the HPA has not restored it, scale back up before waiting on the rollout" — treated the
+scale as a conditional afterthought. It is neither conditional nor an afterthought.
 
-A `helm upgrade` can change a ConfigMap **without restarting the pod** (`#20`). Polaris reads
-`application.properties` at start, so if the pod did not restart, restart it:
+**The `#20` ConfigMap caveat does not apply this time.** A `helm upgrade` can change a
+ConfigMap without restarting the pod, and Polaris reads `application.properties` only at start
+— but here the pod is being created from zero, so it reads the new ConfigMap by construction.
+No `rollout restart` is needed. (It *would* be needed on any later values-only change made
+while a pod is already running.)
 
-```bash
-kubectl -n datahub-hynix rollout restart deploy/benchmarks-polaris
-```
+**Helm 4 / server-side apply.** The release already reports
+`previous_release_apply_method=ssa`, so a field-manager conflict is possible on this upgrade in
+a way it would not have been under Helm 3. `--dry-run=client` cannot surface it, because it
+never contacts the cluster. If the upgrade fails with a conflict, **stop and read the message
+rather than reaching for `--force`** — in Helm, `--force` means replace/recreate the resource,
+which on a Deployment is destructive and is not the fix for a field-manager dispute.
 
 ---
 
