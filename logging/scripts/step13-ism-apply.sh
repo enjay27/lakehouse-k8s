@@ -43,6 +43,47 @@ POLICIES=(
   "k8s-logs-3d:${HERE}/opensearch/ism-k8s-logs-3d.json:k8s-logs-*"
 )
 
+# ---------------------------------------------------------------------------
+# SELF-CHECK: compile every embedded Python block before running any of them.
+#
+# WHY. On 2026-09-18 this script shipped with sections 3 and 4 written as
+# `python3 -c '...'` containing \" escapes. Single-quoted shell passes the
+# backslashes through verbatim, and a backslash inside an f-string expression is
+# a SyntaxError -- so both sections crashed at the point where they were meant to
+# report what OpenSearch said, after their curl had already run. The apply failed
+# and took its own error message with it.
+#
+# It escaped testing because the offline smoke test could not reach a cluster, so
+# the preflight (correctly) aborted at section 1 and sections 3-5 were never
+# executed. A gate that stops early hides everything behind it: this compiles all
+# of it, with no cluster, every run.
+# ---------------------------------------------------------------------------
+python3 - "${BASH_SOURCE[0]}" <<'PY' || { echo "REFUSING TO RUN: embedded Python does not compile."; exit 1; }
+import sys, re
+src = open(sys.argv[1], encoding="utf-8").read().splitlines()
+blocks, cur = [], None
+for i, line in enumerate(src, 1):
+    if cur is None:
+        if re.search(r"<<'PY'", line):
+            cur = (i + 1, [])
+    elif line.strip() == "PY" and not line.startswith(" "):
+        blocks.append((cur[0], "\n".join(cur[1]))); cur = None
+    else:
+        cur[1].append(line)
+bad = 0
+for start, code in blocks:
+    if "SELF-CHECK" in code or "import sys, re" in code:
+        continue
+    try:
+        compile(code, f"<block at line {start}>", "exec")
+    except SyntaxError as e:
+        bad += 1
+        print(f"  FAIL  block at line {start}: {e.msg} (block line {e.lineno})")
+print(f"  self-check: {len(blocks) - bad}/{len(blocks)} embedded Python blocks compile")
+sys.exit(1 if bad else 0)
+PY
+echo
+
 echo "== 0. the files parse, and say what they are expected to say =="
 python3 - "${POLICIES[@]}" <<'PY' || exit 1
 import json, sys
@@ -137,23 +178,79 @@ fi
 echo "== 3. PUT the policies =="
 FAIL=0
 for spec in "${POLICIES[@]}"; do
-  PID="${spec%%:*}"; REST="${spec#*:}"; FILE="${REST%%:*}"
+  PID="${spec%:*}"; REST="${spec#*:}"; FILE="${REST%:*}"
   # An existing policy needs its seq_no/primary_term, or OpenSearch answers 409.
   CUR=$("${OS[@]}" "${OS_URL}/_plugins/_ism/policies/${PID}")
-  Q=$(python3 -c '
-import json,sys
+  Q=$(python3 - "$CUR" <<'PY'
+import json, sys
 try:
-    d=json.loads(sys.argv[1])
-    print(f"?if_seq_no={d[\"_seq_no\"]}&if_primary_term={d[\"_primary_term\"]}")
+    d = json.loads(sys.argv[1])
+    print("?if_seq_no=%s&if_primary_term=%s" % (d["_seq_no"], d["_primary_term"]))
 except Exception:
-    print("")' "$CUR")
+    print("")
+PY
+)
   RESP=$("${OS[@]}" -X PUT "${OS_URL}/_plugins/_ism/policies/${PID}${Q}" --data-binary "@${FILE}")
-  echo "$RESP" | python3 -c '
-import json,sys
-r=json.load(sys.stdin)
-if "_id" in r: print(f"  PASS  stored {r[\"_id\"]} (version {r.get(\"_version\")})")
-else: print(f"  FAIL  {json.dumps(r)[:300]}"); sys.exit(1)' || FAIL=1
+  python3 - "$RESP" "$PID" <<'PY' || FAIL=1
+import json, sys
+raw, pid = sys.argv[1], sys.argv[2]
+try:
+    r = json.loads(raw)
+except Exception as e:
+    print("  FAIL  %s: response was not JSON (%s)" % (pid, e))
+    print("        raw: %r" % raw[:500]); sys.exit(1)
+if "_id" in r:
+    print("  PASS  stored %s (version %s)" % (r["_id"], r.get("_version")))
+    sys.exit(0)
+# Print the WHOLE error. The first version of this script truncated to 300 chars and
+# then crashed before printing anything at all -- the reason an apply failed on
+# 2026-09-18 was destroyed by its own reporting.
+print("  FAIL  %s rejected. OpenSearch said:" % pid)
+print(json.dumps(r, indent=2)[:4000])
+sys.exit(1)
+PY
 done
+echo
+
+# Do not attach a policy that may not exist. Section 4 on a failed section 3 produces
+# noise that looks like a second, different problem.
+if [ "$FAIL" -ne 0 ]; then
+  echo "ABORTING before section 4: at least one policy was not stored."
+  echo "Nothing was attached. Fix the rejection above and re-run --apply; the PUT is idempotent."
+  exit 1
+fi
+
+echo "== 3b. READ BACK: the policies are on the cluster, independent of what the PUT replied =="
+LIST=$("${OS[@]}" "${OS_URL}/_plugins/_ism/policies?size=200")
+python3 - "$LIST" "${POLICIES[@]}" <<'PY' || FAIL=1
+import json, sys
+raw, specs = sys.argv[1], sys.argv[2:]
+want = {sp.split(":", 2)[0] for sp in specs}
+try:
+    pols = json.loads(raw).get("policies", [])
+except Exception as e:
+    print("  FAIL  could not read the policy list back (%s)" % e); sys.exit(1)
+have = {}
+for p in pols:
+    pid = p.get("_id") or p.get("policy_id")
+    body = p.get("policy", {})
+    try:
+        age = body["states"][0]["transitions"][0]["conditions"]["min_index_age"]
+    except Exception:
+        age = "?"
+    have[pid] = age
+bad = 0
+for pid in sorted(want):
+    ok = pid in have
+    print("  %s  %-20s %s" % ("PASS" if ok else "FAIL", pid,
+          ("stored, min_index_age=" + have[pid]) if ok else "NOT ON THE CLUSTER"))
+    bad += 0 if ok else 1
+sys.exit(1 if bad else 0)
+PY
+if [ "$FAIL" -ne 0 ]; then
+  echo "ABORTING: a policy the PUT claimed to store is not in the policy list."
+  exit 1
+fi
 echo
 
 echo "== 4. attach to indices that already exist (ism_template only covers new ones) =="
@@ -162,12 +259,17 @@ for spec in "${POLICIES[@]}"; do
   RESP=$("${OS[@]}" -X POST "${OS_URL}/_plugins/_ism/add/${PATTERN}" \
          -d "{\"policy_id\":\"${PID}\"}")
   echo "  ${PATTERN} -> ${PID}"
-  echo "$RESP" | python3 -c '
-import json,sys
-r=json.load(sys.stdin)
-for f in r.get("failures") and r.get("failed_indices", []) or []:
-    print(f"    note {f.get(\"index_name\")}: {f.get(\"reason\")}")
-print(f"    updated={r.get(\"updated_indices\", 0)} failures={r.get(\"failures\")}")'
+  python3 - "$RESP" <<'PY'
+import json, sys
+raw = sys.argv[1]
+try:
+    r = json.loads(raw)
+except Exception as e:
+    print("    could not parse the add response (%s): %r" % (e, raw[:400])); sys.exit(0)
+for f in (r.get("failed_indices") or []):
+    print("    note %s: %s" % (f.get("index_name"), f.get("reason")))
+print("    updated=%s failures=%s" % (r.get("updated_indices", 0), r.get("failures")))
+PY
 done
 echo
 

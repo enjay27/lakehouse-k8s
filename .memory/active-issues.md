@@ -75,6 +75,30 @@ the Polaris mount itself. So:
 **The finding above is unaffected.** Quarkus still has no age-based retention; that is why "3
 days" could never have been a rotation setting in the first place, whichever volume it wrote to.
 
+**`step13` apply defect, found by Kade on first `--apply` (2026-09-18) — the script destroyed the
+evidence of its own failure.** Sections 3 and 4 were written as `python3 -c '...'` containing
+`\"` escapes. Single-quoted shell passes the backslashes through verbatim, and a backslash inside
+an f-string expression is a `SyntaxError`, so both blocks crashed **after their `curl` had already
+run** — at precisely the point where they were meant to report what OpenSearch replied. Section 5
+then correctly found 0/5 indices managed, with no way to tell why.
+
+**Why it escaped the offline test:** the smoke run could not reach a cluster, so the section-1
+preflight (correctly, by design) aborted before sections 3–5 ever executed. **The hardening that
+prevents a false pass also hid everything behind it.** A gate that stops early tests nothing
+downstream of itself.
+
+**Fixed:** all embedded Python is now heredocs (`python3 - "$ARG" <<'PY'`), no `python3 -c`
+anywhere; failures print the **whole** OpenSearch error, not a 300-char truncation; a new
+**section 3b** reads the policy list back so storage is confirmed independently of what the PUT
+replied; and a failed PUT now **aborts before section 4** instead of attaching policies that may
+not exist. A **self-check compiles every embedded Python block at start-up, with no cluster, on
+every run** and refuses to proceed otherwise — verified by reintroducing the exact bug
+(`f-string expression part cannot include a backslash`, refuses, exit 1) and removing it again.
+
+**Still unknown: why the PUT failed.** The response was swallowed, so no cause is recorded. The
+re-run reports it in full. If it fails again, look first at whether ISM rejects `policy_id`
+inside the request body — that is a guess, not a finding.
+
 **Gate defect, found by Kade on first run and fixed the same day.** The runbook's step-3 gate
 grepped the whole `--dry-run=client --debug` output for `/deployments/logs` and wanted 0. It
 returns **2** on a correct chart: `--debug` echoes USER-SUPPLIED VALUES and COMPUTED VALUES
