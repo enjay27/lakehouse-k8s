@@ -111,3 +111,95 @@ wrong — the same shape as the "rendered UI is a projection" lesson in the 09-0
 No `helm lint`, no `--dry-run` render, no cluster command. The two inverted gates have had
 `bash -n` only; neither has been run against a render or a cluster. YAML and JSON parse. The
 tree should not be trusted as rolled until `step2` passes on a real render.
+
+---
+
+# Part 2 — the roll (same day, Kade at the cluster)
+
+## I gave a wrong command and it produced 21 false failures
+
+step2's first run came back `RESULT: 21 check(s) FAILED — do not upgrade.` Nothing was wrong
+with the change. **I had added `--debug` to the render command**, combining CLAUDE.md's DoD
+wording (`--dry-run=client --debug`, right for reading a manifest by eye) with step2's own
+documented usage (`--dry-run=client`, no `--debug`). With `--debug`, Helm prints
+`USER-SUPPLIED VALUES:`, then `COMPUTED VALUES:`, then `MANIFEST:` — and the `config.inputs/
+filters/outputs` blocks appear in all three, so every `grep -c` in the gate triples.
+
+**The tell was in the arithmetic, not in any individual check:** every failure was exactly 3× its
+expected count (want 2 → 6, want 1 → 3, want 3 → 9) and every check expecting 0 passed. One
+failure did not fit that pattern and confirmed the diagnosis outright: `no reloader image` wanted
+0 and got **1** — that string exists only in the fluent-bit chart's *default* values, which only
+`--debug` prints. Nothing in the repo references a reloader.
+
+Worth keeping because the failure was legible only in aggregate. Read check-by-check, 21 failures
+across five unrelated sections reads like a corrupted values file; read as a column of numbers it
+is obviously one input defect. **When a whole gate fails, suspect its input before its subject.**
+
+It also means step2 has a real usability hole: handed a wrong-shaped render it produces 21
+confusing failures instead of one clear "you passed --debug". Offered to Kade as its own commit;
+not taken up in this session.
+
+## The roll, and what it proved
+
+Clean render → step2 clean → `helm upgrade` → step3 twice, before and after traffic. Both
+`RESULT: post-upgrade checks passed`.
+
+**After traffic, section 5:**
+
+```
+PASS  polaris-logs-*: 367 docs carry message since pod start
+PASS  polaris-logs-*: 367 docs carry threadName.keyword since pod start
+PASS  polaris-logs-*: 367 docs carry threadId since pod start
+PASS  polaris-logs-*: 0 docs with ndc since pod start
+```
+
+367/367, and `ndc` 0 — the exact inverse of `#30`'s "0 of 386". Every v6 absence still holds.
+
+**Three secondary readings that each say something the primary one does not:**
+
+- **Lua ConfigMap sha `f92bb6d4dbbfc346`, unchanged, last written 2026-09-16T15:59:12Z.** This is
+  the positive proof that the roll was values-only and no `apply-lua.sh` ran — better evidence
+  than "I didn't run it," because it is a property of the cluster rather than of anyone's memory.
+- **Tier-2 output `ok=367 errors=0 retries_failed=0`, pod log clean.** A per-item OpenSearch
+  rejection inside an HTTP 200 increments none of the counters, so the pod log is the only place
+  it shows — and it is clean. **Today's index was shaped by dynamic mapping, not the template**
+  (not retroactive), and `threadId` indexed fine anyway. That is empirical confirmation of the
+  correction I made earlier in the day: the explicit `threadId: long` mapping is defensive, not
+  load-bearing. I had argued it from the mapping rules; the cluster then demonstrated it.
+- **`polaris_noise_filter dropped=497 added=164`.** 367 stored + 497 dropped = 864 in, a 57.5 %
+  drop against the v5 policy's 58 %. The two fields changed what each record carries, not what
+  the filter decides — which is the thing a field change could plausibly have broken.
+
+## The gate that verified it had a hole, and it was mine
+
+`RESULT: post-upgrade checks passed` does **not** mean the thread fields are present. step3's
+`huh()` prints `????` and never increments `FAIL`; the `#42` presence checks I wrote called `huh`
+on zero documents, copying the `message` idiom. **The pre-traffic run proves the hole exactly:**
+`????` on all three presence checks, and `RESULT: post-upgrade checks passed`.
+
+`#42` is verified regardless, because I asked for the `PASS` lines and read them rather than
+trusting the RESULT line. But that is luck of process, not design — a future reader of that
+RESULT line would have been entitled to conclude something it does not support.
+
+Fixed as `#43`: the checks self-arm off `$M`, the count of documents carrying `message`. If
+documents are being written and the fields are absent *from those documents*, that is a real
+`bad`. Only when nothing has been written at all does 0 stay uninformative. The general `huh`
+mechanism stays — it exists for checks that genuinely cannot tell "broken" from "not yet". The
+rule that came out of it: **a presence check needs an arming signal, or it is not a check.**
+
+Note the shape recurring three times in one day: the `.keyword` trap (a gate that would have
+failed for the wrong reason), the `--debug` render (a gate that did fail for the wrong reason),
+and this (a gate that passed without asserting). All three are the same failure — the gate's
+verdict not tracking its subject — and only the first was caught before it cost anything.
+
+## Open at the end of the session
+
+- **`step12` output was never read.** If it did not run, the `threadId: long` declaration is
+  still only in the repo and tomorrow's index is dynamic-mapped again. Harmless on today's
+  evidence; contrary to the file's whole purpose. Expect **8/8**, was 7/7 under `#30`.
+- helm revision not recorded (expect 21). `step10`/`step11` not run, so `#32`/`#31`'s
+  detail-by-logger and report-row equalities were not re-established on this roll.
+- `#43`'s new `bad` branch has never fired — it requires `message > 0` with the field count at 0,
+  which is precisely the state this roll did not produce.
+- Average document size: **deliberately not measured.** See `#42` for why the measurement was
+  withdrawn rather than skipped.

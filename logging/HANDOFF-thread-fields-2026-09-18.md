@@ -4,10 +4,17 @@
 [`HANDOFF-pipeline-next-2026-09-16.md`](HANDOFF-pipeline-next-2026-09-16.md) as the start-here
 document for `logging/`; that file's state section is now two Polaris versions out of date.
 
-**STATUS 2026-09-18 (updated): decision B taken (Kade). The file changes below are WRITTEN AND
-COMMITTED; NOTHING IS APPLIED to the cluster.** What remains is the roll itself — `step2` →
-`helm upgrade` → `step3`. Prepared in a Cowork session with no `kubectl`, `helm` or `docker`
-reach (CLAUDE.md), so no render and no cluster command backs any of it.
+**STATUS 2026-09-18 (final): decision B taken, ROLLED, and VERIFIED ON TRAFFIC. This task is
+DONE.** step3 after traffic: **367/367 detail docs carry `threadName.keyword` and `threadId`,
+0 carry `ndc`** — the exact inverse of `#30`'s assertion. Pod started 07:23:34Z on image 5.1.1,
+tier-2 output `ok=367 errors=0`, Lua ConfigMap sha unchanged (values-only, as planned). Full
+record: `.memory/active-issues.md` `#42`.
+
+**Still open from the roll:** `step12`'s output was not read, so it is unknown whether the index
+template was applied — if it was not, tomorrow's index is shaped by dynamic mapping again. Also
+unread: the helm revision (expect 21) and `step10`/`step11`.
+
+Everything below is kept as the reasoning behind the change, not as instructions to carry out.
 
 **Two things changed in this document after the decision:** the cost is now quantified (it did
 not need a cluster), and the before/after measurement in *Verification* is **withdrawn** — worked

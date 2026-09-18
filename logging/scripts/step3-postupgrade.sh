@@ -116,10 +116,19 @@ if [ -n "${START_T:-}" ]; then
   # threadName is an UNDECLARED string under the v6 template -- text with index:false plus a .keyword sub-field --
   # so exists MUST name threadName.keyword; the bare field finds nothing and would fail this check for the wrong
   # reason. threadId is mapped long (template properties), so the bare field is the right one for it.
+  #
+  # SELF-ARMING (#43, 2026-09-18): huh() does NOT increment FAIL, so a plain "0 docs -> huh" presence check is
+  # compatible with RESULT: passed even when the fields are genuinely gone -- which is a gate that passes for the
+  # wrong reason, the same class of bug as querying bare threadName. $M (docs carrying `message`) is the arming
+  # signal: if documents ARE being written since pod start and these fields are absent from them, that is a real
+  # FAIL, not a "run traffic and re-try". Only when no document has been written at all is 0 uninformative.
   for f in threadName.keyword threadId; do
     N=$(count_since "polaris-logs-*" ",{\"exists\":{\"field\":\"$f\"}}")
     if [ -n "$N" ] && [ "$N" -gt 0 ] 2>/dev/null; then ok "polaris-logs-*: $N docs carry $f since pod start"
-    else huh "polaris-logs-*: ${N:-no answer} docs with $f since pod start -- run traffic, then re-run (#42)"; fi
+    elif [ -n "$M" ] && [ "$M" -gt 0 ] 2>/dev/null; then
+      bad "polaris-logs-*: ${N:-no answer} docs with $f since pod start, but $M carry message -- docs ARE being written without it, so the tier-2 trim is still removing it (#42)"
+    else
+      huh "polaris-logs-*: ${N:-no answer} docs with $f since pod start -- nothing written yet (message: ${M:-0}), run traffic, then re-run (#42)"; fi
   done
   for f in app level _msg; do
     none_since "polaris-report-*" ",{\"exists\":{\"field\":\"$f\"}}" "with $f" "the Lua is not schema v6"

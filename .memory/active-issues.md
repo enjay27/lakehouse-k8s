@@ -5,9 +5,62 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
-**#42 — `threadName` / `threadId` RESTORED to `polaris-logs-*`, REVERSING `#30`. WRITTEN, NOT
-APPLIED.** 2026-09-18. Decision B (Kade), taken on the cost analysis below rather than on the
-original premise, which was half wrong.
+**#42 — `threadName` / `threadId` RESTORED to `polaris-logs-*`, REVERSING `#30`: ROLLED AND
+VERIFIED ON TRAFFIC 2026-09-18.** Decision B (Kade), taken on the cost analysis below rather
+than on the original premise, which was half wrong.
+
+**ROLLED (Kade), pod `benchmarks-fluent-bit` started 2026-09-18T07:23:34Z, image 5.1.1,
+`restartCount 0`.** Values-only path as planned; the Lua ConfigMap sha is `f92bb6d4dbbfc346`,
+**unchanged** and last written 2026-09-16T15:59:12Z, which is the positive proof that this roll
+touched values only and no `apply-lua.sh` ran.
+
+**VERIFIED — the assertion is the exact inverse of `#30`'s.** `#30` recorded *"0 of 386
+`polaris-logs-*` docs carry `threadName`, `threadId` or `ndc`."* step3 after traffic:
+
+```
+PASS  polaris-logs-*: 367 docs carry message since pod start
+PASS  polaris-logs-*: 367 docs carry threadName.keyword since pod start
+PASS  polaris-logs-*: 367 docs carry threadId since pod start
+PASS  polaris-logs-*: 0 docs with ndc since pod start
+```
+
+367/367 on all three, `ndc` 0, and every schema-v6 absence still holds (`processName`, `stream`,
+`flb_tag`, `app`, `_msg` all 0; report envelope clean; P3 `Exclude_Path` holding at 0 docs from
+Fluent Bit's own pod). Pre-traffic run was clean too, with the three presence checks at `????`
+(0 docs, no traffic yet) — see the caveat on that below.
+
+**No per-item rejection, and that settles the mapping question empirically.** Tier-2 output
+`ok=367 errors=0 retries_failed=0`, and section 2 found no parser/Lua complaint in the pod log —
+which is where a per-item OpenSearch rejection inside an HTTP 200 would land, since it increments
+none of the counters. **Today's index was shaped by DYNAMIC mapping, not by the template** (the
+template is not retroactive; `polaris-logs-2026.09.18` predates it), and `threadId` indexed
+cleanly anyway. That is direct confirmation of this entry's claim below that the explicit
+`threadId: long` mapping is **defensive, not load-bearing**.
+
+**The Lua policy is unchanged, as intended.** `polaris_noise_filter dropped=497 added=164`, so
+367 stored + 497 dropped = 864 records in, a **57.5 % drop rate** against the 58 % the v5 policy
+has held since `#31`. The two extra fields changed what each record carries, not what the filter
+decides.
+
+**NOT READ, and one of them matters:**
+- **`step12` output was not pasted, so it is unknown whether the index template was applied.**
+  If it was not, the `threadId: long` declaration is still only in the repo and **tomorrow's
+  index will be shaped by dynamic mapping again.** Harmless on today's evidence (dynamic reaches
+  `long` on its own), but the file's whole purpose is that this not be left to chance. Run
+  `step12` and expect **8/8** where `#30` recorded 7/7.
+- helm revision number (expected 21) — not recorded.
+- `step10`/`step11` window readout — not run; the detail-by-logger and report-row equality
+  checks of `#32`/`#31` were therefore not re-established on this roll.
+- Average document size before/after — **deliberately not measured**, see the withdrawal below.
+  `#39`'s replica count at each reading was likewise not needed, for the same reason.
+
+**A gate defect found in the process, still OPEN at the time of this roll.** step3's `huh()`
+prints `????` and does **not** increment `FAIL`, so `RESULT: post-upgrade checks passed` was
+compatible with both thread fields being absent — the pre-traffic run proves it, having printed
+`????` on all three presence checks and still passed. The verification above is sound because the
+`PASS` lines were read directly, not inferred from the RESULT line. **The fix is `#43`.**
+
+
 
 **The premise that produced the request was wrong in its second half.** Kade asked for the
 fields back reasoning *"I had them removed believing the Lua parsed them; they cost no CPU to
@@ -111,6 +164,42 @@ arrives with the next daily index, and indices created 2026-09-16...18 simply la
 **NOT VERIFIED:** no `helm lint`, no `--dry-run` render, no cluster command of any kind - this
 was written in a Cowork session with no `helm`/`kubectl`/`docker` reach (CLAUDE.md). The
 inverted gates have had `bash -n` only; neither has been run against a render or a cluster.
+
+**#43 — step3's presence checks could pass while asserting nothing: FIXED, NOT RE-RUN.**
+2026-09-18. Found while verifying `#42`, on this session's own defect.
+
+`step3-postupgrade.sh` has three verdict functions and only one of them counts:
+
+```
+ok()  -> PASS
+bad() -> FAIL, FAIL=$((FAIL+1))     <- the only one RESULT reads
+huh() -> ????                        <- does not
+```
+
+The `#42` presence checks called `huh` on zero documents, copying the existing `message` idiom,
+which is non-fatal because a pre-traffic run legitimately has none. **So `RESULT: post-upgrade
+checks passed` was compatible with both thread fields being completely absent** — and the
+pre-traffic run of the `#42` roll demonstrates it exactly: `????` on all three presence checks,
+`RESULT: post-upgrade checks passed`. A gate that passes for the wrong reason, which is the same
+class of bug as querying bare `threadName` under the v6 template.
+
+**`#42` is verified regardless, because the `PASS` lines were read directly** (367/367) rather
+than inferred from the RESULT line. The hole was in what a *future* reader of that RESULT line
+would have been entitled to conclude.
+
+**Fixed: the checks are now self-arming.** `$M`, the count of documents carrying `message`, is
+the arming signal. If documents are being written since pod start and the thread fields are
+absent *from those documents*, that is a real `bad` — not a "run traffic and re-try". Only when
+nothing has been written at all is 0 uninformative, and only then does it stay `huh`.
+
+**The general shape is still there and is deliberate**, so do not "fix" it wholesale: `huh`
+exists for checks that genuinely cannot distinguish "broken" from "not yet". The rule that came
+out of this: **a presence check needs an arming signal, or it is not a check.** Any future
+presence assertion added to step3 should name what makes its zero meaningful.
+
+**NOT VERIFIED:** `bash -n` only. The new `bad` branch has never been exercised — it fires only
+when `message > 0` and the field count is 0, which is precisely the state the `#42` roll did not
+produce. Re-running step3 as-is should reproduce the same all-`PASS` section 5.
 
 **#41 — OPEN. A 1.6.0 pod crashed three times at rollout: `Reason: Error`, exit code 1, dead
 four seconds after start. NOT an OOMKill.** 2026-09-18.
