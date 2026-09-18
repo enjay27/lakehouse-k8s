@@ -85,6 +85,8 @@ unverified — see `active-issues.md` #33.
 | JVM heap vs container | initial `1Gi`, max `1.33Gi` (65% of `2Gi` limit) → ~`0.67Gi` for all non-heap. Watch `restartCount` for OOMKills |
 | `#15` hypothesis C | **ALIVE again** as of 2026-09-18 — killed at step 0b on one pod, revived six hours later by `#39` |
 | `events` max `timestamp_ms` after step 4 | `1789574562296` = **2026-09-16T16:02:42Z**, i.e. PRE-upgrade. 2528 rows. Proves survival, **not** that the listener writes on 1.6.0 |
+| Polaris endpoints from the Mac | `192.168.139.2:8181` catalog/REST, `192.168.139.2:8182` mgmt/health (`benchmarks-polaris`, `benchmarks-polaris-mgmt`, both LoadBalancer) — prefer these over `exec` + localhost |
+| `fb-polaris-shipper-fluent-bit` | **still installed** 2026-09-18, age 27d — the OpenSearch cutover plan said to uninstall it and MEMORY.md says Kade will; neither has happened (`#38`) |
 | v5 (`events.catalog_id` nullable) | **1.7.0**, not 1.6.0 |
 | 1.6.0 image tag | `1.6.0` — no `-incubating`; graduated after 1.3.0 |
 | `polaris.event-listener.type` | deprecated upstream **since 1.5.0**; plural `types` is current |

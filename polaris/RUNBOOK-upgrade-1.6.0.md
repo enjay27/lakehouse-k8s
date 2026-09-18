@@ -703,12 +703,18 @@ kubectl -n datahub-hynix logs deploy/benchmarks-polaris --tail=5
 kubectl -n datahub-hynix logs deploy/benchmarks-polaris | grep -i 'Unrecognized VM option' \
   || echo "GC flags OK"
 
-# The management port is 8182 here, not the 8282 upstream docs use. exec, not port-forward --
-# port-forward blocks the terminal (CLAUDE.md, Persistent Server Block).
-kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
-  curl -sf http://localhost:8182/q/health
-# If curl is absent from the image, the readiness probe already answers this: a pod reporting
-# READY 1/1 has passed it. Do not reach for port-forward to find out.
+# Health. USE THE LOADBALANCER FROM THE MAC, not exec + localhost (Kade, 2026-09-18):
+#   benchmarks-polaris       8181 -> 192.168.139.2:8181   (catalog / REST)
+#   benchmarks-polaris-mgmt  8182 -> 192.168.139.2:8182   (management, health, metrics)
+# Three reasons it is better than the exec form this step used to give: it does not depend on
+# curl existing in a UBI9 runtime image, it exercises the Service path rather than in-pod
+# localhost, and with #39's three replicas it is load-balanced across them, which is the path
+# that actually matters. The management port is 8182 here, not the 8282 upstream docs use.
+# Still not port-forward -- that blocks the terminal (CLAUDE.md, Persistent Server Block).
+curl -sf http://192.168.139.2:8182/q/health
+# Re-check the external IP if it has moved: kubectl -n datahub-hynix get svc
+# If the IP is unreachable from the Mac, a pod reporting READY 1/1 has already passed the
+# readiness probe. Do not reach for port-forward to find out.
 
 # Schema version, from the database.
 kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
@@ -725,8 +731,19 @@ kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -
 
 # THE ACTUAL LISTENER CHECK: generate one API call, wait out the buffer, then re-read.
 # `buffer-time=PT5S`, so sleep longer than that or the row is still in memory.
-kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
-  curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8181/api/catalog/v1/config
+#
+# USE AN AUTHENTICATED CALL. An unauthenticated request returns 401 and may legitimately
+# produce no event row at all, in which case a flat count would look like a broken listener
+# when it is only a rejected request. Use the root token (`root_token()` in polaris-learning)
+# against a real endpoint:
+#
+#   TOKEN=...   # root bearer token
+#   curl -s -o /dev/null -w 'catalogs: %{http_code}\n' \
+#     -H "Authorization: Bearer $TOKEN" http://192.168.139.2:8182/api/management/v1/catalogs
+#
+# An unauthenticated probe is still worth one line first, to prove the port answers at all:
+curl -s -o /dev/null -w 'config (401 expected): %{http_code}\n' \
+  http://192.168.139.2:8181/api/catalog/v1/config
 sleep 10
 kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
   env PGPASSWORD=polaris psql -U polaris -d polaris -tAc \
@@ -771,6 +788,12 @@ was right and its stated mechanism wrong.
    was **pre-upgrade** (see the corrected command above).
 
 ---
+
+**The shipper is still installed.** `kubectl get svc` on 2026-09-18 still lists
+`fb-polaris-shipper-fluent-bit`, age 27d, so MEMORY.md's "shipper: Kade uninstalls" has not
+happened. That matters here because of `#38`: it tails the Polaris log PVC, and the file
+handler is off, so it has most likely been tailing a file nothing writes. Settle `#38`'s
+directory listing before deciding whether uninstalling it loses anything.
 
 **Do not expect the log volume to drop.** The original version of this runbook said one
 `polaris-logs-*` window after the upgrade should be materially smaller than one before. That
