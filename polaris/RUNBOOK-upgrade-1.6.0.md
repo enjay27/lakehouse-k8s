@@ -88,38 +88,84 @@ and `0a` is the perishable one.
 
 ---
 
-## Step 1 — pre-flight: entity names. NEW, and it can block the upgrade.
+## Step 1 - entity names. A forward-compatibility screen, NOT an upgrade blocker.
 
-**1.6.0 tightened entity-name validation.** Upstream's own guidance: entities whose names
-contain control characters, dots, backslashes, colons and similar special characters *must be
-renamed before upgrading*. This platform's catalogs and namespaces were created by test
-ladders, so this is a real risk, not a formality.
+**Corrected 2026-09-18.** The first version of this step said 1.6.0's stricter entity-name
+validation "can block the upgrade", following the Snowflake 1.6 blog's *"if you have existing
+entities with these characters, you'll need to rename them before upgrading"*. **Upstream's own
+docs are narrower, and they win:**
 
-Screen the metastore first — read-only:
+> These constraints apply to create, register, and rename operations only. Entities predating
+> this validation are unaffected by read or update operations.
 
-```sql
--- against the primary (pg-1 as of 2026-09-17; confirm, do not assume pg-0). Wrapper:
---   kubectl -n datahub-hynix exec benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
---     env PGPASSWORD=polaris psql -U polaris -d polaris -c "<the query>"
-SELECT realm_id, catalog_id, id, type_code, sub_type_code, name
+So existing entities do **not** stop the upgrade and do not need renaming to perform it. What
+they break is *future* create / register / rename on those names. That still matters here --
+the post-upgrade `#15` ladder creates catalogs and namespaces, and `polaris-learning` phase J
+drives a nested namespace deliberately -- but it is a step 7 concern, not a step 2 gate.
+
+**The actual rule** (upstream entities doc). A valid name:
+
+- is not empty
+- is not `.` or `..` -- the *whole* name, not "contains a dot"
+- does not contain ISO control characters (**U+0000-U+001F or U+007F-U+009F**)
+- does not contain any of: `/ : * ? " < > | # +`
+- does not start or end with whitespace
+
+Policy names are stricter still: letters, digits, `-` and `_` only.
+
+Note what is **not** on that list: a backslash, and a dot anywhere but as the entire name. The
+blog's rendering of the character set is an escaping artifact of `:*?"<>|#+`.
+
+### The corrected screen
+
+The control-character test uses `[[:cntrl:]]` plus an explicit C1 range built with `chr()`,
+deliberately avoiding backslash-u escapes: those are a hazard in their own right, having
+already been turned into real control bytes once while this file was being edited.
+
+```bash
+kubectl -n datahub-hynix exec -i benchmarks-postgresql-postgresql-ha-postgresql-1 -- \
+  env PGPASSWORD=polaris psql -U polaris -d polaris <<'SQL'
+SELECT count(*) AS live_entities FROM polaris_schema.entities WHERE drop_timestamp = 0;
+
+SELECT realm_id, catalog_id, id, type_code, sub_type_code, name,
+       CASE
+         WHEN name = ''                       THEN 'empty'
+         WHEN name IN ('.', '..')             THEN 'dot-name'
+         WHEN name ~ '[[:cntrl:]]'            THEN 'control-char-c0'
+         WHEN name ~ ('[' || chr(128) || '-' || chr(159) || ']') THEN 'control-char-c1'
+         WHEN name ~ '[/:*?"<>|#+]'           THEN 'forbidden-char'
+         WHEN name ~ '^[[:space:]]|[[:space:]]$' THEN 'edge-whitespace'
+       END AS why
 FROM polaris_schema.entities
 WHERE drop_timestamp = 0
-  AND (name ~ '[\x00-\x1F\x7F]'   -- control characters
-    OR name LIKE '%.%'
-    OR name LIKE '%\%'
-    OR name LIKE '%:%'
-    OR name ~ '[/\\<>"|?*]')
+  AND ( name = ''
+     OR name IN ('.', '..')
+     OR name ~ '[[:cntrl:]]'
+     OR name ~ ('[' || chr(128) || '-' || chr(159) || ']')
+     OR name ~ '[/:*?"<>|#+]'
+     OR name ~ '^[[:space:]]|[[:space:]]$' )
 ORDER BY realm_id, catalog_id, id;
+SQL
 ```
 
-**This query is a screen, not the rule.** It was written from upstream's prose description,
-not from 1.6.0's validation code. If it returns rows, confirm the actual rejected character
-set against the 1.6.0 validation source before renaming anything — and rename on **1.3.0**,
-while the old validation still lets you.
+Heredoc with `exec -i`, not `-c`: the pattern contains both quote characters.
 
-If it returns zero rows, record that: "entity-name screen clean, N entities, <date>".
+### Why the first screen's clean result did not settle it
 
----
+The 2026-09-18 run of the *original* query returned 0 rows, but that query was wrong in both
+directions and its clean result was partly luck:
+
+| original clause | what it actually did |
+|---|---|
+| `name LIKE '%.%'` | flagged **any** name containing a dot -- far broader than the real `.`/`..` rule. 0 rows means no name contains a dot at all: stronger than needed, not wrong. |
+| `name LIKE '%\%'` | **bug.** Backslash is LIKE's default escape character, so this matched names ending in a literal `%`, not names containing a backslash. |
+| the `~` character class | covered `/ < > " \| ? *` and, via the doubled backslash, a literal backslash -- which is not actually forbidden |
+| -- | **missed `#` and `+`**, missed the C1 control range **U+0080-U+009F**, and missed leading/trailing whitespace entirely |
+
+So `#`, `+`, the C1 range and edge-whitespace have **not** been screened. Re-run the corrected
+query above before the ladder, and record the result as
+"entity-name screen clean, N live entities, <date>" -- with N, so the next reader knows the
+screen ran against a populated metastore rather than an empty one.
 
 ## Step 2 — the metastore migration. v3 → v4.
 
@@ -306,6 +352,12 @@ C row**: step 0b measured one Polaris pod, so cross-pod cache divergence is not 
 on this cluster. That leaves **A** (stale reads through Pgpool) and **B** (a 1.3.0
 resolver/entity-cache bug — and this upgrade is the experiment for B, for free).
 
+**The ladder's own names must satisfy 1.6.0's validation** (step 1). It creates catalogs and
+namespaces, so any probe name carrying `/ : * ? " < > | # +`, a leading/trailing space, or a
+bare `.`/`..` will now be rejected at create time — a 400 where 1.3.0 gave a 200, which would
+look like a new failure rather than a renamed rule. Check the notebook's probe names before
+reading anything into the result.
+
 Before the ladder run, decide whether to hold C dead for its duration: the HPA is live again
 with `maxReplicas: 3`, so a ladder that loads Polaris past the target can reintroduce a
 second pod mid-experiment and contaminate the result. `replicaCount: 1` with
@@ -424,6 +476,14 @@ can proceed.
   certainly use different Agroal connections, so pgpool's `disable_load_balance_on_write`
   (session-scoped) cannot cover the create-then-resolve path. Strengthens `#15` hypothesis A
   and the case for the handoff's remedy A.
+
+**Entity-name screen, 2026-09-18: 0 rows — but on the WRONG query.** The screen as first
+written over-tested dots, had a LIKE-escape bug in its backslash clause, and never tested `#`,
+`+`, the C1 control range or edge whitespace. 0 rows is real for what it did test and is
+reassuring, not conclusive. Corrected query in step 1; re-run before the ladder. And the
+framing was wrong in a more useful way: upstream's docs say the new validation applies to
+create/register/rename only and **entities predating it are unaffected by read or update**, so
+this was never an upgrade blocker.
 
 **Open — everything else that needs the cluster.** In particular: `helm get values
 benchmarks-polaris` has *still* never been run, so the live replica count, the live logging

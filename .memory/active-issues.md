@@ -141,6 +141,42 @@ that would have protected the create-then-resolve path does not cover it, and wi
 read is balanced onto a standby. The handoff's remedy A —
 `database_redirect_preference_list = 'polaris:primary'` — addresses exactly this.
 
+**STEP 1 CORRECTED: the entity-name tightening is NOT an upgrade blocker, and the first screen
+asked the wrong question.** 2026-09-18.
+
+The runbook's step 1 said 1.6.0's stricter name validation "can block the upgrade", taken from
+the Snowflake 1.6 blog's *"you'll need to rename them before upgrading"*. Upstream's entities
+doc is narrower and wins: **"These constraints apply to create, register, and rename operations
+only. Entities predating this validation are unaffected by read or update operations."** So
+existing entities do not gate the upgrade. What they break is future create/register/rename —
+which still matters, because the post-upgrade `#15` ladder creates catalogs and namespaces and
+`polaris-learning` phase J drives a nested namespace.
+
+**The rule, from the doc.** A valid name: not empty; not `.` or `..` (the *whole* name); no ISO
+control characters (U+0000-U+001F or U+007F-U+009F); none of `/ : * ? " < > | # +`; no leading
+or trailing whitespace. Policy names stricter still: letters, digits, `-`, `_` only. **A
+backslash is not forbidden** — the blog's character list is an escaping artifact.
+
+**The screen returned 0 rows, and the screen was wrong in both directions.** Kade ran it; the
+result is real for what it tested and is reassuring. But:
+
+- `name LIKE '%.%'` flagged any name *containing* a dot, far broader than `.`/`..`. 0 rows
+  there is stronger than needed, not wrong.
+- `name LIKE '%\%'` was a **bug**: backslash is LIKE's default escape character, so it matched
+  names ending in a literal `%`, not names containing a backslash. Backslash was covered
+  anyway by the regex clause — and is not forbidden, so it never mattered.
+- **`#`, `+`, the C1 range U+0080-U+009F and edge whitespace were never tested at all.**
+
+Corrected query in the runbook's step 1, using `[[:cntrl:]]` and a `chr(128)`/`chr(159)` range
+rather than backslash-u escapes. **Re-run it before the ladder.** Two lessons worth keeping:
+a screen written from prose instead of the spec tests the prose, and a 0-row result is only as
+good as the predicate.
+
+**Watch backslash-u escapes in this repo's markdown.** Writing `[\u0000-\u001F]` into the
+runbook produced *real* NUL / 0x1F / 0x7F / 0x9F bytes in the file, which silently killed two
+edit attempts before the cause was found. Any SQL or Lua pattern committed here should use
+POSIX classes or `chr()` instead.
+
 **Step 0 progress, 2026-09-18 (Kade ran these; this session cannot):**
 `0c` **DONE — the live metastore is at schema version 3**, read from primary pg-1:
 `SELECT * FROM polaris_schema.version` → `version|3`. The repo's `schema_v3.sql` and the

@@ -32,8 +32,10 @@ Tag/Chart 1.6.0, plural `event-listener.types`, console **INFO** + all 13 DEBUG 
 volume.** **The console emits JSON** (`QUARKUS_LOG_CONSOLE_JSON_ENABLED=true`, ordinal 300 > properties 250), so
 `logging.console.json:false` + `format` are **inert** — that, not the threshold, is the real dead config, and the tier-2 Lua
 depends on the env var. `topologySpreadConstraints` selects `name: polaris` → **0 pods, inert since install** (`#8`'s "spreading"
-is not in effect). JVM: `-XX:+ZGenerational` safe on 1.6.0's **JDK 21** image, removed in JDK 25. **Next: step 1 entity-name
-screen** — the only pre-flight that can still block.
+is not in effect). JVM: `-XX:+ZGenerational` safe on 1.6.0's **JDK 21** image, removed in JDK 25. **Step 1 reframed:** the 1.6.0 name tightening applies to
+create/register/rename only — pre-existing entities are **unaffected**, so it was never a blocker. Screen returned **0 rows**, but
+on a query that over-tested dots and never tested `#`, `+`, U+0080-U+009F or edge whitespace; corrected query in step 1, re-run
+before the ladder. **Next: step 2, the v3→v4 migration** (dump first; HPA may undo the scale-to-0).
 Corrections: **1.6.0 needs schema v4, not v5** (the `events.catalog_id` ALTER is 1.7.0) and **v3→v4 is additive only**
 (`postgresql/schema/migrate_v3_to_v4.sql` — transcribed; diff against the shipped file first). "`maxReplicas 3 → 1` already in
 the tree" was **false** — `#8` still armed. New: **1.6.0 rejects entity names with dots/colons/backslashes — screen first**
