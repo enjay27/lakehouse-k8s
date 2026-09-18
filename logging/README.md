@@ -17,7 +17,7 @@ first table describes the pipeline as it runs**. When a dated document disagrees
 | [`REVIEW-pipeline-2026-09-16.md`](REVIEW-pipeline-2026-09-16.md) | end-to-end review, P1–P12 with before/after — **decided and rolled as schema v6** (P5 open, P10 manual) |
 | [`REVIEW-lua-refactor-2026-09-16.md`](REVIEW-lua-refactor-2026-09-16.md) | the Lua refactor (one filter, R1–R6) and how it was proven equivalent — **rolled** |
 | [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md) | the phase 0–3 task table toward production (ISM handed to the Monitoring team) |
-| [`opensearch/`](opensearch/) | index templates (`polaris-logs-template.json`, `polaris-report-template.json`) and `devtools-export.console` |
+| [`opensearch/`](opensearch/) | index templates (`polaris-logs-template.json`, `polaris-report-template.json`), **ISM retention policies** (`ism-polaris-logs-3d.json`, `ism-polaris-report-30d.json`, `ism-k8s-logs-3d.json` — 2026-09-18, applied with `scripts/step13-ism-apply.sh`) and `devtools-export.console` |
 | [`scripts/`](scripts/) | see *Scripts* below |
 | `../fluent-bit/values.yaml` · `../fluent-bit/polaris_access_log.lua` · `../fluent-bit/apply-lua.sh` | what is deployed, and how the Lua is rolled |
 
@@ -50,7 +50,7 @@ Not in this repo on purpose: retention / ISM policies — **the Monitoring team 
 
 | status | files |
 |---|---|
-| **live** | `step2-render-gate.sh` (render gate) · `step3-postupgrade.sh` (post-roll) · `step9-report-index-template.sh` · `step12-logs-index-template.sh` · `step10-v4-window-readout.sh` (one window, three sources) · `step11-replay-window.py` (replay; `POLARIS_LUA=` for a candidate) · `test-schema-v3/v4/v5/v6.lua` · `test-first-tick.lua` · `test-raw-access-shim.lua` · `devtools-json-fix.py` |
+| **live** | `step2-render-gate.sh` (render gate) · `step3-postupgrade.sh` (post-roll) · `step9-report-index-template.sh` · `step12-logs-index-template.sh` · `step13-ism-apply.sh` (retention; dry run by default, `--apply` to write) · `step10-v4-window-readout.sh` (one window, three sources) · `step11-replay-window.py` (replay; `POLARIS_LUA=` for a candidate) · `test-schema-v3/v4/v5/v6.lua` · `test-first-tick.lua` · `test-raw-access-shim.lua` · `devtools-json-fix.py` |
 | **finished / superseded** — **moved to `scripts/attic/` 2026-09-16** (P11; old docs cite the old paths) | `step0-preflight.sh` · `step4-report-readout.sh` · `step5-probe-apply-verify.sh` · `step6-tier2-readout.sh` · `step7-dedup-check.sh` · `step8-subset-proof.sh` · `test-polaris-filters.py` (tests the shipper's Lua) · `report_readout.py` (used by step4) |
 | harnesses | `candidates/diff-v5-v6.lua` (v5 vs v6) · `diff-refactor.lua` · `bench-refactor.lua` · `bench-classify.lua` (pre-v6 scripts: they feed `_msg`) · `tier1-to-lua.py` |
 

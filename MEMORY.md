@@ -3,7 +3,14 @@
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here;
 everything else is a link into [`.memory/`](.memory/README.md).
 
-## Now — 2026-09-18 (Polaris 1.6.0 live; thread fields ROLLED and VERIFIED; v6 templates finally applied)
+## Now — 2026-09-18 (Polaris 1.6.0 live; thread fields ROLLED and VERIFIED; retention WRITTEN, not applied)
+
+**RETENTION IS WRITTEN AND NOTHING IS APPLIED (2026-09-18, `#44`).** ISM is **ours locally** now, not the Monitoring team's
+(production still theirs): `logging/opensearch/ism-*.json` — `polaris-logs-*` 3d, `polaris-report-*` **30d (a rehearsal
+figure: that stream is the only record of successful reads)**, `k8s-logs-*` 3d. Run `logging/scripts/step13-ism-apply.sh`
+dry first; `--apply` also deletes the 30 s-window report indices. PVC side: **Quarkus has no age TTL**, so `polaris/values.yaml`
+states a byte cap instead (`fileSuffix` null, `maxBackupIndex` 45 = 460Mi ring) — and **the ~130 dated `.gz` orphans it cannot
+reach need `#44`'s one-time command.** All inert while `logging.file.enabled: false` (`#38`).
 
 **Start here next session:** `.memory/active-issues.md` `#42` — the thread-field task is **DONE**, and `#42` carries both the
 outcome and the four things that were never read. [`logging/HANDOFF-thread-fields-2026-09-18.md`](logging/HANDOFF-thread-fields-2026-09-18.md)
@@ -29,20 +36,21 @@ keep pre-v6 mappings for life; from 09-19 both families are v6.** No data lost, 
 **Pipeline running:** `benchmarks-fluent-bit` policy v5 / **report schema 6** (`#32`): field `message`, trim before the one Lua
 filter. **`WINDOW_SECONDS` is still 30** (1800 s is a *Lua* change — combining it with the above needs
 `apply-lua.sh --no-restart` → step2 → `helm upgrade`, no restart between; prefer landing them separately). Readouts: `step10` +
-`step11`, not Dev Tools copies. **ISM / retention: Monitoring team, not ours.**
+`step11`, not Dev Tools copies. **ISM / retention: ours locally since 09-18 (`step13`), Monitoring team's in production.**
 
 **`#41` is the live loose end:** a 1.6.0 pod crashed 3× at rollout — `Reason: Error`, exit 1, dead in **4 s**, **not** an
 OOMKill. `kubectl logs <pod> --previous`, or the `k8s-logs-*` Dev Tools query in the runbook. **Perishable** — `#39` recycles
 pods. **`#39`:** the HPA flaps on **memory at 2% CPU** (`0→1→3→2→1` in an hour; resting 1) because it measures against the `1Gi`
 request while the JVM commits `1Gi` — so **`#15` hypothesis C is intermittently live: pin `replicaCount` before any ladder run**.
 **`#38`:** the file handler is off, so nothing writes the log PVC and **`fb-polaris-shipper` (still installed) now tails a dead
-file**. Also open: `#36`, `#37`, `#40`, and a **plaintext OpenSearch password in `fluent-bit/values.yaml`** against CLAUDE.md.
+file**. Also open: `#36`, `#37`, `#40` (**`#44` answers its question 1: the bound is per-day**), and a **plaintext OpenSearch
+password in `fluent-bit/values.yaml`** against CLAUDE.md.
 
 **PostgreSQL (2026-09-17):** `#15` create-namespace 500s are an NPE, not a settled read-after-write; `SELECT
 pg_wal_replay_pause()` on the standbys settles it in one command. The primary-unavailable harness is **planned, not built**:
 [`postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md`](postgresql/HANDOFF-toxiproxy-failover-2026-09-17.md).
 
-Detail for every `#n` above: [`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#43`. Do not re-summarise it here.
+Detail for every `#n` above: [`.memory/active-issues.md`](.memory/active-issues.md) `#33`–`#44`. Do not re-summarise it here.
 
 **Standing.** Polaris is not to be changed. **Verify against the running object, never an intent artifact.**
 

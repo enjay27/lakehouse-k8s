@@ -4,13 +4,19 @@
 **Why this note:** retention (ISM) for the Polaris indices is yours (decided 2026-09-16). This is what the pipeline assumes and
 what it cannot tell anyone about by itself.
 
+> **SUPERSEDED FOR THE LOCAL CLUSTER, 2026-09-18.** Kade took the local OrbStack cluster's retention back into this repo and
+> set it much shorter than the figures below: `polaris-logs-*` **3 days**, `polaris-report-*` **30 days**, `k8s-logs-*`
+> **3 days**. Policies are in `logging/opensearch/ism-*.json`, applied with `logging/scripts/step13-ism-apply.sh`.
+> **Production retention is still yours, and the recommended column below is still what the design asks for** — the local
+> figures are a rehearsal-environment choice, not a recommendation to carry over. Section 2 (silent loss) is unaffected.
+
 ## 1. Indices
 
 | index | written by | content | recommended retention | why |
 |---|---|---|---|---|
-| `polaris-logs-YYYY.MM.DD` | Fluent Bit DaemonSet, tier 2 | selected Polaris log lines: every 4xx/5xx except 404, every PUT/DELETE/PATCH, management POST, two allow-listed app loggers, every WARN/ERROR | **30 days** | incident investigation; large |
-| `polaris-report-YYYY.MM.DD` | same pod, tier 3 | one summary row + resource / principal / app_dropped rows per 30-minute window, schema v6 | **365 days** | the **only** record of successful reads and catalog POSTs (they are counted, not stored); small |
-| `k8s-logs-YYYY.MM.DD` | same pod, tier 1 | every container, unfiltered | unchanged (5 days today) | raw source for cross-checks |
+| `polaris-logs-YYYY.MM.DD` | Fluent Bit DaemonSet, tier 2 | selected Polaris log lines: every 4xx/5xx except 404, every PUT/DELETE/PATCH, management POST, two allow-listed app loggers, every WARN/ERROR | **30 days** *(local: 3 days)* | incident investigation; large |
+| `polaris-report-YYYY.MM.DD` | same pod, tier 3 | one summary row + resource / principal / app_dropped rows per 30-minute window, schema v6 | **365 days** *(local: 30 days)* | the **only** record of successful reads and catalog POSTs (they are counted, not stored); small |
+| `k8s-logs-YYYY.MM.DD` | same pod, tier 1 | every container, unfiltered | unchanged (5 days today) *(local: 3 days)* | raw source for cross-checks |
 
 - Daily indices, no rollover: `min_index_age`-based delete fits.
 - **Before attaching the 365-day policy: `polaris-report-*` indices written while the window was 30 s are verification data**

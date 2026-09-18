@@ -255,9 +255,39 @@ logging:
     logsDir: /deployments/logs
     fileName: polaris.log
     rotation:
+      # RETENTION IS A BYTE CAP, NOT A TTL. Quarkus/JBoss has no age-based deletion:
+      # max-file-size and max-backup-index are the only bounds it offers. So the PVC is
+      # held by the size of a fixed ring -- maxFileSize x (maxBackupIndex + 1) -- and NOT
+      # by "delete files older than N days", which this handler cannot express.
+      #
+      #   10Mi x (45 + 1) = 460Mi ceiling, uncompressed, on a 5Gi PVC (~9%).
+      #
+      # Why 45. Measured from the PVC archive (#40, #44): busy days rotated 11-14 times
+      # (08-21, 08-24, 08-31 reached .14; 09-15 reached .12), quiet days about twice.
+      # 45 backups is therefore ~3 of the busiest observed days, or a fortnight of quiet
+      # ones. Change this number to move the ceiling; the arithmetic above is the contract.
       maxFileSize: 10Mi
-      maxBackupIndex: 5
-      fileSuffix: ~  # .yyyy-MM-dd.gz
+      maxBackupIndex: 45
+      # fileSuffix MUST STAY NULL, and this is the whole finding of 2026-09-18.
+      #
+      # A suffix switches JBoss from SizeRotatingFileHandler to
+      # PeriodicSizeRotatingFileHandler. maxBackupIndex then bounds only the numeric index
+      # WITHIN one day (polaris.log.2026-09-16.1 .. .N); the daily roll mints a new
+      # basename and NOTHING EVER DELETES THE PREVIOUS DAY. That is how the PVC came to
+      # hold ~130 files and 27MB reaching back to 08-21 while this file said the bound
+      # was 5 -- the bound was real, it just was not bounding days.
+      #
+      # It also means the value below has never been in effect: the live pod rotated with
+      # a date suffix (polaris.log.2026-09-16.gz, written 09-18 01:27, is a periodic roll),
+      # so an older ConfigMap carried .yyyy-MM-dd.gz. #20's shape. Verify from the running
+      # object after any upgrade, never from this line:
+      #   kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
+      #     grep rotation /deployments/config/application.properties
+      #
+      # The cost of null: no gzip. Compression came from the suffix ending in .gz, so the
+      # ring above is 460Mi of plaintext where the old scheme held ~23MB compressed. That
+      # is the trade for a ceiling that actually holds.
+      fileSuffix: ~
     storage:
       className: standard
       size: 5Gi

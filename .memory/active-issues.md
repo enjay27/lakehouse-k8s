@@ -5,6 +5,69 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#44 — Quarkus cannot express a log retention TTL, and the PVC archive is the proof. The
+27 MB reaching back to 08-21 is ORPHANED: no rotation setting will ever delete it.** 2026-09-18.
+
+Kade asked for "remove logs older than 3 days" on the Polaris log PVC and, when told a sweeper
+would be needed, answered *"max index count rather than day, since this count means day."* It
+does not, and the evidence was already in this repo.
+
+**What JBoss actually does.** `quarkus.log.file.rotation` offers `max-file-size`,
+`max-backup-index` and `file-suffix`. There is **no age-based deletion anywhere in it**. With a
+suffix set, the handler is `PeriodicSizeRotatingFileHandler`: `max-backup-index` bounds only the
+numeric index **inside one day** (`polaris.log.2026-09-16.1 .. .N`), while the daily roll mints a
+new basename and **nothing deletes the previous day**. That is exactly how a bound of 5 coexists
+with ~130 files over a month — the bound was real, it was not bounding days.
+
+**Two readings from the live listing (Kade, 2026-09-18) that settle the live config:**
+
+```
+polaris.log.2026-09-16.4.gz  458929  Sep 16 08:41
+polaris.log.2026-09-16.gz    201788  Sep 18 01:27   <- periodic roll, no numeric index
+polaris.log.2026-09-18.1.gz    1225  Sep 18 01:35
+polaris.log.2026-09-18.2.gz    1017  Sep 18 01:35
+polaris.log.2026-09-18.3.gz     307  Sep 18 01:34
+```
+
+1. **The live pod rotated with `.yyyy-MM-dd.gz`** while `polaris/values.yaml` says
+   `fileSuffix: ~`. A dated file with *no* numeric index is the periodic roll's signature. So
+   the file's value has **never been in effect** — `#20`'s shape again, and the same finding
+   `#40` reached from the `.14`-vs-5 direction. `#40` can stop asking whether the bound is
+   per-day: it is.
+2. **Three rotations of ~1 KB files within 2 minutes at 01:34–01:35**, when `maxFileSize` is
+   10Mi. Size did not trigger those. That is either pod shutdown or `#8`'s rotation storm.
+   **Not established** — recorded because it is the first sighting of the shape on a day whose
+   replica history is known (`#8` fired `REPLICAS 3` that morning).
+
+**The change (2026-09-18):** `polaris/values.yaml` now states the retention contract as a **byte
+cap**, which is the only thing this handler can enforce: `fileSuffix` stays null (so the handler
+is the plain `SizeRotatingFileHandler` and the ring is `polaris.log.1 .. .N`, nothing
+accumulating across days), and `maxBackupIndex` 5 → **45**, giving `10Mi x 46 = 460Mi` on the
+5Gi PVC. Sized from the archive's own rotation rate: 11–14 rotations on busy days, so ~3 busy
+days or a fortnight of quiet ones. **The cost is gzip** — compression came from the suffix
+ending in `.gz`, so the ring is 460Mi of plaintext where the old scheme held ~23MB compressed.
+
+**STILL OPEN, and it is the part the values change does not touch:**
+
+- **The existing ~130 dated `.gz` files are orphans.** They do not match `polaris.log.N`, so the
+  size ring will never see them. They sit there for ever unless deleted by hand. One-time,
+  destructive, needs explicit authorisation at the moment of execution:
+  ```bash
+  kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
+    find /deployments/logs -name 'polaris.log.2*.gz' -mtime +3 -print      # LOOK FIRST
+  kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
+    find /deployments/logs -name 'polaris.log.2*.gz' -mtime +3 -delete
+  ```
+- **None of it runs while `logging.file.enabled: false`** (`#38`, settled). The ring is config
+  for a handler that is off. If file logging comes back, `#8` comes back with it — three
+  replicas, one RWO file, independent rotation state — so pin `replicaCount` first (`#39`).
+- **Never confirm the ring from this values file.** It is the file that was wrong for a month:
+  `exec ... grep rotation /deployments/config/application.properties`.
+
+**#43 relevance:** the first draft of `step13-ism-apply.sh` had the same self-arming fault —
+an unreachable cluster printed "could not list policies" and the script still offered `--apply`.
+An unreachable preflight now exits 2 and blocks the write.
+
 **#42 — `threadName` / `threadId` RESTORED to `polaris-logs-*`, REVERSING `#30`: ROLLED AND
 VERIFIED ON TRAFFIC 2026-09-18.** Decision B (Kade), taken on the cost analysis below rather
 than on the original premise, which was half wrong.

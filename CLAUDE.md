@@ -32,8 +32,10 @@
   not the file — the next `helm upgrade` makes this line history.
 - **VictoriaLogs:** log sink in namespace `logging` (9428), for the shipper above.
 - **OpenSearch:** runs in **Docker, outside the cluster and outside this repo** — no compose file is versioned here.
-  **`3.5.0`** (measured 2026-09-08). Index templates are ours (`logging/opensearch/`); **retention / ISM belongs to the
-  Monitoring team** (2026-09-16) and is not kept in this repo.
+  **`3.5.0`** (measured 2026-09-08). Index templates are ours (`logging/opensearch/`), and **so is retention for this
+  local cluster, since 2026-09-18** — `logging/opensearch/ism-*.json`, applied with `logging/scripts/step13-ism-apply.sh`
+  (`polaris-logs-*` 3d, `polaris-report-*` 30d, `k8s-logs-*` 3d). The 2026-09-16 "ISM belongs to the Monitoring team"
+  rule still holds **for production**.
 - **Values-only against upstream charts:** DataHub + prerequisites (Kafka / Elasticsearch /
   MySQL / ZooKeeper), Kafka, Schema Registry, Spark, Airflow, Argo Workflows, Jupyter.
   *Service versions are declared explicitly in each chart's `values.yaml`; several charts
