@@ -1,6 +1,6 @@
 """
-polaris_test_utils.py
-=====================
+nb_support.py
+=============
 Shared utilities for all Polaris error case notebooks.
 """
 
@@ -227,12 +227,15 @@ def require_not_prod(action="this destructive action"):
         )
 
 
-# Auto-initialize from POLARIS_ENV (default dev) so a bare `import *` works.
+# Auto-initialize from POLARIS_ENV (default "local", NOT dev -- this comment said
+# dev until 2026-09-21 and line 122 has always said local) so a bare `import *`
+# works. This is why a notebook that never calls init_env() still has populated
+# BASE_CAT / BASE_MGMT / POLARIS_URL: 26 notebooks rely on exactly that.
 # A notebook can re-run init_env("prod") afterwards to switch.
 try:
     init_env()
 except Exception as _e:
-    print(f"[polaris_test_utils] init_env deferred: {_e}")
+    print(f"[nb_support] init_env deferred: {_e}")
 
 
 # ── Token ─────────────────────────────────────────────────────
@@ -767,7 +770,7 @@ def teardown_catalog(catalog, root=None):
     namespaces → non-default catalog-roles → catalog, then sweep instance
     principals + MinIO). Thin wrapper over `_teardown_catalog_selfcontained` so
     notebooks don't have to reach a private, underscore-prefixed name —
-    `from polaris_test_utils import *` does NOT export leading-underscore names,
+    `from nb_support import *` does NOT export leading-underscore names,
     so calling the private function directly raises NameError."""
     return _teardown_catalog_selfcontained(catalog, root=root)
 

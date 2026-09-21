@@ -335,3 +335,35 @@ two can never disagree about what a path is. It skips, naming `fetch_specs.sh`, 
 the documents are absent.
 
 `pytest` 999 passed.
+
+### 2026-09-21 — CORRECTION: nb_support auto-initialises, and 52 notebooks relaid
+
+**The claim in commit `b3868b1` is wrong and is withdrawn.** It said the availability
+notebook "never called `init_env`, so every URL it built read
+`None/watchdog-catalog`". `nb_support` ends with a module-level `try: init_env()`
+("so a bare `import *` works"), so a star-import already populates `BASE_CAT`,
+`BASE_MGMT` and `POLARIS_URL`. Measured: a bare `from nb_support import *` yields
+`BASE_CAT = http://192.168.139.2:8181/api/catalog/v1`.
+
+The notebook's real post-merge failure was the **bootstrap depth** — `cwd().parent /
+"src"` resolved to `notebooks/src` from `notebooks/availability/`, so the import
+raised before any URL was built. The `init_env("local")` added there is still right
+(explicit beats implicit, and it pins the env instead of inheriting `POLARIS_ENV`)
+but it fixed nothing that was broken.
+
+**Consequence worth keeping: the 26 notebooks that import `nb_support` and never call
+`init_env` are FINE.** They rely on the auto-init. Do not "fix" them.
+
+Two real defects found while checking: the auto-init comment said "default dev" when
+line 122 has always said `local`, and its failure message still printed
+`[polaris_test_utils]` after the rename. Both fixed.
+
+**52 notebooks relaid**: bootstraps now walk up for `src/` instead of counting
+`.parent` levels, and `polaris_test_utils` -> `nb_support` throughout. 14 untouched,
+correctly — 4 already used the walk-up form, 6 DataHub notebooks are self-relative to
+their own directory, 4 are self-contained by design.
+
+Verified by execution, not inspection: **61 notebooks' real bootstrap text runs with
+cwd set to the notebook's own folder, and every `src` module each one imports loads.
+0 failures.** Now enforced as `tests/test_notebook_bootstrap.py` (62 cases, 12 s),
+which also asserts the self-contained set has not grown. `pytest` **1061 passed**.
