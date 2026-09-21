@@ -1,4 +1,10 @@
-# HANDOFF — schema v6 is live and verified. Next: the 1800 s window. Start at §3 step 1.
+# HANDOFF — schema v6 is live and verified. Next: the **3600 s** window. Start at §3 step 1.
+
+> **2026-09-21: the target is 1 hour, not 30 minutes.** `WINDOW_SECONDS` 3600, decided by Kade's manager,
+> replacing the 1800 this document was written around. It is **revisitable after deployment during
+> monitoring — 1 h and 2 h are the candidates** — so treat 3600 as the value to roll, not as settled
+> forever. Everything below that says 1800 means 3600; what changes with the longer window is in
+> `SPEC-polaris-audit-logging.ko.md` §11-21 (the per-window row caps) and §11-22 (slower outage detection).
 
 **Final state of the 2026-09-16 Cowork session** (Lua refactor, thread-field trim, whole-pipeline review, schema v6 — commits
 `5315e0d`..the one that added this line). Supersedes [`archive/2026-09-16-HANDOFF-audit-log-next.md`](archive/2026-09-16-HANDOFF-audit-log-next.md).
@@ -40,8 +46,8 @@ Docs index: [`README.md`](README.md). Monitoring team: [`NOTE-monitoring-team-ha
 
 | | task | who | depends on | done when |
 |---|---|---|---|---|
-| **1** | **TODO 2.5 — `WINDOW_SECONDS` 30 → 1800** (Lua only, `apply-lua.sh`). After it one verification window costs 30 min; step10 takes `[window_seconds]` 1800 | C write · K apply | — | summary `window_seconds` 1800, `window_start` on :00/:30, step11 PASS on one 1800 s window |
-| 2 | **TODO 2.7 — delete the 30 s-window `polaris-report-*` indices.** *Destructive: explicit OK at execution.* Tell the Monitoring team (see the note) | K | 1 | only 1800 s report indices remain |
+| **1** | **TODO 2.5 — `WINDOW_SECONDS` 30 → 3600** (Lua only, `apply-lua.sh`; keep `Interval_Sec` 5). After it one verification window costs **1 hour**; step10 takes `[window_seconds]` 3600 | C write · K apply | — | summary `window_seconds` 3600, `window_start` on the hour, step11 PASS on one 3600 s window, and `resources_other` / `principals_other` / `role_keys_forced` checked (§11-21) |
+| 2 | **TODO 2.7 — delete the 30 s-window `polaris-report-*` indices.** *Destructive: explicit OK at execution.* Tell the Monitoring team (see the note) | K | 1 | only 3600 s report indices remain |
 | 3 | Uninstall `fb-polaris-shipper` / VictoriaLogs (review P10) — Kade, manually. Then update `CLAUDE.md`, `.memory/environments.md`, `.memory/goal.md` | K · C docs | — | `helm list -A` shows neither |
 | 4 | Decide **P5** (Lua in the Helm release vs separate ConfigMap) before the GitOps port | K | — | decision recorded in the review |
 | 5 | **Phase 3** (plan §3): 3.1 load test (pod CPU for `#31`/P1) · 3.2 row caps · 3.3 one-day size · 3.4 one vs two prod indices · 3.5 GitOps port · 3.6 tier-1 credentials to a Secret (`#4`) · 3.7 prod Polaris log level / replicas · 3.8 dashboards and alerts (use `.keyword` and `message`) | see plan | 1 for 3.3/3.8 | see plan |

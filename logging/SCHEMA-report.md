@@ -21,7 +21,7 @@ agg on `window_start` — groups one window.
 | `report_seq` | int | **per pod.** Resets on pod replacement. Always pair with `hostname`. |
 | `hostname` | string | the Fluent Bit pod, not Polaris. |
 | `window_start` / `window_end` | string | RFC3339, aligned to the wall-clock `WINDOW_SECONDS` grid. |
-| `window_seconds` | int | 30 during the verification band; 1800 in steady state. |
+| `window_seconds` | int | 30 during the verification band; **3600 in steady state from the 2026-09-21 decision** (1800 before it). Read it off the row — it is a tunable, and 1 h / 2 h are both candidates. |
 | `_time` | string | **the window's END.** A row with `window_start 05:59:00` carries `_time 05:59:30`. |
 
 ## `summary` — one row per window

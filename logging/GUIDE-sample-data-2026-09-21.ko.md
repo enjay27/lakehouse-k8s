@@ -42,7 +42,7 @@
   - `org.apache.polaris.service.admin.PolarisServiceImpl` 62건 (INFO 62)
   - `org.apache.polaris.service.events.PolarisEventListeners` 2건 (ERROR 2)
 - **요약 `polaris-report-2026.09.21`** (122건): Fluent Bit 파드 `benchmarks-fluent-bit-pdr2h` 가 윈도우
-  `2026-09-21T04:32:30Z` ~ `2026-09-21T04:47:30Z` (30초, 검증용 길이; 운영 설계값은 30분) 를 닫으며 만든 행. 윈도우 30개.
+  `2026-09-21T04:32:30Z` ~ `2026-09-21T04:47:30Z` (30초, 검증용 길이; 운영 목표는 3600초 = 1시간 (2026-09-21 결정, 모니터링 중 재조정 가능)) 를 닫으며 만든 행. 윈도우 30개.
   - `report_type`: `summary` 30 / `principal` 7 / `resource` 77 / `app_dropped` 8
 - **트래픽은 윈도우 2개에만 있습니다.** 나머지 28개는 `access_seen: 0` 인 빈 summary 행입니다 — 30초 윈도우를 쓰는 동안은 이렇게 빈 행이 대부분을 차지합니다.
 - **적재되지 않은 것은 요약에 숫자로 남습니다.** 이 구간의 access log 는 **443줄**이었고 그중 **245줄**만 상세 인덱스에 있습니다.

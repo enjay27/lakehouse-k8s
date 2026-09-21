@@ -27,8 +27,14 @@ throws on the null-rename path (new in 1.6.0) and is stored only because rule 1 
 regardless of `APP_ALLOW` — which also flagged `LocalIcebergCatalog`, 42 dropped lines in 25 s, for an
 allowlist review.
 
-**Unchanged and still open:** `WINDOW_SECONDS` is **30**, five days after it was set "temporarily" (28 of
-30 windows in the 09-21 export were empty summary rows). The **plaintext OpenSearch password in
+**`WINDOW_SECONDS` has a decided target at last: 3600 — one hour** (Kade's manager, 2026-09-21), replacing
+the 1800 every older document calls "the revert". **Retunable during monitoring; 1 h and 2 h are the
+candidates, so read `window_seconds` off a row rather than assuming it.** Written into the docs, **not
+rolled** — it is a Lua change (`apply-lua.sh`), and the running value is still the verification 30. After
+the roll the thing to check is not index size but the **per-window** caps: `resources_other`,
+`principals_other`, `role_keys_forced` (`#47`, SPEC §11-21).
+
+**Also still open:** The **plaintext OpenSearch password in
 `fluent-bit/values.yaml`** tier 1 is documented in three more places today and fixed in none — it needs a
 Secret plus a `k8s-logs-*` write-permission check, because a wrong user stops node-wide collection.
 `#41` (the 1.6.0 pod that crashed 3× at rollout) is **perishable** and still unread. `#39`, `#36`, `#37`

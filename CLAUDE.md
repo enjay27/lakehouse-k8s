@@ -34,6 +34,11 @@
   the Lua, report rows without `app`/`level`, tier-1 `Id_Key` output / self-log / parser filters removed, `.keyword`-only string
   mappings for indices created after step9/step12 (query strings via `.keyword`). Pod `62klp`.
   `WINDOW_SECONDS` is still the verification value 30 — **still 30 on 2026-09-21**, five days after it was set "temporarily".
+  → **2026-09-21 decision (Kade's manager): the operational window is `WINDOW_SECONDS` 3600 — one hour**, replacing the
+  1800 every older document calls "the revert". **Retunable after deployment during monitoring; 1 h and 2 h are the
+  candidates**, so read `window_seconds` off a report row rather than assuming it. Not rolled yet: it is a Lua change,
+  so `bash fluent-bit/apply-lua.sh`. The caps that bite are per window — `REPORT_MAX_RESOURCES` 500,
+  `REPORT_MAX_PRINCIPALS` 200, `REPORT_MAX_ROLE_KEYS` 100 (`logging/SPEC-polaris-audit-logging.ko.md` §11-21).
   → **2026-09-18 (`#42`), values-only, Lua sha unchanged: `threadName`/`threadId` RESTORED** to `polaris-logs-*`, reversing
   rev 19's removal; `ndc` stays removed. Verified 367/367 on traffic that day, 391/391 on the 2026-09-21 export.
   **Query `threadName.keyword`, never the bare field** — it is `text`/`index: false` plus a `.keyword` sub-field.

@@ -70,3 +70,40 @@ behind; those were moved to `.git/_to_delete/` after each one, per CLAUDE.md.
   in three more places this session, fixed in none. It needs a Secret and a permission check, not a doc edit.
 - `APP_ALLOW` review for `LocalIcebergCatalog` (`#45`).
 - `SCHEMA-report.md`'s `bytes_total` / `response_bytes` naming trap.
+
+---
+
+## Addendum, same day — the window is 1 hour
+
+Kade: his manager set `WINDOW_SECONDS` to 3600, retunable during monitoring, candidates 1 h and 2 h.
+Docs only; the Lua value is his roll.
+
+The interesting part is that this is **not** the "1800 revert" fourteen documents were waiting for. 1800
+was a design value that never ran, and calling the change a revert would have kept that framing alive, so
+the wording is now "the operational window is 3600" everywhere it is stated as a target — and every place
+that states it also says it is retunable, because a number a manager set on Monday is not a constant.
+
+What I pushed back into the docs rather than just find-and-replacing 1800 → 3600:
+
+- **The caps are per window and do not scale with it.** `REPORT_MAX_RESOURCES` 500, `REPORT_MAX_PRINCIPALS`
+  200, `REPORT_MAX_ROLE_KEYS` 100. Going 30 min → 1 h doubles what accumulates against them; 2 h
+  quadruples. §6.3's capacity table is written for 30-minute windows and its "you may hit the 500 cap at
+  50M/day" warning gets stronger, not weaker, as the window grows. This is the post-roll check, and it is
+  `resources_other` / `principals_other` / `role_keys_forced`, not index size.
+- **Row count does not fall by 120×.** Windows/day 2880 → 24, but rows track distinct keys per window, and
+  a longer window holds more of them. Only the per-window floor (one summary row) collapses cleanly.
+  The roadmap row said "~60× fewer rows" for 1800; extrapolating that to "~120× for 3600" would have been
+  arithmetic on the wrong quantity.
+- **Outage detection gets slower in proportion.** "No new report document in a window" fires in a minute
+  at 30 s and in up to two hours at 1 h. That alert should watch tier 1 flow instead — recorded as spec
+  §11-22, decision pending, before dashboards are built (`PLAN-audit-log-todo` 3.8).
+- **`Interval_Sec` stays 5.** 720 ticks per window is harmless and keeps label skew at 0–5 s = 0.14 % of
+  an hour. The old "put it back to 30" note belongs to the shipper era.
+
+`step14-sample-doc.py` had "운영 설계값은 30분" hardcoded in its section 1 — a generated document with a
+hand-written constant in it, which is the exact failure the generator exists to prevent. It now describes
+the window the export carries and names the target only when the export is a short verification window.
+Guide regenerated.
+
+The Lua is untouched again: L160–162 carry both the value and a comment calling 1800 the operational
+value. Those change together, in Kade's roll, as one ConfigMap change.

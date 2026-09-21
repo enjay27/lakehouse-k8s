@@ -5,6 +5,41 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#47 — The operational report window is 1 hour, not 30 minutes. Decided 2026-09-21, not rolled, and
+the thing to watch after it rolls is not size but the per-window caps.** 2026-09-21.
+
+Kade's manager set `WINDOW_SECONDS` to **3600**. This supersedes the 1800 that every document since
+2026-09-04 has called "the revert" — it is not a revert to a previous operational value, because 1800
+never ran either. **It is explicitly retunable after deployment during monitoring; 1 h and 2 h are the
+two candidates.** So nothing should hardcode it: read `window_seconds` off a report row.
+
+Still unrolled. It lives in `fluent-bit/polaris_access_log.lua` L162, so it is a Lua change —
+`bash fluent-bit/apply-lua.sh` (tests → apply → restart), not a Helm upgrade. `Interval_Sec` stays **5**
+(720 ticks per window is harmless: a tick inside the window is one Lua call and is discarded; keeping it
+at 5 holds label skew at 0–5 s, which is 0.14 % of an hour). The old note in `logging/fb-values.yaml`
+telling you to put `Interval_Sec` back to 30 belongs to the shipper and is history.
+
+**What actually changes, and it is not the byte count.** Windows per day go 2880 → 24. Total rows fall,
+but by much less than 120×, because the row counts are driven by *distinct keys per window* and a longer
+window accumulates more of them. The caps are per window and do not scale with it:
+
+    REPORT_MAX_RESOURCES  500      REPORT_MAX_PRINCIPALS 200      REPORT_MAX_ROLE_KEYS 100
+
+At 1 hour a window accumulates roughly twice what a 30-minute window did against those caps; at 2 hours,
+four times. Overflow is not data loss — the totals stay exact and the overflow lands in `__other__` — but
+per-key trend is what tier 3 exists for, and `__other__` is where trend goes to die. **First window after
+the roll, check `resources_other`, `resources_other_distinct`, `principals_other` and `role_keys_forced`.**
+Non-zero means choose: shorter window, or higher cap (traded against Lua memory).
+
+Second-order, worth a decision before dashboards get built (`PLAN-audit-log-todo` 3.8): the collection-gap
+alert is "no new `polaris-report-*` document in a window". At 30 s that fires in a minute; **at 1 hour the
+worst case is two hours.** That alert should probably watch tier 1 (`k8s-logs-*`) flow instead — the
+pipeline stopping is exactly the case where no report will ever arrive to be missed. Spec §11-22.
+
+Verification cost changes too: one verification window is now an hour, so `step10`/`step11` runs are no
+longer something you iterate on casually. `PLAN-audit-log-todo` phase 0, 1.4 and 1.5 were already
+sequenced to finish before this for that reason.
+
 **#46 — A 5xx can be missing from its resource row and present in the summary, and that is by
 design. The intentional 500 probes landed in `__errors__`.** 2026-09-21.
 

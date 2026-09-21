@@ -5,7 +5,8 @@
 --   luajit logging/scripts/test-schema-v3.lua        # v3 동작(분류, last_*, 롤, __errors__)
 --
 -- 틱 시각을 _now_override 로 30초씩 넘겨 윈도우를 닫으므로 WINDOW_SECONDS 가 30 이어야 한다.
--- 운영값 1800 으로 되돌린 뒤에는 추출 결과에 sed 's/^local WINDOW_SECONDS = 1800/local WINDOW_SECONDS = 30/' 를 적용할 것.
+-- 운영값(2026-09-21 결정: 3600)으로 바꾼 뒤에는 추출 결과에 sed -E 's/^local WINDOW_SECONDS = [0-9]+/local WINDOW_SECONDS = 30/' 를 적용할 것.
+-- 정규식으로 둔 이유: 운영값이 1800 에서 3600 으로 바뀌었고 모니터링 결과에 따라 또 바뀔 수 있다 (후보 1시간·2시간).
 dofile("/tmp/polaris.lua")
 dofile("logging/scripts/test-raw-access-shim.lua")   -- 액세스 라인을 message 원문으로 넣는다 (분리형·병합형 공통)
 local T0 = 1788940800                 -- 30초 경계에 정렬된 시각

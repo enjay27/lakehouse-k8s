@@ -145,6 +145,13 @@ def emit(d, argv):
     e4, e5, den = d.tot("errors_4xx"), d.tot("errors_5xx"), d.tot("auth_denied")
     statuses = collections.Counter(a.get("http_status") for a in d.access)
     zero = [r for r in d.summary if r.get("access_seen", 0) == 0]
+    # The operational window is a decision that moves (30 s verification -> 1800 -> 3600 on 2026-09-21,
+    # with 2 h still a candidate). Describe what the export carries rather than restating a target that
+    # will age -- the guide is regenerated, the sentence should not need editing when the value changes.
+    ws = d.summary[0].get("window_seconds") if d.summary else None
+    wnote = (", 검증용 길이; 운영 목표는 3600초 = 1시간 (2026-09-21 결정, 모니터링 중 재조정 가능)"
+             if ws is not None and ws < 600 else
+             f" = {ws // 60}분" if ws else "")
 
     w(f"""# OpenSearch 샘플 데이터 — `polaris-logs-*` (상세) · `polaris-report-*` (요약), 스키마 v6 — {date}
 
@@ -192,7 +199,7 @@ def emit(d, argv):
         w(f"  - `{lg}` {n}건 ({lvs})")
 
     w(f"""- **요약 `{d.report_index}`** ({len(d.report)}건): Fluent Bit 파드 `{', '.join(d.fb_pods)}` 가 윈도우
-  `{d.windows[0]}` ~ `{d.summary[-1].get('window_end')}` ({d.summary[0].get('window_seconds')}초, 검증용 길이; 운영 설계값은 30분) 를 닫으며 만든 행. 윈도우 {len(d.windows)}개.
+  `{d.windows[0]}` ~ `{d.summary[-1].get('window_end')}` ({d.summary[0].get('window_seconds')}초{wnote}) 를 닫으며 만든 행. 윈도우 {len(d.windows)}개.
   - `report_type`: `summary` {len(d.summary)} / `principal` {len(d.pri)} / `resource` {len(d.res)} / `app_dropped` {len(d.drop)}
 - **트래픽은 윈도우 {len([r for r in d.summary if r.get('access_seen',0)>0])}개에만 있습니다.** 나머지 {len(zero)}개는 `access_seen: 0` 인 빈 summary 행입니다 — 30초 윈도우를 쓰는 동안은 이렇게 빈 행이 대부분을 차지합니다.
 - **적재되지 않은 것은 요약에 숫자로 남습니다.** 이 구간의 access log 는 **{seen}줄**이었고 그중 **{kept}줄**만 상세 인덱스에 있습니다.

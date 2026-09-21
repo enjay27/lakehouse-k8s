@@ -15,12 +15,12 @@ what it cannot tell anyone about by itself.
 | index | written by | content | recommended retention | why |
 |---|---|---|---|---|
 | `polaris-logs-YYYY.MM.DD` | Fluent Bit DaemonSet, tier 2 | selected Polaris log lines: every 4xx/5xx except 404, every PUT/DELETE/PATCH, management POST, two allow-listed app loggers, every WARN/ERROR | **30 days** *(local: 3 days)* | incident investigation; large |
-| `polaris-report-YYYY.MM.DD` | same pod, tier 3 | one summary row + resource / principal / app_dropped rows per 30-minute window, schema v6 | **365 days** *(local: 30 days)* | the **only** record of successful reads and catalog POSTs (they are counted, not stored); small |
+| `polaris-report-YYYY.MM.DD` | same pod, tier 3 | one summary row + resource / principal / app_dropped rows per **1-hour** window (2026-09-21 decision; it was 30 minutes, and may be retuned to 2 h during monitoring), schema v6 | **365 days** *(local: 30 days)* | the **only** record of successful reads and catalog POSTs (they are counted, not stored); small |
 | `k8s-logs-YYYY.MM.DD` | same pod, tier 1 | every container, unfiltered | unchanged (5 days today) *(local: 3 days)* | raw source for cross-checks |
 
 - Daily indices, no rollover: `min_index_age`-based delete fits.
 - **Before attaching the 365-day policy: `polaris-report-*` indices written while the window was 30 s are verification data**
-  (about 60× the rows per day). The pipeline owner deletes them after the switch to 1800 s; please don't retain them as production.
+  (about 120× the rows per day against the 1-hour window). The pipeline owner deletes them after the switch to 3600 s; please don't retain them as production.
 - Index templates (`polaris-logs`, `polaris-report`, priority 100) are applied by the pipeline owner. Schema v6 string fields are
   queried through `.keyword`.
 

@@ -178,7 +178,8 @@ step2  →  helm upgrade  →  step3
 ```
 
 `apply-lua.sh` is for Lua changes and would restart Fluent Bit for no reason. **If you also
-land the `WINDOW_SECONDS 30 → 1800` change** that `MEMORY.md` lists as next, that *is* a Lua
+land the `WINDOW_SECONDS 30 → 1800` change** *(2026-09-21: the target is now **3600**, not 1800 —
+`active-issues.md` `#47`; the mechanics below are unchanged)* that `MEMORY.md` lists as next, that *is* a Lua
 change and the two together take the third path — `apply-lua.sh --no-restart` → `step2` →
 `helm upgrade`, with **no restart in between**. Doing either half alone stops every input or
 stores every access line as a parse error (`#31`). **Prefer landing them separately**, so the
