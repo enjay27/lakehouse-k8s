@@ -300,3 +300,18 @@ Run `fetch_specs.sh` first. This is not a merge artifact — a fresh clone of th
 pre-merge repo behaves identically.
 
 **Platform gate still unrun** (no cluster reach from a Cowork session).
+
+### 2026-09-21 — polaris_availability_test relaid on the current layer
+
+`polaris_test_utils.py:90` is `BASE_MGMT = BASE_CAT = None`; both are assigned only
+inside `init_env()`. The availability notebook never called it, so every URL it built
+read `None/watchdog-catalog/...`. **The module was never broken — the notebook never
+initialised it.**
+
+Refactored to the six-notebook convention: `polaris_test_utils` for env + token,
+`PolarisREST` for REST. Nine call sites moved onto the client; one raw `requests.get`
+remains for `/q/health`. `WATCHDOG_SECRET` now comes from the environment, not a
+literal. Bootstrap resolves the repo root by `pyproject.toml` marker — verified from
+both the notebook's directory and the repo root, and it is the template for M1.
+
+`pytest` 996 passed. **Never run against a cluster**; T01-T06 unproven on 1.6.0.

@@ -30,8 +30,8 @@ the per-window caps, not index size. The **plaintext OpenSearch password in
 `1789955605` measured session 17's fixes: **+8 on the shared 286-cell subset** (231 -> 239) —
 **quote the +8, not the raw 245/297**, the denominators differ. The **fixture catalog still will
 not drop**; the suspect is `createNamespace`'s 400 cell returning 500 with a null namespace, and
-the next drive resolves it. **NEEDS KADE:** the availability credential (deliberately uncommitted,
-**not carried into this repo**); `04_explain_sweep.ipynb`'s `latest_report()` returns `hits[-2]`;
+the next drive resolves it. **NEEDS KADE:** export `POLARIS_WATCHDOG_CLIENT_ID` / `POLARIS_WATCHDOG_SECRET` before running
+the availability notebook (its hardcoded secret is gone as of 2026-09-21); `04_explain_sweep.ipynb`'s `latest_report()` returns `hits[-2]`;
 `03_api_index_matrix` has a literal `clientSecret` in `HEAD`. Fast-run settings (30/5) are
 **temporary** — revert together.
 
