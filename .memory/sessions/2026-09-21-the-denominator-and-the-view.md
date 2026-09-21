@@ -164,3 +164,110 @@ commit carries no stale requirement), `dropNamespace` 409 (needs a non-empty nam
 Verified: `pytest` 939 passed / 45 skipped at every commit (VM venv outside the repo — the repo's
 `.venv` points at the Mac's Python). `black`/`isort` clean on every file touched. **Nothing in this
 session was run against the cluster.**
+
+---
+
+# Part 6 — run `1789955605`, the first drive with the fixes, and three more changes
+
+Same day, same session. Report `seq=388`, window `01:53:30Z`–`01:54:00Z`, **354 access lines**.
+
+## What the fixes were worth, arithmetically
+
+Coverage reads **245/297**. That is not comparable with `231/286`, so the figure to quote is the
+**shared 286-cell subset: 231 -> 239, +8**, and it decomposes with nothing left over:
+
+| | |
+|---|---|
+| `loadView` 2+403, `viewExists` 2+403, `replaceView` 2+403 | **+6** |
+| `registerTable` 409, `createTable` 409, `createView` 409 | **+3** |
+| `renameView` 409 | **−1** |
+
+The two new operations contribute 6 of their 11 cells, giving 245. Operations with every planned
+cell covered: 31/63 -> **35/65**.
+
+**Tagging is complete and the window proves it: 198 of 198** kept access lines inside the window
+carry `nb-<run>-`, against 167 of 186. The 43 untagged lines in the export are all OUTSIDE the
+window — the fixture setup, correctly excluded. That is what lets the rest close: **`counted_404`
+is 100 = the grid's 91 plus the teardown's 9**, and the teardown's nine were invisible until phase
+I was tagged. `auth_denied` 110 = 60×401 + 50×403. `errors_5xx` 7 = 4 grid + 3 ladder.
+kept 198 + counted 156 = seen 354 = Σ principals = Σ resources. **Gate 2 reproduced byte-for-byte
+at 1941.**
+
+**The ladder catalog is gone**: `DELETE /catalogs/nb1789955605bh -> 204`, and
+`/nb1789955605bh/namespaces/bh_ns` has its own resource row, so `drop_catalog_tree` emptying first
+is visible from the report rather than inferred.
+
+## Three things the run said I got wrong
+
+**1. `{prefix}_shared` was A cause and not THE cause.** `delete catalog role
+apimatrix1789955605_shared -> 204`, and the fixture catalog still answered **400**. This time the
+app log says it in words: `Catalog 'apimatrix1789955605_cat' cannot be dropped, it is not empty`.
+The teardown comment's original suspect is back — `createNamespace` at its 400 cell returned 500
+with `Cannot invoke "Namespace.levels()" because "namespace" is null`, in both of the last two
+runs.
+
+What made this worse than a wrong guess: **the notebook's hand-rolled teardown reimplements
+`api_surface.teardown_fixture` and does its three jobs badly.** That function already listed
+catalog roles rather than naming them, deleted with `purge=True`, and inventoried what remained via
+`walk_namespaces` — which follows `?parent=` into nested namespaces, where the notebook's sweep
+listed the top level only AND joined a multi-level name with a dot, looking for one namespace
+called `probe_ns.nested`. Phase J creates exactly that shape every run. The answer to "what is
+still in there" had been one call away for three occurrences.
+
+Fixed by adopting all three, plus `remaining_in_catalog(catalog, pc, ic)` shared by both paths.
+**An empty inventory is now stated as the finding**: if Polaris reports not-empty and the walk plus
+both listings see nothing, the residue is invisible to the API that manages it, which is the shape
+a write that committed during a 500 leaves. `nothing_visible` carries that verdict.
+
+**2. `ISSUED` was a floor, not a check, because one id did not mean one call.** 342 ids against
+354 lines, printed as "at least 345". Three ids carried two calls each — the black hole rung's
+cleanup and both `teardown-deprovision`s, the only duplicated ids in the window — and
+`drop_catalog_tree`'s listings, `walk_namespaces`' per-level lists and the `droponly` create were
+not counted at all. `th.Tagger` gives every call its own id and remembers it; `tag_around` and
+`Tagger` **restore** the id they found instead of clearing it, so group and per-call tagging nest;
+and a rung that tags itself is not wrapped again, because **an id standing for no access line is a
+false positive in the same check, the same failure pointing the other way.** Section 13 now claims
+an equality.
+
+**3. I broke `renameView` 409 while fixing the layer above it.** It was covered in `1789950539`
+and is 404 in `1789955605`. `9c45c57` gave the renames their own source so phase D's
+`createTable`/`createView` could conflict — and the rename's own 409 cell then had no source left,
+because its 2xx cell consumes it. Net was +3 and the trade went unnamed in that commit, which is
+the part to not repeat. It had also only ever passed by accident: phase D's `createView`
+re-created `new_view` just before the rename 409 cell ran.
+
+`PAYLOADS` entries may now be keyed by target, so a 409 cell can differ from its 2xx cell. The
+rename 409 renames `new_*` onto `renamed_*`, both of which exist. `updateTable` 409 asserts
+`assert-table-uuid` against an impossible uuid — `{"requirements": []}` cannot conflict, so
+`updateTable missed [409] got 200` was never a failed conflict, it was a successful commit wearing
+a 409 label. **400 cells are deliberately untouched**: the parse-time malform strategy stays the
+only thing deciding what a 400 cell sends, so the eighteen omission cells stay byte-identical to
+every previous run, and a test now asserts per-target payloads cannot become a second way in.
+
+## New measurements
+
+- **`registerView` answers 400 at its 2xx cell** — the dead-end metadata location working as
+  designed, so it belongs in the ledger beside `registerTable` rather than the missed column.
+- **`signRequest` is route-absent on 1.6.0**: 404 even at its 401 cell, which is the whole of the
+  401->404 count moving 4 -> 5. **`401 -> 404` is the route-absent signature** — the router answers
+  before authentication — and it is what separated a missing route from a missing fixture in
+  Part 2.
+- `__errors__` is 56/354 (15.8%), same shapes as Part 5.
+- Report-side labelling unchanged: `distinct_resources` 59 counts `__errors__` (58 real);
+  `app_dropped_404` 110 still exceeds `app_dropped_total` 96.
+
+## Still open
+
+1. **`replaceView` 400 and 409 both answer 200** now that it reaches the view. `CommitViewRequest`
+   carries no `requirements`, so there is nothing to fail for a 409, and the 400 is the same
+   question as `updateTable` 400: the Iceberg 1.11 spec says an unknown update MUST be 400 and this
+   build returns 200. Both turn on one decision — whether an explicit 400 payload may override the
+   malform strategy — and it is not taken here.
+2. **The `GET /v1/config` `endpoints` oracle** from Part 5 is still unbuilt, and `signRequest` is a
+   second operation it would classify rather than leave as a MISS.
+3. `src/api_report.py:307` still hardcodes `polaris_version="1.3.0-incubating"`.
+4. `init_env`'s banner printed twice in this run's cell 2 — the cell was executed more than once.
+   Harmless, but a re-executed setup cell is how `RUN` and the drive window come apart.
+
+Verified: `pytest` 951 passed / 45 skipped at every commit. **Nothing after run `1789955605` has
+been run against the cluster.**
