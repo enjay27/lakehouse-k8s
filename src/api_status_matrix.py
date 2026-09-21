@@ -31,7 +31,10 @@ re-labelled as coverage of the status it happened to hit. That relabelling is
 how a matrix comes to agree with itself and with nothing else.
 """
 
+import collections
 import copy
+import hashlib
+import json
 import pathlib
 
 #: Path parameters that name a thing that must exist. `{prefix}` is the Iceberg
@@ -277,6 +280,158 @@ def load_spec(spec_dir):
 
 
 # ----------------------------------------------------------------------
+# the denominator, recorded rather than assumed
+# ----------------------------------------------------------------------
+#: The tracked file beside the gitignored OpenAPI documents. `.gitignore` keeps
+#: it on purpose: the documents themselves are ASF-licensed and not vendored
+#: into git, so this is the ONLY durable record of which spec a run was
+#: measured against.
+INVENTORY_NAME = "inventory.json"
+
+
+def spec_fingerprint(spec_dir):
+    """What the denominator IS -- as bytes, and as counts.
+
+    WHY BYTES AND COUNTS BOTH. A sha256 says the file changed; the counts say
+    what the change did to the grid. Run `1789950539` was driven against 63
+    operations and 286 cells, and `log-coverage/spec/` was re-fetched 19
+    minutes later; today the same call answers 65 and 297. Nothing on disk
+    recorded the difference, so the run's coverage figure became
+    unreproducible -- not wrong, unreproducible, which is worse, because it
+    still looks like a number.
+    """
+    d = pathlib.Path(spec_dir)
+    files = sorted(d.glob("*.yml")) + sorted(d.glob("*.yaml")) if d.is_dir() else []
+    if not files:
+        raise SpecUnavailable(
+            f"no OpenAPI document in {spec_dir} -- run log-coverage/fetch_specs.sh"
+        )
+    ops = load_spec(spec_dir)
+    grid = cells(ops)
+    by_target = collections.Counter(c.target for c in grid)
+    return {
+        "files": [
+            {
+                "name": f.name,
+                "bytes": f.stat().st_size,
+                "sha256": hashlib.sha256(f.read_bytes()).hexdigest(),
+            }
+            for f in files
+        ],
+        "operations": len(ops),
+        "cells": len(grid),
+        "by_target": {str(k): by_target[k] for k in sorted(by_target, key=str)},
+        "operation_ids": sorted(o.op_id for o in ops),
+    }
+
+
+def read_inventory(spec_dir):
+    """The recorded fingerprint, or None when none was ever written."""
+    f = pathlib.Path(spec_dir) / INVENTORY_NAME
+    if not f.is_file():
+        return None
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise SpecUnavailable(f"{f} is not readable JSON: {exc}") from exc
+
+
+def inventory_drift(spec_dir):
+    """Differences between the documents on disk and the recorded inventory.
+
+    Returns a list of sentences, empty when they agree. Never raises for a
+    missing inventory -- that is one of the sentences.
+    """
+    live = spec_fingerprint(spec_dir)
+    rec = read_inventory(spec_dir)
+    if rec is None:
+        return [
+            f"no {INVENTORY_NAME} in {spec_dir}: nothing records which spec this "
+            f"grid ({live['operations']} operations, {live['cells']} cells) came from"
+        ]
+    out = []
+    was = {f["name"]: f["sha256"] for f in rec.get("files") or ()}
+    now = {f["name"]: f["sha256"] for f in live["files"]}
+    for name in sorted(set(was) | set(now)):
+        if was.get(name) != now.get(name):
+            out.append(
+                f"{name}: recorded {(was.get(name) or 'absent')[:16]}, "
+                f"on disk {(now.get(name) or 'absent')[:16]}"
+            )
+    for k in ("operations", "cells"):
+        if rec.get(k) != live[k]:
+            out.append(f"{k}: recorded {rec.get(k)}, on disk {live[k]}")
+    if out:
+        added = set(live["operation_ids"]) - set(rec.get("operation_ids") or ())
+        gone = set(rec.get("operation_ids") or ()) - set(live["operation_ids"])
+        if added:
+            out.append(f"operations added since the record: {sorted(added)}")
+        if gone:
+            out.append(f"operations gone since the record: {sorted(gone)}")
+    return out
+
+
+def assert_denominator(spec_dir, tag=None):
+    """Hard-fail when the grid is not the one that was recorded.
+
+    Called before a drive. A run whose denominator silently moved cannot be
+    compared with the run before it, and a coverage figure that cannot be
+    compared is decoration.
+    """
+    drift = inventory_drift(spec_dir)
+    if drift:
+        how = " ; ".join(drift)
+        raise SpecUnavailable(
+            f"THE DENOMINATOR MOVED -- {how}. Re-record it with "
+            f'`python -c \'import sys; sys.path.insert(0,"src"); '
+            f"import api_status_matrix as m; "
+            f'm.write_inventory("{spec_dir}", tag="<polaris tag>")\'` '
+            f"once you know the new spec is the right one, and say so in the "
+            f"commit -- do NOT re-record to make a red run go green."
+        )
+    rec = read_inventory(spec_dir)
+    if tag and rec.get("tag") and rec["tag"] != tag:
+        raise SpecUnavailable(f"spec recorded at tag {rec['tag']}, run expects {tag}")
+    return rec
+
+
+def write_inventory(spec_dir, tag=None, note=None, server_version=None):
+    """Record the denominator. The superseded one is pushed onto `history`.
+
+    History is kept because the alternative is what happened on 2026-09-21: a
+    re-fetch with no record left the previous grid knowable only from the
+    printed output inside a committed `.ipynb`.
+    """
+    d = pathlib.Path(spec_dir)
+    live = spec_fingerprint(spec_dir)
+    prev = read_inventory(spec_dir)
+    history = list((prev or {}).get("history") or ())
+    if prev is not None:
+        superseded = {k: v for k, v in prev.items() if k != "history"}
+        if superseded.get("files") != live["files"]:
+            history.append(superseded)
+    live.update(
+        {
+            "tag": tag,
+            "note": note,
+            "server_version": server_version,
+            "recorded": _now_iso(),
+            "history": history,
+        }
+    )
+    (d / INVENTORY_NAME).write_text(
+        json.dumps(live, indent=2, sort_keys=False) + "\n", encoding="utf-8"
+    )
+    return live
+
+
+def _now_iso():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# ----------------------------------------------------------------------
 # binding a template to the fixture
 # ----------------------------------------------------------------------
 def _malform_for(spec, comps):
@@ -429,6 +584,28 @@ PAYLOADS = {
     "registerTable": lambda b: {
         "name": b["new_table"],
         "metadata-location": b["metadata_location"],
+    },
+    # ARRIVED WITH THE 1.6.0 SPEC (Iceberg 1.11.0), 2026-09-21. Both were
+    # absent from the 1.3.0 documents, so the grid went 63 -> 65 operations
+    # and 286 -> 297 cells the moment `spec/` was re-fetched -- and a
+    # requestBody with no payload here is a KeyError at the dry run, which is
+    # where the next drive would have stopped.
+    "registerView": lambda b: {
+        # Same shape and the same deliberate dead end as `registerTable`: the
+        # metadata location names a file that was never written, so the 2xx
+        # cell measures the ROUTE rather than creating a view the teardown
+        # does not know the name of.
+        "name": b["new_view"],
+        "metadata-location": b["metadata_location"],
+    },
+    "signRequest": lambda b: {
+        # S3 remote signing. Polaris vends credentials instead, so this is
+        # expected to answer 404/501 here -- which is a measurement, and the
+        # reason the cell is driven rather than assumed.
+        "region": "us-east-1",
+        "uri": f"{b['allowed_location']}{b['run']}/signed-probe",
+        "method": "GET",
+        "headers": {"x-matrix-run": [str(b["run"])]},
     },
     "createTable": lambda b: {
         "name": b["new_table"],

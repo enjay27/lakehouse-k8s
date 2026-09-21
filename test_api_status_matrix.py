@@ -69,11 +69,19 @@ def binding():
 # the denominator
 # ----------------------------------------------------------------------
 def test_the_spec_yields_the_operations_the_plan_counted(ops):
-    """63, split 33 management / 30 catalog. If this changes, `fetch_specs.sh`
-    vendored a new version -- read the diff before touching the number."""
-    assert len(ops) == 63
+    """65, split 33 management / 32 catalog. If this changes, `fetch_specs.sh`
+    vendored a new version -- read the diff before touching the number.
+
+    The documents moved on 2026-09-21: `fetch_specs.sh` was run at
+    `apache-polaris-1.6.0` (catalog document = Iceberg 1.11.0), which added
+    `registerView` and `signRequest` and nothing else. The diff was read, the
+    cluster is on 1.6.0, and `log-coverage/spec/inventory.json` records both
+    fingerprints -- the superseded 1.3.0 one is in its `history`.
+    """
+    assert len(ops) == 65
     assert sum(1 for o in ops if o.api == "management") == 33
-    assert sum(1 for o in ops if o.api == "catalog") == 30
+    assert sum(1 for o in ops if o.api == "catalog") == 32
+    assert {"registerView", "signRequest"} <= {o.op_id for o in ops}
 
 
 def test_an_empty_spec_directory_is_an_error_not_an_empty_grid(tmp_path):
@@ -225,17 +233,21 @@ def test_every_cell_names_a_driver_and_a_phase(ops):
 
 
 def test_the_grid_is_the_size_the_plan_committed_to(ops):
-    """~293 cells. A characterization test: it is expected to move when the
-    spec is re-vendored or a rule changes, and the diff is the thing to read."""
+    """297 cells. A characterization test: it is expected to move when the
+    spec is re-vendored or a rule changes, and the diff is the thing to read.
+    It was 286 until the 1.6.0 documents were vendored on 2026-09-21; the +11
+    is `registerView` (6 cells) and `signRequest` (5)."""
     grid = m.cells(ops)
     by_target = {}
     for c in grid:
         by_target[c.target] = by_target.get(c.target, 0) + 1
-    assert by_target[2] == 63
-    assert by_target[401] == 63
-    assert by_target[403] == 62
-    assert by_target[404] == 55
-    assert by_target[409] == 15
+    assert by_target[2] == 65
+    assert by_target[400] == 30
+    assert by_target[401] == 65
+    assert by_target[403] == 64
+    assert by_target[404] == 57
+    assert by_target[409] == 16
+    assert len(grid) == 297, by_target
     assert 285 <= len(grid) <= 305, by_target
 
 
@@ -595,12 +607,18 @@ def test_the_finder_does_not_flag_an_operation_it_can_break(tmp_path):
     assert m.malform_strategies(tmp_path)["wrong_type"] == 1
 
 
-def test_the_hybrid_splits_exactly_sixteen_and_eleven():
-    """16 keep omission, 11 switch to a wrong-typed value, none is left with
+def test_the_hybrid_splits_exactly_eighteen_and_eleven():
+    """18 keep omission, 11 switch to a wrong-typed value, none is left with
     no way to break. A count that drifts means a document changed, and the
-    right response is to read the diff rather than to adjust the number."""
+    right response is to read the diff rather than to adjust the number.
+
+    It was 16/11/0 against the 1.3.0 documents. `registerView` and
+    `signRequest` both declare `required` properties, so both take omission,
+    and the eleven wrong-type cells are untouched -- which is what keeps every
+    previous run's 400 column comparable with this one.
+    """
     counts = m.malform_strategies(SPEC_DIR)
-    assert counts == {"omit": 16, "wrong_type": 11, "none": 0}
+    assert counts == {"omit": 18, "wrong_type": 11, "none": 0}
     assert sum(counts.values()) == len(
         [c for c in m.cells(m.load_spec(SPEC_DIR)) if c.target == 400 and c.op.has_body]
     )
@@ -621,7 +639,7 @@ def test_the_omission_cells_send_a_byte_identical_body_to_before_the_hybrid(bind
         body = req["json"] if req["json"] is not None else req["data"]
         assert body == m.MALFORMED_BODY, cell.op.op_id
         checked += 1
-    assert checked == 16
+    assert checked == 18
 
 
 def test_the_wrong_type_cells_send_something_their_schema_must_reject(binding):
@@ -770,3 +788,113 @@ def test_typed_properties_reads_through_a_combinator_branch():
         "value": "not-an-integer",
         "type": "integer",
     }
+
+
+# ----------------------------------------------------------------------
+# the denominator is recorded, not assumed
+# ----------------------------------------------------------------------
+#
+# These exist because of run 1789950539: the grid was 63 operations / 286
+# cells, `log-coverage/spec/` was re-fetched at a different tag 19 minutes
+# later, and nothing on disk recorded either number. The run's coverage
+# figure survived only as printed output inside a committed notebook.
+
+
+def _twin(
+    tmp_path,
+    a="paths:\n  /x:\n    get:\n      operationId: getX\n      responses:\n        200:\n          description: ok\n",
+):
+    """A minimal two-document spec directory, the shape `load_spec` expects."""
+    (tmp_path / "polaris-management-service.yml").write_text(a, encoding="utf-8")
+    (tmp_path / "rest-catalog-open-api.yaml").write_text(a, encoding="utf-8")
+    return tmp_path
+
+
+def test_the_fingerprint_carries_bytes_and_counts_together():
+    """A sha says the file moved; the counts say what the move did to the grid.
+    Either alone leaves a reader guessing."""
+    fp = m.spec_fingerprint(SPEC_DIR)
+    assert fp["operations"] == len(m.load_spec(SPEC_DIR))
+    assert fp["cells"] == len(m.cells(m.load_spec(SPEC_DIR)))
+    assert sorted(f["name"] for f in fp["files"]) == [
+        "polaris-management-service.yml",
+        "rest-catalog-open-api.yaml",
+    ]
+    for f in fp["files"]:
+        assert len(f["sha256"]) == 64
+        assert f["bytes"] > 0
+    assert sum(fp["by_target"].values()) == fp["cells"]
+
+
+def test_the_vendored_spec_matches_its_own_inventory():
+    """The tracked record and the documents on disk agree. When this fails,
+    someone re-fetched without re-recording -- which is the whole failure this
+    module was added to catch."""
+    assert m.inventory_drift(SPEC_DIR) == []
+
+
+def test_a_directory_with_no_inventory_reports_that_as_the_drift(tmp_path):
+    """Absent is a finding, not a pass. An unrecorded denominator is exactly
+    the state run 1789950539 was measured in."""
+    d = _twin(tmp_path)
+    drift = m.inventory_drift(d)
+    assert len(drift) == 1 and "no inventory.json" in drift[0]
+    with pytest.raises(m.SpecUnavailable, match="THE DENOMINATOR MOVED"):
+        m.assert_denominator(d)
+
+
+def test_a_changed_document_is_named_with_both_shas(tmp_path):
+    d = _twin(tmp_path)
+    m.write_inventory(d, tag="t1")
+    assert m.inventory_drift(d) == []
+    (d / "rest-catalog-open-api.yaml").write_text(
+        "paths:\n  /x:\n    get:\n      operationId: getX\n      responses:\n"
+        "        200:\n          description: ok\n"
+        "  /z:\n    get:\n      operationId: getZ\n      responses:\n"
+        "        200:\n          description: ok\n",
+        encoding="utf-8",
+    )
+    drift = m.inventory_drift(d)
+    assert any("rest-catalog-open-api.yaml" in line for line in drift), drift
+    assert any(line.startswith("operations:") for line in drift), drift
+    assert any(line.startswith("cells:") for line in drift), drift
+    assert any(
+        "operations added since the record: ['getZ']" in line for line in drift
+    ), drift
+
+
+def test_a_re_record_keeps_the_fingerprint_it_superseded(tmp_path):
+    """The previous denominator must survive the overwrite. Losing it is what
+    made run 1789950539 unreproducible."""
+    d = _twin(tmp_path)
+    first = m.write_inventory(d, tag="apache-polaris-1.3.0-incubating")
+    (d / "rest-catalog-open-api.yaml").write_text(
+        "paths:\n  /y:\n    get:\n      operationId: getY\n      responses:\n"
+        "        200:\n          description: ok\n",
+        encoding="utf-8",
+    )
+    second = m.write_inventory(d, tag="apache-polaris-1.6.0")
+    assert second["tag"] == "apache-polaris-1.6.0"
+    assert len(second["history"]) == 1
+    assert second["history"][0]["tag"] == "apache-polaris-1.3.0-incubating"
+    assert second["history"][0]["files"] == first["files"]
+    assert "history" not in second["history"][0]
+
+
+def test_re_recording_an_unchanged_spec_does_not_grow_the_history(tmp_path):
+    d = _twin(tmp_path)
+    m.write_inventory(d, tag="t1")
+    again = m.write_inventory(d, tag="t1")
+    assert again["history"] == []
+
+
+def test_the_inventory_names_the_operations_that_appeared(tmp_path):
+    """`registerView` and `signRequest` are the entire 63->65 difference, and a
+    reader must be able to see that without re-fetching anything."""
+    rec = m.read_inventory(SPEC_DIR)
+    assert rec["history"], "the 1.3.0 fingerprint must still be on record"
+    was = set(rec["history"][0]["operation_ids"])
+    now = set(rec["operation_ids"])
+    assert now - was == {"registerView", "signRequest"}
+    assert was - now == set()
+    assert rec["history"][0]["cells"] == 286 and rec["cells"] == 297
