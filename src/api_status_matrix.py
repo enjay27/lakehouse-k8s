@@ -639,14 +639,22 @@ PAYLOADS = {
         "updates": [{"action": "set-properties", "updates": {"matrix.run": b["run"]}}],
     },
     "renameTable": lambda b: {
-        # SOURCE IS THE DISPOSABLE TABLE, never the fixture: a rename is a
-        # destructive operation wearing a POST, and renaming the fixture table
-        # 404s every later cell that reads it.
-        "source": {"namespace": [b["namespace"]], "name": b["new_table"]},
+        # SOURCE IS THE RENAME FAMILY'S OWN TABLE, never the fixture and no
+        # longer `new_table`: a rename is a destructive operation wearing a
+        # POST, and renaming the fixture table 404s every later cell that
+        # reads it. `new_table` was the wrong disposable to pick, because
+        # phase B's rename CONSUMED it and phase D's `createTable` 409 cell
+        # then had nothing left to conflict with -- run 1789950539 recorded
+        # that as `createTable missed [409] got {409: 403}` and
+        # `createView missed [409] got {409: 200}`, both read as Polaris
+        # behaviour. The 409 cells and the 2xx rename cells now own separate
+        # entities.
+        "source": {"namespace": [b["namespace"]], "name": b["rename_table"]},
         "destination": {"namespace": [b["namespace"]], "name": b["renamed_table"]},
     },
     "renameView": lambda b: {
-        "source": {"namespace": [b["namespace"]], "name": b["new_view"]},
+        #: Its own view, for the reason `renameTable` gives above.
+        "source": {"namespace": [b["namespace"]], "name": b["rename_view"]},
         "destination": {"namespace": [b["namespace"]], "name": b["renamed_view"]},
     },
     "commitTransaction": lambda b: {

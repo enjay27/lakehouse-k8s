@@ -924,8 +924,12 @@ def _binding(config, fx, run, runner_name, runner_role):
         "new_principal": f"mx_{run}_p2",
         "new_principal_role": f"mx_{run}_prole2",
         "new_catalog_role": f"mx_{run}_crole2",
-        "renamed_table": f"{fx.tbl}_renamed",
-        "renamed_view": f"{fx.view}_renamed",
+        #: The rename family. Separate from `new_*` since 2026-09-21, because
+        #: phase B's rename consumed the entity phase D's 409 cell needed.
+        "rename_table": f"mx_{run}_rn_tbl",
+        "rename_view": f"mx_{run}_rn_vw",
+        "renamed_table": f"mx_{run}_rn_tbl_renamed",
+        "renamed_view": f"mx_{run}_rn_vw_renamed",
         "doomed_catalog": f"mx{run}doomed",
         "doomed_namespace": f"mx_{run}_ns_doomed",
         "doomed_table": f"mx_{run}_tbl_doomed",
@@ -1030,11 +1034,36 @@ def _setup_doomed(adm_pc, adm_ic, fx, binding, config, schema, table_payload):
     out["doomed table"] = adm_ic.create_table(
         fx.cat, fx.ns, table_payload(binding["doomed_table"], schema)
     ).status_code
+    # THE RENAME FAMILY. `renameTable`/`renameView` move these rather than
+    # `new_table`/`new_view`, so phase B no longer consumes what phase D's
+    # 409 cells conflict with.
+    out["rename table"] = adm_ic.create_table(
+        fx.cat, fx.ns, table_payload(binding["rename_table"], schema)
+    ).status_code
     out["doomed view"] = adm_ic.create_view(
         fx.cat,
         fx.ns,
         {
             "name": binding["doomed_view"],
+            "schema": schema,
+            "view-version": {
+                "version-id": 1,
+                "timestamp-ms": 0,
+                "schema-id": 0,
+                "summary": {"engine-name": "make-traffic"},
+                "default-namespace": [fx.ns],
+                "representations": [
+                    {"type": "sql", "sql": "SELECT 1", "dialect": "spark"}
+                ],
+            },
+            "properties": {"mx.run": binding["run"]},
+        },
+    ).status_code
+    out["rename view"] = adm_ic.create_view(
+        fx.cat,
+        fx.ns,
+        {
+            "name": binding["rename_view"],
             "schema": schema,
             "view-version": {
                 "version-id": 1,
@@ -1401,12 +1430,50 @@ def _cleanup(
             ("dropTable", "DELETE", lambda: run_ic.drop_table(fx.cat, fx.ns, fx.tbl)),
             ("dropNamespace", "DELETE", lambda: run_ic.drop_namespace(fx.cat, fx.ns)),
         ]
+    if fx is not None and run_ic is not None:
+        # EVERY NAME THE RUN CAN CREATE, not only the ones it planned. The
+        # rename family and its destinations outlive phase B, and a catalog
+        # that still holds an entity cannot be deleted.
+        for _key in ("rename_table", "renamed_table", "new_table"):
+            _n = binding.get(_key)
+            if _n:
+                steps.append(
+                    (
+                        "dropTable",
+                        "DELETE",
+                        lambda n=_n: run_ic.drop_table(fx.cat, fx.ns, n),
+                    )
+                )
+        for _key in ("rename_view", "renamed_view", "new_view"):
+            _n = binding.get(_key)
+            if _n:
+                steps.append(
+                    (
+                        "dropView",
+                        "DELETE",
+                        lambda n=_n: run_ic.drop_view(fx.cat, fx.ns, n),
+                    )
+                )
     if fx is not None and binding.get("catalogRoleName"):
         steps.append(
             (
                 "deleteCatalogRole",
                 "DELETE",
                 lambda: adm_pc.delete_catalog_role(fx.cat, binding["catalogRoleName"]),
+            )
+        )
+    if fx is not None:
+        # THE ROLE `authorize_on_fixture` CREATES INSIDE THE CATALOG. Polaris
+        # refuses to delete a catalog that still holds a catalog role, so
+        # without this the fixture catalog leaks on every run -- measured as
+        # `delete catalog apimatrix1789950539_cat 400`.
+        import api_surface as _surf
+
+        steps.append(
+            (
+                "deleteCatalogRole",
+                "DELETE",
+                lambda: adm_pc.delete_catalog_role(fx.cat, _surf.shared_role_name(fx)),
             )
         )
     if fx is not None:

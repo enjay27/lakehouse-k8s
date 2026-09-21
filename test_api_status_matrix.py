@@ -44,6 +44,8 @@ def binding():
         "new_principal": "prin2",
         "new_principal_role": "prole2",
         "new_catalog_role": "crole2",
+        "rename_table": "tbl_rn",
+        "rename_view": "vw_rn",
         "renamed_table": "tbl_r",
         "renamed_view": "vw_r",
         "doomed_catalog": "cat_doomed",
@@ -496,8 +498,27 @@ def test_credential_rotation_never_touches_an_identity_the_run_authenticates_as(
 def test_a_rename_moves_the_disposable_table_not_the_fixture(ops, binding):
     """A rename is a destructive operation wearing a POST."""
     body = m.payload_for({o.op_id: o for o in ops}["renameTable"], binding)
-    assert body["source"]["name"] == "tbl2"
+    assert body["source"]["name"] == "tbl_rn"
     assert body["destination"]["name"] == "tbl_r"
+    assert body["source"]["name"] != binding["table"], "never the fixture"
+
+
+def test_a_rename_does_not_consume_what_the_409_cells_conflict_with(ops, binding):
+    """Phase B's renameTable / renameView used to move `new_table` and
+    `new_view` away, so phase D's createTable and createView 409 cells had
+    nothing left to collide with. Run 1789950539 recorded that as
+    `createTable missed [409] got {409: 403}` and `createView missed [409] got
+    {409: 200}` -- two cells that could not pass, printed as Polaris.
+    """
+    by_id = {o.op_id: o for o in ops}
+    for rename_op, create_op, new_key in (
+        ("renameTable", "createTable", "new_table"),
+        ("renameView", "createView", "new_view"),
+    ):
+        moved = m.payload_for(by_id[rename_op], binding)["source"]["name"]
+        conflicts_with = m.payload_for(by_id[create_op], binding)["name"]
+        assert conflicts_with == binding[new_key]
+        assert moved != conflicts_with, f"{rename_op} consumes {create_op}'s 409 target"
 
 
 def test_the_409_family_still_has_something_to_conflict_with(ops, binding):
