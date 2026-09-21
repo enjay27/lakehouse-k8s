@@ -43,6 +43,25 @@ from dataclasses import dataclass, field
 READ_METHODS = ("GET", "HEAD")
 
 
+def build_view_payload(name, namespace, schema):
+    """A minimal CreateViewRequest. One shape, used by the fixture and by the
+    sweep, because two spellings of it is how `probe_view` came to exist in
+    one path and not the other."""
+    return {
+        "name": name,
+        "schema": schema,
+        "view-version": {
+            "version-id": 1,
+            "schema-id": 0,
+            "timestamp-ms": 0,
+            "summary": {"operation": "create"},
+            "representations": [{"type": "sql", "sql": "SELECT 1", "dialect": "spark"}],
+            "default-namespace": [namespace],
+        },
+        "properties": {},
+    }
+
+
 @dataclass
 class Operation:
     """One API call, its shape, and how to issue it.
@@ -92,21 +111,7 @@ class SurfaceContext:
     scratch: dict = field(default_factory=dict)
 
     def view_payload(self, name=None):
-        return {
-            "name": name or self.view,
-            "schema": self.schema,
-            "view-version": {
-                "version-id": 1,
-                "schema-id": 0,
-                "timestamp-ms": 0,
-                "summary": {"operation": "create"},
-                "representations": [
-                    {"type": "sql", "sql": "SELECT 1", "dialect": "spark"}
-                ],
-                "default-namespace": [self.ns],
-            },
-            "properties": {},
-        }
+        return build_view_payload(name or self.view, self.ns, self.schema)
 
 
 def _snapshot_prepare(ctx):
@@ -285,7 +290,13 @@ def operations(ctx, payload_builder=None, scan_report_builder=None):
             "iceberg.create_view",
             "POST",
             "/v1/{cat}/namespaces/{ns}/views",
-            fn=lambda c: c.ic.create_view(c.cat, c.ns, c.view_payload()),
+            # DISPOSABLE, like `probe_tbl2` beside it. It used to create
+            # `c.view` itself, which is why `setup_fixture` did not build one
+            # -- and why the grid, which does not run this sweep, drove eleven
+            # cells against a view that never existed.
+            fn=lambda c: c.ic.create_view(
+                c.cat, c.ns, build_view_payload("probe_view2", c.ns, c.schema)
+            ),
         ),
         Operation(
             "iceberg.list_views",
@@ -309,13 +320,15 @@ def operations(ctx, payload_builder=None, scan_report_builder=None):
             "iceberg.rename_view",
             "POST",
             "/v1/{cat}/views/rename",
-            fn=lambda c: c.ic.rename_view(c.cat, c.ns, c.view, c.ns, "probe_view2"),
+            fn=lambda c: c.ic.rename_view(
+                c.cat, c.ns, "probe_view2", c.ns, "probe_view3"
+            ),
         ),
         Operation(
             "iceberg.drop_view",
             "DELETE",
             "/v1/{cat}/namespaces/{ns}/views/{view}",
-            fn=lambda c: c.ic.drop_view(c.cat, c.ns, "probe_view2"),
+            fn=lambda c: c.ic.drop_view(c.cat, c.ns, "probe_view3"),
         ),
         # ---- Management API ----
         Operation(
@@ -728,6 +741,22 @@ def setup_fixture(
         lambda: adm_ic.create_table(fx.cat, fx.ns, payload_builder(fx.tbl, schema)),
         f"create table {fx.tbl}",
         lambda: adm_ic.table_exists(fx.cat, fx.ns, fx.tbl),
+    )
+    # THE VIEW. `fx.view` is bound into eleven cells of the status grid and
+    # nothing created it: `api_status_matrix.REBIND` states that the fixture
+    # "catalog / namespace / table / view" is read by the happy cells and by
+    # every 401/403/404 cell and is never destroyed by one -- true, and it was
+    # never BUILT either. Run 1789950539 reported loadView, viewExists and
+    # replaceView as MISSED with 404 at their 2xx and 403 cells, and
+    # replaceView again at 409 and 400: eight misses on three operations,
+    # every one of them read as a fact about Polaris. The teardown said so in
+    # the same run -- `drop view probe_view 404`.
+    ck(
+        lambda: adm_ic.create_view(
+            fx.cat, fx.ns, build_view_payload(fx.view, fx.ns, schema)
+        ),
+        f"create view {fx.view}",
+        lambda: adm_ic.head_view(fx.cat, fx.ns, fx.view),
     )
     return result
 

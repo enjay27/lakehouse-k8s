@@ -397,10 +397,17 @@ class FakeTree:
         self.created.append(("table", payload.get("name")))
         return Resp(200)
 
+    def create_view(self, cat, ns, payload):
+        self.created.append(("view", payload.get("name")))
+        return Resp(200)
+
     def namespace_exists(self, cat, ns):
         return Resp(200)
 
     def table_exists(self, cat, ns, t):
+        return Resp(200)
+
+    def head_view(self, cat, ns, v):
         return Resp(200)
 
 
@@ -428,6 +435,7 @@ def test_setup_grants_catalog_manage_content_because_creating_a_catalog_does_not
     assert ("namespace", "probe_ns") in ic.created
     assert ("namespace", "probe_ns2") in ic.created
     assert ("table", "probe_tbl") in ic.created
+    assert ("view", "probe_view") in ic.created
 
 
 def test_setup_raises_loudly_when_a_call_really_failed():
@@ -750,3 +758,88 @@ def test_an_absent_catalog_is_reported_absent_not_dropped():
 
     rep = surf.drop_catalog_tree("nope", Gone(), Gone())
     assert rep["catalog"] == "absent" and rep["tables"] == 0
+
+
+# ----------------------------------------------------------------------
+# the fixture view
+# ----------------------------------------------------------------------
+#
+# `fx.view` is bound into eleven cells of the status grid and `setup_fixture`
+# built everything except it. Run 1789950539 reported the consequence as eight
+# MISSED cells on loadView / viewExists / replaceView, each printed as a 404
+# from Polaris.
+
+
+class _Recorder:
+    """Records calls and answers 200 to everything."""
+
+    def __init__(self):
+        self.calls = []
+
+    def _ok(self, name):
+        def fn(*a, **k):
+            self.calls.append((name, a, k))
+
+            class R:
+                status_code = 200
+                ok = True
+                text = ""
+
+                @staticmethod
+                def json():
+                    return {}
+
+            return R()
+
+        return fn
+
+    def __getattr__(self, name):
+        return self._ok(name)
+
+
+def test_setup_fixture_creates_the_view_it_binds():
+    fx = surf.ProbeFixture(prefix="t")
+    adm_pc, adm_ic = _Recorder(), _Recorder()
+    surf.setup_fixture(
+        fx,
+        adm_pc,
+        adm_ic,
+        "bucket",
+        "http://minio:9000",
+        {"type": "struct", "fields": []},
+        lambda name, schema: {"name": name},
+        ensure_catalog=lambda *a, **k: None,
+        attempt=lambda call, what, result, exists=None: (True, call()),
+        result={},
+    )
+    created = [c for c in adm_ic.calls if c[0] == "create_view"]
+    assert created, "setup_fixture built no view; the grid binds fx.view anyway"
+    assert created[0][1][2]["name"] == fx.view
+    assert created[0][1][2]["view-version"]["default-namespace"] == [fx.ns]
+
+
+def test_the_sweep_does_not_consume_the_fixture_view():
+    """The sweep creates and drops its own. It used to create `c.view`, which
+    is why `setup_fixture` did not -- and why the grid, which never runs the
+    sweep, drove eleven cells against a view that did not exist."""
+    fx = surf.ProbeFixture(prefix="t")
+    ic = _Recorder()
+    ctx = fx.context(ic=ic, pc=_Recorder(), adm=_Recorder(), schema={"fields": []})
+    ops = {op.label: op for op in surf.operations(ctx)}
+    ops["iceberg.create_view"].fn(ctx)
+    ops["iceberg.rename_view"].fn(ctx)
+    ops["iceberg.drop_view"].fn(ctx)
+    made = [c for c in ic.calls if c[0] == "create_view"][0][1][2]["name"]
+    renamed = [c for c in ic.calls if c[0] == "rename_view"][0][1]
+    dropped = [c for c in ic.calls if c[0] == "drop_view"][0][1]
+    assert made == "probe_view2", "the sweep must not create the fixture's view"
+    assert "probe_view2" in renamed and "probe_view3" in renamed
+    assert fx.view not in renamed
+    assert dropped[-1] == "probe_view3"
+
+
+def test_one_view_payload_shape_for_the_fixture_and_the_sweep():
+    p = surf.build_view_payload("v", "ns", {"type": "struct"})
+    assert p["name"] == "v"
+    assert p["view-version"]["default-namespace"] == ["ns"]
+    assert p["view-version"]["representations"][0]["type"] == "sql"
