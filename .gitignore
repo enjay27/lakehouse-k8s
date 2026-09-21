@@ -21,9 +21,14 @@ node_modules/
 diagnostics/ladders/log-coverage/doc-log-coverage-results-*.md
 
 # --- Capture output: hundreds of MB, never committed ------------------------
-diagnostics/outputs/captures/
 capture*/
 *.log
+# `capture*/` above also matches `captures/`, and git never descends into an
+# excluded DIRECTORY -- so the directory must be re-included before its contents
+# can be excluded and the keeper file negated. Order matters; later wins.
+!diagnostics/outputs/captures/
+diagnostics/outputs/captures/*
+!diagnostics/outputs/captures/.gitignore
 
 # --- Helm render dumps and scratch (CLAUDE.md forbids committing these) -----
 *.render.txt
