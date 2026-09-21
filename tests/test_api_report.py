@@ -14,7 +14,6 @@ golden-file test would not actually check.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 import api_report as rep  # noqa: E402
 import query_profile as qp  # noqa: E402
 

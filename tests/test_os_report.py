@@ -23,8 +23,6 @@ import sys
 
 import pytest
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "src"))
-
 import os_report as osr  # noqa: E402
 
 

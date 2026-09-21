@@ -7,9 +7,16 @@
 **`local-k8s` and `polaris-learning` are one repo as of today.** 554 files at HEAD relocated;
 both pre-merge histories are here on their own refs (`git log archive/local-k8s`,
 `archive/polaris-learning`; `git log --all --grep=` searches both). Why and the full path
-mapping: [`docs/MERGE-2026-09-21.md`](docs/MERGE-2026-09-21.md). **No gate was run — a Cowork
-session has no `helm`, no `kubectl`. Treat the tree as unverified until both gates run locally.**
-Eight deferred seams, none done: [`.memory/active-issues/merge.md`](.memory/active-issues/merge.md).
+mapping: [`docs/MERGE-2026-09-21.md`](docs/MERGE-2026-09-21.md).
+
+**The suite gate is green — `pytest` 996 passed, 0 failed**, after repairing the 20 of 21 test
+modules the move into `tests/` broke
+([session](.memory/sessions/2026-09-21-merge-test-repair.md)). **A clone still needs
+`fetch_specs.sh` first**, or 13 fail and 49 error on `SpecUnavailable`. **The platform gate has
+never run** — no `helm`, no `kubectl` from here — so charts, values and templates stay unverified.
+Open seams: M1 notebook bootstraps (**61 notebooks, not 66; the 5 in `diagnostics/` must not be
+touched**), M2, M3, M4/M5, M6, M10 —
+[`.memory/active-issues/merge.md`](.memory/active-issues/merge.md).
 
 **Platform.** `WINDOW_SECONDS` has a decided target of **3600, one hour** (Kade's manager,
 2026-09-21), replacing the 1800 older documents call "the revert" — **written, not rolled**; it is

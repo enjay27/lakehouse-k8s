@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
 from polaris_rest import PolarisREST
 
 BASE = "http://192.168.139.2:8181"

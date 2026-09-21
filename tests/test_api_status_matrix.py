@@ -13,11 +13,15 @@ import sys
 
 import pytest
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "src"))
-
 import api_status_matrix as m  # noqa: E402
 
-SPEC_DIR = pathlib.Path(__file__).parent / "log-coverage" / "spec"
+SPEC_DIR = (
+    pathlib.Path(__file__).resolve().parents[1]
+    / "diagnostics"
+    / "ladders"
+    / "log-coverage"
+    / "spec"
+)
 
 
 @pytest.fixture(scope="module")

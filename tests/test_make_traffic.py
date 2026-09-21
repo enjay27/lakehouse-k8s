@@ -28,12 +28,16 @@ import sys
 
 import pytest
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "src"))
-
 import make_traffic as mt  # noqa: E402
 
-SRC = pathlib.Path(__file__).resolve().parent / "src"
-SPEC = pathlib.Path(__file__).resolve().parent / "log-coverage" / "spec"
+SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
+SPEC = (
+    pathlib.Path(__file__).resolve().parents[1]
+    / "diagnostics"
+    / "ladders"
+    / "log-coverage"
+    / "spec"
+)
 
 #: Modules that hold a concept of what a log pipeline did with a request. The
 #: traffic side may not reach any of them, at module scope or inside a

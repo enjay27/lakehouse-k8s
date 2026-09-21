@@ -11,14 +11,12 @@ may survive parsing of a principal_authentication_data statement.
 Run: pytest test_api_trace.py
 """
 
+import os  # noqa: E402
 import sys
+import time  # noqa: E402
 from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-import os  # noqa: E402
-import time  # noqa: E402
 
 from api_trace import SqlStatement  # noqa: E402
 from api_trace import Tracer  # noqa: E402

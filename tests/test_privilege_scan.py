@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
 from privilege_scan import authenticate  # noqa: E402
 from privilege_scan import (
     Identity,

@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
 from schema_audit import INDEX_HYPOTHESES  # noqa: E402
 from schema_audit import (
     EXPECTED_INDEXES,

@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
 import entity_replay as er  # noqa: E402
 
 SCHEMA, REALM = "polaris_schema", "POLARIS"

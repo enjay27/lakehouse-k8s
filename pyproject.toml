@@ -28,3 +28,11 @@ dev = [
     "isort>=8.0.1",
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+# The suite imports modules from src/ by bare name (`import api_report`).
+# Before the 2026-09-21 merge every test sat at the repo root and inserted
+# `Path(__file__).parent / "src"` itself; tests/ broke all 20 of those at once.
+# One anchored setting replaces them and survives the next move.
+pythonpath = ["src"]
+testpaths = ["tests"]

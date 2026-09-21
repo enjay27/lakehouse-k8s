@@ -282,3 +282,21 @@ What has been done and what is next, newest first. Session narratives live in
   - **`grant_records` IS GIVEN NO INDEX BY UPSTREAM.** Its only access path is `PRIMARY KEY (realm_id, securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code)` — six columns, grantee at positions 4-5. Every other table gets a purpose-built index: `idx_entities`, `idx_locations` (partial), `idx_policy_mapping_record`. **`grant_records` is the only table in the schema queried on every request and the only one with nothing but its PK.**
   - **REPRODUCED — SHAPE, not estimates.** Two sweeps 25 minutes apart in separate kernels, **264 explains** across the three cases: **0 differ in shape** (node types, relations seq-scanned, indexes used, per-scan node/index), and `per_api` is byte-identical in all three — which is why every table in notebook 04 reproduces exactly. **11 differ in `plan_rows`**, every one the same 19 → 20 drift; 28 differ in some field once the cost numbers inside the raw plan are counted. Statistics moving under autovacuum between two runs on a table nobody wrote to. **This is the methodology working, not a wobble in it** — the audit reports shape and discards the clock precisely because estimates and timings move while shape does not. **Quote the shape; never quote `plan_rows` or a cost as a stable figure.**
   - **Upstream says so itself**, at `schema_v3.sql:57`: `-- TODO: create indexes based on all query pattern.` The TODO sits directly above the two `entities` indexes; `grant_records` never got its turn.
+
+## 2026-09-21 — the suite gate after the merge
+
+**996 passed, 0 failed, 49.3 s** (`pytest -q`, venv from `uv sync --group dev`, Python
+3.12). Before the repair: **50 collected, 20 errors** — 20 of 21 test modules failed to
+import, because moving them into `tests/` broke
+`sys.path.insert(0, str(Path(__file__).parent / "src"))`.
+
+Fixed by `[tool.pytest.ini_options] pythonpath = ["src"]` + `testpaths = ["tests"]` in
+`pyproject.toml`, deleting the 20 per-file inserts, and rewriting 10 path constructions
+whose target moved structurally (spec dir, api-sql-profile, banked reports).
+
+**The run requires the vendored OpenAPI documents**, which are gitignored downloads and
+are not in any clone: without them 13 tests fail and 49 error with `SpecUnavailable`.
+Run `fetch_specs.sh` first. This is not a merge artifact — a fresh clone of the
+pre-merge repo behaves identically.
+
+**Platform gate still unrun** (no cluster reach from a Cowork session).

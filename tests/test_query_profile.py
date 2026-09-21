@@ -21,7 +21,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 import api_sweep as sweep  # noqa: E402
 import query_profile as qp  # noqa: E402
 
@@ -877,8 +876,8 @@ def test_the_real_matrix_report_parses_clean_with_the_counts_it_is_known_to_have
     future edit to the report or the regex moves any of them, this fails rather
     than quietly re-baselining.
     """
-    doc = Path(__file__).resolve().parent / (
-        "diagnostics/api-sql-profile/reports/doc-api-sql-matrix-latest.md"
+    doc = Path(__file__).resolve().parents[1] / (
+        "diagnostics/outputs/banked/reports/doc-api-sql-matrix-latest.md"
     )
     if not doc.exists():  # pragma: no cover - report is gitignored in some trees
         pytest.skip("matrix report not present")

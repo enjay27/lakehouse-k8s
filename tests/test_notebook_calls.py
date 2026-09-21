@@ -26,8 +26,6 @@ import sys
 
 import pytest
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "src"))
-
 import api_status_matrix as mx  # noqa: E402
 import iceberg_rest  # noqa: E402
 import log_coverage as lc  # noqa: E402
@@ -36,7 +34,9 @@ import polaris_rest  # noqa: E402
 import traffic_helpers as th  # noqa: E402
 
 NOTEBOOK = (
-    pathlib.Path(__file__).resolve().parent
+    pathlib.Path(__file__).resolve().parents[1]
+    / "diagnostics"
+    / "ladders"
     / "log-coverage"
     / "polaris_log_coverage_v2.ipynb"
 )
@@ -62,7 +62,7 @@ OWNERS = {
 #: It IS the notebook's traffic cells, lifted -- so every signature the
 #: notebook was checked for is a signature it now makes, and a module gets no
 #: exemption a notebook does not.
-MODULE = pathlib.Path(__file__).resolve().parent / "src" / "make_traffic.py"
+MODULE = pathlib.Path(__file__).resolve().parents[1] / "src" / "make_traffic.py"
 
 
 def _calls_in(src):

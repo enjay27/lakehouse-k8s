@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
 import grant_scale as gs  # noqa: E402
 
 SCHEMA = "polaris_schema"

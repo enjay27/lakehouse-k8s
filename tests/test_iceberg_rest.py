@@ -19,9 +19,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+from iceberg_rest import DELEGATION_VENDED_CREDENTIALS  # noqa: E402
 from iceberg_rest import (
-    DELEGATION_VENDED_CREDENTIALS,  # noqa: E402
     IcebergREST,
     build_assert_table_uuid_requirement,
     build_create_table_payload,

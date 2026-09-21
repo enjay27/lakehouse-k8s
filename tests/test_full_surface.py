@@ -13,8 +13,6 @@ capture, so the strongest thing these tests can assert is that it did not move.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-
 import api_sweep as sweep  # noqa: E402
 import privilege_scan as ps  # noqa: E402
 import query_profile as qp  # noqa: E402

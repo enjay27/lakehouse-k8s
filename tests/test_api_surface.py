@@ -23,8 +23,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT / "src"))
+ROOT = Path(__file__).resolve().parents[1]
 import api_surface as surf  # noqa: E402
 import query_profile as qp  # noqa: E402
 
@@ -133,7 +132,7 @@ def test_the_catalogue_is_the_43_apis_the_matrix_report_names():
     If a transcription dropped or renamed an operation, this fails with the
     exact label rather than with a count that someone re-baselines.
     """
-    doc = ROOT / "diagnostics/api-sql-profile/reports/doc-api-sql-matrix-latest.md"
+    doc = ROOT / "diagnostics/outputs/banked/reports/doc-api-sql-matrix-latest.md"
     if not doc.exists():  # pragma: no cover
         pytest.skip("matrix report not present")
     reported = set(qp.parse_api_statements(doc.read_text()).apis)

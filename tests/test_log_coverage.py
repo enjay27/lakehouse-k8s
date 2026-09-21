@@ -23,8 +23,6 @@ import sys
 
 import pytest
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "src"))
-
 import log_coverage as lc  # noqa: E402
 import traffic_helpers as th  # noqa: E402
 

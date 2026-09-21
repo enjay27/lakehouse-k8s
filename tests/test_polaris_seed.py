@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
 from polaris_seed import COARSE_CATALOG_PRIVILEGES  # noqa: E402
 from polaris_seed import (
     CATALOG_PRIVILEGES,
