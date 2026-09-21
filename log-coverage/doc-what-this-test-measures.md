@@ -12,8 +12,15 @@ own headline numbers suggest.
 ## 1. What the traffic covers
 
 **The denominator is the vendored OpenAPI documents, not the run.** `load_spec` reads
-`log-coverage/spec/` and builds **63 operations** (33 management, 30 catalog) and
-**286 cells**, where a cell is one (operation x status) pair. The grid exists before
+`log-coverage/spec/` and builds **65 operations** (33 management, 32 catalog) and
+**297 cells**, where a cell is one (operation x status) pair.
+
+> **The numbers below the line are from run `1789497434` against the 63-operation /
+> 286-cell grid, and the grid changed on 2026-09-21.** The 1.6.0 documents added
+> `registerView` and `signRequest`. `log-coverage/spec/inventory.json` records both
+> fingerprints; the 1.3.0 one is in its `history` with `sha256: null`, because the bytes
+> were overwritten before anything recorded them. **Do not compare a figure taken against
+> one grid with a figure taken against the other without saying so.** The grid exists before
 anything is driven, which is why a drive that falls over halfway still has a denominator.
 
 | target | cells | covered (run 1789368559) |

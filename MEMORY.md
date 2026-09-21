@@ -4,73 +4,33 @@
 [`.memory/`](.memory/README.md). If you are picking this up cold, read the
 handoff named in *Now* — it is standalone.
 
-## Now — 2026-09-17 (session 16: replica-staleness probe — run 1 was instrument-limited, corrected)
+## Now — 2026-09-21 (session 17: the denominator moved, and five harness faults fixed)
 
-**Session 16: `diagnostics/polaris_replica_staleness.ipynb` is NEW; run 1 is void, the corrected version is UNRUN.** It targets the *database* half of
-`local-k8s` #15 (create-namespace 500s) without Polaris: pause WAL replay on every standby, write once through Pgpool, read from
-12 brand-new pooled sessions, and read routing off Pgpool's `select_cnt` counters rather than from inside the query.
-**Topology measured: pg-1 is PRIMARY, pg-0 and pg-2 standbys** — a hand-run that assumed pg-0 paused the wrong pod and left a
-standby live. `delay_threshold` is set nowhere in the chart, templates or values, so pgpool never checks replication lag before
-balancing a read. Only notebook in `diagnostics/` that changes server state: `require_not_prod()` **plus** a hard `ENV == "local"`
-assert, plus a standalone PANIC cell. **RUN 1 PRINTED `REFUTED` AND IT MEASURED THE INSTRUMENT, NOT THE CLUSTER:** the detector
-`pg_is_in_recovery()` sat inside the measured query, it is VOLATILE, and Pgpool classifies read-vs-write by parsing — so the
-detector plausibly forced all 12 reads to the primary. Nothing checked that the connection reached Pgpool at all. **Corrected:**
-routing now comes from `select_cnt` diffs around a plain query, §2b hard-fails unless `SHOW pool_nodes` answers, and §8/§10 add the
-#15 ladder paused-vs-healthy so the *symptom* is measured too. **Do not quote run 1's REFUTED.** Live facts: pg-1 is primary; 2
-replication slots; `/bitnami/postgresql` is 203G, so `persistence.size: 10Gi` is unenforced by OrbStack's provisioner and the
-roadmap assertion that checks it with `df` is dead. [`sessions/2026-09-17-replica-staleness-probe.md`](.memory/sessions/2026-09-17-replica-staleness-probe.md)
+**POLARIS IS 1.6.0** (since 2026-09-18 17:33 KST, helm rev 9). Run `1789950539` printed `Polaris
+1.3.0` on every output: `init_env` prints a config string and **nothing measures the server**.
+So the 500 ladder now PROVOKING is a version difference, not a mystery. `api_report.py:307` still
+hardcodes the old version.
 
-**Session 14: `log-coverage/polaris_api_traffic_v1.ipynb` is v2's traffic with every verification cell removed** — no OpenSearch, no kubectl, and **one window wait**: it waits once for a fresh window (lag 6.5 s at 30/5 fast-run, edit on revert), then runs B–I back to back (~6 s measured) and reports if the drive crossed a boundary. Kept cells diff against v2 only in printed strings. ~~`src/make_traffic.py` still uses `lag=0.5`~~ **fixed session 15 (2026-09-16): `drive()` requires `tick_interval_s`, one validated `_wait_for_window`, AST-tested**; **phase J added and RUN** (run `1789535345`: 6/6 calls as targeted, Polaris accepts a nested namespace; local-k8s found one table row with commit_count 2 and no phantom) — [`sessions/2026-09-16-phase-lag-and-nested-namespace.md`](.memory/sessions/2026-09-16-phase-lag-and-nested-namespace.md). Not run on the cluster. [`.memory/sessions/2026-09-15-traffic-only-notebook.md`](.memory/sessions/2026-09-15-traffic-only-notebook.md)
+**THE DENOMINATOR MOVED 19 MINUTES AFTER THAT RUN.** 63 ops / 286 cells then, 65 / 297 now, no
+`inventory.json` — so **`231/286` is unreproducible** and survives only in the notebook output at
+`253f6de`. Now recorded, `history` and all, and `assert_denominator` fails on drift. The re-fetch
+had already left 8 tests red and would have stopped the next drive at call 0.
 
-**THE WINDOW OFFSET WAS `lag=0.5`. THE NOTEBOOK CAUSED THE CONDITION IT SPENT THREE RUNS
-REPORTING TO `local-k8s`, AND NOTHING IN THE CLUSTER IS WRONG.** A window closes when the 5 s
-report tick notices its boundary — measured at **`window_end + 3.673 s`, σ < 2 ms**, and it cannot
-drift while `Interval_Sec` **divides** `WINDOW_SECONDS`. Every phase fired 0.5 s past a boundary,
-**inside that blind spot**, so 100 % of every burst was booked to the previous row,
-deterministically. **`{-30: 5, 0: 1}` was an artefact of cell 32 flooring `min_record_time`
-before differencing — raw it is `{30.5: 5, 16.9: 1}`. Do not quote the INCONSISTENT sentence, it
-is withdrawn.** Fixed in four commits: `PHASE_LAG = Interval_Sec + 1.5` read from the running
-ConfigMap (five call sites); `row_for()`, which picks a report row by its **records** and retires
-`lbl()` / `WINDOW_OFFSET_S`; the raw displacement statistic; the invariant renamed to **`no record
-fell outside its row's label window`**, because under the old name `WINDOWS_TRUSTED` would have
-suppressed Gate 2 and Gate 4 forever against a pipeline behaving as designed.
+**FIVE FIXES, ALL UNVERIFIED — RUNNING IT IS THE NEXT THING.** The fixture never built `fx.view`
+(8 of 55 misses); phase B's renames consumed phase D's 409 targets (`createView` 409 returned
+**200**); phase I and both ends of every ladder rung were untagged on every run to date; two
+catalogs leaked from every run with both cleanups reporting success; `registerView` and
+`signRequest` have never been driven. **Gate 2's positive half is answered** (`last_write_bytes`
+1941, byte-identical); **its negative half leaves the field ABSENT, not `0`** — assert absence.
 
-**THREE SENTENCES SHIPPED TO ANOTHER TEAM AS WORK ITEMS FOR A PIPELINE THAT DID NOTHING WRONG.**
-`auth_denied=0 (… fell to `__errors__`)` and `writes=1 granted=3` were **adjacent rows**, checked
-in the export. Verdict strings now carry the measurement; causes moved to `GATE_REMEDIES`, which
-lead with *check the resolved window — it was this both times*. **`REPORT-for-local-k8s.md` item 1
-is no longer needed** and contradicts the Lua's deliberate no-re-dating decision.
+**NEEDS KADE (unchanged):** a real principal credential in `availability/polaris_availability_test.ipynb`
+cell 2 (deliberately uncommitted); `04_explain_sweep.ipynb`'s `latest_report()` returns `hits[-2]`;
+`03_api_index_matrix` has a literal `clientSecret` in `HEAD`. **Fast-run settings are live and
+TEMPORARY** (30/5): revert together and re-check that the tick divides the window.
 
-**FOUND ON THE WAY, not in the handoff:** Gate 2's negative half compared **two different
-windows** (`_absent` wall-clock, `_present` shifted) — a real latent bug. `INVARIANT_REMEDIES` is
-keyed by the invariant's **name string** with a defaulting lookup, so a rename alone degrades a
-remedy silently. **And the handoff's own §8-2 check is wrong:** `PHASE_LAG = Interval_Sec + 1.5`
-lands a *correct* run just past `Interval_Sec`; the meaningful band is `[0, window_seconds)`.
-
-**NOT VERIFIED — the notebook was not executed; it needs the cluster.** `pytest` 911/45 green
-before every commit. **Next run answers exactly three things:** Gate 2 `last_write_bytes` (VOID
-twice, and it is the feature), Gate 4's two FAILs (expected PASS; a FAIL with the invariant green
-is the first quotable window-scoped finding this project has had), and one `_analyze` call on
-`__errors__` — underscore is `ExtendNumLet`, so the guide's "the analyser splits it" is probably
-wrong while `.keyword` stays right on case-folding grounds.
-
-**NEEDS KADE:** `availability/polaris_availability_test.ipynb` holds a **real principal
-credential** in cell 2 and is deliberately uncommitted; `04_explain_sweep.ipynb`'s
-`latest_report()` now returns `hits[-2]`, which looks like a leftover; and `03_api_index_matrix`
-already has a literal `clientSecret` in `HEAD`.
-
-**Fast-run settings are live and TEMPORARY** (`WINDOW_SECONDS` 30, `Interval_Sec` 5). Revert
-together, AFTER the api-status-matrix phase schedule — and **re-check that the tick still divides
-the window**, since `PHASE_LAG` becomes 31.5 s at 1800/30.
-
-**NEXT SESSION STARTS FROM
-[`.memory/sessions/2026-09-15-window-lag-is-the-harness.md`](.memory/sessions/2026-09-15-window-lag-is-the-harness.md)**.
-
-**POLARIS IS BEING UPGRADED 1.3.0 -> 1.6.0 (next session, in `local-k8s`).** When it lands, this repo goes stale in three places:
-`log-coverage/spec/` is vendored **1.3.0** OpenAPI and **is the coverage run's denominator** (`load_spec` builds the 63 operations
-and 286 cells from it) — re-fetch before quoting any coverage number; `src/config/local.yaml` carries `polaris_version: "1.3.0"`
-and `purge_deletes_files: false` ("issue #379 present locally"), both to re-test; and the report/Lua shapes want one window
-compared rather than assumed. Plan: [`local-k8s/polaris/HANDOFF-upgrade-1.6.0-2026-09-17.md`].
+**START FROM [`sessions/2026-09-21-the-denominator-and-the-view.md`](.memory/sessions/2026-09-21-the-denominator-and-the-view.md).**
+The replica-staleness notebook is still UNRUN and run 1's `REFUTED` is withdrawn
+([`2026-09-17`](.memory/sessions/2026-09-17-replica-staleness-probe.md)).
 
 ## Where the detail is
 
