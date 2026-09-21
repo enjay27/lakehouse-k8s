@@ -10,7 +10,9 @@
 - **Target Namespace:** `datahub-hynix` — **strictly enforced for every K8s asset, with no exception
   as of 2026-09-18.** The `logging` exception existed for the VictoriaLogs sink; release and PVC are
   both gone, so that namespace is empty and **everything belongs in `datahub-hynix`**.
-- **Apache Polaris (Iceberg REST catalog):** local chart, v1.3.0-incubating. Management
+- **Apache Polaris (Iceberg REST catalog):** local chart, **1.6.0** — deployed and verified 2026-09-18
+  (metastore schema v4, plural `event-listener.types` working, console output still JSON so tier-2 parsing
+  is unaffected). This line said `v1.3.0-incubating` until 2026-09-21. Management
   port **8182**, not the 8282 upstream docs default to.
 - **PostgreSQL HA:** local umbrella chart wrapping Bitnami `postgresql-ha` 16.3.2 —
   3 replicas + **Pgpool-II** connection pooler (**not** PgBouncer; corrected 2026-08-18).
@@ -19,7 +21,7 @@
 - **Fluent Bit — two releases, both in `datahub-hynix`:**
   the DaemonSet `benchmarks-fluent-bit` (chart `fluent-bit-0.57.6`, image `5.1.1`, values `fluent-bit/values.yaml`)
   tails `/var/log/containers/*.log` into **OpenSearch** in three tiers: tier 1 `k8s-logs-*` (all containers, unfiltered),
-  tier 2 `polaris-logs-*` (Polaris, policy v5), tier 3 `polaris-report-*` (window reports, schema v5).
+  tier 2 `polaris-logs-*` (Polaris, policy v5), tier 3 `polaris-report-*` (window reports, **schema v6**).
   **There is no second pipeline any more.** `fb-polaris-shipper` (which tailed the Polaris log PVC into VictoriaLogs)
   was **uninstalled 2026-09-18**, along with VictoriaLogs and `polaris-shared-logs-pvc` itself
   (`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`, executed; `REVIEW-pipeline-2026-09-16.md` P10 closed).
@@ -31,7 +33,11 @@
   → **schema v6 (`#32`), rolled and verified 2026-09-16:** raw line and summary sentence are `message` (not `_msg`), trim before
   the Lua, report rows without `app`/`level`, tier-1 `Id_Key` output / self-log / parser filters removed, `.keyword`-only string
   mappings for indices created after step9/step12 (query strings via `.keyword`). Pod `62klp`.
-  `WINDOW_SECONDS` is still the verification value 30. **The rule stands:** confirm a setting from the running object,
+  `WINDOW_SECONDS` is still the verification value 30 — **still 30 on 2026-09-21**, five days after it was set "temporarily".
+  → **2026-09-18 (`#42`), values-only, Lua sha unchanged: `threadName`/`threadId` RESTORED** to `polaris-logs-*`, reversing
+  rev 19's removal; `ndc` stays removed. Verified 367/367 on traffic that day, 391/391 on the 2026-09-21 export.
+  **Query `threadName.keyword`, never the bare field** — it is `text`/`index: false` plus a `.keyword` sub-field.
+  **The rule stands:** confirm a setting from the running object,
   not the file — the next `helm upgrade` makes this line history.
 - **VictoriaLogs:** **GONE 2026-09-18** — release uninstalled and its **50 Gi** PVC deleted by hand (a
   `helm uninstall` does not remove it). Was the log sink in namespace `logging`, 9428, for the shipper above;
@@ -57,6 +63,7 @@ Full detail in [`.memory/repository-map.md`](.memory/repository-map.md). The sha
   chart, nothing more. Exception: `fluent-bit/` also holds `polaris_access_log.lua` and a
   `kustomization.yaml` that ships it as ConfigMap **`polaris-fluent-bit-lua`**, mounted through
   `extraVolumes` at `/fluent-bit/polaris-lua/`. **No hot reload: Fluent Bit reads the Lua only at start.**
+  Entry doc for that directory: `fluent-bit/README.md`.
   A Lua change is **`bash fluent-bit/apply-lua.sh`** (tests → `kubectl apply -k` → `rollout restart`);
   `apply -k` alone leaves the old script running with no warning. **Not** `--set-file` (v4 and earlier;
   `luaScripts` is `{}`). **Lua and values changed together:** `apply-lua.sh --no-restart` → step2 → `helm upgrade`,

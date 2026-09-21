@@ -5,6 +5,61 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#46 — A 5xx can be missing from its resource row and present in the summary, and that is by
+design. The intentional 500 probes landed in `__errors__`.** 2026-09-21.
+
+From the `polaris-report-2026.09.21` export. Kade's changed traffic includes a deliberate 500
+generator: catalog `nb1789965827bh` with its S3 endpoint pointed at `127.0.0.1:1`, so
+`create_table` fails with `SdkClientException: Connect to 127.0.0.1:1 ... Connection refused`.
+Three of them fired (`rid nb-1789965827-3201..3203-probe-500-black_hole_endpoint-create_table_N`).
+
+**They are not on the resource row for their path.** `/api/catalog/v1/nb1789965827bh/namespaces/
+bh_ns/tables` exists as a row in that window with `requests: 1, errors: 0` — the row a later
+successful read created. The three 500s are in `__errors__` (`requests: 56, errors_4xx: 53,
+errors_5xx: 3`).
+
+This is the `create=false` rule doing its job (Lua L292-296): **an errored request may not create
+a resource row**, so a client walking nonexistent table names cannot fill the key space. The row
+that does exist was created *after* the failures, and the rule is evaluated per record — "was
+there a row at that moment", not "is there one by the end of the window".
+
+Nothing is lost that the design promised: `summary.errors_5xx` is 7 and correct, the margin
+`summary == sum(resource rows)` holds, and all seven 500s are stored as full documents by rule 3.
+**Only the attribution is gone.** If a probe's whole point is to see a 5xx attributed to one
+endpoint, send one 2xx to that path first, in the same window.
+
+Worth deciding, not urgent: whether `__errors__` should carry a `resource_kind` breakdown, or
+whether errored requests should be allowed to create a row when the path matches a
+`RESOURCE_PATTERNS` entry (bounded key space, unlike arbitrary table names).
+
+**#45 — Polaris 1.6.0's event listener throws on the same null path as `#24`, and the pipeline
+keeps it only because of rule 1.** 2026-09-21.
+
+Two ERROR documents in the 09-21 export from `org.apache.polaris.service.events.PolarisEventListeners`:
+
+    Error while delivering BEFORE_RENAME_TABLE event to listener 'persistence-in-memory-buffer'
+    (InMemoryBufferEventListener_Subclass@3cfbe489)
+    java.lang.NullPointerException: Cannot invoke "...TableIdentifier.toString()" because the
+    return value of "...()" is null
+
+and the same for `BEFORE_RENAME_VIEW`. Both coincide with `#24`'s rename-with-null-identifier
+probes, so the null reaches the event listener as well as the handler. **New in 1.6.0** — the
+plural `event-listener.types` that the upgrade enabled is what makes this listener run at all.
+
+**For the pipeline this is a non-event, and that is the interesting part.** `PolarisEventListeners`
+is **not** in `APP_ALLOW` (which holds exactly `IcebergExceptionMapper` and `PolarisServiceImpl`).
+It is stored because rule 1 keeps every `ERROR`/`WARN` regardless of the allowlist — the guard
+against a new logger disappearing silently. It worked on its first real test.
+
+To decide: whether an in-memory buffer listener failing on every null rename matters to Polaris
+(it is a buffer, and the request already 500s), and whether `event-listener.types` should keep
+`persistence-in-memory-buffer` enabled locally at all.
+
+Also from the same export, not new issues: `org.apache.polaris.service.catalog.iceberg.LocalIcebergCatalog`
+dropped **42** lines in 25 seconds, which is the condition the Lua's own L556 says should trigger an
+`APP_ALLOW` review (`a new org.apache.polaris.service.* in app_dropped`). Full drop tally:
+`CatalogUtil` 43, `LocalIcebergCatalog` 42, `BaseMetastoreCatalog` 30, `BaseMetastoreViewCatalog` 9.
+
 **#44 — Quarkus cannot express a log retention TTL, and the PVC archive is the proof. The
 27 MB reaching back to 08-21 is ORPHANED: no rotation setting will ever delete it.** 2026-09-18.
 
@@ -2358,6 +2413,15 @@ drivable on demand.** API matrix run `1789026666`, 2026-09-10: `getToken`, `crea
 `renameTable` and `renameView` each returned **500 where the matrix targeted 400**, trace verdict
 `unhandled` on all four — a throwable survived to the transport. 4 five-hundreds in 286 cells, 0
 transport errors.
+
+**2026-09-21: all four reproduce on Polaris 1.6.0.** From the `polaris-logs-2026.09.21` export
+(391 detail docs, requestIds `nb-1789965827-2253-getToken-400`, `-2255-createNamespace-400`,
+`-2275-renameTable-400`, `-2279-renameView-400`): four 500s, one per operation, every one an NPE
+surfaced by `IcebergExceptionMapper` — `Cannot invoke "Object.equals(Object)" because "o" is null`
+(getToken), `Namespace.levels() because "namespace" is null` (createNamespace), and
+`TableIdentifier.namespace() because "identifier" is null` (both renames). The 1.6.0 upgrade did
+not touch this. **So `errors_5xx` still cannot be read as a service-health signal without
+excluding these four** — a client sending a malformed request drives it at will.
 
 Two consequences, and the second is the useful one:
 

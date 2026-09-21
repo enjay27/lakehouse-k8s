@@ -58,6 +58,44 @@ normal and 140M/day peak at 30-day retention**, with the `GET .../tables/{t}` po
 numbers apply — the local instance is a correctness rehearsal for that design, not a load
 test of it, and sizing should be chosen for the laptop, not copied from the doc.
 
+## 2026-09-21 pipeline re-verification — the numbers, on changed test traffic
+
+Export: `polaris-logs-2026.09.21` **391 docs** (245 access + 146 app) and `polaris-report-2026.09.21`
+**122 rows** (30 summary / 77 resource / 7 principal / 8 app_dropped), Fluent Bit pod
+`benchmarks-fluent-bit-pdr2h`, Polaris pod `benchmarks-polaris-c7c64b9dd-cwb8k`, `report_seq` 503–532,
+`schema_version` 6 and `window_seconds` 30 on every row. Thirty windows 04:32:30Z–04:47:30Z; **traffic in
+two of them** — 04:43:30Z (87 requests) and 04:44:00Z (356).
+
+| invariant | result |
+|---|---|
+| `access_kept == access_seen - access_counted` | 245 == 443 − 198, all 30 windows |
+| `counted_404 <= errors_4xx` | 99 ≤ 242, no window violates |
+| summary `errors_4xx` / `errors_5xx` == Σ resource rows | exact, both active windows |
+| summary `bytes_total` == Σ resource `response_bytes` | exact — note the field names differ between row types |
+| no 404 document stored | 0 stored of 99 counted |
+| `auth_denied` == stored 401 + 403 | 110 == 60 + 50 |
+| `errors_kept` == stored docs with status ≥ 400 | 150 == 19+60+50+14+7 |
+| clean state | `parse_errors` 0, `held_orphans` 0, `held_pending` 0, `windows_skipped` 0, `resources_other` 0, `principals_other` 0, `partial_window` `"false"` on all 30 |
+| `#42` holds | **391/391** detail docs carry `threadName` + `threadId`; **0** carry `ndc` |
+| v6 shape holds | no `app`/`level`/`_msg`/`stream`/`flb_tag` on detail docs; no `app`/`level` on report rows |
+
+Totals over the 30 windows: `access_seen` 443, `access_kept` 245, `access_counted` 198
+(`counted_read` 66 + `counted_post` 33 + `counted_404` 99), `errors_kept` 150, `errors_4xx` 242,
+`errors_5xx` 7, `auth_denied` 110, `app_dropped_total` 124, `app_dropped_404` 109,
+`role_keys_forced` 4 (cap 100), `bytes_total` 1,279,290.
+
+Stored status distribution: 200×5, 201×57, 204×33, 400×19, 401×60, 403×50, 409×14, 500×7.
+Principals: `root` 96 requests, `-` (unauthenticated) 61, `mx_1789965827_denied` 48,
+`mx_1789965827_runner` 40.
+
+**Window economics, measured:** 28 of 30 summary rows carried zero traffic. That is the cost of
+`WINDOW_SECONDS` 30 stated as a number rather than an estimate.
+
+The seven 500s split two ways: **four** are `#24`'s malformed-request NPEs, now confirmed on 1.6.0;
+**three** are a deliberate black-hole probe and landed in `__errors__` rather than their own resource
+row (`#46`). Samples for all of it: `logging/GUIDE-sample-data-2026-09-21.ko.md`, generated from this
+export by `logging/scripts/step14-sample-doc.py`.
+
 ## Polaris 1.6.0 — the numbers, and what to assert after the upgrade
 
 Established 2026-09-18 by reading upstream at tag `apache-polaris-1.6.0`. Cluster side

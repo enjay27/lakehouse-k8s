@@ -22,8 +22,9 @@ and one directory per service. A service directory is either a **local chart**
 duplicates** — `fluent-bit/values.yaml` is the **DaemonSet** (its Lua is the separate file
 `fluent-bit/polaris_access_log.lua` since 2026-09-15 — shipped as ConfigMap `polaris-fluent-bit-lua` via
 `fluent-bit/kustomization.yaml` and rolled with `fluent-bit/apply-lua.sh` since 2026-09-16, no `--set-file`; one Lua filter since the `#31` refactor;
-container logs → OpenSearch in Docker); `logging/fb-values.yaml` is a **single-replica Deployment**
-(shared-PVC file tail → VictoriaLogs). `logging/` also holds
+container logs → OpenSearch in Docker); `logging/fb-values.yaml` **was** a single-replica Deployment
+(shared-PVC file tail → VictoriaLogs) — **that release, VictoriaLogs and the PVC were all removed on
+2026-09-18, so it is history, not a second deployment.** There is one Fluent Bit release now. `logging/` also holds
 `victoria-values.yaml` and `logging/archive/2026-09-03-polaris-logging-architecture-spec.md`, the design doc
 those two are built against (filed 2026-09-03 — **historical**: the built pipeline is stdout → OpenSearch; which
 `logging/` document is current is in **`logging/README.md`**, which also sorts `logging/scripts/` into live and finished).

@@ -1,5 +1,11 @@
 # Report schema reference — v3 tables; v4 deployed 2026-09-15; v5 deployed 2026-09-16; **v6 deployed 2026-09-16 (current)** — see the end
 
+> **⚠ The tables in §Envelope–§Invariants below are the v2/v3 shape and are kept for the field meanings, not for the
+> document shape.** They still list `app`, `level` and `schema_version: 3`; v6 removed the first two from every report
+> row and the version is 6. **For what a row looks like today, read the v6 section at the end**, then the sample
+> documents in [`GUIDE-sample-data-2026-09-21.ko.md`](GUIDE-sample-data-2026-09-21.ko.md), which are generated from a
+> real export rather than written by hand.
+
 Read off `fluent-bit/values.yaml` (`build_report`, ~line 447) on 2026-09-09, not from intent.
 Three `report_type` values share one envelope and one `_time`, so `stats by (_time)` — or a terms
 agg on `window_start` — groups one window.
@@ -234,7 +240,7 @@ Tests: `test-schema-v3.lua`, `test-schema-v4.lua` (both now expect `schema_versi
 | Access-line parsing moved into `polaris_noise_filter` (one Lua filter instead of two) | none — equal output proven offline (0 diffs on real and fuzz input) and on the cluster (window 15:01Z equals 14:44Z / 08:41Z count for count) |
 | **Records before the first tick are now counted** (they were dropped uncounted for up to `Interval_Sec` after every pod start) | the first row after a restart can now carry counts: `partial_window: "true"`, `window_start` is the window the first *record* fell in, and `min_record_time` is later than `window_start`. A partial row is never comparable to a full one |
 | `http_status` / `response_size` get their integer type from FILTER 3's `type_int_key` (was FILTER 2's) | none — still JSON integers in `polaris-logs-*`, including access lines released with held app lines |
-| Detail docs lose `threadName`, `threadId`, `ndc` (values FILTER 4, `#30`) | `polaris-logs-*` only; not a report-schema change. `polaris-logs-template.json` no longer maps `threadId` |
+| Detail docs lose `threadName`, `threadId`, `ndc` (values FILTER 4, `#30`) | `polaris-logs-*` only; not a report-schema change. `polaris-logs-template.json` no longer maps `threadId`. **Reversed on 2026-09-18 for the two thread fields — see the 09-18 section at the end** |
 
 Tests: `test-schema-v3/v4/v5.lua` now feed raw `_msg` access lines through `logging/scripts/test-raw-access-shim.lua`;
 `test-first-tick.lua` covers the start-up counting. All run in `fluent-bit/apply-lua.sh`.
@@ -262,3 +268,27 @@ plus the `.keyword` sub-field (query `.keyword`, never the bare name), `message`
 Tests: `test-schema-v6.lua` (document shape) plus v3/v4/v5/first-tick, all passing on LuaJIT 2.1 against the v6 script;
 `logging/candidates/diff-v5-v6.lua`: v5 vs v6 on real and fuzz input, 0 diffs after normalising only the intended changes.
 step11 on readouts `084100Z` and `144400Z`: PASS 67×34, detail 200 / 22 / 78.
+
+
+---
+
+# 2026-09-18 — `threadName` / `threadId` restored to `polaris-logs-*` (`#42`). Report schema stays 6
+
+Not a report-schema change: no `polaris-report-*` field was added, removed or re-typed, and
+`schema_version` stays **6**. It is recorded here because the v5-refactor table above says the detail
+index lost these fields, and as of 2026-09-18 that is only true of `ndc`.
+
+| field | state | how to query it |
+|---|---|---|
+| `threadName` | **restored** | **`threadName.keyword`** — and only that. It has no explicit mapping on purpose, so it falls to `strings_keyword_only`: `text` with `index: false` plus a `.keyword` sub-field. A `term`, `exists` or `match` on the bare name returns nothing, silently |
+| `threadId` | **restored** | `threadId` — it arrives as a JSON integer and is declared `long` defensively in `polaris-logs-template.json` |
+| `ndc` | still removed | — (all 300 sampled detail docs carried `""`, and 1.6.0's console output does too) |
+
+Why: no correlation key across the records of one request survived `#30` except `threadName`. The cost
+is about **47 B per detail document** (+7.2 % access, +6.3 % app), derived from the P1 table and
+**accepted, not measured** — the before/after measurement was withdrawn as undeliverable.
+
+Verified on traffic the same day: **367/367** detail documents carried `threadName.keyword` and
+`threadId`, **0** carried `ndc` — the exact inverse of `#30`'s assertion. Tier-2 output `ok=367
+errors=0`, Lua ConfigMap sha unchanged (the change was values-only). Re-confirmed on the 2026-09-21
+export: **391/391**.
