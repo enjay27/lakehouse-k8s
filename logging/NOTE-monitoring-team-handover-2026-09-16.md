@@ -35,4 +35,4 @@ what it cannot tell anyone about by itself.
 | Pipeline restarted | every config or Lua change | summary row with `partial_window: "true"`, `report_seq` restarting at 1 | informational |
 
 ## 3. Contacts in the repo
-`logging/PROPOSAL-polaris-audit-log-retention.ko.md` §5.3 (retention), §8 (dashboards); `logging/SCHEMA-report.md` (fields).
+`logging/SPEC-polaris-audit-logging.ko.md` §5.3 (retention), §8 (dashboards); `logging/SCHEMA-report.md` (fields).

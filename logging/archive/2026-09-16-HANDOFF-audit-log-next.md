@@ -81,4 +81,4 @@ If the fluent-bit log shows no reason line, the next step is `Trace_Error On` on
 | `logging/scripts/step2-render-gate.sh` · `step3-postupgrade.sh` · `step9-…` · `step10-…` · `step11-…` | render gate · post-roll checks · report template · one-window readout · replay |
 | `logging/opensearch/` | index templates, `devtools-export.console` |
 | `2026-09-16-RUNBOOK-lua-hot-reload.md` | SUPERSEDED; section D's `sequence` query is still useful |
-| `logging/PROPOSAL-polaris-audit-log-retention.ko.md` | the proposal (§9.1 deploy method updated) |
+| `logging/SPEC-polaris-audit-logging.ko.md` | the proposal (§9.1 deploy method updated) |

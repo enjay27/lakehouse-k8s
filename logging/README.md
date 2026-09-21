@@ -9,7 +9,7 @@ first table describes the pipeline as it runs**. When a dated document disagrees
 |---|---|
 | [`HANDOFF-thread-fields-2026-09-18.md`](HANDOFF-thread-fields-2026-09-18.md) | **START HERE** — the next task (restore `threadName`/`threadId`), what the 1.6.0 upgrade changed under the pipeline, and every open item |
 | [`HANDOFF-pipeline-next-2026-09-16.md`](HANDOFF-pipeline-next-2026-09-16.md) | the rules and the ordered step list — **but its state section predates Polaris 1.6.0**; where the two disagree, the 09-18 handoff wins |
-| [`PROPOSAL-polaris-audit-log-retention.ko.md`](PROPOSAL-polaris-audit-log-retention.ko.md) | the design and its rationale (Korean): indices, policy rules 0–7, 404 handling, deploy method, gates |
+| [`SPEC-polaris-audit-logging.ko.md`](SPEC-polaris-audit-logging.ko.md) | **the specification of the running system** (Korean): indices, policy rules 0–7, 404 handling, retention, deploy method, gates, known limits. Renamed 2026-09-21 from `PROPOSAL-polaris-audit-log-retention.ko.md` — it stopped being a proposal when it rolled on 09-16 |
 | [`GUIDE-sample-data.ko.md`](GUIDE-sample-data.ko.md) | 신규 엔지니어용 샘플 문서 (Korean): 스키마 v6 의 상세·요약 문서를 유형별로, 요청 추적, DQL 예시 |
 | [`polaris-logging.drawio`](polaris-logging.drawio) | pipeline diagram (Korean): three inputs, the tier-2/3 filter chain, two Polaris indices + `k8s-logs` — v6, 2026-09-16 |
 | [`NOTE-monitoring-team-handover-2026-09-16.md`](NOTE-monitoring-team-handover-2026-09-16.md) | what the Monitoring team needs: retention values, verification indices, silent-loss metrics |

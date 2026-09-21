@@ -1,4 +1,4 @@
-# TODO — Polaris audit log, from `PROPOSAL-polaris-audit-log-retention.ko.md` to production
+# TODO — Polaris audit log, from `SPEC-polaris-audit-logging.ko.md` to production
 
 > **Update 2026-09-16 (late): phase 2 rolled except 2.5/2.7.** 2.6 done (v5, rev 17), hot reload removed (rev 18), thread/ndc trim
 > (rev 19, `#30`), Lua refactor with one Lua filter rolled and verified (`#31`). **2.8 / 2.9 (ISM) are no longer ours — the Monitoring

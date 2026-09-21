@@ -1,4 +1,4 @@
-> **과거 문서 (2026-09-16 표시).** 2026-09-07 기준 (VictoriaLogs 시기) 상태를 기술한다. 현재 파이프라인(Fluent Bit DaemonSet → OpenSearch, 정책 v5)은 `PROPOSAL-polaris-audit-log-retention.ko.md`, 문서 현황은 `README.md`.
+> **과거 문서 (2026-09-16 표시).** 2026-09-07 기준 (VictoriaLogs 시기) 상태를 기술한다. 현재 파이프라인(Fluent Bit DaemonSet → OpenSearch, 정책 v5)은 `SPEC-polaris-audit-logging.ko.md`, 문서 현황은 `README.md`.
 
 # Polaris 로깅 파이프라인 완전 가이드
 

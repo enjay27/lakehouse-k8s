@@ -36,7 +36,7 @@ Their old paths resolve through this table.
 | `logging/HANDOFF-report-schema-v2-2026-09-07.md` | [`2026-09-07-HANDOFF-report-schema-v2.md`](2026-09-07-HANDOFF-report-schema-v2.md) | `../SCHEMA-report.md` |
 | `logging/HANDOFF-harness-schema-v2-2026-09-07.md` | [`2026-09-07-HANDOFF-harness-schema-v2.md`](2026-09-07-HANDOFF-harness-schema-v2.md) | `../SCHEMA-report.md` |
 | `logging/HANDOFF-polaris-log-coverage-2026-09-07.md` | [`2026-09-07-HANDOFF-polaris-log-coverage.md`](2026-09-07-HANDOFF-polaris-log-coverage.md) | `../scripts/step10` + `step11` readouts |
-| `logging/POLARIS-LOGGING-GUIDE.ko.md` | [`2026-09-07-POLARIS-LOGGING-GUIDE.ko.md`](2026-09-07-POLARIS-LOGGING-GUIDE.ko.md) | describes the VictoriaLogs era (09-07). The current system: `../PROPOSAL-polaris-audit-log-retention.ko.md` |
+| `logging/POLARIS-LOGGING-GUIDE.ko.md` | [`2026-09-07-POLARIS-LOGGING-GUIDE.ko.md`](2026-09-07-POLARIS-LOGGING-GUIDE.ko.md) | describes the VictoriaLogs era (09-07). The current system: `../SPEC-polaris-audit-logging.ko.md` |
 | `logging/polaris-logging-architecture-spec.md` | [`2026-09-03-polaris-logging-architecture-spec.md`](2026-09-03-polaris-logging-architecture-spec.md) | 09-03 design for a PVC → VictoriaLogs shipper. **That leg was removed 2026-09-18** — nothing it describes is running |
 
 ## What is NOT here

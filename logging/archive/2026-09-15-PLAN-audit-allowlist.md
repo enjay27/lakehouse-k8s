@@ -203,7 +203,7 @@ Consequences, accepted:
 | 4 | same — Lua | **credential guard**: if a kept record's `_msg` matches `clientSecret:%s*[^%s*]` (anything but the mask), replace the value with `<redacted>` and set `secret_redacted=true`. Cheap, and it stops a masking regression landing in a 30-day index |
 | 5 | `logging/scripts/test-polaris-filters.py`, `test-schema-v3.lua` | cases: allowed logger kept; unknown INFO dropped + counted; unknown WARN kept; mask regression redacted; commit on known table → stats on that row; **`a.b` namespace → `%1F` key equal to the access path's key**; view commit → view row; transaction-only table → row with `requests 0` + commits emitted; idle key → no row next window |
 | 6 | `logging/opensearch/polaris-report-template.json` | `logger_name` keyword; `dropped`, `commit_*` long; `carried_rows` removed — **after** the Lua is rolled (`#25` order) |
-| 7 | `logging/PROPOSAL-polaris-audit-log-retention.ko.md` §3.5–3.6 | rule 2 text; drop table gets the six loggers; §9 #1 status |
+| 7 | `logging/SPEC-polaris-audit-logging.ko.md` §3.5–3.6 | rule 2 text; drop table gets the six loggers; §9 #1 status |
 | 8 | `SCHEMA-report.md`, `.memory/active-issues.md`, MEMORY.md *Now* | v4, the allow-list as a watched item |
 
 No Polaris change (standing rule). No change to `kube.*` / `k8s-logs` — the unfiltered copy stays,
