@@ -612,9 +612,31 @@ PAYLOADS = {
         "schema": _schema(),
         "properties": {"matrix.run": b["run"]},
     },
-    "updateTable": lambda b: {
-        "requirements": [],
-        "updates": [{"action": "set-properties", "updates": {"matrix.run": b["run"]}}],
+    "updateTable": {
+        2: lambda b: {
+            "requirements": [],
+            "updates": [
+                {"action": "set-properties", "updates": {"matrix.run": b["run"]}}
+            ],
+        },
+        # A COMMIT WITH NO REQUIREMENT CANNOT CONFLICT. The 409 cell sent the
+        # 2xx body and was recorded as `updateTable missed [409] got 200` on
+        # every run to date -- it was not a failed conflict, it was a
+        # successful commit wearing a 409 label. `assert-table-uuid` against a
+        # uuid no table can have is the spec's own mechanism: requirements are
+        # validated before the commit, and a failed one is
+        # CommitFailedException, 409.
+        409: lambda b: {
+            "requirements": [
+                {
+                    "type": "assert-table-uuid",
+                    "uuid": "00000000-0000-0000-0000-000000000000",
+                }
+            ],
+            "updates": [
+                {"action": "set-properties", "updates": {"matrix.run": b["run"]}}
+            ],
+        },
     },
     "reportMetrics": lambda b: {
         "report-type": "scan",
@@ -638,7 +660,7 @@ PAYLOADS = {
         "requirements": [],
         "updates": [{"action": "set-properties", "updates": {"matrix.run": b["run"]}}],
     },
-    "renameTable": lambda b: {
+    "renameTable": {
         # SOURCE IS THE RENAME FAMILY'S OWN TABLE, never the fixture and no
         # longer `new_table`: a rename is a destructive operation wearing a
         # POST, and renaming the fixture table 404s every later cell that
@@ -647,15 +669,34 @@ PAYLOADS = {
         # then had nothing left to conflict with -- run 1789950539 recorded
         # that as `createTable missed [409] got {409: 403}` and
         # `createView missed [409] got {409: 200}`, both read as Polaris
-        # behaviour. The 409 cells and the 2xx rename cells now own separate
-        # entities.
-        "source": {"namespace": [b["namespace"]], "name": b["rename_table"]},
-        "destination": {"namespace": [b["namespace"]], "name": b["renamed_table"]},
+        # behaviour.
+        2: lambda b: {
+            "source": {"namespace": [b["namespace"]], "name": b["rename_table"]},
+            "destination": {"namespace": [b["namespace"]], "name": b["renamed_table"]},
+        },
+        # AND THE 409 CELL CANNOT REPEAT THAT REQUEST, because phase B's 2xx
+        # cell consumed `rename_table`. It needs a source that still exists and
+        # a destination that already does: `new_table` survives phase B (the
+        # rename no longer takes it) and `renamed_table` is what phase B just
+        # created. Run 1789955605 is the measurement -- `renameView missed
+        # [409] got 404` -- and it was covered before 9c45c57 only by the
+        # accident of phase D's createView re-creating `new_view` first.
+        409: lambda b: {
+            "source": {"namespace": [b["namespace"]], "name": b["new_table"]},
+            "destination": {"namespace": [b["namespace"]], "name": b["renamed_table"]},
+        },
     },
-    "renameView": lambda b: {
-        #: Its own view, for the reason `renameTable` gives above.
-        "source": {"namespace": [b["namespace"]], "name": b["rename_view"]},
-        "destination": {"namespace": [b["namespace"]], "name": b["renamed_view"]},
+    "renameView": {
+        #: Its own view, and its own 409 source, for the reasons `renameTable`
+        #: gives above.
+        2: lambda b: {
+            "source": {"namespace": [b["namespace"]], "name": b["rename_view"]},
+            "destination": {"namespace": [b["namespace"]], "name": b["renamed_view"]},
+        },
+        409: lambda b: {
+            "source": {"namespace": [b["namespace"]], "name": b["new_view"]},
+            "destination": {"namespace": [b["namespace"]], "name": b["renamed_view"]},
+        },
     },
     "commitTransaction": lambda b: {
         "table-changes": [
@@ -800,8 +841,20 @@ def malformed_body(op):
 MALFORMED_BODY = {"matrix": "deliberately-missing-required-fields"}
 
 
-def payload_for(op, binding):
-    """The body for `op`, or None if it carries none.
+def payload_for(op, binding, target=None):
+    """The body for `op` at `target`, or None if it carries none.
+
+    A PAYLOADS entry is normally one builder used at every status. It may
+    instead be a dict keyed by target, `{2: builder, 409: builder}`, for the
+    operations where the 2xx cell and the conflict cell cannot want the same
+    body. A rename is the case that forced it: its 2xx cell CONSUMES its
+    source, so repeating that request at the 409 cell asks the server to rename
+    something that is no longer there and gets 404 -- run 1789955605 recorded
+    `renameView missed [409] got 404` for exactly that, and 9c45c57 caused it
+    while fixing the same fault one level up.
+
+    An unlisted target falls back to the `2` builder, so adding a variant
+    changes only the cells it names.
 
     KeyError -- loudly -- for a body-carrying operation with no entry, rather
     than an empty dict. An endpoint driven with a body it did not ask for
@@ -814,7 +867,9 @@ def payload_for(op, binding):
             f"{op.op_id} carries a requestBody and has no PAYLOADS entry. Add "
             "one; do not drive it with an empty body."
         )
-    return copy.deepcopy(PAYLOADS[op.op_id](binding))
+    entry = PAYLOADS[op.op_id]
+    builder = entry.get(target, entry[2]) if isinstance(entry, dict) else entry
+    return copy.deepcopy(builder(binding))
 
 
 # ----------------------------------------------------------------------
@@ -1027,7 +1082,7 @@ def request_for(cell, binding, tokens, request_id, realm):
 
     path = bind_path(op, binding, break_param=True if cell.target == 404 else None)
 
-    body = payload_for(op, binding)
+    body = payload_for(op, binding, target=cell.target)
     if cell.target == 400:
         body = malformed_body(op) if op.has_body else body
     elif cell.target == 409 and body and "currentEntityVersion" in body:

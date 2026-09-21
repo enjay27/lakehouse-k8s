@@ -919,3 +919,75 @@ def test_the_inventory_names_the_operations_that_appeared(tmp_path):
     assert now - was == {"registerView", "signRequest"}
     assert was - now == set()
     assert rec["history"][0]["cells"] == 286 and rec["cells"] == 297
+
+
+# ----------------------------------------------------------------------
+# a 409 cell may need a different body from its 2xx cell
+# ----------------------------------------------------------------------
+
+
+def test_a_payload_may_vary_by_target_and_falls_back_to_the_2xx_builder(ops, binding):
+    """One builder per operation was the rule until 2026-09-21. It cannot
+    express an operation whose 2xx cell CONSUMES what its 409 cell needs."""
+    by_id = {o.op_id: o for o in ops}
+    rename = by_id["renameTable"]
+    assert payload_target(rename, binding, 2) != payload_target(rename, binding, 409)
+    # an unlisted target falls back to the 2xx builder, unchanged
+    assert payload_target(rename, binding, 404) == payload_target(rename, binding, 2)
+    # an operation with a single builder is untouched by any target
+    create = by_id["createTable"]
+    assert payload_target(create, binding, 2) == payload_target(create, binding, 409)
+
+
+def payload_target(op, binding, target):
+    return m.payload_for(op, binding, target=target)
+
+
+def test_the_rename_409_cell_renames_something_that_still_exists(ops, binding):
+    """Phase B's 2xx rename moves `rename_*` away. Repeating that request at
+    the 409 cell asks the server to rename a table that is no longer there, and
+    it answers 404 -- run 1789955605 recorded `renameView missed [409] got
+    404`. The 409 body must name a source that survived phase B and a
+    destination that phase B has just created."""
+    by_id = {o.op_id: o for o in ops}
+    for op_id, source_key, dest_key in (
+        ("renameTable", "new_table", "renamed_table"),
+        ("renameView", "new_view", "renamed_view"),
+    ):
+        body = m.payload_for(by_id[op_id], binding, target=409)
+        assert body["source"]["name"] == binding[source_key]
+        assert body["destination"]["name"] == binding[dest_key]
+        moved_at_2xx = m.payload_for(by_id[op_id], binding, target=2)["source"]["name"]
+        assert body["source"]["name"] != moved_at_2xx
+
+
+def test_the_update_table_409_cell_carries_a_requirement_that_cannot_hold(ops, binding):
+    """A commit with an empty `requirements` list cannot conflict: it is a
+    successful commit wearing a 409 label, which is what `updateTable missed
+    [409] got 200` has meant on every run so far."""
+    by_id = {o.op_id: o for o in ops}
+    assert m.payload_for(by_id["updateTable"], binding, target=2)["requirements"] == []
+    req = m.payload_for(by_id["updateTable"], binding, target=409)["requirements"]
+    assert req and req[0]["type"] == "assert-table-uuid"
+    assert set(req[0]["uuid"]) <= set("0-")
+
+
+def test_every_cell_still_builds_a_request_with_the_target_threaded(ops, binding):
+    """The guard that catches a payload variant that raises for one status
+    only -- which a dict-shaped entry makes possible for the first time."""
+    built = [m.request_for(c, binding, TOKENS, "r", REALM) for c in m.cells(ops)]
+    assert len(built) == len(m.cells(ops))
+
+
+def test_a_400_cell_still_sends_the_malformed_body_whatever_the_payload_shape(
+    ops, binding
+):
+    """Per-target payloads must not become a second way to decide what a 400
+    cell sends. The malform strategy is parse-time and stays the only one, so
+    the sixteen-plus omission cells keep sending a byte-identical body."""
+    by_id = {o.op_id: o for o in ops}
+    for op_id in ("renameTable", "renameView", "updateTable"):
+        cell = _cell(ops, op_id, 400)
+        req = m.request_for(cell, binding, TOKENS, "r", REALM)
+        body = req["json"] if req["json"] is not None else req["data"]
+        assert body == m.malformed_body(by_id[op_id])
