@@ -35,18 +35,13 @@ Not in this repo on purpose: retention / ISM policies — **the Monitoring team 
 | `PLAN-opensearch-cutover-2026-09-08.md` | 09-08 | why two tails, why separate DBs, credentials | "uninstall `fb-polaris-shipper` after cutover" never recorded as done → `REVIEW-pipeline` P10 |
 | `fb-values.yaml` · `victoria-values.yaml` | 09-07 / 08-21 | the `fb-polaris-shipper` → VictoriaLogs release, if it still runs | not the OpenSearch pipeline |
 
-## Historical — finished or superseded (kept for the reasoning)
+## Historical — finished or superseded
 
-| file | superseded by |
-|---|---|
-| `HANDOFF-audit-log-next-2026-09-16.md`, `HANDOFF-v5-rollout-2026-09-16.md` | `HANDOFF-pipeline-next-2026-09-16.md` |
-| `RUNBOOK-lua-hot-reload-2026-09-16.md` | hot reload removed (rev 18); its section D `sequence` query still works |
-| `PLAN-audit-allowlist-2026-09-15.md` | policy v4, rolled 09-15, then v5 |
-| `PLAN-report-schema-v3-2026-09-09.md`, `PLAN-log-coverage-schema-v2-2026-09-07.md`, `HANDOFF-report-schema-v2-2026-09-07.md`, `HANDOFF-harness-schema-v2-2026-09-07.md` | `SCHEMA-report.md` (v5) |
-| `PLAN-bulk-response-buffer-2026-09-09.md`, `PLAN-heartbeat-probe-2026-09-09.md`, `PLAN-tier2-parse-fault-2026-09-09.md` | faults closed (`#19`, the multiline fix) |
-| `HANDOFF-notebook-run-2026-09-09.md`, `HANDOFF-notebook-window-attribution-2026-09-15.md`, `HANDOFF-polaris-log-coverage-2026-09-07.md` | step10/step11 readouts; `#26` for window attribution |
-| `polaris-logging-architecture-spec.md` | 09-03 design for a PVC → VictoriaLogs shipper; the built pipeline is the proposal's (stdout → OpenSearch) |
-| `POLARIS-LOGGING-GUIDE.ko.md` | 09-07 state (VictoriaLogs era); the proposal describes the current one |
+Moved to [`archive/`](archive/README.md) on 2026-09-21, renamed `YYYY-MM-DD-<name>` by creation date.
+Sixteen documents: the v5-rollout and audit-log-next handoffs, the hot-reload runbook, the allowlist and
+schema-v2/v3 plans, the three closed-fault plans, the notebook handoffs, the 09-03 architecture spec and
+the 09-07 Korean logging guide. [`archive/README.md`](archive/README.md) maps every old path to its new
+one and says what superseded it.
 
 ## Scripts
 

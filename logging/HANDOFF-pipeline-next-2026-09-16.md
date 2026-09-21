@@ -1,7 +1,7 @@
 # HANDOFF — schema v6 is live and verified. Next: the 1800 s window. Start at §3 step 1.
 
 **Final state of the 2026-09-16 Cowork session** (Lua refactor, thread-field trim, whole-pipeline review, schema v6 — commits
-`5315e0d`..the one that added this line). Supersedes [`HANDOFF-audit-log-next-2026-09-16.md`](HANDOFF-audit-log-next-2026-09-16.md).
+`5315e0d`..the one that added this line). Supersedes [`archive/2026-09-16-HANDOFF-audit-log-next.md`](archive/2026-09-16-HANDOFF-audit-log-next.md).
 Reviews: [`REVIEW-pipeline-2026-09-16.md`](REVIEW-pipeline-2026-09-16.md) (decided, rolled except P5/P10) ·
 [`REVIEW-lua-refactor-2026-09-16.md`](REVIEW-lua-refactor-2026-09-16.md) (rolled). Issues: `#30` `#31` `#32` verified, `#29` dropped,
 `#18` closed by P2 (the output is gone), `#24` `#4` open. Plan: [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md).

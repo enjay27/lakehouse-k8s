@@ -163,7 +163,7 @@ the size > 0 rule separates commit from drop without it.
 
 # v4 — written 2026-09-15, deployed 2026-09-15 (active-issues #27), verified 2026-09-16
 
-Plan: `logging/PLAN-audit-allowlist-2026-09-15.md`. Script: `fluent-bit/polaris_access_log.lua`, supplied to the chart with `--set-file` (see `fluent-bit/values.yaml`).
+Plan: `archive/2026-09-15-PLAN-audit-allowlist.md`. Script: `fluent-bit/polaris_access_log.lua`, supplied to the chart with `--set-file` (see `fluent-bit/values.yaml`).
 
 | change | field(s) | notes |
 |---|---|---|

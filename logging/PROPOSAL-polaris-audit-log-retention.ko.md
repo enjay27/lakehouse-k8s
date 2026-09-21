@@ -952,7 +952,7 @@ v4 스크립트가 함께 돌아온다. **엔진이 멈췄다면** 좋은 스크
 | `fluent-bit/values.yaml` | Fluent Bit DaemonSet 설정 (tier 1/2/3) |
 | `fluent-bit/polaris_access_log.lua` | 판정·집계·요약 Lua (정책 v5) |
 | `fluent-bit/kustomization.yaml` | Lua ConfigMap `polaris-fluent-bit-lua` 생성 (v5) |
-| `logging/RUNBOOK-lua-hot-reload-2026-09-16.md` | hot reload 검증 런북 — **폐기** (hot reload 제거) |
+| `archive/2026-09-16-RUNBOOK-lua-hot-reload.md` | hot reload 검증 런북 — **폐기** (hot reload 제거) |
 | `fluent-bit/apply-lua.sh` | Lua 변경 배포 (테스트 → apply → 재시작) |
 | `logging/opensearch/polaris-logs-template.json` | 상세 인덱스 템플릿 |
 | `logging/opensearch/polaris-report-template.json` | 요약 인덱스 템플릿 |
@@ -961,7 +961,7 @@ v4 스크립트가 함께 돌아온다. **엔진이 멈췄다면** 좋은 스크
 | `logging/scripts/step2-render-gate.sh` | 렌더 게이트 |
 | `logging/scripts/step3-postupgrade.sh` | 롤 후 점검 |
 | `logging/scripts/step9-report-index-template.sh` | 템플릿 적용 |
-| `logging/PLAN-audit-allowlist-2026-09-15.md` | v4 설계·결정 기록 |
+| `archive/2026-09-15-PLAN-audit-allowlist.md` | v4 설계·결정 기록 |
 | `logging/SCHEMA-report.md` | 요약 스키마 레퍼런스 (영문) |
 
 ### C. 측정 기록

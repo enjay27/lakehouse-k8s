@@ -103,7 +103,7 @@ luaScripts:
     --         %l, always "-", dropped                               http_status ------+   |
     --                                                              response_size ---------+
     --
-    -- Field names match §7 of logging/polaris-logging-architecture-spec.md so the
+    -- Field names match §7 of archive/2026-09-03-archive/2026-09-03-polaris-logging-architecture-spec.md so the
     -- LogsQL recipes there work unchanged.
     --
     -- _msg is left in place: it is the raw line, and it is what you read when the
@@ -725,7 +725,7 @@ config:
     #
     #    Gated inside the script on loggerName == io.quarkus.http.access-log;
     #    every other Polaris record returns untouched. Field names match §7 of
-    #    logging/polaris-logging-architecture-spec.md, so the LogsQL recipes
+    #    archive/2026-09-03-archive/2026-09-03-polaris-logging-architecture-spec.md, so the LogsQL recipes
     #    there work as written:
     #      client_ip  user_principal_name  http_method  api_path
     #      http_status (int)  response_size (int)

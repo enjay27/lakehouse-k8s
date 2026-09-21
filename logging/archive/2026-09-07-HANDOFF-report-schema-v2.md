@@ -3,7 +3,7 @@
 **Status: IMPLEMENTED AND DEPLOYED 2026-09-07**, minus `top_error_path`. The running
 ConfigMap carries this script (sha256 `d58b9203a8304030`, confirmed by the notebook's own
 gate) and run `1788755035` measured it end to end — every margin exact, including the new
-fields' own. The harness has not caught up: `logging/HANDOFF-harness-schema-v2-2026-09-07.md`. Results at the foot of
+fields' own. The harness has not caught up: `2026-09-07-HANDOFF-harness-schema-v2.md`. Results at the foot of
 this document; the decisions and their reasoning are in
 [`.memory/sessions/2026-09-07-report-schema-v2.md`](../.memory/sessions/2026-09-07-report-schema-v2.md).
 Step 1 of the repo's plan-first protocol; step 2 is Kade's confirmation. Written 2026-09-07 to
@@ -12,7 +12,7 @@ be read cold in a new session.
 **Scope: the report schema only.** Policy v3 — the keep/count rules — is not touched by any of
 this and is not in question. Three runs verified it end to end; see the companion document.
 
-**Read alongside** [`HANDOFF-polaris-log-coverage-2026-09-07.md`](HANDOFF-polaris-log-coverage-2026-09-07.md),
+**Read alongside** [`2026-09-07-HANDOFF-polaris-log-coverage.md`](2026-09-07-HANDOFF-polaris-log-coverage.md),
 which owns the three *operational* items (revert the fast-run settings, the stack-trace
 correction, the volume mix) and the list of what is settled about the filter. This document
 owns the *schema*. They share one `helm upgrade` — see §Sequencing.
@@ -385,7 +385,7 @@ they are not discovered late. Every one of them is a consequence of a change abo
 - **Harness updated (§7), characterization test read and updated:** **not yet** — run
   `1788755035` reports 34 fixture mismatches and a violated invariant, and **none of them is a
   filter fault**. The three, with evidence, are in
-  [`HANDOFF-harness-schema-v2-2026-09-07.md`](HANDOFF-harness-schema-v2-2026-09-07.md): the
+  [`2026-09-07-HANDOFF-harness-schema-v2.md`](2026-09-07-HANDOFF-harness-schema-v2.md): the
   window merge does not sum fields it does not know (so a v2 field reads as one window, not the
   merge — a wrong number, not an error); `distinct_resources=38 but 44 rows emitted` is now
   correct and needs the stronger invariant `distinct + distinct + carried == rows - 1`; and the

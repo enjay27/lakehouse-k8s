@@ -3,7 +3,7 @@
 > **SUPERSEDED 2026-09-16 (late) by [`HANDOFF-pipeline-next-2026-09-16.md`](HANDOFF-pipeline-next-2026-09-16.md).** Since this was written: A dropped, B done, the Lua refactored and rolled (`#31`), thread fields removed (`#30`), and **C/F (ISM) handed to the Monitoring team**.
 
 **Written 2026-09-16 at the end of the Cowork session that rolled v5 (commits `28300b8`..`63cf6e9`).**
-Supersedes [`HANDOFF-v5-rollout-2026-09-16.md`](HANDOFF-v5-rollout-2026-09-16.md) (its §2 roll is done).
+Supersedes [`2026-09-16-HANDOFF-v5-rollout.md`](2026-09-16-HANDOFF-v5-rollout.md) (its §2 roll is done).
 Plan: [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md) · issues
 [`#28`](../.memory/active-issues.md) (v5), `#29` (tier-1 chunk drops), `#24` (four 500s) · session note
 [`2026-09-16-v5-roll-and-hot-reload-removal.md`](../.memory/sessions/2026-09-16-v5-roll-and-hot-reload-removal.md).
@@ -80,5 +80,5 @@ If the fluent-bit log shows no reason line, the next step is `Trace_Error On` on
 | `fluent-bit/polaris_access_log.lua` · `kustomization.yaml` · `apply-lua.sh` | v5 Lua · its ConfigMap · the only way to roll it |
 | `logging/scripts/step2-render-gate.sh` · `step3-postupgrade.sh` · `step9-…` · `step10-…` · `step11-…` | render gate · post-roll checks · report template · one-window readout · replay |
 | `logging/opensearch/` | index templates, `devtools-export.console` |
-| `logging/RUNBOOK-lua-hot-reload-2026-09-16.md` | SUPERSEDED; section D's `sequence` query is still useful |
+| `2026-09-16-RUNBOOK-lua-hot-reload.md` | SUPERSEDED; section D's `sequence` query is still useful |
 | `logging/PROPOSAL-polaris-audit-log-retention.ko.md` | the proposal (§9.1 deploy method updated) |

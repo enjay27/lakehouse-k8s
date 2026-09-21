@@ -24,7 +24,7 @@ duplicates** — `fluent-bit/values.yaml` is the **DaemonSet** (its Lua is the s
 `fluent-bit/kustomization.yaml` and rolled with `fluent-bit/apply-lua.sh` since 2026-09-16, no `--set-file`; one Lua filter since the `#31` refactor;
 container logs → OpenSearch in Docker); `logging/fb-values.yaml` is a **single-replica Deployment**
 (shared-PVC file tail → VictoriaLogs). `logging/` also holds
-`victoria-values.yaml` and `polaris-logging-architecture-spec.md`, the design doc
+`victoria-values.yaml` and `logging/archive/2026-09-03-polaris-logging-architecture-spec.md`, the design doc
 those two are built against (filed 2026-09-03 — **historical**: the built pipeline is stdout → OpenSearch; which
 `logging/` document is current is in **`logging/README.md`**, which also sorts `logging/scripts/` into live and finished).
 `logging/candidates/` holds the Lua-refactor harnesses (`diff-refactor.lua`, `bench-*.lua`, `tier1-to-lua.py`).

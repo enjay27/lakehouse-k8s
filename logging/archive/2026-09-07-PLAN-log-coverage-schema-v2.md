@@ -27,7 +27,7 @@ cost ~90 minutes per drive instead of ~2**. That is the reason to run this befor
 
 ## 1. Fix these first — the run is not meaningful until they are done
 
-Detail and evidence: `HANDOFF-harness-schema-v2-2026-09-07.md` (in `local-k8s/logging/`).
+Detail and evidence: `2026-09-07-HANDOFF-harness-schema-v2.md` (in `local-k8s/logging/`).
 
 | # | change | acceptance, testable WITHOUT a full drive |
 |---|---|---|

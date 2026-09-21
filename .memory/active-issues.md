@@ -1975,7 +1975,7 @@ still its own last step.
   (`step3-postupgrade.sh`).
 - **Order:** roll the Lua, THEN apply `polaris-report-template.json` (#25) — it now also types the
   v4 integers as `long`.
-- **After rolling, the plan's gates G1–G8** (`logging/PLAN-audit-allowlist-2026-09-15.md` §5).
+- **After rolling, the plan's gates G1–G8** (`logging/archive/2026-09-15-PLAN-audit-allowlist.md` §5).
   Any v3 dashboard reading `carried_rows` or counting zero rows breaks by design; filter `schema_version`.
 
 ## Resolved, kept because they recur
@@ -1984,7 +1984,7 @@ still its own last step.
 **Dropped (Kade, 2026-09-16 late: "drop #29, since task done"):** no further diagnosis is planned. The fault was never read: the
 diagnosis commands' output directory `.scratch/issue29-1356Z/` came out empty, so the cause (mapping reject / 429 / buffer) is unknown
 and nothing was changed. It concerns tier 1 only; the Polaris tier-2/3 pipeline was intact in every checked window. If it matters
-again (e.g. phase 3.1's load test shows more drops), restart from the commands in `logging/HANDOFF-audit-log-next-2026-09-16.md` §3 A.
+again (e.g. phase 3.1's load test shows more drops), restart from the commands in `logging/archive/2026-09-16-HANDOFF-audit-log-next.md` §3 A.
 Original record:
 One chunk per traffic run, twice today, **before and after the v5 roll**, so not caused by v5:
 - `1-1789535377` (05:09:37 UTC, v4 pod `rvm49`, traffic window readout `050930Z`): warn 05:09:46, 05:10:07, `cannot be retried` 05:10:45.
@@ -2099,7 +2099,7 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   Polaris assigns `requestId` without a client header (production question — if not, 404 app lines are kept).
 - **Order:** tests → `kubectl kustomize` + helm dry-run → step2 (two args) → **`kubectl apply -k fluent-bit/`
   BEFORE `helm upgrade`** (missing ConfigMap = ContainerCreating) → step3 → step9 re-apply (41 fields) →
-  traffic → step10/11 → runbook B/C/D. [`logging/RUNBOOK-lua-hot-reload-2026-09-16.md`](../logging/RUNBOOK-lua-hot-reload-2026-09-16.md).
+  traffic → step10/11 → runbook B/C/D. [`logging/archive/2026-09-16-RUNBOOK-lua-hot-reload.md`](../logging/archive/2026-09-16-RUNBOOK-lua-hot-reload.md).
 - **Until it rolls, #27's rule stands:** the running release is v4 and any `helm upgrade` of the *old* values
   still needs `--set-file`. After v5 is rolled, `--set-file` must NOT be used (it would re-add a luascripts key
   nobody reads, harmless, but a sign the wrong runbook is being followed).
@@ -2184,7 +2184,7 @@ on every record — measured at the filter, `records 5030 / drop 0 / add 0`, byt
 record. Those three lines are now **removed from `fluent-bit/values.yaml`, and NOT YET DEPLOYED**.
 Until `helm upgrade` runs and §A's gate passes, this issue is live exactly as described.
 Evidence: `sessions/2026-09-09-stdout-not-equivalent.md`; change and gate:
-`logging/PLAN-tier2-parse-fault-2026-09-09.md`.
+`logging/archive/2026-09-09-PLAN-tier2-parse-fault.md`.
 
 **#22 — RESOLVED 2026-09-09, AND THE ORIGINAL FINDING WAS WRONG.** *(filed as #17; renumbered with #21.)* Re-measured after the
 `multiline.parser` fix, one burst, matched windows: **`access_seen` 265 (stdout) == 265 (file)**
@@ -2272,7 +2272,7 @@ buffer, the flush fails with `http_do=-1`, `Retry_Limit 3` exhausts, and the chu
 **discarded**. This is unacknowledged data loss on tier 1, happening now, and it is invisible to
 every gate used so far: `k8s-logs` doc counts keep rising because most chunks still succeed.
 **FIX APPLIED 2026-09-09, NOT DEPLOYED:** `Buffer_Size False` on all four OpenSearch outputs.
-Plan, mechanism and gate: `logging/PLAN-bulk-response-buffer-2026-09-09.md`. Not a bulk-size
+Plan, mechanism and gate: `logging/archive/2026-09-09-PLAN-bulk-response-buffer.md`. Not a bulk-size
 reduction — that treats the symptom. Not a cutover regression by evidence; no before/after
 measurement exists.
 

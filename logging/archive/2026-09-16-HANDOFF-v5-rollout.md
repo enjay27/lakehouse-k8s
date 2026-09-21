@@ -1,6 +1,6 @@
 # HANDOFF — policy v5 is committed and NOT on the cluster. Start at §2 step 1.
 
-> **SUPERSEDED by [`HANDOFF-audit-log-next-2026-09-16.md`](HANDOFF-audit-log-next-2026-09-16.md) — start there.**
+> **SUPERSEDED by [`2026-09-16-HANDOFF-audit-log-next.md`](2026-09-16-HANDOFF-audit-log-next.md) — start there.**
 >
 > **UPDATE 2026-09-16 (later the same day).** §2 was run: v5 is live as **rev 17** and verified (step11
 > 67×34, `counted_404` 100 with 0 stored, detail 200/22/78 as predicted — `active-issues.md` #28). Then
@@ -14,7 +14,7 @@ Read §1 and §2 before touching the cluster. §4 is the remaining plan; §5 is 
 Plan: [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md) (Phase 2 onward) ·
 issue [`#28`](../.memory/active-issues.md) · session note
 [`2026-09-16-v5-404-policy-lua-configmap.md`](../.memory/sessions/2026-09-16-v5-404-policy-lua-configmap.md) ·
-runbook [`RUNBOOK-lua-hot-reload-2026-09-16.md`](RUNBOOK-lua-hot-reload-2026-09-16.md).
+runbook [`2026-09-16-RUNBOOK-lua-hot-reload.md`](2026-09-16-RUNBOOK-lua-hot-reload.md).
 
 ---
 

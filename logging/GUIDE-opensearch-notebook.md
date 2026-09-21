@@ -5,7 +5,7 @@ VictoriaLogs through `fb-polaris-shipper`. Once the shipper is uninstalled its d
 existing, and the same measurements have to come from OpenSearch instead.
 
 Source of truth for the pipeline's design and its LogsQL originals:
-[`POLARIS-LOGGING-GUIDE.ko.md`](POLARIS-LOGGING-GUIDE.ko.md) §7 and §8. **This document is the
+[`archive/2026-09-07-POLARIS-LOGGING-GUIDE.ko.md`](archive/2026-09-07-POLARIS-LOGGING-GUIDE.ko.md) §7 and §8. **This document is the
 port, not a replacement** — every trap in that guide's §7.4 still applies, and OpenSearch adds
 several of its own.
 

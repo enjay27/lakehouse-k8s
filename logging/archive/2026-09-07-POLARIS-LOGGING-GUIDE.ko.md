@@ -4,7 +4,7 @@
 
 **대상**: 이 플랫폼을 처음 맡는 엔지니어, 그리고 무엇이 보장되고 무엇이 보장되지 않는지 알아야 하는 관리자
 **기준 시점**: 2026-09-07
-**성격**: 설계 문서(`polaris-logging-architecture-spec.md`)가 *의도*를 기술한다면, 이 문서는 **실제로 배포되어 돌아가는 상태**를 기술한다. 둘이 다른 곳은 다르다고 적었다.
+**성격**: 설계 문서(`2026-09-03-polaris-logging-architecture-spec.md`)가 *의도*를 기술한다면, 이 문서는 **실제로 배포되어 돌아가는 상태**를 기술한다. 둘이 다른 곳은 다르다고 적었다.
 
 ---
 
@@ -921,9 +921,9 @@ curl -s localhost:2020/api/v1/metrics/prometheus | grep -E 'output_(errors|retri
 | `logging/fb-values.yaml` | shipper values + **Lua 정책·리포트 정본** |
 | `logging/victoria-values.yaml` | VictoriaLogs values |
 | `logging/scripts/test-polaris-filters.py` | 배포된 Lua를 추출해 실행하는 테스트 (60/60) |
-| `logging/polaris-logging-architecture-spec.md` | 설계 문서(의도). §7에 LogsQL 레시피 |
-| `logging/HANDOFF-report-schema-v2-2026-09-07.md` | 리포트 스키마 v2의 근거와 결정 |
-| `logging/PLAN-log-coverage-schema-v2-2026-09-07.md` | 하네스가 갚아야 할 항목 |
+| `2026-09-03-2026-09-03-polaris-logging-architecture-spec.md` | 설계 문서(의도). §7에 LogsQL 레시피 |
+| `2026-09-07-HANDOFF-report-schema-v2.md` | 리포트 스키마 v2의 근거와 결정 |
+| `2026-09-07-PLAN-log-coverage-schema-v2.md` | 하네스가 갚아야 할 항목 |
 | `polaris/values.yaml` | Polaris 차트 values (로깅 블록 포함) |
 | `shipper-v3-upgrade-runbook.md` | 업그레이드/복귀 절차 |
 | `.memory/active-issues.md` | **값이나 런북을 믿기 전에 볼 것** |

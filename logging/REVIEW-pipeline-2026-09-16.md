@@ -240,7 +240,7 @@ Live: step2, step3, step9, step10, step11, step12, `test-schema-v3/v4/v5`, `test
 `window-readout`, `replay-window`, …) is optional and touches every doc that cites them. **Recommendation: move, don't rename.**
 
 Docs: the current set is `PROPOSAL-…ko.md`, `SCHEMA-report.md`, the two REVIEWs, the latest HANDOFF and PLAN-audit-log-todo.
-The architecture spec (2026-09-03) describes the PVC → VictoriaLogs design, and `POLARIS-LOGGING-GUIDE.ko.md` (09-07)
+The architecture spec (2026-09-03) describes the PVC → VictoriaLogs design, and `archive/2026-09-07-POLARIS-LOGGING-GUIDE.ko.md` (09-07)
 predates OpenSearch. A `logging/README.md` index says so in one place instead of editing 20 headers.
 
 ---
