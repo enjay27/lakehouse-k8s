@@ -336,13 +336,20 @@ def elect_drive_identity(
     return "root", adm_pc, adm_ic, "root", notes
 
 
-def deprovision_run_principal(adm_pc, name, prole):
+def deprovision_run_principal(adm_pc, name, prole, run=None, seq=9900):
     """Best-effort cleanup. Returns a list of what failed, never raises.
 
     The cleanup DELETEs are themselves part of the test, so they run inside the
     tagged window -- but a failure here must not lose the run's findings.
+
+    `run` makes that first sentence true. Without it these two DELETEs went out
+    with a Quarkus-generated request id and the verifier could not select them,
+    while the notebook's section 11 asserted in a comment that cleanup IS the
+    test.
     """
     problems = []
+    if run is not None:
+        tag_clients([adm_pc], request_id(run, seq, "teardown-deprovision"))
     for call, what in (
         (lambda: adm_pc.delete_principal(name), f"delete_principal {name}"),
         (lambda: adm_pc.delete_principal_role(prole), f"delete_principal_role {prole}"),
@@ -353,6 +360,8 @@ def deprovision_run_principal(adm_pc, name, prole):
                 problems.append(f"{what} -> [{r.status_code}]")
         except Exception as exc:  # noqa: BLE001
             problems.append(f"{what} -> {type(exc).__name__}: {exc}")
+    if run is not None:
+        tag_clients([adm_pc], None)
     return problems
 
 
@@ -509,6 +518,20 @@ def principal_of(resp, registry, default=None):
 #: it, and the results document reads that: coverage claimed for the ERROR path
 #: must be traceable to a call this notebook made on purpose.
 DELIBERATE_500_PREFIX = "probe.500."
+
+
+def tag_around(clients, run, seq, label, fn):
+    """Run `fn` with every client carrying a request id, then clear it.
+
+    For work that is not one call -- a rung's prepare makes two, a teardown
+    makes twenty -- where the point is only that the traffic is findable.
+    """
+    rid = request_id(run, seq, label)
+    tag_clients(clients, rid)
+    try:
+        return fn()
+    finally:
+        tag_clients(clients, None)
 
 
 #: The PG-HA read-after-write signature. A 500 on one of these is a write that
@@ -833,7 +856,20 @@ def drive_500(clients, run, seq, provokers, principals=None, call=None, on_rung=
         note, rung_rows = None, []
         try:
             if prov.prepare is not None:
-                prov.prepare()
+                # TAGGED. A rung's prepare creates a catalog and a namespace
+                # and its cleanup deletes the catalog -- traffic in the same
+                # window as the 500s, and until now the only way to find it
+                # was to guess from the path. Run 1789950539 shows the cost:
+                # `POST /api/management/v1/catalogs` and `DELETE
+                # /api/management/v1/catalogs/nb1789950539bh` carry
+                # Quarkus-generated request ids, so the catalog the ladder
+                # leaves behind cannot be attributed to the ladder.
+                #
+                # NOT under DELIBERATE_500_PREFIX: a 500 out of a prepare or a
+                # cleanup is an accident of the rung, not a 500 the ladder
+                # drove on purpose, and `classify_500` must keep saying so.
+                seq += 1
+                tag_around(clients, run, seq, f"{prov.name}.prepare", prov.prepare)
             prepared = True
         except Exception as exc:  # noqa: BLE001
             prepared, note = False, f"setup: {type(exc).__name__}: {exc}"
@@ -858,7 +894,10 @@ def drive_500(clients, run, seq, provokers, principals=None, call=None, on_rung=
             finally:
                 if prov.cleanup is not None:
                     try:
-                        prov.cleanup()
+                        seq += 1
+                        tag_around(
+                            clients, run, seq, f"{prov.name}.cleanup", prov.cleanup
+                        )
                     except Exception as exc:  # noqa: BLE001
                         note = f"{note + ' | ' if note else ''}cleanup: {type(exc).__name__}"
         statuses = [r.get("status") for r in rung_rows]
@@ -916,7 +955,13 @@ def classify_500s(calls):
 #: `test_log_coverage_still_re_exports_every_moved_name` must not ask the v1
 #: module to re-export them -- that test guards what MOVED.
 __added_after_split__ = frozenset(
-    {"NESTED_CHILD", "nested_table_resource_key", "drive_nested_namespace"}
+    {
+        "NESTED_CHILD",
+        "nested_table_resource_key",
+        "drive_nested_namespace",
+        #: 2026-09-21, with the tagging of a rung's prepare and cleanup.
+        "tag_around",
+    }
 )
 
 #: The child level phase J creates under the fixture namespace.

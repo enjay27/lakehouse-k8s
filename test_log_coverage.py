@@ -1151,8 +1151,61 @@ def test_drive_500_stops_at_the_first_rung_that_actually_fires():
     #: behind to clean up, and cleanup on a rung that did run always happens
     assert (rungs[2].prepared, rungs[2].cleaned) == (0, 0)
     assert rungs[1].cleaned == 1
-    assert out["seq"] == 13
+    #: 10 + 2 prepares + 3 driven calls + 2 cleanups. The prepares and cleanups
+    #: take a sequence number of their own now (2026-09-21) because they issue
+    #: real requests -- a rung's prepare creates a catalog and a namespace --
+    #: and traffic with no request id cannot be attributed to the run that made
+    #: it. It was 13 when those four calls went out untagged.
+    assert out["seq"] == 17
     assert len(lc.classify_500s(out["rows"])["deliberate"]) == 2
+
+
+class _HeaderSpy:
+    """A client that records the request id it was carrying at each call."""
+
+    def __init__(self):
+        self.extra_headers = {}
+        self.seen = []
+
+    def note(self, what):
+        self.seen.append((what, self.extra_headers.get("Polaris-Request-Id")))
+
+
+def test_a_rungs_prepare_and_cleanup_carry_a_request_id():
+    """They issue real requests -- a prepare creates a catalog and a namespace,
+    a cleanup deletes the catalog -- and traffic with no request id cannot be
+    attributed to the run that made it.
+
+    Run 1789950539 is the evidence: `POST /api/management/v1/catalogs` and the
+    400 on `DELETE /api/management/v1/catalogs/nb1789950539bh` both went out
+    with a Quarkus-generated id, so the catalog the ladder leaked could not be
+    tied to the ladder from the log alone.
+    """
+    spy = _HeaderSpy()
+    rung = _FakeProv("bh", [500])
+    rung.prepare = lambda: spy.note("prepare")
+    rung.cleanup = lambda: spy.note("cleanup")
+    out = lc.drive_500([spy], "9", 100, [rung], call=_fake_call([500]))
+    tagged = dict(spy.seen)
+    assert tagged["prepare"] and tagged["prepare"].startswith("nb-9-")
+    assert "bh-prepare" in tagged["prepare"]
+    assert tagged["cleanup"] and "bh-cleanup" in tagged["cleanup"]
+    assert (
+        spy.extra_headers.get("Polaris-Request-Id") is None
+    ), "the tag must be cleared"
+    assert out["winner"] == "bh"
+
+
+def test_a_500_from_a_cleanup_is_not_counted_as_a_deliberate_one():
+    """Tagging the prepare and the cleanup must not turn their accidents into
+    coverage. `classify_500` keys on DELIBERATE_500_PREFIX, and only the rung's
+    own calls carry it."""
+    spy = _HeaderSpy()
+    rung = _FakeProv("bh", [500])
+    rung.cleanup = lambda: spy.note("cleanup")
+    out = lc.drive_500([spy], "9", 200, [rung], call=_fake_call([500]))
+    assert len(lc.classify_500s(out["rows"])["deliberate"]) == 1
+    assert not any(".cleanup" in r["label"] for r in out["rows"])
 
 
 def test_drive_500_survives_a_rung_whose_setup_fails():
