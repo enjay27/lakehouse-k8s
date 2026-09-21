@@ -843,3 +843,19 @@ def test_one_view_payload_shape_for_the_fixture_and_the_sweep():
     assert p["name"] == "v"
     assert p["view-version"]["default-namespace"] == ["ns"]
     assert p["view-version"]["representations"][0]["type"] == "sql"
+
+
+def test_the_shared_role_has_one_name_and_the_teardown_can_ask_for_it():
+    """`authorize_on_fixture` creates a catalog role INSIDE the fixture
+    catalog, and Polaris refuses to delete a catalog that still holds one.
+    The name was a literal in one function and absent from the teardown's
+    list, which is the whole of `delete catalog apimatrix1789950539_cat 400`.
+    """
+    fx = surf.ProbeFixture(prefix="apimatrix1789950539")
+    assert surf.shared_role_name(fx) == "apimatrix1789950539_shared"
+
+    pc = FakeCatalogs()
+    out = surf.authorize_on_fixture(
+        fx, pc, "some_prole", privileges=["TABLE_READ_DATA"]
+    )
+    assert out["catalog_role"] == surf.shared_role_name(fx)

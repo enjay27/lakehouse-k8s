@@ -520,6 +520,57 @@ def principal_of(resp, registry, default=None):
 DELIBERATE_500_PREFIX = "probe.500."
 
 
+def drop_catalog_tree(adm_pc, ic, cat, ns=None):
+    """Empty a catalog, then delete it. Returns every status, never raises.
+
+    A LADDER RUNG'S CLEANUP IS NOT A FORMALITY. `provokers_500` promised that
+    "every rung creates its own catalog and deletes it in cleanup, so a rung
+    that fails leaves nothing behind", and it was not true: the cleanups
+    deleted the catalog while its namespace was still in it, Polaris answered
+    400 (a catalog must be empty), and the `except Exception: pass` around the
+    call swallowed a response that had never raised. Run 1789950539 left
+    `nb1789950539bh` on the cluster and the ladder reported nothing wrong.
+
+    Returns a dict of what each step answered, so a caller can SEE the leak.
+    """
+    out = {}
+
+    def _step(key, fn):
+        try:
+            r = fn()
+            out[key] = getattr(r, "status_code", r)
+        except Exception as exc:  # noqa: BLE001 - cleanup never fails the run
+            out[key] = f"{type(exc).__name__}: {exc}"
+        return out[key]
+
+    if ns is not None and ic is not None:
+        # Whatever the rung managed to create before it failed. A rung whose
+        # tables all 500'd has none; one that half-succeeded has some, and
+        # those are exactly the runs that leaked.
+        for kind, lister, dropper in (
+            ("view", getattr(ic, "list_views", None), getattr(ic, "drop_view", None)),
+            (
+                "table",
+                getattr(ic, "list_tables", None),
+                getattr(ic, "drop_table", None),
+            ),
+        ):
+            if lister is None or dropper is None:
+                continue
+            try:
+                r = lister(cat, ns)
+                ids = (r.json().get("identifiers") or []) if r.ok else []
+            except Exception:  # noqa: BLE001
+                ids = []
+            for ident in ids:
+                name = ident.get("name") if isinstance(ident, dict) else str(ident)
+                _step(f"drop {kind} {name}", lambda n=name, d=dropper: d(cat, ns, n))
+        _step(f"drop namespace {ns}", lambda: ic.drop_namespace(cat, ns))
+    _step(f"delete catalog {cat}", lambda: adm_pc.delete_catalog(cat, purge=False))
+    out["leaked"] = out.get(f"delete catalog {cat}") not in (200, 204, 404)
+    return out
+
+
 def tag_around(clients, run, seq, label, fn):
     """Run `fn` with every client carrying a request id, then clear it.
 
@@ -585,8 +636,13 @@ def provokers_500(
 ):
     """The ladder, cheapest and most likely first. Drive it with `drive_500`.
 
-    Every rung creates its own catalog and deletes it in `cleanup`, so a rung
-    that fails leaves nothing behind and the next one starts clean.
+    Every rung creates its own catalog and empties and deletes it in
+    `cleanup`, so a rung that fails leaves nothing behind and the next one
+    starts clean. That sentence was false until 2026-09-21 -- the cleanups
+    deleted a non-empty catalog, got 400, and swallowed it -- and
+    `drop_catalog_tree` is what makes it true. `ladder[i]["cleanup"]` carries
+    the statuses so a leak is visible rather than inferred from the cluster
+    later.
 
     Args:
         adm_pc: a `PolarisREST` that may create and delete catalogs.
@@ -640,7 +696,12 @@ def provokers_500(
             )
         # The namespace is metadata only and must SUCCEED -- it gives the
         # window a resource key that was read cleanly, so the 500s that follow
-        # can be shown to land in `__other__` instead of creating one.
+        # can be shown to land in the report's error bucket instead of
+        # creating one. THE BUCKET IS `__errors__`, not `__other__`: they are
+        # different fields and `resources_other` was 0 in run 1789950539 while
+        # `__errors__` held all three of this rung's 500s. Confirmed there --
+        # `/nb1789950539bh/namespaces` got a clean row with 1 write and 0
+        # errors, and `/namespaces/bh_ns/tables` got no row at all.
         state["bh_ns"] = ic.create_namespace(bh_cat, bh_ns).status_code
 
     def bh_calls():
@@ -663,10 +724,12 @@ def provokers_500(
         # delete the underlying files, which means talking to the storage
         # endpoint this rung just pointed at a dead port -- so a purge here
         # either hangs or provokes a second, untagged 500 during cleanup.
-        try:
-            adm_pc.delete_catalog(bh_cat, purge=False)
-        except Exception:  # noqa: BLE001 - cleanup never fails the run
-            pass
+        #
+        # THE NAMESPACE GOES FIRST. `bh_prepare` creates it and a catalog must
+        # be empty to be deleted, so deleting the catalog alone answered 400
+        # and `nb<run>bh` stayed on the cluster after every run.
+        state["bh_cleanup"] = drop_catalog_tree(adm_pc, ic, bh_cat, bh_ns)
+        return state["bh_cleanup"]
 
     # -- rung 2: an endpoint whose HOSTNAME does not resolve ----------------
     # Kade's case, and a more realistic mistake than rung 1: a typo in the
@@ -706,10 +769,8 @@ def provokers_500(
         ]
 
     def dns_cleanup():
-        try:
-            adm_pc.delete_catalog(dns_cat, purge=False)
-        except Exception:  # noqa: BLE001
-            pass
+        state["dns_cleanup"] = drop_catalog_tree(adm_pc, ic, dns_cat, dns_ns)
+        return state["dns_cleanup"]
 
     # -- rung 3: a bucket that is not there ---------------------------------
     nb_cat = f"nb{run}nobkt"
@@ -746,10 +807,8 @@ def provokers_500(
         ]
 
     def nb_cleanup():
-        try:
-            adm_pc.delete_catalog(nb_cat, purge=False)
-        except Exception:  # noqa: BLE001
-            pass
+        state["nb_cleanup"] = drop_catalog_tree(adm_pc, ic, nb_cat, nb_ns)
+        return state["nb_cleanup"]
 
     # -- rung 4: a stale entity version -------------------------------------
     # [assumed], and flagged as such: `PolarisREST.update_catalog`'s own
@@ -791,10 +850,9 @@ def provokers_500(
         ]
 
     def sv_cleanup():
-        try:
-            adm_pc.delete_catalog(sv_cat, purge=False)
-        except Exception:  # noqa: BLE001
-            pass
+        # This rung creates no namespace, so there is nothing to empty.
+        state["sv_cleanup"] = drop_catalog_tree(adm_pc, None, sv_cat)
+        return state["sv_cleanup"]
 
     return [
         Provoker(
@@ -853,7 +911,7 @@ def drive_500(clients, run, seq, provokers, principals=None, call=None, on_rung=
     call = call or call_once
     rows, ladder, winner = [], [], None
     for prov in provokers:
-        note, rung_rows = None, []
+        note, rung_rows, cleanup_out = None, [], None
         try:
             if prov.prepare is not None:
                 # TAGGED. A rung's prepare creates a catalog and a namespace
@@ -895,7 +953,7 @@ def drive_500(clients, run, seq, provokers, principals=None, call=None, on_rung=
                 if prov.cleanup is not None:
                     try:
                         seq += 1
-                        tag_around(
+                        cleanup_out = tag_around(
                             clients, run, seq, f"{prov.name}.cleanup", prov.cleanup
                         )
                     except Exception as exc:  # noqa: BLE001
@@ -909,6 +967,10 @@ def drive_500(clients, run, seq, provokers, principals=None, call=None, on_rung=
             "statuses": statuses,
             "provoked": len(provoked),
             "note": note,
+            #: What the cleanup answered, so a leaked catalog is reported by
+            #: the run that leaked it rather than found on the cluster weeks
+            #: later. `None` when the rung never ran.
+            "cleanup": cleanup_out,
         }
         ladder.append(entry)
         rows.extend(rung_rows)
@@ -959,8 +1021,10 @@ __added_after_split__ = frozenset(
         "NESTED_CHILD",
         "nested_table_resource_key",
         "drive_nested_namespace",
-        #: 2026-09-21, with the tagging of a rung's prepare and cleanup.
+        #: 2026-09-21, with the tagging of a rung's prepare and cleanup,
+        #: and with the cleanup that actually empties its catalog.
         "tag_around",
+        "drop_catalog_tree",
     }
 )
 

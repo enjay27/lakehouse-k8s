@@ -761,6 +761,21 @@ def setup_fixture(
     return result
 
 
+def shared_role_name(fx):
+    """The catalog role `authorize_on_fixture` creates INSIDE the fixture
+    catalog.
+
+    It is a function because it was a literal in one place and absent from the
+    teardown's list of names, and Polaris refuses to delete a catalog that
+    still holds a catalog role. Run 1789950539 ended with
+    `delete catalog apimatrix1789950539_cat 400` for exactly that reason --
+    `apimatrix1789950539_shared` was still there -- which is the leak the
+    teardown's own comment blames on a `createNamespace` 500 that "COMMITTED
+    anyway". It was this instead, and it is deterministic.
+    """
+    return f"{fx.prefix}_shared"
+
+
 def authorize_on_fixture(fx, adm_pc, principal_role, privileges=None, role_name=None):
     """Grant a principal-role rights ON the probe catalog. Admin only.
 
@@ -793,7 +808,7 @@ def authorize_on_fixture(fx, adm_pc, principal_role, privileges=None, role_name=
             privileges = list(CORE_CATALOG_PRIVILEGES)
         except Exception:  # noqa: BLE001
             privileges = ["CATALOG_MANAGE_CONTENT"]
-    role = role_name or f"{fx.prefix}_shared"
+    role = role_name or shared_role_name(fx)
 
     out = {"catalog_role": role, "granted": [], "failed": {}}
     r = adm_pc.create_catalog_role(fx.cat, role)

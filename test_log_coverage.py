@@ -26,6 +26,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "src"))
 
 import log_coverage as lc  # noqa: E402
+import traffic_helpers as th  # noqa: E402
 
 CAT = "/api/catalog/v1"
 MGMT = "/api/management/v1"
@@ -1799,3 +1800,83 @@ def test_a_kept_call_that_cannot_be_found_is_still_reported():
     split = lc.correlation_by_disposition([], calls, [{"verdict": lc.KEEP}])
     assert split[lc.KEPT]["missing"] == ["nb-9-001-a"]
     assert split[lc.KEPT]["recovered"] == 0
+
+
+# ----------------------------------------------------------------------
+# a rung that leaves a catalog behind must say so
+# ----------------------------------------------------------------------
+
+
+class _FakeCat:
+    """Deletes a catalog only when its namespace is gone, as Polaris does."""
+
+    def __init__(self):
+        self.has_ns = True
+        self.deleted = []
+
+    def delete_catalog(self, cat, purge=False):
+        if self.has_ns:
+            return _Resp(400, "cannot be dropped, not empty")
+        self.deleted.append(cat)
+        return _Resp(204)
+
+
+class _FakeTreeIc:
+    def __init__(self, cat):
+        self.cat = cat
+        self.tables = ["bh_tbl_0"]
+
+    def list_views(self, cat, ns):
+        return _Resp(200, payload={"identifiers": []})
+
+    def list_tables(self, cat, ns):
+        return _Resp(200, payload={"identifiers": [{"name": t} for t in self.tables]})
+
+    def drop_view(self, cat, ns, name):
+        return _Resp(204)
+
+    def drop_table(self, cat, ns, name):
+        self.tables.remove(name)
+        return _Resp(204)
+
+    def drop_namespace(self, cat, ns):
+        self.cat.has_ns = False
+        return _Resp(204)
+
+
+class _Resp:
+    def __init__(self, status, text="", payload=None):
+        self.status_code = status
+        self.text = text
+        self.ok = 200 <= status < 300
+        self._payload = payload or {}
+
+    def json(self):
+        return self._payload
+
+
+def test_a_rung_empties_its_catalog_before_deleting_it():
+    """`delete_catalog` on a catalog that still holds a namespace answers 400,
+    and the old cleanup wrapped that in `except Exception: pass` -- which never
+    fires, because a 400 is a response, not an exception. Run 1789950539 left
+    `nb1789950539bh` behind and the ladder reported nothing."""
+    pc = _FakeCat()
+    ic = _FakeTreeIc(pc)
+    out = th.drop_catalog_tree(pc, ic, "nb9bh", "bh_ns")
+    assert out["delete catalog nb9bh"] == 204
+    assert out["leaked"] is False
+    assert pc.deleted == ["nb9bh"]
+    assert out["drop table bh_tbl_0"] == 204
+    assert out["drop namespace bh_ns"] == 204
+
+
+def test_a_catalog_that_could_not_be_deleted_is_reported_as_leaked():
+    pc = _FakeCat()
+
+    class _Stuck(_FakeTreeIc):
+        def drop_namespace(self, cat, ns):
+            return _Resp(409, "not empty")
+
+    out = th.drop_catalog_tree(pc, _Stuck(pc), "nb9bh", "bh_ns")
+    assert out["leaked"] is True
+    assert out["delete catalog nb9bh"] == 400
