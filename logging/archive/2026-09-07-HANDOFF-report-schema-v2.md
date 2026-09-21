@@ -5,7 +5,7 @@ ConfigMap carries this script (sha256 `d58b9203a8304030`, confirmed by the noteb
 gate) and run `1788755035` measured it end to end — every margin exact, including the new
 fields' own. The harness has not caught up: `2026-09-07-HANDOFF-harness-schema-v2.md`. Results at the foot of
 this document; the decisions and their reasoning are in
-[`.memory/sessions/2026-09-07-report-schema-v2.md`](../.memory/sessions/2026-09-07-report-schema-v2.md).
+[`.memory/sessions/2026-09-07-report-schema-v2.md`](../../.memory/sessions/2026-09-07-report-schema-v2.md).
 Step 1 of the repo's plan-first protocol; step 2 is Kade's confirmation. Written 2026-09-07 to
 be read cold in a new session.
 

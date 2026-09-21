@@ -11,9 +11,9 @@
 **Written 2026-09-16 at `aaf7679`, for the next session (Kade + Claude).**
 Read §1 and §2 before touching the cluster. §4 is the remaining plan; §5 is what nobody has measured.
 
-Plan: [`PLAN-audit-log-todo-2026-09-16.md`](PLAN-audit-log-todo-2026-09-16.md) (Phase 2 onward) ·
-issue [`#28`](../.memory/active-issues.md) · session note
-[`2026-09-16-v5-404-policy-lua-configmap.md`](../.memory/sessions/2026-09-16-v5-404-policy-lua-configmap.md) ·
+Plan: [`PLAN-audit-log-todo-2026-09-16.md`](../PLAN-audit-log-todo-2026-09-16.md) (Phase 2 onward) ·
+issue [`#28`](../../.memory/active-issues.md) · session note
+[`2026-09-16-v5-404-policy-lua-configmap.md`](../../.memory/sessions/2026-09-16-v5-404-policy-lua-configmap.md) ·
 runbook [`2026-09-16-RUNBOOK-lua-hot-reload.md`](2026-09-16-RUNBOOK-lua-hot-reload.md).
 
 ---

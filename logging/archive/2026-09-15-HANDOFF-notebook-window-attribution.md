@@ -7,8 +7,8 @@ Read §1 and §3. §5 and §6 are two sentences the notebook prints that should 
 Basis: the notebook as uploaded 2026-09-15 (cells 2–8 executed, 10–44 unrun), run
 `1789370776`'s two output documents, and two OpenSearch exports of 2026-09-14 — the report index
 (`seq` 184..194) and the Polaris log index (343 access lines). Derivation:
-[`.memory/sessions/2026-09-14-window-skew-review.md`](../.memory/sessions/2026-09-14-window-skew-review.md),
-issue [`#26`](../.memory/active-issues.md).
+[`.memory/sessions/2026-09-14-window-skew-review.md`](../../.memory/sessions/2026-09-14-window-skew-review.md),
+issue [`#26`](../../.memory/active-issues.md).
 
 ---
 

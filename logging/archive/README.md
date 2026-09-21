@@ -18,7 +18,7 @@ Links elsewhere in the repo were updated to these paths, with two deliberate exc
 `.memory/sessions/` and the comment header of `fluent-bit/polaris_access_log.lua`. Session records describe
 the repo as it stood on their date and are not rewritten; the Lua is deployed configuration, and editing a
 comment in it changes the ConfigMap sha, which costs a pod restart and a reset of every Lua window counter.
-Their old paths resolve through this table.
+Their old paths resolve through this table. One markdown link is knowingly left broken by this: `.memory/sessions/2026-09-07-report-schema-v2.md` points at `../../logging/HANDOFF-report-schema-v2-2026-09-07.md`. It is the price of not editing a record of what happened on 2026-09-07.
 
 | old path | now | superseded by / why it is here |
 |---|---|---|

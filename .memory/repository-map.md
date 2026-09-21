@@ -10,7 +10,7 @@ and one directory per service. A service directory is either a **local chart**
 |---|---|---|
 | `minio/` | `benchmarks-minio` | Chart + templates written 2026-08-18. Creates `data-catalog-bucket`, `argo-artifacts`, `user-catalog-bucket` and the `benchmarks-minio-credentials` secret via `job-postinstall.yaml`. **Installed first — Polaris will not bootstrap without it.** |
 | `postgresql/` | `benchmarks-postgresql` | **Umbrella chart**: `Chart.yaml` declares Bitnami `postgresql-ha` 16.3.2 as a dependency (vendored at `charts/postgresql-ha-16.3.2.tgz`). Everything intended for the subchart **must** be nested under `postgresql-ha:` — see `active-issues.md` #F1. Also holds `schema/` (Polaris DDL) and `secret/`. |
-| `polaris/` | `benchmarks-polaris` | Apache Polaris v1.3.0-incubating. `values-old.yaml` is a superseded copy kept for diffing, not for installing. |
+| `polaris/` | `benchmarks-polaris` | Apache Polaris **1.6.0** (deployed 2026-09-18; this line said v1.3.0-incubating until 2026-09-21). `values-old.yaml` is a superseded copy kept for diffing, not for installing. |
 
 ## Values-only — upstream chart, local values
 

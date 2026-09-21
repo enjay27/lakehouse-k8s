@@ -4,8 +4,8 @@
 approval before any edit. All three touch `fluent-bit/values.yaml` and the same release, so they
 are presented together — but they are **separately approvable and should be separately committed**.
 
-Evidence for all three: [`sessions/2026-09-09-stdout-not-equivalent`](../.memory/sessions/2026-09-09-stdout-not-equivalent.md),
-issues [#16-#19](../.memory/active-issues.md).
+Evidence for all three: [`sessions/2026-09-09-stdout-not-equivalent`](../../.memory/sessions/2026-09-09-stdout-not-equivalent.md),
+issues [#16-#19](../../.memory/active-issues.md).
 
 ---
 

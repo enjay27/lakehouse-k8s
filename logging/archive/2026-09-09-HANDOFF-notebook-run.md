@@ -22,7 +22,7 @@ shipper's. `k8s-logs` kept flowing at ~23k docs/10m, so node-wide collection sur
 **`fb-polaris-shipper` was not touched and is still installed.** That is deliberate and it is the
 whole point of this handoff.
 
-Design and gates: [`PLAN-opensearch-cutover`](PLAN-opensearch-cutover-2026-09-08.md), §4.2 for
+Design and gates: [`PLAN-opensearch-cutover`](../PLAN-opensearch-cutover-2026-09-08.md), §4.2 for
 this run specifically.
 
 ---
