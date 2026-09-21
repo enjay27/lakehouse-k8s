@@ -336,7 +336,7 @@ def elect_drive_identity(
     return "root", adm_pc, adm_ic, "root", notes
 
 
-def deprovision_run_principal(adm_pc, name, prole, run=None, seq=9900):
+def deprovision_run_principal(adm_pc, name, prole, run=None, seq=9900, tag=None):
     """Best-effort cleanup. Returns a list of what failed, never raises.
 
     The cleanup DELETEs are themselves part of the test, so they run inside the
@@ -348,20 +348,22 @@ def deprovision_run_principal(adm_pc, name, prole, run=None, seq=9900):
     test.
     """
     problems = []
-    if run is not None:
-        tag_clients([adm_pc], request_id(run, seq, "teardown-deprovision"))
+    #: ONE ID PER DELETE. This made two calls under one id until 2026-09-21,
+    #: which is two of the three places run `1789955605`'s issued count could
+    #: not close against `access_seen`.
+    if tag is None and run is not None:
+        tag = Tagger([adm_pc], run, start=seq, prefix="teardown-deprovision-")
+    _tag = tag or (lambda label, fn: fn())
     for call, what in (
         (lambda: adm_pc.delete_principal(name), f"delete_principal {name}"),
         (lambda: adm_pc.delete_principal_role(prole), f"delete_principal_role {prole}"),
     ):
         try:
-            r = call()
+            r = _tag(what.split()[0].replace("_", "-"), call)
             if r.status_code not in (200, 204, 404):
                 problems.append(f"{what} -> [{r.status_code}]")
         except Exception as exc:  # noqa: BLE001
             problems.append(f"{what} -> {type(exc).__name__}: {exc}")
-    if run is not None:
-        tag_clients([adm_pc], None)
     return problems
 
 
@@ -520,7 +522,7 @@ def principal_of(resp, registry, default=None):
 DELIBERATE_500_PREFIX = "probe.500."
 
 
-def drop_catalog_tree(adm_pc, ic, cat, ns=None):
+def drop_catalog_tree(adm_pc, ic, cat, ns=None, tag=None):
     """Empty a catalog, then delete it. Returns every status, never raises.
 
     A LADDER RUNG'S CLEANUP IS NOT A FORMALITY. `provokers_500` promised that
@@ -534,10 +536,13 @@ def drop_catalog_tree(adm_pc, ic, cat, ns=None):
     Returns a dict of what each step answered, so a caller can SEE the leak.
     """
     out = {}
+    #: `tag("label", fn)` when the caller wants one id per call; otherwise the
+    #: calls go out under whatever id the caller already set.
+    tag = tag or (lambda label, fn: fn())
 
     def _step(key, fn):
         try:
-            r = fn()
+            r = tag(key.replace(" ", "-"), fn)
             out[key] = getattr(r, "status_code", r)
         except Exception as exc:  # noqa: BLE001 - cleanup never fails the run
             out[key] = f"{type(exc).__name__}: {exc}"
@@ -558,7 +563,7 @@ def drop_catalog_tree(adm_pc, ic, cat, ns=None):
             if lister is None or dropper is None:
                 continue
             try:
-                r = lister(cat, ns)
+                r = tag(f"list-{kind}s", lambda l=lister: l(cat, ns))
                 ids = (r.json().get("identifiers") or []) if r.ok else []
             except Exception:  # noqa: BLE001
                 ids = []
@@ -571,18 +576,70 @@ def drop_catalog_tree(adm_pc, ic, cat, ns=None):
     return out
 
 
-def tag_around(clients, run, seq, label, fn):
-    """Run `fn` with every client carrying a request id, then clear it.
+def current_tag(clients, header="Polaris-Request-Id"):
+    """The request id the clients are carrying, or None."""
+    for client in clients_of(clients):
+        return (getattr(client, "extra_headers", {}) or {}).get(header)
+    return None
 
-    For work that is not one call -- a rung's prepare makes two, a teardown
-    makes twenty -- where the point is only that the traffic is findable.
+
+def tag_around(clients, run, seq, label, fn):
+    """Run `fn` with every client carrying a request id, then RESTORE the one
+    they had.
+
+    Restore rather than clear, so this nests: a rung's cleanup tagged as a
+    group can contain calls that tag themselves, and the calls after them still
+    carry the group's id instead of going out bare.
     """
     rid = request_id(run, seq, label)
+    previous = current_tag(clients)
     tag_clients(clients, rid)
     try:
         return fn()
     finally:
-        tag_clients(clients, None)
+        tag_clients(clients, previous)
+
+
+class Tagger:
+    """Gives every CALL its own request id, and remembers them in order.
+
+    ONE ID PER CALL, NOT PER GROUP, and the difference is measurable. The run
+    record's `ISSUED` is a set of request ids to be found in the window, which
+    is only an equality while each id stands for one access line. Run
+    `1789955605` had exactly three ids carrying two calls each -- the black
+    hole rung's cleanup, and both `teardown-deprovision`s -- so the notebook
+    could claim "at least 345" against 354 seen and nothing could close the
+    gap. A helper that makes four calls under one id turns a check into an
+    estimate.
+
+    `tagger("drop-namespace", lambda: ic.drop_namespace(cat, ns))` returns
+    whatever `fn` returns and appends the id to `tagger.ids`.
+    """
+
+    def __init__(self, clients, run, start=9000, prefix=""):
+        self.clients = list(clients_of(clients))
+        self.run = run
+        self.prefix = prefix
+        self._next = start
+        self.ids = []
+
+    def next_id(self, label):
+        #: A plain counter rather than `itertools.count`: `log_coverage` must
+        #: re-export every public name this module has, and an imported module
+        #: is a public name.
+        rid = request_id(self.run, self._next, f"{self.prefix}{label}")
+        self._next += 1
+        self.ids.append(rid)
+        return rid
+
+    def __call__(self, label, fn):
+        rid = self.next_id(label)
+        previous = current_tag(self.clients)
+        tag_clients(self.clients, rid)
+        try:
+            return fn()
+        finally:
+            tag_clients(self.clients, previous)
 
 
 #: The PG-HA read-after-write signature. A 500 on one of these is a write that
@@ -603,7 +660,9 @@ class Provoker:
     a rung this notebook can own.
     """
 
-    def __init__(self, name, why, calls, prepare=None, cleanup=None, assumed=False):
+    def __init__(
+        self, name, why, calls, prepare=None, cleanup=None, assumed=False, tagged=False
+    ):
         self.name = name
         self.why = why
         self._calls = calls
@@ -612,6 +671,11 @@ class Provoker:
         #: True where the rung has never been observed to return 500 on this
         #: build. The ladder is ordered, not proven.
         self.assumed = assumed
+        #: True when `prepare`/`cleanup` tag each of their own calls. `drive_500`
+        #: then does NOT wrap them in one id of its own -- an id that stands for
+        #: no access line is a false positive in the run's ISSUED check, which
+        #: is the same failure as an untagged call, pointing the other way.
+        self.tagged = tagged
 
     def calls(self):
         return list(self._calls())
@@ -633,6 +697,7 @@ def provokers_500(
     unresolvable="http://nb-no-such-minio.datahub-hynix.svc.invalid:9000",
     bad_bucket=None,
     repeat=3,
+    tag=None,
 ):
     """The ladder, cheapest and most likely first. Drive it with `drive_500`.
 
@@ -675,6 +740,11 @@ def provokers_500(
         )
 
     state = {}
+    #: `tag("label", fn) -> result`, one request id per call. Without it the
+    #: rung's fixture calls go out under whatever id `drive_500` set for the
+    #: whole prepare or cleanup, which is two-to-four calls under one id.
+    _tag = tag or (lambda label, fn: fn())
+    _tagged = tag is not None
 
     # -- rung 1: the storage endpoint Polaris itself cannot reach ------------
     # This is `error-cases/09`'s intent, repaired. 09 broke because it left
@@ -686,8 +756,11 @@ def provokers_500(
     bh_ns = "bh_ns"
 
     def bh_prepare():
-        r = adm_pc.create_catalog(
-            bh_cat, bucket, unreachable, minio_endpoint_internal=unreachable
+        r = _tag(
+            f"{bh_cat}-create-catalog",
+            lambda: adm_pc.create_catalog(
+                bh_cat, bucket, unreachable, minio_endpoint_internal=unreachable
+            ),
         )
         state["bh_catalog"] = r.status_code
         if r.status_code not in (200, 201):
@@ -702,7 +775,9 @@ def provokers_500(
         # `__errors__` held all three of this rung's 500s. Confirmed there --
         # `/nb1789950539bh/namespaces` got a clean row with 1 write and 0
         # errors, and `/namespaces/bh_ns/tables` got no row at all.
-        state["bh_ns"] = ic.create_namespace(bh_cat, bh_ns).status_code
+        state["bh_ns"] = _tag(
+            f"{bh_cat}-create-namespace", lambda: ic.create_namespace(bh_cat, bh_ns)
+        ).status_code
 
     def bh_calls():
         return [
@@ -728,7 +803,7 @@ def provokers_500(
         # THE NAMESPACE GOES FIRST. `bh_prepare` creates it and a catalog must
         # be empty to be deleted, so deleting the catalog alone answered 400
         # and `nb<run>bh` stayed on the cluster after every run.
-        state["bh_cleanup"] = drop_catalog_tree(adm_pc, ic, bh_cat, bh_ns)
+        state["bh_cleanup"] = drop_catalog_tree(adm_pc, ic, bh_cat, bh_ns, tag=_tag)
         return state["bh_cleanup"]
 
     # -- rung 2: an endpoint whose HOSTNAME does not resolve ----------------
@@ -743,15 +818,20 @@ def provokers_500(
     dns_ns = "dns_ns"
 
     def dns_prepare():
-        r = adm_pc.create_catalog(
-            dns_cat, bucket, unresolvable, minio_endpoint_internal=unresolvable
+        r = _tag(
+            f"{dns_cat}-create-catalog",
+            lambda: adm_pc.create_catalog(
+                dns_cat, bucket, unresolvable, minio_endpoint_internal=unresolvable
+            ),
         )
         state["dns_catalog"] = r.status_code
         if r.status_code not in (200, 201):
             raise RuntimeError(
                 f"catalog create returned {r.status_code}: {r.text[:200]}"
             )
-        state["dns_ns"] = ic.create_namespace(dns_cat, dns_ns).status_code
+        state["dns_ns"] = _tag(
+            f"{dns_cat}-create-namespace", lambda: ic.create_namespace(dns_cat, dns_ns)
+        ).status_code
 
     def dns_calls():
         return [
@@ -769,7 +849,7 @@ def provokers_500(
         ]
 
     def dns_cleanup():
-        state["dns_cleanup"] = drop_catalog_tree(adm_pc, ic, dns_cat, dns_ns)
+        state["dns_cleanup"] = drop_catalog_tree(adm_pc, ic, dns_cat, dns_ns, tag=_tag)
         return state["dns_cleanup"]
 
     # -- rung 3: a bucket that is not there ---------------------------------
@@ -778,18 +858,23 @@ def provokers_500(
     missing_bucket = bad_bucket or f"nb-{run}-no-such-bucket"
 
     def nb_prepare():
-        r = adm_pc.create_catalog(
-            nb_cat,
-            missing_bucket,
-            endpoint,
-            minio_endpoint_internal=endpoint_internal or endpoint,
+        r = _tag(
+            f"{nb_cat}-create-catalog",
+            lambda: adm_pc.create_catalog(
+                nb_cat,
+                missing_bucket,
+                endpoint,
+                minio_endpoint_internal=endpoint_internal or endpoint,
+            ),
         )
         state["nb_catalog"] = r.status_code
         if r.status_code not in (200, 201):
             raise RuntimeError(
                 f"catalog create returned {r.status_code}: {r.text[:200]}"
             )
-        state["nb_ns"] = ic.create_namespace(nb_cat, nb_ns).status_code
+        state["nb_ns"] = _tag(
+            f"{nb_cat}-create-namespace", lambda: ic.create_namespace(nb_cat, nb_ns)
+        ).status_code
 
     def nb_calls():
         return [
@@ -807,7 +892,7 @@ def provokers_500(
         ]
 
     def nb_cleanup():
-        state["nb_cleanup"] = drop_catalog_tree(adm_pc, ic, nb_cat, nb_ns)
+        state["nb_cleanup"] = drop_catalog_tree(adm_pc, ic, nb_cat, nb_ns, tag=_tag)
         return state["nb_cleanup"]
 
     # -- rung 4: a stale entity version -------------------------------------
@@ -818,17 +903,20 @@ def provokers_500(
     sv_cat = f"nb{run}stale"
 
     def sv_prepare():
-        r = adm_pc.create_catalog(
-            sv_cat,
-            bucket,
-            endpoint,
-            minio_endpoint_internal=endpoint_internal or endpoint,
+        r = _tag(
+            f"{sv_cat}-create-catalog",
+            lambda: adm_pc.create_catalog(
+                sv_cat,
+                bucket,
+                endpoint,
+                minio_endpoint_internal=endpoint_internal or endpoint,
+            ),
         )
         if r.status_code not in (200, 201):
             raise RuntimeError(
                 f"catalog create returned {r.status_code}: {r.text[:200]}"
             )
-        cat = adm_pc.get_catalog(sv_cat).json()
+        cat = _tag(f"{sv_cat}-get-catalog", lambda: adm_pc.get_catalog(sv_cat)).json()
         state["sv_props"] = dict(cat.get("properties") or {})
         state["sv_version"] = _as_int(cat.get("entityVersion"), 1)
 
@@ -851,7 +939,7 @@ def provokers_500(
 
     def sv_cleanup():
         # This rung creates no namespace, so there is nothing to empty.
-        state["sv_cleanup"] = drop_catalog_tree(adm_pc, None, sv_cat)
+        state["sv_cleanup"] = drop_catalog_tree(adm_pc, None, sv_cat, tag=_tag)
         return state["sv_cleanup"]
 
     return [
@@ -863,6 +951,7 @@ def provokers_500(
             prepare=bh_prepare,
             cleanup=bh_cleanup,
             assumed=True,
+            tagged=_tagged,
         ),
         Provoker(
             "unresolvable_host",
@@ -873,6 +962,7 @@ def provokers_500(
             prepare=dns_prepare,
             cleanup=dns_cleanup,
             assumed=True,
+            tagged=_tagged,
         ),
         Provoker(
             "nonexistent_bucket",
@@ -882,6 +972,7 @@ def provokers_500(
             prepare=nb_prepare,
             cleanup=nb_cleanup,
             assumed=True,
+            tagged=_tagged,
         ),
         Provoker(
             "stale_entity_version",
@@ -891,6 +982,7 @@ def provokers_500(
             prepare=sv_prepare,
             cleanup=sv_cleanup,
             assumed=True,
+            tagged=_tagged,
         ),
     ]
 
@@ -926,8 +1018,11 @@ def drive_500(clients, run, seq, provokers, principals=None, call=None, on_rung=
                 # NOT under DELIBERATE_500_PREFIX: a 500 out of a prepare or a
                 # cleanup is an accident of the rung, not a 500 the ladder
                 # drove on purpose, and `classify_500` must keep saying so.
-                seq += 1
-                tag_around(clients, run, seq, f"{prov.name}.prepare", prov.prepare)
+                if getattr(prov, "tagged", False):
+                    prov.prepare()
+                else:
+                    seq += 1
+                    tag_around(clients, run, seq, f"{prov.name}.prepare", prov.prepare)
             prepared = True
         except Exception as exc:  # noqa: BLE001
             prepared, note = False, f"setup: {type(exc).__name__}: {exc}"
@@ -952,10 +1047,13 @@ def drive_500(clients, run, seq, provokers, principals=None, call=None, on_rung=
             finally:
                 if prov.cleanup is not None:
                     try:
-                        seq += 1
-                        cleanup_out = tag_around(
-                            clients, run, seq, f"{prov.name}.cleanup", prov.cleanup
-                        )
+                        if getattr(prov, "tagged", False):
+                            cleanup_out = prov.cleanup()
+                        else:
+                            seq += 1
+                            cleanup_out = tag_around(
+                                clients, run, seq, f"{prov.name}.cleanup", prov.cleanup
+                            )
                     except Exception as exc:  # noqa: BLE001
                         note = f"{note + ' | ' if note else ''}cleanup: {type(exc).__name__}"
         statuses = [r.get("status") for r in rung_rows]
@@ -1025,6 +1123,8 @@ __added_after_split__ = frozenset(
         #: and with the cleanup that actually empties its catalog.
         "tag_around",
         "drop_catalog_tree",
+        "Tagger",
+        "current_tag",
     }
 )
 

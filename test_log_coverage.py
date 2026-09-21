@@ -1880,3 +1880,73 @@ def test_a_catalog_that_could_not_be_deleted_is_reported_as_leaked():
     out = th.drop_catalog_tree(pc, _Stuck(pc), "nb9bh", "bh_ns")
     assert out["leaked"] is True
     assert out["delete catalog nb9bh"] == 400
+
+
+# ----------------------------------------------------------------------
+# one id per call
+# ----------------------------------------------------------------------
+
+
+def test_the_tagger_gives_every_call_its_own_id_and_remembers_them():
+    """A group id is only as good as the assumption that a group is one call.
+    Run 1789955605 had three ids carrying two calls each, so the run's ISSUED
+    count was a floor (`at least 345`) against 354 access lines."""
+    spy = _HeaderSpy()
+    tag = th.Tagger([spy], "9", start=100, prefix="teardown-")
+    tag("drop-view", lambda: spy.note("a"))
+    tag("drop-table", lambda: spy.note("b"))
+    seen = dict(spy.seen)
+    assert seen["a"] == "nb-9-100-teardown-drop-view"
+    assert seen["b"] == "nb-9-101-teardown-drop-table"
+    assert tag.ids == ["nb-9-100-teardown-drop-view", "nb-9-101-teardown-drop-table"]
+    assert len(set(tag.ids)) == 2
+
+
+def test_tagging_restores_the_id_it_found_rather_than_clearing_it():
+    """So a group tag can contain calls that tag themselves, and the calls
+    after them still carry the group's id instead of going out bare."""
+    spy = _HeaderSpy()
+    inner = th.Tagger([spy], "9", start=200)
+
+    def body():
+        spy.note("before-inner")
+        inner("inner", lambda: spy.note("inner"))
+        spy.note("after-inner")
+
+    th.tag_around([spy], "9", 7, "group", body)
+    seen = dict(spy.seen)
+    assert seen["before-inner"] == seen["after-inner"] == "nb-9-007-group"
+    assert seen["inner"] == "nb-9-200-inner"
+    assert th.current_tag([spy]) is None
+
+
+def test_deprovision_tags_each_delete_separately():
+    spy = _HeaderSpy()
+
+    class _Pc:
+        def delete_principal(self, n):
+            spy.note("principal")
+            return _Resp(204)
+
+        def delete_principal_role(self, n):
+            spy.note("role")
+            return _Resp(204)
+
+    tag = th.Tagger([spy], "9", start=300, prefix="teardown-")
+    assert th.deprovision_run_principal(_Pc(), "p", "r", tag=tag) == []
+    ids = [rid for _, rid in spy.seen]
+    assert len(set(ids)) == 2, "two DELETEs shared one id"
+    assert tag.ids == ids
+
+
+def test_a_rung_that_tags_itself_is_not_wrapped_again():
+    """An id that stands for no access line is a false positive in the ISSUED
+    check -- the same failure as an untagged call, pointing the other way."""
+    spy = _HeaderSpy()
+    rung = _FakeProv("bh", [500])
+    rung.tagged = True
+    rung.prepare = lambda: spy.note("prepare")
+    rung.cleanup = lambda: spy.note("cleanup")
+    out = lc.drive_500([spy], "9", 400, [rung], call=_fake_call([500]))
+    assert dict(spy.seen) == {"prepare": None, "cleanup": None}
+    assert out["seq"] == 401, "only the driven call took a sequence number"

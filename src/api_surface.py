@@ -831,7 +831,7 @@ def authorize_on_fixture(fx, adm_pc, principal_role, privileges=None, role_name=
 BUILTIN_CATALOG_ROLE = "catalog_admin"
 
 
-def walk_namespaces(catalog, adm_ic, max_depth=8):
+def walk_namespaces(catalog, adm_ic, max_depth=8, tag=None):
     """Every namespace in a catalog, DEEPEST FIRST, as full level tuples.
 
     `GET /namespaces` returns only the TOP level; children come from the same
@@ -845,6 +845,7 @@ def walk_namespaces(catalog, adm_ic, max_depth=8):
     cannot be dropped while it holds children.
 
     Args:
+        tag: optional `(label, fn) -> result` wrapper, one call at a time.
         max_depth: recursion bound. Polaris does not limit namespace nesting,
             and a cycle here would be a server bug rather than a fixture, but
             an unbounded walk in a teardown is not worth the risk.
@@ -853,11 +854,20 @@ def walk_namespaces(catalog, adm_ic, max_depth=8):
         list[tuple[str, ...]] -- deepest first, then arbitrary.
     """
     found = []
+    #: `tag("label", fn)` when the caller wants one request id per call. The
+    #: walk issues one list per level, and a teardown that reports its ids
+    #: cannot report a number it did not count.
+    _tag = tag or (lambda label, fn: fn())
 
     def descend(parent, depth):
         if depth > max_depth:
             return
-        r = adm_ic.list_namespaces(catalog, parent=list(parent) if parent else None)
+        r = _tag(
+            f"list-namespaces-depth-{depth}",
+            lambda: adm_ic.list_namespaces(
+                catalog, parent=list(parent) if parent else None
+            ),
+        )
         if r.status_code >= 300:
             return
         for ns in r.json().get("namespaces", []):
