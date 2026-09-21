@@ -1,0 +1,1048 @@
+{
+  "run_id": "20260822-044103",
+  "volumes": [
+    0,
+    100
+  ],
+  "index_states": [
+    false,
+    true
+  ],
+  "k": 15,
+  "warmup": 2,
+  "fixture": {
+    "catalog": "user1_catalog",
+    "namespace": "ns1",
+    "principal": "user1_principal",
+    "principal_role": "user1_principal_role",
+    "catalog_role": "owner_principal"
+  },
+  "decoy": "user2_catalog",
+  "pinned_parallelism": false,
+  "cells": [
+    {
+      "clones": 0,
+      "index": false,
+      "volume": {
+        "clones": 0,
+        "removed": {
+          "entities": 0,
+          "grants": 0
+        },
+        "inserted": {
+          "entities": 0,
+          "grants": 0
+        },
+        "rows": {
+          "entities": 20,
+          "grant_records": 64
+        },
+        "replication": {
+          "standbys": 2,
+          "seconds": 0.0037391185760498047,
+          "lag": [
+            {
+              "standby": "benchmarks-postgresql-postgresql-ha-postgresql-2",
+              "state": null,
+              "behind_bytes": 0
+            },
+            {
+              "standby": "benchmarks-postgresql-postgresql-ha-postgresql-0",
+              "state": null,
+              "behind_bytes": 0
+            }
+          ]
+        }
+      },
+      "index_state": {
+        "seconds": 0.0004830360412597656,
+        "state": {
+          "present": false,
+          "valid": false,
+          "ready": false
+        }
+      },
+      "restart": {
+        "seconds": 32.56485080718994,
+        "restart": "deployment.apps/benchmarks-polaris restarted",
+        "status": "Waiting for deployment \"benchmarks-polaris\" rollout to finish: 0 out of 1 new replicas have been updated...\nWaiting for deployment \"benchmarks-polaris\" rollout to finish: 1 old replicas are pending termination...\nWaiting for deployment \"benchmarks-polaris\" rollout to finish: 1 old replicas are pending termination...\ndeployment \"benchmarks-polaris\" successfully rolled out",
+        "serving": {
+          "seconds": 9.412739992141724,
+          "attempts": true
+        }
+      },
+      "cold": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 14.932541991584003,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 59.529667007154785,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 12.850875005824491,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 15.186750009888783,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 13.410750005277805,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 14.829834006377496,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 51.35595799947623,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 17.523875008919276,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 76.62112500111107,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 43.39875000005122,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 70.71254200127441,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 14.819083997281268,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 13.811416996759363,
+          "n": 1,
+          "cold": true
+        }
+      },
+      "warm": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 11.184165996382944,
+          "min": 8.240334005677141,
+          "max": 39.431625002180226,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 7.975707994773984,
+          "min": 6.790041996282525,
+          "max": 10.158708013477735,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 7.960542003274895,
+          "min": 6.797291993279941,
+          "max": 11.617290991125628,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 7.577833006507717,
+          "min": 6.783625009120442,
+          "max": 12.831583007937297,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 8.599958004197106,
+          "min": 7.415041007334366,
+          "max": 12.331207995885052,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 8.635999998659827,
+          "min": 6.330999996862374,
+          "max": 21.94408400100656,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 6.750959000783041,
+          "min": 6.028499992680736,
+          "max": 9.101040996029042,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 8.10929101135116,
+          "min": 6.669541995506734,
+          "max": 33.94545799528714,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 8.211583000957035,
+          "min": 7.2469159931642935,
+          "max": 9.686332996352576,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 7.544791995314881,
+          "min": 6.492166998214088,
+          "max": 24.717666005017236,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 7.284292005351745,
+          "min": 6.4990000100806355,
+          "max": 10.341791989048943,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 8.271500002592802,
+          "min": 6.371083989506587,
+          "max": 13.284457992995158,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 8.875707993865944,
+          "min": 6.608374998904765,
+          "max": 12.179915996966884,
+          "n": 15,
+          "cold": false
+        },
+        "POST /oauth/tokens": {
+          "surface": "auth",
+          "ms": 6.8760830035898834,
+          "min": 6.161541008623317,
+          "max": 9.143417002633214,
+          "n": 15,
+          "cold": false
+        }
+      },
+      "scan": {
+        "label": "fattest (103 rows)",
+        "plan": "Index Only Scan",
+        "cost": 12.03,
+        "buffers": 9,
+        "rows_filtered": null,
+        "parallel": false,
+        "probe_is_clone": false,
+        "probe_rows": 103
+      }
+    },
+    {
+      "clones": 0,
+      "index": true,
+      "volume": {
+        "clones": 0,
+        "removed": {
+          "entities": 0,
+          "grants": 0
+        },
+        "inserted": {
+          "entities": 0,
+          "grants": 0
+        },
+        "rows": {
+          "entities": 20,
+          "grant_records": 64
+        },
+        "replication": {
+          "standbys": 2,
+          "seconds": 0.0037391185760498047,
+          "lag": [
+            {
+              "standby": "benchmarks-postgresql-postgresql-ha-postgresql-2",
+              "state": null,
+              "behind_bytes": 0
+            },
+            {
+              "standby": "benchmarks-postgresql-postgresql-ha-postgresql-0",
+              "state": null,
+              "behind_bytes": 0
+            }
+          ]
+        }
+      },
+      "index_state": {
+        "seconds": 0.010045051574707031,
+        "state": {
+          "present": true,
+          "valid": true,
+          "ready": true
+        }
+      },
+      "restart": {
+        "seconds": 33.80144691467285,
+        "restart": "deployment.apps/benchmarks-polaris restarted",
+        "status": "Waiting for deployment \"benchmarks-polaris\" rollout to finish: 0 out of 1 new replicas have been updated...\nWaiting for deployment \"benchmarks-polaris\" rollout to finish: 1 old replicas are pending termination...\nWaiting for deployment \"benchmarks-polaris\" rollout to finish: 1 old replicas are pending termination...\ndeployment \"benchmarks-polaris\" successfully rolled out",
+        "serving": {
+          "seconds": 2.3476650714874268,
+          "attempts": true
+        }
+      },
+      "cold": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 16.917665998334996,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 12.142166000558063,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 33.694958008709364,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 12.170041009085253,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 26.576500007649884,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 13.980625008116476,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 11.751957994420081,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 12.566499994136393,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 65.5040419951547,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 98.53004199976567,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 26.726625001174398,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 70.72837499435991,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 12.070958007825539,
+          "n": 1,
+          "cold": true
+        }
+      },
+      "warm": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 10.407459005364217,
+          "min": 7.285791987669654,
+          "max": 60.866833009640686,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 7.70633399952203,
+          "min": 7.091833991580643,
+          "max": 11.181041991221718,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 8.46912499400787,
+          "min": 6.827333010733128,
+          "max": 27.425833002780564,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 7.1991669974522665,
+          "min": 6.464791993494146,
+          "max": 21.686791005777195,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 8.191792003344744,
+          "min": 7.082458003424108,
+          "max": 10.956500002066605,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 8.277082990389317,
+          "min": 6.820958995376714,
+          "max": 25.422999999136664,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 7.166290990426205,
+          "min": 6.151041001430713,
+          "max": 8.36745799460914,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 7.837583005311899,
+          "min": 6.391125003574416,
+          "max": 15.222625006572343,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 9.321417004684918,
+          "min": 7.415833999402821,
+          "max": 12.671542004682124,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 7.706624994170852,
+          "min": 6.253541010664776,
+          "max": 12.792167006409727,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 7.128665994969197,
+          "min": 6.2352499953703955,
+          "max": 44.391917006578296,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 7.632916996954009,
+          "min": 6.619124993449077,
+          "max": 10.042665991932154,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 7.806125009665266,
+          "min": 6.530541999381967,
+          "max": 16.381459005060606,
+          "n": 15,
+          "cold": false
+        },
+        "POST /oauth/tokens": {
+          "surface": "auth",
+          "ms": 6.73791699227877,
+          "min": 6.017916995915584,
+          "max": 7.690416998229921,
+          "n": 15,
+          "cold": false
+        }
+      },
+      "scan": {
+        "label": "fattest (103 rows)",
+        "plan": "Index Only Scan",
+        "cost": 12.03,
+        "buffers": 9,
+        "rows_filtered": null,
+        "parallel": false,
+        "probe_is_clone": false,
+        "probe_rows": 103
+      }
+    },
+    {
+      "clones": 100,
+      "index": false,
+      "volume": {
+        "clones": 100,
+        "removed": {
+          "entities": 0,
+          "grants": 0
+        },
+        "inserted": {
+          "entities": 700,
+          "grants": 3000
+        },
+        "rows": {
+          "entities": 720,
+          "grant_records": 3064
+        },
+        "replication": {
+          "standbys": 2,
+          "seconds": 0.0005881786346435547,
+          "lag": [
+            {
+              "standby": "benchmarks-postgresql-postgresql-ha-postgresql-2",
+              "state": null,
+              "behind_bytes": 0
+            },
+            {
+              "standby": "benchmarks-postgresql-postgresql-ha-postgresql-0",
+              "state": null,
+              "behind_bytes": 0
+            }
+          ]
+        }
+      },
+      "index_state": {
+        "seconds": 0.0050201416015625,
+        "state": {
+          "present": false,
+          "valid": false,
+          "ready": false
+        }
+      },
+      "restart": {
+        "seconds": 32.614880084991455,
+        "restart": "deployment.apps/benchmarks-polaris restarted",
+        "status": "Waiting for deployment \"benchmarks-polaris\" rollout to finish: 0 out of 1 new replicas have been updated...\nWaiting for deployment \"benchmarks-polaris\" rollout to finish: 1 old replicas are pending termination...\nWaiting for deployment \"benchmarks-polaris\" rollout to finish: 1 old replicas are pending termination...\ndeployment \"benchmarks-polaris\" successfully rolled out",
+        "serving": {
+          "seconds": 9.346031665802002,
+          "attempts": true
+        }
+      },
+      "cold": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 16.97062500170432,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 12.498541997047141,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 28.918540992890485,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 47.06133299623616,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 15.693833993282169,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 39.55945798952598,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 39.74445800122339,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 13.695292000193149,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 16.63974999974016,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 82.65179200679995,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 23.04812500369735,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 63.74333400162868,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 15.05225000437349,
+          "n": 1,
+          "cold": true
+        }
+      },
+      "warm": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 11.670583000523038,
+          "min": 9.134166990406811,
+          "max": 41.26412500045262,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 7.982750001247041,
+          "min": 6.674999996903352,
+          "max": 14.201750003849156,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 10.859041998628527,
+          "min": 9.32654200005345,
+          "max": 45.194749996881,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 7.215499994345009,
+          "min": 6.5780409931903705,
+          "max": 20.484750013565645,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 8.547207995434292,
+          "min": 7.144500006688759,
+          "max": 10.078207997139543,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 15.938082986394875,
+          "min": 11.190874996827915,
+          "max": 42.84433300199453,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 10.571542006800883,
+          "min": 6.995541989454068,
+          "max": 38.516707994858734,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 6.362250001984648,
+          "min": 5.224541004281491,
+          "max": 22.440165994339623,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 7.73099999059923,
+          "min": 6.527624995214865,
+          "max": 9.854124989942648,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 7.627500002854504,
+          "min": 6.141165998997167,
+          "max": 60.15204200230073,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 6.738374999258667,
+          "min": 6.262666996917687,
+          "max": 66.70624999969732,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 7.902249999460764,
+          "min": 6.72741599555593,
+          "max": 20.575832997565158,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 8.284167008241639,
+          "min": 6.918208004208282,
+          "max": 27.36708300653845,
+          "n": 15,
+          "cold": false
+        },
+        "POST /oauth/tokens": {
+          "surface": "auth",
+          "ms": 7.342375000007451,
+          "min": 6.011833000229672,
+          "max": 10.13908299501054,
+          "n": 15,
+          "cold": false
+        }
+      },
+      "scan": {
+        "label": "fattest (103 rows)",
+        "plan": "Index Only Scan",
+        "cost": 12.03,
+        "buffers": 9,
+        "rows_filtered": null,
+        "parallel": false,
+        "probe_is_clone": false,
+        "probe_rows": 103
+      }
+    },
+    {
+      "clones": 100,
+      "index": true,
+      "volume": {
+        "clones": 100,
+        "removed": {
+          "entities": 0,
+          "grants": 0
+        },
+        "inserted": {
+          "entities": 700,
+          "grants": 3000
+        },
+        "rows": {
+          "entities": 720,
+          "grant_records": 3064
+        },
+        "replication": {
+          "standbys": 2,
+          "seconds": 0.0005881786346435547,
+          "lag": [
+            {
+              "standby": "benchmarks-postgresql-postgresql-ha-postgresql-2",
+              "state": null,
+              "behind_bytes": 0
+            },
+            {
+              "standby": "benchmarks-postgresql-postgresql-ha-postgresql-0",
+              "state": null,
+              "behind_bytes": 0
+            }
+          ]
+        }
+      },
+      "index_state": {
+        "seconds": 0.008671045303344727,
+        "state": {
+          "present": true,
+          "valid": true,
+          "ready": true
+        }
+      },
+      "restart": {
+        "seconds": 32.86879801750183,
+        "restart": "deployment.apps/benchmarks-polaris restarted",
+        "status": "Waiting for deployment \"benchmarks-polaris\" rollout to finish: 0 out of 1 new replicas have been updated...\nWaiting for deployment \"benchmarks-polaris\" rollout to finish: 1 old replicas are pending termination...\nWaiting for deployment \"benchmarks-polaris\" rollout to finish: 1 old replicas are pending termination...\ndeployment \"benchmarks-polaris\" successfully rolled out",
+        "serving": {
+          "seconds": 9.537577867507935,
+          "attempts": true
+        }
+      },
+      "cold": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 15.529750002315268,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 71.81774999480695,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 13.445374992443249,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 12.955291007529013,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 13.449292004224844,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 66.07558399264235,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 14.083207992371172,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 14.949666991014965,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 74.35066699690651,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 39.962750000995584,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 48.41166699770838,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 21.677250013453886,
+          "n": 1,
+          "cold": true
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 12.55579199641943,
+          "n": 1,
+          "cold": true
+        }
+      },
+      "warm": {
+        "GET  /principals": {
+          "surface": "mgmt",
+          "ms": 11.196417006431147,
+          "min": 9.93200000084471,
+          "max": 48.2250409986591,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principals/{name}": {
+          "surface": "mgmt",
+          "ms": 7.95174999802839,
+          "min": 6.975291995331645,
+          "max": 13.313750008819625,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles": {
+          "surface": "mgmt",
+          "ms": 9.643917001085356,
+          "min": 8.325666989549063,
+          "max": 40.050874988082796,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles/{name}": {
+          "surface": "mgmt",
+          "ms": 7.416458000079729,
+          "min": 6.328749994281679,
+          "max": 22.52341700659599,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /principal-roles/{n}/principals": {
+          "surface": "mgmt",
+          "ms": 8.529750004527159,
+          "min": 7.663583004614338,
+          "max": 10.607083997456357,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs": {
+          "surface": "mgmt",
+          "ms": 13.35954100068193,
+          "min": 11.57295900338795,
+          "max": 57.94408298970666,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs/{name}": {
+          "surface": "mgmt",
+          "ms": 8.052958000916988,
+          "min": 6.054042009054683,
+          "max": 61.81995800579898,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalogs/{c}/catalog-roles": {
+          "surface": "mgmt",
+          "ms": 7.522457992308773,
+          "min": 6.497750000562519,
+          "max": 25.299999993876554,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /catalog-roles/{r}/grants": {
+          "surface": "mgmt",
+          "ms": 8.21324999560602,
+          "min": 6.3883749971864745,
+          "max": 10.022208996815607,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces": {
+          "surface": "iceberg",
+          "ms": 7.031290995655581,
+          "min": 6.24033399799373,
+          "max": 8.750207998673432,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}": {
+          "surface": "iceberg",
+          "ms": 6.700167010421865,
+          "min": 6.039957996108569,
+          "max": 8.05158299044706,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/tables": {
+          "surface": "iceberg",
+          "ms": 6.967374996747822,
+          "min": 5.840375000843778,
+          "max": 10.598957989714108,
+          "n": 15,
+          "cold": false
+        },
+        "GET  /namespaces/{ns}/views": {
+          "surface": "iceberg",
+          "ms": 7.284041988896206,
+          "min": 5.677584005752578,
+          "max": 31.16737499658484,
+          "n": 15,
+          "cold": false
+        },
+        "POST /oauth/tokens": {
+          "surface": "auth",
+          "ms": 6.807124998886138,
+          "min": 5.7850000011967495,
+          "max": 7.555375006631948,
+          "n": 15,
+          "cold": false
+        }
+      },
+      "scan": {
+        "label": "fattest (103 rows)",
+        "plan": "Index Only Scan",
+        "cost": 12.03,
+        "buffers": 9,
+        "rows_filtered": null,
+        "parallel": false,
+        "probe_is_clone": false,
+        "probe_rows": 103
+      }
+    }
+  ]
+}

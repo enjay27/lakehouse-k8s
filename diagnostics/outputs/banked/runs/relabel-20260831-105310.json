@@ -1,0 +1,1100 @@
+{
+  "capture": "capture-authz-noindex",
+  "run_id": "20260831-105310",
+  "generated": "2026-08-31 02:48:48",
+  "templates": 30,
+  "access_records": 2702,
+  "statements": 21510,
+  "orphan_statements": 0,
+  "unclassified_paths": {},
+  "reconciliation": {
+    "rows": [
+      {
+        "label": "GET  /applicable-policies",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalog-roles/{r}/grants",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalog-roles/{r}/principal-roles",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs/{c}/catalog-roles",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs/{c}/catalog-roles/{r}",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs/{name}",
+        "expected": 100,
+        "observed": 101,
+        "delta": 1,
+        "probe": 1,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /config",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /generic-tables",
+        "expected": 200,
+        "observed": 200,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": true
+      },
+      {
+        "label": "GET  /generic-tables/{gt}",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces",
+        "expected": 200,
+        "observed": 200,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": true
+      },
+      {
+        "label": "GET  /namespaces/{ns}",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces/{ns}/tables",
+        "expected": 200,
+        "observed": 200,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": true
+      },
+      {
+        "label": "GET  /namespaces/{ns}/tables/{t}",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces/{ns}/tables/{t}/credentials",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces/{ns}/views",
+        "expected": 200,
+        "observed": 200,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": true
+      },
+      {
+        "label": "GET  /namespaces/{ns}/views/{v}",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /policies",
+        "expected": 200,
+        "observed": 200,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": true
+      },
+      {
+        "label": "GET  /policies/{p}",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles/{name}",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles/{n}/catalog-roles/{c}",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles/{n}/principals",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principals",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principals/{name}",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principals/{p}/principal-roles",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "HEAD /namespaces/{ns}",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "HEAD /namespaces/{ns}/tables/{t}",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "HEAD /namespaces/{ns}/views/{v}",
+        "expected": 100,
+        "observed": 100,
+        "delta": 0,
+        "probe": 0,
+        "unexplained": 0,
+        "folded": false
+      },
+      {
+        "label": "POST /oauth/tokens",
+        "expected": 100,
+        "observed": 101,
+        "delta": 1,
+        "probe": 1,
+        "unexplained": 0,
+        "folded": false
+      }
+    ],
+    "expected_total": 2700,
+    "observed_total": 2702,
+    "delta_total": 2,
+    "probe_total": 2,
+    "unexplained_total": 0,
+    "clean": true,
+    "folded_labels": [
+      "GET  /generic-tables",
+      "GET  /namespaces",
+      "GET  /namespaces/{ns}/tables",
+      "GET  /namespaces/{ns}/views",
+      "GET  /policies"
+    ]
+  },
+  "outcome_classes": {
+    "auth (token)": {
+      "requests": 101,
+      "statements": 303,
+      "per_request": 3.0,
+      "min": 3,
+      "median": 3,
+      "max": 3,
+      "table_per_request": 0.0,
+      "shapes": [
+        "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND parent_id = ? AND type_code = ? AND realm_id = ? AND name = ?",
+        "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ? AND type_code = ? AND catalog_id = ?",
+        "SELECT principal_id, principal_client_id, main_secret_hash, secondary_secret_hash, secret_salt FROM POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA WHERE principal_client_id = ? AND realm_id = ?"
+      ],
+      "labels": [
+        "POST /oauth/tokens"
+      ]
+    },
+    "permitted (2xx)": {
+      "requests": 2601,
+      "statements": 21207,
+      "per_request": 8.153402537485583,
+      "min": 7,
+      "median": 8,
+      "max": 11,
+      "table_per_request": 1.076893502499039,
+      "shapes": [
+        "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN (<rows>) AND realm_id = ?",
+        "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND parent_id = ? AND type_code = ? AND realm_id = ? AND name = ?",
+        "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+        "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+        "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ? AND type_code = ? AND catalog_id = ?",
+        "SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+        "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_catalog_id = ? AND grantee_id = ? AND realm_id = ?",
+        "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = ? AND securable_catalog_id = ? AND realm_id = ?",
+        "SELECT target_catalog_id, target_id, policy_type_code, policy_catalog_id, policy_id, parameters FROM POLARIS_SCHEMA.POLICY_MAPPING_RECORD WHERE target_id = ? AND target_catalog_id = ? AND realm_id = ?"
+      ],
+      "labels": [
+        "GET  /applicable-policies",
+        "GET  /catalog-roles/{r}/grants",
+        "GET  /catalog-roles/{r}/principal-roles",
+        "GET  /catalogs/{c}/catalog-roles",
+        "GET  /catalogs/{c}/catalog-roles/{r}",
+        "GET  /catalogs/{name}",
+        "GET  /config",
+        "GET  /generic-tables",
+        "GET  /generic-tables/{gt}",
+        "GET  /namespaces",
+        "GET  /namespaces/{ns}",
+        "GET  /namespaces/{ns}/tables",
+        "GET  /namespaces/{ns}/tables/{t}",
+        "GET  /namespaces/{ns}/tables/{t}/credentials",
+        "GET  /namespaces/{ns}/views",
+        "GET  /namespaces/{ns}/views/{v}",
+        "GET  /policies",
+        "GET  /policies/{p}",
+        "HEAD /namespaces/{ns}",
+        "HEAD /namespaces/{ns}/tables/{t}",
+        "HEAD /namespaces/{ns}/views/{v}"
+      ]
+    }
+  },
+  "per_label": [
+    {
+      "label": "GET  /applicable-policies",
+      "surface": "polaris",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 1100,
+      "per_request": 11.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /catalog-roles/{r}/grants",
+      "surface": "mgmt",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 1000,
+      "per_request": 10.0,
+      "table_hits": 200,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET  /catalog-roles/{r}/principal-roles",
+      "surface": "mgmt",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 1000,
+      "per_request": 10.0,
+      "table_hits": 200,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}/views/{v}",
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 900,
+      "per_request": 9.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /namespaces/{ns}/views/{v}",
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "204": 100
+      },
+      "statements": 900,
+      "per_request": 9.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /catalogs/{c}/catalog-roles",
+      "surface": "mgmt",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 800,
+      "per_request": 8.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /generic-tables",
+      "surface": "polaris",
+      "requests": 200,
+      "statuses": {
+        "200": 200
+      },
+      "statements": 1600,
+      "per_request": 8.0,
+      "table_hits": 200,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /generic-tables/{gt}",
+      "surface": "polaris",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 800,
+      "per_request": 8.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces",
+      "surface": "iceberg",
+      "requests": 200,
+      "statuses": {
+        "200": 200
+      },
+      "statements": 1600,
+      "per_request": 8.0,
+      "table_hits": 200,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}/tables",
+      "surface": "iceberg",
+      "requests": 200,
+      "statuses": {
+        "200": 200
+      },
+      "statements": 1600,
+      "per_request": 8.0,
+      "table_hits": 200,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}/tables/{t}",
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 800,
+      "per_request": 8.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}/tables/{t}/credentials",
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 800,
+      "per_request": 8.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}/views",
+      "surface": "iceberg",
+      "requests": 200,
+      "statuses": {
+        "200": 200
+      },
+      "statements": 1600,
+      "per_request": 8.0,
+      "table_hits": 200,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /policies",
+      "surface": "polaris",
+      "requests": 200,
+      "statuses": {
+        "200": 200
+      },
+      "statements": 1600,
+      "per_request": 8.0,
+      "table_hits": 200,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /policies/{p}",
+      "surface": "polaris",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 800,
+      "per_request": 8.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /namespaces/{ns}/tables/{t}",
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "204": 100
+      },
+      "statements": 800,
+      "per_request": 8.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /catalogs/{c}/catalog-roles/{r}",
+      "surface": "mgmt",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 700,
+      "per_request": 7.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /catalogs/{name}",
+      "surface": "mgmt",
+      "requests": 101,
+      "statuses": {
+        "200": 101
+      },
+      "statements": 707,
+      "per_request": 7.0,
+      "table_hits": 101,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /config",
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 700,
+      "per_request": 7.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}",
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 700,
+      "per_request": 7.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /namespaces/{ns}",
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "204": 100
+      },
+      "statements": 700,
+      "per_request": 7.0,
+      "table_hits": 100,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "POST /oauth/tokens",
+      "surface": "auth",
+      "requests": 101,
+      "statuses": {
+        "200": 101
+      },
+      "statements": 303,
+      "per_request": 3.0,
+      "table_hits": 0,
+      "table_per_request": 0.0
+    }
+  ],
+  "labels": {
+    "POST /oauth/tokens": {
+      "surface": "auth",
+      "requests": 101,
+      "statuses": {
+        "200": 101
+      },
+      "statements": 303,
+      "tables": {
+        "entities": 202,
+        "principal_authentication_data": 101
+      }
+    },
+    "GET  /catalogs/{name}": {
+      "surface": "mgmt",
+      "requests": 101,
+      "statuses": {
+        "200": 101
+      },
+      "statements": 707,
+      "tables": {
+        "entities": 606,
+        "grant_records": 101
+      }
+    },
+    "GET  /namespaces": {
+      "surface": "iceberg",
+      "requests": 200,
+      "statuses": {
+        "200": 200
+      },
+      "statements": 1600,
+      "tables": {
+        "entities": 1400,
+        "grant_records": 200
+      }
+    },
+    "GET  /namespaces/{ns}/tables": {
+      "surface": "iceberg",
+      "requests": 200,
+      "statuses": {
+        "200": 200
+      },
+      "statements": 1600,
+      "tables": {
+        "entities": 1400,
+        "grant_records": 200
+      }
+    },
+    "GET  /namespaces/{ns}/views": {
+      "surface": "iceberg",
+      "requests": 200,
+      "statuses": {
+        "200": 200
+      },
+      "statements": 1600,
+      "tables": {
+        "entities": 1400,
+        "grant_records": 200
+      }
+    },
+    "GET  /generic-tables": {
+      "surface": "polaris",
+      "requests": 200,
+      "statuses": {
+        "200": 200
+      },
+      "statements": 1600,
+      "tables": {
+        "entities": 1400,
+        "grant_records": 200
+      }
+    },
+    "GET  /policies": {
+      "surface": "polaris",
+      "requests": 200,
+      "statuses": {
+        "200": 200
+      },
+      "statements": 1600,
+      "tables": {
+        "entities": 1400,
+        "grant_records": 200
+      }
+    },
+    "GET  /catalogs/{c}/catalog-roles": {
+      "surface": "mgmt",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 800,
+      "tables": {
+        "entities": 700,
+        "grant_records": 100
+      }
+    },
+    "GET  /catalogs/{c}/catalog-roles/{r}": {
+      "surface": "mgmt",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 700,
+      "tables": {
+        "entities": 600,
+        "grant_records": 100
+      }
+    },
+    "GET  /catalog-roles/{r}/principal-roles": {
+      "surface": "mgmt",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 1000,
+      "tables": {
+        "entities": 800,
+        "grant_records": 200
+      }
+    },
+    "GET  /catalog-roles/{r}/grants": {
+      "surface": "mgmt",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 1000,
+      "tables": {
+        "entities": 800,
+        "grant_records": 200
+      }
+    },
+    "GET  /config": {
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 700,
+      "tables": {
+        "entities": 600,
+        "grant_records": 100
+      }
+    },
+    "GET  /namespaces/{ns}": {
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 700,
+      "tables": {
+        "entities": 600,
+        "grant_records": 100
+      }
+    },
+    "HEAD /namespaces/{ns}": {
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "204": 100
+      },
+      "statements": 700,
+      "tables": {
+        "entities": 600,
+        "grant_records": 100
+      }
+    },
+    "GET  /namespaces/{ns}/tables/{t}": {
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 800,
+      "tables": {
+        "entities": 700,
+        "grant_records": 100
+      }
+    },
+    "HEAD /namespaces/{ns}/tables/{t}": {
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "204": 100
+      },
+      "statements": 800,
+      "tables": {
+        "entities": 700,
+        "grant_records": 100
+      }
+    },
+    "GET  /namespaces/{ns}/tables/{t}/credentials": {
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 800,
+      "tables": {
+        "entities": 700,
+        "grant_records": 100
+      }
+    },
+    "GET  /namespaces/{ns}/views/{v}": {
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 900,
+      "tables": {
+        "entities": 800,
+        "grant_records": 100
+      }
+    },
+    "HEAD /namespaces/{ns}/views/{v}": {
+      "surface": "iceberg",
+      "requests": 100,
+      "statuses": {
+        "204": 100
+      },
+      "statements": 900,
+      "tables": {
+        "entities": 800,
+        "grant_records": 100
+      }
+    },
+    "GET  /generic-tables/{gt}": {
+      "surface": "polaris",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 800,
+      "tables": {
+        "entities": 700,
+        "grant_records": 100
+      }
+    },
+    "GET  /policies/{p}": {
+      "surface": "polaris",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 800,
+      "tables": {
+        "entities": 700,
+        "grant_records": 100
+      }
+    },
+    "GET  /applicable-policies": {
+      "surface": "polaris",
+      "requests": 100,
+      "statuses": {
+        "200": 100
+      },
+      "statements": 1100,
+      "tables": {
+        "entities": 800,
+        "policy_mapping_record": 200,
+        "grant_records": 100
+      }
+    }
+  },
+  "shapes": [
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN (<rows>) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 6302,
+      "requests": 2601,
+      "labels": {
+        "GET  /catalogs/{name}": 202,
+        "GET  /namespaces": 400,
+        "GET  /namespaces/{ns}/tables": 400,
+        "GET  /namespaces/{ns}/views": 400,
+        "GET  /generic-tables": 400,
+        "GET  /policies": 400,
+        "GET  /catalogs/{c}/catalog-roles": 200,
+        "GET  /catalogs/{c}/catalog-roles/{r}": 200,
+        "GET  /catalog-roles/{r}/principal-roles": 300,
+        "GET  /catalog-roles/{r}/grants": 300,
+        "GET  /config": 200,
+        "GET  /namespaces/{ns}": 200,
+        "HEAD /namespaces/{ns}": 200,
+        "GET  /namespaces/{ns}/tables/{t}": 300,
+        "HEAD /namespaces/{ns}/tables/{t}": 300,
+        "GET  /namespaces/{ns}/tables/{t}/credentials": 300,
+        "GET  /namespaces/{ns}/views/{v}": 400,
+        "HEAD /namespaces/{ns}/views/{v}": 400,
+        "GET  /generic-tables/{gt}": 300,
+        "GET  /policies/{p}": 300,
+        "GET  /applicable-policies": 200
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ? AND type_code = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 5503,
+      "requests": 2702,
+      "labels": {
+        "POST /oauth/tokens": 101,
+        "GET  /catalogs/{name}": 202,
+        "GET  /namespaces": 400,
+        "GET  /namespaces/{ns}/tables": 400,
+        "GET  /namespaces/{ns}/views": 400,
+        "GET  /generic-tables": 400,
+        "GET  /policies": 400,
+        "GET  /catalogs/{c}/catalog-roles": 200,
+        "GET  /catalogs/{c}/catalog-roles/{r}": 200,
+        "GET  /catalog-roles/{r}/principal-roles": 200,
+        "GET  /catalog-roles/{r}/grants": 200,
+        "GET  /config": 200,
+        "GET  /namespaces/{ns}": 200,
+        "HEAD /namespaces/{ns}": 200,
+        "GET  /namespaces/{ns}/tables/{t}": 200,
+        "HEAD /namespaces/{ns}/tables/{t}": 200,
+        "GET  /namespaces/{ns}/tables/{t}/credentials": 200,
+        "GET  /namespaces/{ns}/views/{v}": 200,
+        "HEAD /namespaces/{ns}/views/{v}": 200,
+        "GET  /generic-tables/{gt}": 200,
+        "GET  /policies/{p}": 200,
+        "GET  /applicable-policies": 400
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 2801,
+      "requests": 2601,
+      "labels": {
+        "GET  /catalogs/{name}": 101,
+        "GET  /namespaces": 200,
+        "GET  /namespaces/{ns}/tables": 200,
+        "GET  /namespaces/{ns}/views": 200,
+        "GET  /generic-tables": 200,
+        "GET  /policies": 200,
+        "GET  /catalogs/{c}/catalog-roles": 100,
+        "GET  /catalogs/{c}/catalog-roles/{r}": 100,
+        "GET  /catalog-roles/{r}/principal-roles": 200,
+        "GET  /catalog-roles/{r}/grants": 200,
+        "GET  /config": 100,
+        "GET  /namespaces/{ns}": 100,
+        "HEAD /namespaces/{ns}": 100,
+        "GET  /namespaces/{ns}/tables/{t}": 100,
+        "HEAD /namespaces/{ns}/tables/{t}": 100,
+        "GET  /namespaces/{ns}/tables/{t}/credentials": 100,
+        "GET  /namespaces/{ns}/views/{v}": 100,
+        "HEAD /namespaces/{ns}/views/{v}": 100,
+        "GET  /generic-tables/{gt}": 100,
+        "GET  /policies/{p}": 100,
+        "GET  /applicable-policies": 100
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND parent_id = ? AND type_code = ? AND realm_id = ? AND name = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 2702,
+      "requests": 2702,
+      "labels": {
+        "POST /oauth/tokens": 101,
+        "GET  /catalogs/{name}": 101,
+        "GET  /namespaces": 200,
+        "GET  /namespaces/{ns}/tables": 200,
+        "GET  /namespaces/{ns}/views": 200,
+        "GET  /generic-tables": 200,
+        "GET  /policies": 200,
+        "GET  /catalogs/{c}/catalog-roles": 100,
+        "GET  /catalogs/{c}/catalog-roles/{r}": 100,
+        "GET  /catalog-roles/{r}/principal-roles": 100,
+        "GET  /catalog-roles/{r}/grants": 100,
+        "GET  /config": 100,
+        "GET  /namespaces/{ns}": 100,
+        "HEAD /namespaces/{ns}": 100,
+        "GET  /namespaces/{ns}/tables/{t}": 100,
+        "HEAD /namespaces/{ns}/tables/{t}": 100,
+        "GET  /namespaces/{ns}/tables/{t}/credentials": 100,
+        "GET  /namespaces/{ns}/views/{v}": 100,
+        "HEAD /namespaces/{ns}/views/{v}": 100,
+        "GET  /generic-tables/{gt}": 100,
+        "GET  /policies/{p}": 100,
+        "GET  /applicable-policies": 100
+      }
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_catalog_id = ? AND grantee_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 2701,
+      "requests": 2601,
+      "labels": {
+        "GET  /catalogs/{name}": 101,
+        "GET  /namespaces": 200,
+        "GET  /namespaces/{ns}/tables": 200,
+        "GET  /namespaces/{ns}/views": 200,
+        "GET  /generic-tables": 200,
+        "GET  /policies": 200,
+        "GET  /catalogs/{c}/catalog-roles": 100,
+        "GET  /catalogs/{c}/catalog-roles/{r}": 100,
+        "GET  /catalog-roles/{r}/principal-roles": 100,
+        "GET  /catalog-roles/{r}/grants": 200,
+        "GET  /config": 100,
+        "GET  /namespaces/{ns}": 100,
+        "HEAD /namespaces/{ns}": 100,
+        "GET  /namespaces/{ns}/tables/{t}": 100,
+        "HEAD /namespaces/{ns}/tables/{t}": 100,
+        "GET  /namespaces/{ns}/tables/{t}/credentials": 100,
+        "GET  /namespaces/{ns}/views/{v}": 100,
+        "HEAD /namespaces/{ns}/views/{v}": 100,
+        "GET  /generic-tables/{gt}": 100,
+        "GET  /policies/{p}": 100,
+        "GET  /applicable-policies": 100
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 1000,
+      "requests": 1000,
+      "labels": {
+        "GET  /namespaces": 200,
+        "GET  /namespaces/{ns}/tables": 200,
+        "GET  /namespaces/{ns}/views": 200,
+        "GET  /generic-tables": 200,
+        "GET  /policies": 200
+      }
+    },
+    {
+      "sql": "SELECT target_catalog_id, target_id, policy_type_code, policy_catalog_id, policy_id, parameters FROM POLARIS_SCHEMA.POLICY_MAPPING_RECORD WHERE target_id = ? AND target_catalog_id = ? AND realm_id = ?",
+      "table": "policy_mapping_record",
+      "verb": "SELECT",
+      "occurrences": 200,
+      "requests": 100,
+      "labels": {
+        "GET  /applicable-policies": 200
+      }
+    },
+    {
+      "sql": "SELECT principal_id, principal_client_id, main_secret_hash, secondary_secret_hash, secret_salt FROM POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA WHERE principal_client_id = ? AND realm_id = ?",
+      "table": "principal_authentication_data",
+      "verb": "SELECT",
+      "occurrences": 101,
+      "requests": 101,
+      "labels": {
+        "POST /oauth/tokens": 101
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 100,
+      "requests": 100,
+      "labels": {
+        "GET  /catalogs/{c}/catalog-roles": 100
+      }
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = ? AND securable_catalog_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 100,
+      "requests": 100,
+      "labels": {
+        "GET  /catalog-roles/{r}/principal-roles": 100
+      }
+    }
+  ]
+}

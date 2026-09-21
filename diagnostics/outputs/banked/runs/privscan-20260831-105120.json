@@ -1,0 +1,183 @@
+{
+  "run_id": "20260831-105120",
+  "realm": "POLARIS",
+  "prefix": "authz",
+  "profile": "catalog-scoped-full",
+  "probe": {
+    "profile": "catalog-scoped-full",
+    "probed_user": 1,
+    "scope": "PRINCIPAL_ROLE:authz1_principal_role",
+    "namespace": "ns1",
+    "authorized": [
+      "GET  /catalogs/{name}",
+      "GET  /catalogs/{c}/catalog-roles",
+      "GET  /catalogs/{c}/catalog-roles/{r}",
+      "GET  /catalog-roles/{r}/principal-roles",
+      "GET  /catalog-roles/{r}/grants",
+      "GET  /config",
+      "GET  /namespaces",
+      "GET  /namespaces/{ns}",
+      "HEAD /namespaces/{ns}",
+      "GET  /namespaces/{ns}/tables",
+      "GET  /namespaces/{ns}/tables/{t}",
+      "HEAD /namespaces/{ns}/tables/{t}",
+      "GET  /namespaces/{ns}/tables/{t}/credentials",
+      "GET  /namespaces/{ns}/views",
+      "GET  /namespaces/{ns}/views/{v}",
+      "HEAD /namespaces/{ns}/views/{v}",
+      "GET  /generic-tables",
+      "GET  /generic-tables/{gt}",
+      "GET  /policies",
+      "GET  /policies/{p}",
+      "GET  /applicable-policies"
+    ],
+    "refused": {
+      "GET  /catalogs": 403,
+      "GET  /principals": 403,
+      "GET  /principals/{name}": 403,
+      "GET  /principals/{p}/principal-roles": 403,
+      "GET  /principal-roles": 403,
+      "GET  /principal-roles/{name}": 403,
+      "GET  /principal-roles/{n}/principals": 403,
+      "GET  /principal-roles/{n}/catalog-roles/{c}": 403
+    },
+    "refused_detail": {
+      "GET  /catalogs": "{\"error\":{\"message\":\"Principal 'authz1_principal' with activated PrincipalRoles '[authz1_principal_role]' and activated grants via '[authz1_principal_role]' is ",
+      "GET  /principals": "{\"error\":{\"message\":\"Principal 'authz1_principal' with activated PrincipalRoles '[authz1_principal_role]' and activated grants via '[authz1_principal_role]' is ",
+      "GET  /principals/{name}": "{\"error\":{\"message\":\"Principal 'authz1_principal' with activated PrincipalRoles '[authz1_principal_role]' and activated grants via '[authz1_principal_role]' is ",
+      "GET  /principals/{p}/principal-roles": "{\"error\":{\"message\":\"Principal 'authz1_principal' with activated PrincipalRoles '[authz1_principal_role]' and activated grants via '[authz1_principal_role]' is ",
+      "GET  /principal-roles": "{\"error\":{\"message\":\"Principal 'authz1_principal' with activated PrincipalRoles '[authz1_principal_role]' and activated grants via '[authz1_principal_role]' is ",
+      "GET  /principal-roles/{name}": "{\"error\":{\"message\":\"Principal 'authz1_principal' with activated PrincipalRoles '[authz1_principal_role]' and activated grants via '[authz1_principal_role]' is ",
+      "GET  /principal-roles/{n}/principals": "{\"error\":{\"message\":\"Principal 'authz1_principal' with activated PrincipalRoles '[authz1_principal_role]' and activated grants via '[authz1_principal_role]' is ",
+      "GET  /principal-roles/{n}/catalog-roles/{c}": "{\"error\":{\"message\":\"Principal 'authz1_principal' with activated PrincipalRoles '[authz1_principal_role]' and activated grants via '[authz1_principal_role, owne"
+    },
+    "verdicts": {
+      "GET  /catalogs": "refused",
+      "GET  /catalogs/{name}": "authorized",
+      "GET  /principals": "refused",
+      "GET  /principals/{name}": "refused",
+      "GET  /principals/{p}/principal-roles": "refused",
+      "GET  /principal-roles": "refused",
+      "GET  /principal-roles/{name}": "refused",
+      "GET  /principal-roles/{n}/principals": "refused",
+      "GET  /principal-roles/{n}/catalog-roles/{c}": "refused",
+      "GET  /catalogs/{c}/catalog-roles": "authorized",
+      "GET  /catalogs/{c}/catalog-roles/{r}": "authorized",
+      "GET  /catalog-roles/{r}/principal-roles": "authorized",
+      "GET  /catalog-roles/{r}/grants": "authorized",
+      "GET  /config": "authorized",
+      "GET  /namespaces": "authorized",
+      "GET  /namespaces/{ns}": "authorized",
+      "HEAD /namespaces/{ns}": "authorized",
+      "GET  /namespaces/{ns}/tables": "authorized",
+      "GET  /namespaces/{ns}/tables/{t}": "authorized",
+      "HEAD /namespaces/{ns}/tables/{t}": "authorized",
+      "GET  /namespaces/{ns}/tables/{t}/credentials": "authorized",
+      "GET  /namespaces/{ns}/views": "authorized",
+      "GET  /namespaces/{ns}/views/{v}": "authorized",
+      "HEAD /namespaces/{ns}/views/{v}": "authorized",
+      "GET  /generic-tables": "authorized",
+      "GET  /generic-tables/{gt}": "authorized",
+      "GET  /policies": "authorized",
+      "GET  /policies/{p}": "authorized",
+      "GET  /applicable-policies": "authorized"
+    },
+    "at": 1788140266
+  },
+  "identities": 100,
+  "authenticated": 100,
+  "requests": 2700,
+  "auth_failures": [],
+  "skipped": [],
+  "unresolved": {},
+  "errors": [],
+  "status_counts": {
+    "GET  /catalogs": {},
+    "GET  /catalogs/{name}": {
+      "200": 100
+    },
+    "GET  /principals": {},
+    "GET  /principals/{name}": {},
+    "GET  /principals/{p}/principal-roles": {},
+    "GET  /principal-roles": {},
+    "GET  /principal-roles/{name}": {},
+    "GET  /principal-roles/{n}/principals": {},
+    "GET  /principal-roles/{n}/catalog-roles/{c}": {},
+    "GET  /catalogs/{c}/catalog-roles": {
+      "200": 100
+    },
+    "GET  /catalogs/{c}/catalog-roles/{r}": {
+      "200": 100
+    },
+    "GET  /catalog-roles/{r}/principal-roles": {
+      "200": 100
+    },
+    "GET  /catalog-roles/{r}/grants": {
+      "200": 100
+    },
+    "GET  /config": {
+      "200": 100
+    },
+    "GET  /namespaces": {
+      "200": 100
+    },
+    "GET  /namespaces/{ns}": {
+      "200": 100
+    },
+    "HEAD /namespaces/{ns}": {
+      "204": 100
+    },
+    "GET  /namespaces/{ns}/tables": {
+      "200": 100
+    },
+    "GET  /namespaces/{ns}/tables/{t}": {
+      "200": 100
+    },
+    "HEAD /namespaces/{ns}/tables/{t}": {
+      "204": 100
+    },
+    "GET  /namespaces/{ns}/tables/{t}/credentials": {
+      "200": 100
+    },
+    "GET  /namespaces/{ns}/views": {
+      "200": 100
+    },
+    "GET  /namespaces/{ns}/views/{v}": {
+      "200": 100
+    },
+    "HEAD /namespaces/{ns}/views/{v}": {
+      "204": 100
+    },
+    "GET  /generic-tables": {
+      "200": 100
+    },
+    "GET  /generic-tables/{gt}": {
+      "200": 100
+    },
+    "GET  /policies": {
+      "200": 100
+    },
+    "GET  /policies/{p}": {
+      "200": 100
+    },
+    "GET  /applicable-policies": {
+      "200": 100
+    },
+    "GET  /namespaces [ns-resolve]": {
+      "200": 100
+    },
+    "GET  /namespaces/{ns}/tables [entity-resolve]": {
+      "200": 100
+    },
+    "GET  /namespaces/{ns}/views [entity-resolve]": {
+      "200": 100
+    },
+    "GET  /generic-tables [entity-resolve]": {
+      "200": 100
+    },
+    "GET  /policies [entity-resolve]": {
+      "200": 100
+    }
+  },
+  "elapsed_s": 33.7
+}

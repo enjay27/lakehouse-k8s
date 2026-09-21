@@ -1,0 +1,179 @@
+{
+  "index_patterns": [
+    "polaris-report-*"
+  ],
+  "priority": 100,
+  "_meta": {
+    "source": "local-k8s: logging/opensearch/polaris-report-template.json",
+    "written": "2026-09-10",
+    "why": "polaris-report-2026.09.10 dynamic-mapped min_record_time as TEXT: the Lua wrote \"\" on idle windows and a fresh daily index almost always opens on one at 30s windows. Dynamic mapping types a field from the FIRST document it sees and keeps it for the life of that index, so no range query or date histogram works there again. A template survives an idle first window; waiting for a fresh index does not. Measured by the API matrix run 1789026666, and predicted before it in SCHEMA-report.md review #2.",
+    "pairs_with": "the Lua now OMITS min/max_record_time when nil (fluent-bit/values.yaml). BOTH OR NEITHER: with these fields typed as date, a document carrying \"\" is rejected per-item inside a bulk that still returns HTTP 200.",
+    "not_retroactive": "applies only to indices CREATED after it is applied. polaris-report-2026.09.10 and earlier stay text for their life.",
+    "v4": "2026-09-15: app_dropped_total, dropped, commit_count, commit_ms_sum/min/max added as long. carried_rows stays mapped although v4 no longer emits it -- v3 documents share the index. logger_name is left dynamic like the other strings, so .keyword exists.",
+    "v5": "2026-09-16: counted_404, app_dropped_404, held_orphans, held_pending added as long (summary rows). 404 access lines are counted, not stored; allow-listed app lines of a 404 request are dropped by mdc.requestId.",
+    "strings_left_dynamic": "superseded by v6: undeclared strings follow dynamic_templates.strings_keyword_only; queries keep using .keyword.",
+    "v6": "2026-09-16 (REVIEW-pipeline P7/P8, decided: Kade): schema 6 drops app / level from every row and keeps the human sentence only on summary rows, renamed _msg -> message; message is full-text (one sentence per window; kept indexed so it stays searchable and exists-queries work). Undeclared strings (resource, resource_kind, api_kind, report_type, window_start, window_end, hostname, partial_window, logger_name, user_principal_name) are text index:false plus the .keyword sub-field every query uses. CAVEAT: query the .keyword path."
+  },
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0,
+        "refresh_interval": "5s"
+      }
+    },
+    "mappings": {
+      "properties": {
+        "min_record_time": {
+          "type": "date",
+          "format": "strict_date_optional_time_nanos||strict_date_optional_time||epoch_millis",
+          "ignore_malformed": true
+        },
+        "max_record_time": {
+          "type": "date",
+          "format": "strict_date_optional_time_nanos||strict_date_optional_time||epoch_millis",
+          "ignore_malformed": true
+        },
+        "schema_version": {
+          "type": "long"
+        },
+        "report_seq": {
+          "type": "long"
+        },
+        "window_seconds": {
+          "type": "long"
+        },
+        "access_seen": {
+          "type": "long"
+        },
+        "access_kept": {
+          "type": "long"
+        },
+        "access_counted": {
+          "type": "long"
+        },
+        "role_keys_forced": {
+          "type": "long"
+        },
+        "counted_read": {
+          "type": "long"
+        },
+        "counted_post": {
+          "type": "long"
+        },
+        "errors_kept": {
+          "type": "long"
+        },
+        "parse_errors": {
+          "type": "long"
+        },
+        "errors_4xx": {
+          "type": "long"
+        },
+        "errors_5xx": {
+          "type": "long"
+        },
+        "auth_denied": {
+          "type": "long"
+        },
+        "bytes_total": {
+          "type": "long"
+        },
+        "distinct_resources": {
+          "type": "long"
+        },
+        "distinct_principals": {
+          "type": "long"
+        },
+        "carried_rows": {
+          "type": "long"
+        },
+        "resources_other": {
+          "type": "long"
+        },
+        "resources_other_distinct": {
+          "type": "long"
+        },
+        "principals_other": {
+          "type": "long"
+        },
+        "windows_skipped": {
+          "type": "long"
+        },
+        "requests": {
+          "type": "long"
+        },
+        "reads": {
+          "type": "long"
+        },
+        "writes": {
+          "type": "long"
+        },
+        "errors": {
+          "type": "long"
+        },
+        "response_bytes": {
+          "type": "long"
+        },
+        "last_read_bytes": {
+          "type": "long"
+        },
+        "last_write_bytes": {
+          "type": "long"
+        },
+        "app_dropped_total": {
+          "type": "long"
+        },
+        "dropped": {
+          "type": "long"
+        },
+        "commit_count": {
+          "type": "long"
+        },
+        "commit_ms_sum": {
+          "type": "long"
+        },
+        "commit_ms_min": {
+          "type": "long"
+        },
+        "commit_ms_max": {
+          "type": "long"
+        },
+        "counted_404": {
+          "type": "long"
+        },
+        "app_dropped_404": {
+          "type": "long"
+        },
+        "held_orphans": {
+          "type": "long"
+        },
+        "held_pending": {
+          "type": "long"
+        },
+        "message": {
+          "type": "text",
+          "norms": false
+        }
+      },
+      "dynamic_templates": [
+        {
+          "strings_keyword_only": {
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "text",
+              "index": false,
+              "norms": false,
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 1024
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

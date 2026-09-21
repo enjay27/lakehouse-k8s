@@ -1,0 +1,85 @@
+# ============================================================
+# JupyterHub — interactive notebook environment
+# Namespace: datahub-hynix
+# Image: pyspark + Iceberg + Polaris client libs
+# ============================================================
+
+# ── Single-user server ───────────────────────────────────────
+singleuser:
+  image:
+    name: jupyter/pyspark-notebook
+    tag: spark-3.5.0
+    pullPolicy: IfNotPresent
+
+  # Resource per notebook user
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+  # Storage per user
+  storage:
+    capacity: 5Gi
+    type: dynamic
+
+  # Environment variables for notebooks
+  extraEnv:
+    POLARIS_URL: "http://benchmarks-polaris.datahub-hynix.svc.cluster.local:8181"
+    MINIO_ENDPOINT: "http://benchmarks-minio.datahub-hynix.svc.cluster.local:9000"
+    MINIO_ENDPOINT_EXTERNAL: "http://192.168.139.2:9000"
+    KAFKA_BOOTSTRAP: "benchmarks-kafka.datahub-hynix.svc.cluster.local:9092"
+    SCHEMA_REGISTRY_URL: "http://benchmarks-schema-registry.datahub-hynix.svc.cluster.local:8081"
+    PG_HOST: "192.168.139.2"
+    PG_PORT: "5432"
+    AWS_ACCESS_KEY_ID: "minioadmin"
+    AWS_SECRET_ACCESS_KEY: "minioadmin"
+
+  # Pre-install Python packages
+  lifecycleHooks:
+    postStart:
+      exec:
+        command:
+          - sh
+          - -c
+          - |
+            pip install --quiet \
+              pyiceberg \
+              confluent-kafka \
+              avro \
+              sqlalchemy \
+              psycopg2-binary \
+              requests \
+              pandas \
+              pyarrow \
+              minio
+
+# ── Hub ──────────────────────────────────────────────────────
+hub:
+  # Simple auth for dev — no password
+  config:
+    JupyterHub:
+      authenticator_class: dummy
+    DummyAuthenticator:
+      password: ""         # any username, no password
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# ── Proxy ────────────────────────────────────────────────────
+proxy:
+  service:
+    type: ClusterIP
+    port: 80
+
+# ── Disable built-in storage (use existing) ──────────────────
+scheduling:
+  userScheduler:
+    enabled: false

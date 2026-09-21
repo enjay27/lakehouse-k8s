@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: datahub-logback
+    namespace: datahub-hynix
+data:
+    logback.xml: |
+      <?xml version="1.0" encoding="UTF-8"?>
+      <configuration scan="true" scanPeriod="30 seconds">
+          <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+              <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+                  <pattern>{ "level": "%level", "thread": "%thread", "logger": "%logger{36}", "message": "%replace(%msg){'\n', ' '}%nopex" }%n</pattern>
+              </encoder>
+          </appender>
+          
+          <root level="INFO">
+              <appender-ref ref="STDOUT"/>
+          </root>
+          
+          <logger name="com.datahub.authentication" level="DEBUG"/>
+          <logger name="com.linkedin.gms.factory.auth" level="DEBUG"/>
+          <logger name="com.linkedin.metadata.kafka" level="DEBUG"/>
+          <logger name="com.linkedin.mxe" level="DEBUG"/>
+          <logger name="com.linkedin.metadata.search" level="DEBUG"/>
+          <logger name="org.apache.kafka.clients.consumer.internals.ConsumerCoordinator" level="WARN"/>
+          <logger name="org.apache.kafka.clients" level="ERROR"/>
+          <logger name="org.elasticsearch.client" level="WARN"/>
+          <logger name="org.springframework" level="WARN"/>
+          <logger name="io.netty" level="WARN"/>
+      </configuration>

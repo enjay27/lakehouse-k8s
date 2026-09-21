@@ -1,0 +1,30 @@
+[project]
+name = "polaris-learning"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.43.8",
+    "fastavro>=1.12.2",
+    "ipykernel>=7.2.0",
+    "jupyterlab>=4.5.7",
+    "matplotlib>=3.11.1",
+    "openpyxl>=3.1.5",
+    "opensearch-py>=3.2.0",
+    "pandas>=3.0.3",
+    "psycopg2-binary>=2.9.12",
+    "pyarrow>=24.0.0",
+    "pyvis>=0.3.2",
+    "requests>=2.34.2",
+    "s3fs>=0.4.2",
+    "sqlalchemy>=2.0.49",
+    "urllib3>=2.7.0",
+]
+
+[dependency-groups]
+dev = [
+    "black>=26.5.1",
+    "isort>=8.0.1",
+    "pytest>=9.1.1",
+]

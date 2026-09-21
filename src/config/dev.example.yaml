@@ -1,0 +1,26 @@
+# COMPANY DEV environment TEMPLATE (shared team cluster).
+# Copy to dev.yaml and fill in. dev.yaml is gitignored.
+# NOTE: connection settings and secrets here are TOTALLY DIFFERENT from local.yaml.
+# Run functional / integration suites here. NEVER run destructive teardown (admin/)
+# against this shared environment — it would delete other users' data.
+#
+# Prefer injecting secrets via env vars rather than committing them:
+#   export POLARIS_ROOT_SECRET=...  MINIO_ACCESS_KEY=...  MINIO_SECRET_KEY=...  OPENSEARCH_PASS=...
+polaris_url: http://<DEV_POLARIS_HOST>:8181
+minio_endpoint: http://<DEV_MINIO_HOST>:9000
+minio_endpoint_internal: http://<DEV_MINIO_INTERNAL>:9000
+opensearch_host: <DEV_OPENSEARCH_HOST>
+opensearch_pass: "<set via OPENSEARCH_PASS env var>"
+
+# PostgreSQL metastore — prefer POSTGRES_PASSWORD env var over committing it
+postgres_host: <DEV_POSTGRES_HOST>
+postgres_password: ""
+
+# secrets — leave blank; inject via env vars
+root_secret: ""
+minio_access_key: ""
+minio_secret_key: ""
+
+# behavioral flags — set after confirming the DEV Polaris version / #379 status
+polaris_version: "<DEV_VERSION>"
+purge_deletes_files: false

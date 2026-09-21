@@ -1,0 +1,27 @@
+{
+  "policy": {
+    "policy_id": "polaris-report-30d",
+    "description": "polaris-report-* (tier 3, summary): delete 30 days after index creation. Kade 2026-09-18, LOCAL DEVICE ONLY -- the design figure is 365 days because this stream is the only record of successful reads and catalog POSTs, which are counted and never stored. Do not carry 30d to production without re-deciding that.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          { "state_name": "delete", "conditions": { "min_index_age": "30d" } }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [ { "delete": {} } ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      {
+        "index_patterns": ["polaris-report-*"],
+        "priority": 100
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+# Shared defaults across all environments (non-secret).
+realm: POLARIS
+root_client: root
+opensearch_port: 9200
+opensearch_user: admin
+log_index: "k8s-logs-*"
+polaris_container_name: benchmarks-polaris
+bucket: data-catalog-bucket
+
+# PostgreSQL metastore — non-secret defaults (host + password are per-env).
+postgres_port: 5432
+postgres_db: polaris
+postgres_user: polaris
+
+# Polaris -> VictoriaLogs pipeline (log-coverage/). Non-secret.
+# VictoriaLogs single has NO auth on 9428 (local-k8s active-issues #7) -- there
+# is no credential to put here, which is the problem, not the convenience.
+#   kubectl -n logging       port-forward svc/vlsingle-victoria-logs-single-server 9428:9428
+#   kubectl -n datahub-hynix port-forward deploy/fb-polaris-shipper 2020:2020
+victorialogs_url: http://localhost:9428
+fluentbit_metrics_url: http://localhost:2020

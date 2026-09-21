@@ -1,0 +1,33 @@
+# LOCAL DEVICE environment TEMPLATE (personal OrbStack single-node).
+# Copy to local.yaml and fill in. local.yaml is gitignored (may hold secrets).
+# This is the DEFAULT env (init_env() with no arg loads "local") — the safe target.
+polaris_url: http://<LOCAL_HOST>:8181
+minio_endpoint: http://<LOCAL_HOST>:9000
+minio_endpoint_internal: http://benchmarks-minio.datahub-hynix.svc.cluster.local:9000
+opensearch_host: localhost
+opensearch_pass: "<local opensearch password>"
+
+# PostgreSQL metastore (host local-specific; password secret)
+postgres_host: <LOCAL_HOST>
+postgres_password: "<local postgres password>"
+
+# secrets (local only — convenient; shared envs use env vars instead)
+root_secret: "<local polaris root secret>"
+# The one secret EVERY seeded principal (user*/authz*/admin*) shares. Set by
+# hand in principal_authentication_data — the seeder discards the credentials
+# create_principal returns, so it cannot be recovered from the ledger.
+polaris_user_secret: "<shared secret for seeded principals>"
+minio_access_key: "<local minio access key>"
+minio_secret_key: "<local minio secret key>"
+
+# behavioral flags (from the purge investigation)
+polaris_version: "1.6.0"   # helm revision 9, deployed 2026-09-18 17:33 KST.
+                           # A LABEL, not a measurement: init_env prints this
+                           # string, so a stale value mislabels every run.
+purge_deletes_files: false      # issue #379 present locally → purge orphans files.
+                                # MEASURED ON 1.3.0, NOT RE-TESTED ON 1.6.0.
+
+# The Fluent Bit values file whose luaScripts block IS the deployed retention
+# policy. log-coverage/ runs that Lua to compute its "expected" column, so the
+# matrix cannot drift from what ships. Not a secret; per-machine, hence here.
+fb_values_path: ~/hynix/local-k8s/logging/fb-values.yaml

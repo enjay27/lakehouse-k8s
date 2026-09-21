@@ -1,0 +1,50 @@
+# ---------------------------------------------------------------------------
+# One root .gitignore for the merged repo. Every pattern from the two source
+# repos, re-anchored to this layout. A pattern containing a slash is anchored
+# to THIS file's directory -- that is why src/ stays at the repo root.
+# ---------------------------------------------------------------------------
+
+# --- Secrets. Only common.yaml and *.example.yaml are ever tracked. ---------
+src/config/*.yaml
+!src/config/common.yaml
+!src/config/*.example.yaml
+
+# --- Vendored downloads (excluded as downloads, not for licence reasons) ----
+diagnostics/ladders/log-coverage/spec/*.yml
+diagnostics/ladders/log-coverage/spec/*.yaml
+!diagnostics/ladders/log-coverage/spec/inventory.json
+notebooks/rbac/lib/
+postgresql-ha-*.tgz
+node_modules/
+
+# --- Regenerated reports: the reviewed copy is committed by hand ------------
+diagnostics/ladders/log-coverage/doc-log-coverage-results-*.md
+
+# --- Capture output: hundreds of MB, never committed ------------------------
+diagnostics/outputs/captures/
+capture*/
+*.log
+
+# --- Helm render dumps and scratch (CLAUDE.md forbids committing these) -----
+*.render.txt
+.scratch/
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[oc]
+*.pyc
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- Editors / OS / local agent state --------------------------------------
+.idea
+.DS_Store
+.claude/.settings.local.json
+
+# --- Cowork cannot delete inside the mount, so files it needs gone land here
+_to_delete/

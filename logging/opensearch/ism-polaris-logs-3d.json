@@ -1,0 +1,27 @@
+{
+  "policy": {
+    "policy_id": "polaris-logs-3d",
+    "description": "polaris-logs-* (tier 2, detail): delete 3 days after index creation. Kade 2026-09-18, replacing the 30-day recommendation in PROPOSAL-polaris-audit-log-retention.ko.md 5.3. Daily indices, no rollover, so min_index_age on the hot state is the whole policy.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          { "state_name": "delete", "conditions": { "min_index_age": "3d" } }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [ { "delete": {} } ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      {
+        "index_patterns": ["polaris-logs-*"],
+        "priority": 100
+      }
+    ]
+  }
+}

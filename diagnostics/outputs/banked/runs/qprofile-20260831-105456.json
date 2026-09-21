@@ -1,0 +1,2690 @@
+{
+  "run_id": "20260831-105456",
+  "capture": "capture-admin-noindex",
+  "generated": "2026-08-31 11:18:29",
+  "index_state": "index ABSENT",
+  "indexes": [
+    {
+      "name": "grant_records_pkey",
+      "def": "CREATE UNIQUE INDEX grant_records_pkey ON polaris_schema.grant_records USING btree (realm_id, securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code)"
+    }
+  ],
+  "grant_rows": 60784,
+  "primary": "192.168.194.103",
+  "reconciliation": {
+    "rows": [
+      {
+        "label": "GET  /applicable-policies",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalog-roles/{r}/grants",
+        "expected": 5,
+        "observed": 5,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalog-roles/{r}/principal-roles",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs",
+        "expected": 5,
+        "observed": 5,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs/{c}/catalog-roles",
+        "expected": 5,
+        "observed": 5,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs/{c}/catalog-roles/{r}",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "GET  /catalogs/{name}",
+        "expected": 5,
+        "observed": 6,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET  /config",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "GET  /generic-tables",
+        "expected": 10,
+        "observed": 0,
+        "delta": -10,
+        "folded": true
+      },
+      {
+        "label": "GET  /generic-tables/{gt}",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces",
+        "expected": 10,
+        "observed": 10,
+        "delta": 0,
+        "folded": true
+      },
+      {
+        "label": "GET  /namespaces/{ns}",
+        "expected": 5,
+        "observed": 5,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces/{ns}/tables",
+        "expected": 10,
+        "observed": 10,
+        "delta": 0,
+        "folded": true
+      },
+      {
+        "label": "GET  /namespaces/{ns}/tables/{t}",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces/{ns}/tables/{t}/credentials",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /namespaces/{ns}/views",
+        "expected": 10,
+        "observed": 10,
+        "delta": 0,
+        "folded": true
+      },
+      {
+        "label": "GET  /namespaces/{ns}/views/{v}",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "GET  /policies",
+        "expected": 10,
+        "observed": 0,
+        "delta": -10,
+        "folded": true
+      },
+      {
+        "label": "GET  /policies/{p}",
+        "expected": 0,
+        "observed": 0,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles",
+        "expected": 5,
+        "observed": 5,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles/{name}",
+        "expected": 5,
+        "observed": 5,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles/{n}/catalog-roles/{c}",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "GET  /principal-roles/{n}/principals",
+        "expected": 5,
+        "observed": 5,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principals",
+        "expected": 5,
+        "observed": 5,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principals/{name}",
+        "expected": 5,
+        "observed": 5,
+        "delta": 0,
+        "folded": false
+      },
+      {
+        "label": "GET  /principals/{p}/principal-roles",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables",
+        "expected": 0,
+        "observed": 2,
+        "delta": 2,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies",
+        "expected": 0,
+        "observed": 2,
+        "delta": 2,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables",
+        "expected": 0,
+        "observed": 2,
+        "delta": 2,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies",
+        "expected": 0,
+        "observed": 2,
+        "delta": 2,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables",
+        "expected": 0,
+        "observed": 2,
+        "delta": 2,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies",
+        "expected": 0,
+        "observed": 2,
+        "delta": 2,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables",
+        "expected": 0,
+        "observed": 2,
+        "delta": 2,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies",
+        "expected": 0,
+        "observed": 2,
+        "delta": 2,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables",
+        "expected": 0,
+        "observed": 2,
+        "delta": 2,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies",
+        "expected": 0,
+        "observed": 2,
+        "delta": 2,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/catalog/v1/config",
+        "expected": 0,
+        "observed": 5,
+        "delta": 5,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/principal-roles/admin1_principal_role/catalog-roles/admin1_catalog",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/principal-roles/admin2_principal_role/catalog-roles/admin2_catalog",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/principal-roles/admin3_principal_role/catalog-roles/admin3_catalog",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/principal-roles/admin4_principal_role/catalog-roles/admin4_catalog",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/principal-roles/admin5_principal_role/catalog-roles/admin5_catalog",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/principals/admin1_principal/principal-roles",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/principals/admin2_principal/principal-roles",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/principals/admin3_principal/principal-roles",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/principals/admin4_principal/principal-roles",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "GET /api/management/v1/principals/admin5_principal/principal-roles",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1",
+        "expected": 0,
+        "observed": 1,
+        "delta": 1,
+        "folded": false
+      },
+      {
+        "label": "HEAD /namespaces/{ns}",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "HEAD /namespaces/{ns}/tables/{t}",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "HEAD /namespaces/{ns}/views/{v}",
+        "expected": 5,
+        "observed": 0,
+        "delta": -5,
+        "folded": false
+      },
+      {
+        "label": "POST /oauth/tokens",
+        "expected": 5,
+        "observed": 6,
+        "delta": 1,
+        "folded": false
+      }
+    ],
+    "expected_total": 160,
+    "observed_total": 162,
+    "delta_total": 2,
+    "clean": false,
+    "folded_labels": [
+      "GET  /generic-tables",
+      "GET  /namespaces",
+      "GET  /namespaces/{ns}/tables",
+      "GET  /namespaces/{ns}/views",
+      "GET  /policies"
+    ]
+  },
+  "integrity": {
+    "access_records": 162,
+    "statements": 1556,
+    "orphan_statements": 0,
+    "unclassified_paths": {
+      "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables": 2,
+      "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies": 2,
+      "GET /api/management/v1/principals/admin1_principal/principal-roles": 1,
+      "GET /api/management/v1/principal-roles/admin1_principal_role/catalog-roles/admin1_catalog": 1,
+      "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal": 1,
+      "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles": 1,
+      "GET /api/catalog/v1/config": 5,
+      "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1": 1,
+      "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 1,
+      "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 1,
+      "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 1,
+      "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 1,
+      "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies": 1,
+      "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables": 2,
+      "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies": 2,
+      "GET /api/management/v1/principals/admin2_principal/principal-roles": 1,
+      "GET /api/management/v1/principal-roles/admin2_principal_role/catalog-roles/admin2_catalog": 1,
+      "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal": 1,
+      "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles": 1,
+      "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1": 1,
+      "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 1,
+      "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 1,
+      "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 1,
+      "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 1,
+      "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies": 1,
+      "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables": 2,
+      "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies": 2,
+      "GET /api/management/v1/principals/admin3_principal/principal-roles": 1,
+      "GET /api/management/v1/principal-roles/admin3_principal_role/catalog-roles/admin3_catalog": 1,
+      "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal": 1,
+      "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles": 1,
+      "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1": 1,
+      "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 1,
+      "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 1,
+      "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 1,
+      "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 1,
+      "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies": 1,
+      "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables": 2,
+      "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies": 2,
+      "GET /api/management/v1/principals/admin4_principal/principal-roles": 1,
+      "GET /api/management/v1/principal-roles/admin4_principal_role/catalog-roles/admin4_catalog": 1,
+      "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal": 1,
+      "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles": 1,
+      "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1": 1,
+      "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 1,
+      "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 1,
+      "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 1,
+      "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 1,
+      "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies": 1,
+      "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables": 2,
+      "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies": 2,
+      "GET /api/management/v1/principals/admin5_principal/principal-roles": 1,
+      "GET /api/management/v1/principal-roles/admin5_principal_role/catalog-roles/admin5_catalog": 1,
+      "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal": 1,
+      "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles": 1,
+      "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1": 1,
+      "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 1,
+      "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 1,
+      "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 1,
+      "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 1,
+      "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies": 1
+    }
+  },
+  "per_label": [
+    {
+      "label": "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 13,
+      "per_request": 13.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 13,
+      "per_request": 13.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 13,
+      "per_request": 13.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 13,
+      "per_request": 13.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 13,
+      "per_request": 13.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 13,
+      "per_request": 13.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 13,
+      "per_request": 13.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 13,
+      "per_request": 13.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET  /namespaces",
+      "surface": "iceberg",
+      "requests": 10,
+      "statuses": {
+        "200": 10
+      },
+      "statements": 122,
+      "per_request": 12.2,
+      "table_hits": 30,
+      "table_per_request": 3.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 12,
+      "per_request": 12.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 12,
+      "per_request": 12.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 12,
+      "per_request": 12.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 12,
+      "per_request": 12.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 12,
+      "per_request": 12.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /catalog-roles/{r}/grants",
+      "surface": "mgmt",
+      "requests": 5,
+      "statuses": {
+        "200": 5
+      },
+      "statements": 55,
+      "per_request": 11.0,
+      "table_hits": 10,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET  /principal-roles/{n}/principals",
+      "surface": "mgmt",
+      "requests": 5,
+      "statuses": {
+        "200": 5
+      },
+      "statements": 55,
+      "per_request": 11.0,
+      "table_hits": 10,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 3,
+      "table_per_request": 3.0
+    },
+    {
+      "label": "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 3,
+      "table_per_request": 3.0
+    },
+    {
+      "label": "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 3,
+      "table_per_request": 3.0
+    },
+    {
+      "label": "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 3,
+      "table_per_request": 3.0
+    },
+    {
+      "label": "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/principal-roles/admin1_principal_role/catalog-roles/admin1_catalog",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/principal-roles/admin2_principal_role/catalog-roles/admin2_catalog",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/principal-roles/admin3_principal_role/catalog-roles/admin3_catalog",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/principal-roles/admin4_principal_role/catalog-roles/admin4_catalog",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/principal-roles/admin5_principal_role/catalog-roles/admin5_catalog",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/principals/admin1_principal/principal-roles",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/principals/admin2_principal/principal-roles",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/principals/admin3_principal/principal-roles",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/principals/admin4_principal/principal-roles",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET /api/management/v1/principals/admin5_principal/principal-roles",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 11,
+      "per_request": 11.0,
+      "table_hits": 2,
+      "table_per_request": 2.0
+    },
+    {
+      "label": "GET  /principal-roles/{name}",
+      "surface": "mgmt",
+      "requests": 5,
+      "statuses": {
+        "200": 5
+      },
+      "statements": 52,
+      "per_request": 10.4,
+      "table_hits": 13,
+      "table_per_request": 2.6
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 10,
+      "per_request": 10.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 10,
+      "per_request": 10.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 10,
+      "per_request": 10.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 10,
+      "per_request": 10.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 10,
+      "per_request": 10.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}/tables",
+      "surface": "iceberg",
+      "requests": 10,
+      "statuses": {
+        "200": 10
+      },
+      "statements": 98,
+      "per_request": 9.8,
+      "table_hits": 14,
+      "table_per_request": 1.4
+    },
+    {
+      "label": "GET  /catalogs",
+      "surface": "mgmt",
+      "requests": 5,
+      "statuses": {
+        "200": 5
+      },
+      "statements": 45,
+      "per_request": 9.0,
+      "table_hits": 5,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /catalogs/{c}/catalog-roles",
+      "surface": "mgmt",
+      "requests": 5,
+      "statuses": {
+        "200": 5
+      },
+      "statements": 45,
+      "per_request": 9.0,
+      "table_hits": 5,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}/views",
+      "surface": "iceberg",
+      "requests": 10,
+      "statuses": {
+        "200": 10
+      },
+      "statements": 90,
+      "per_request": 9.0,
+      "table_hits": 10,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /principal-roles",
+      "surface": "mgmt",
+      "requests": 5,
+      "statuses": {
+        "200": 5
+      },
+      "statements": 45,
+      "per_request": 9.0,
+      "table_hits": 5,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /principals",
+      "surface": "mgmt",
+      "requests": 5,
+      "statuses": {
+        "200": 5
+      },
+      "statements": 45,
+      "per_request": 9.0,
+      "table_hits": 5,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables",
+      "surface": "unclassified",
+      "requests": 2,
+      "statuses": {
+        "200": 2
+      },
+      "statements": 18,
+      "per_request": 9.0,
+      "table_hits": 2,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies",
+      "surface": "unclassified",
+      "requests": 2,
+      "statuses": {
+        "200": 2
+      },
+      "statements": 18,
+      "per_request": 9.0,
+      "table_hits": 2,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables",
+      "surface": "unclassified",
+      "requests": 2,
+      "statuses": {
+        "200": 2
+      },
+      "statements": 18,
+      "per_request": 9.0,
+      "table_hits": 2,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies",
+      "surface": "unclassified",
+      "requests": 2,
+      "statuses": {
+        "200": 2
+      },
+      "statements": 18,
+      "per_request": 9.0,
+      "table_hits": 2,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables",
+      "surface": "unclassified",
+      "requests": 2,
+      "statuses": {
+        "200": 2
+      },
+      "statements": 18,
+      "per_request": 9.0,
+      "table_hits": 2,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies",
+      "surface": "unclassified",
+      "requests": 2,
+      "statuses": {
+        "200": 2
+      },
+      "statements": 18,
+      "per_request": 9.0,
+      "table_hits": 2,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables",
+      "surface": "unclassified",
+      "requests": 2,
+      "statuses": {
+        "200": 2
+      },
+      "statements": 18,
+      "per_request": 9.0,
+      "table_hits": 2,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies",
+      "surface": "unclassified",
+      "requests": 2,
+      "statuses": {
+        "200": 2
+      },
+      "statements": 18,
+      "per_request": 9.0,
+      "table_hits": 2,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables",
+      "surface": "unclassified",
+      "requests": 2,
+      "statuses": {
+        "200": 2
+      },
+      "statements": 18,
+      "per_request": 9.0,
+      "table_hits": 2,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies",
+      "surface": "unclassified",
+      "requests": 2,
+      "statuses": {
+        "200": 2
+      },
+      "statements": 18,
+      "per_request": 9.0,
+      "table_hits": 2,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 9,
+      "per_request": 9.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 9,
+      "per_request": 9.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 9,
+      "per_request": 9.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 9,
+      "per_request": 9.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 9,
+      "per_request": 9.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /catalogs/{name}",
+      "surface": "mgmt",
+      "requests": 6,
+      "statuses": {
+        "200": 6
+      },
+      "statements": 48,
+      "per_request": 8.0,
+      "table_hits": 6,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /namespaces/{ns}",
+      "surface": "iceberg",
+      "requests": 5,
+      "statuses": {
+        "200": 5
+      },
+      "statements": 40,
+      "per_request": 8.0,
+      "table_hits": 5,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET  /principals/{name}",
+      "surface": "mgmt",
+      "requests": 5,
+      "statuses": {
+        "200": 5
+      },
+      "statements": 40,
+      "per_request": 8.0,
+      "table_hits": 5,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/catalog/v1/config",
+      "surface": "unclassified",
+      "requests": 5,
+      "statuses": {
+        "200": 5
+      },
+      "statements": 40,
+      "per_request": 8.0,
+      "table_hits": 5,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "200": 1
+      },
+      "statements": 8,
+      "per_request": 8.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 8,
+      "per_request": 8.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 8,
+      "per_request": 8.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 8,
+      "per_request": 8.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 8,
+      "per_request": 8.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1",
+      "surface": "unclassified",
+      "requests": 1,
+      "statuses": {
+        "204": 1
+      },
+      "statements": 8,
+      "per_request": 8.0,
+      "table_hits": 1,
+      "table_per_request": 1.0
+    },
+    {
+      "label": "POST /oauth/tokens",
+      "surface": "auth",
+      "requests": 6,
+      "statuses": {
+        "200": 6
+      },
+      "statements": 18,
+      "per_request": 3.0,
+      "table_hits": 0,
+      "table_per_request": 0.0
+    }
+  ],
+  "outcome_classes": {
+    "auth (token)": {
+      "requests": 6,
+      "statements": 18,
+      "per_request": 3.0,
+      "min": 3,
+      "median": 3,
+      "max": 3,
+      "table_per_request": 0.0,
+      "labels": [
+        "POST /oauth/tokens"
+      ]
+    },
+    "permitted (2xx)": {
+      "requests": 81,
+      "statements": 780,
+      "per_request": 9.62962962962963,
+      "min": 8,
+      "median": 9,
+      "max": 17,
+      "table_per_request": 1.5185185185185186,
+      "labels": [
+        "GET  /catalog-roles/{r}/grants",
+        "GET  /catalogs",
+        "GET  /catalogs/{c}/catalog-roles",
+        "GET  /catalogs/{name}",
+        "GET  /namespaces",
+        "GET  /namespaces/{ns}",
+        "GET  /namespaces/{ns}/tables",
+        "GET  /namespaces/{ns}/views",
+        "GET  /principal-roles",
+        "GET  /principal-roles/{name}",
+        "GET  /principal-roles/{n}/principals",
+        "GET  /principals",
+        "GET  /principals/{name}"
+      ]
+    },
+    "unclassified (not an op)": {
+      "requests": 75,
+      "statements": 758,
+      "per_request": 10.106666666666667,
+      "min": 8,
+      "median": 10,
+      "max": 13,
+      "table_per_request": 1.4133333333333333,
+      "labels": [
+        "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies",
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables",
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies",
+        "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies",
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables",
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies",
+        "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies",
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables",
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies",
+        "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies",
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables",
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies",
+        "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies",
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables",
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies",
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1",
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1",
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1",
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1",
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1",
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1",
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1",
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1",
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1",
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1",
+        "GET /api/catalog/v1/config",
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal",
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles",
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal",
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles",
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal",
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles",
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal",
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles",
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal",
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles",
+        "GET /api/management/v1/principal-roles/admin1_principal_role/catalog-roles/admin1_catalog",
+        "GET /api/management/v1/principal-roles/admin2_principal_role/catalog-roles/admin2_catalog",
+        "GET /api/management/v1/principal-roles/admin3_principal_role/catalog-roles/admin3_catalog",
+        "GET /api/management/v1/principal-roles/admin4_principal_role/catalog-roles/admin4_catalog",
+        "GET /api/management/v1/principal-roles/admin5_principal_role/catalog-roles/admin5_catalog",
+        "GET /api/management/v1/principals/admin1_principal/principal-roles",
+        "GET /api/management/v1/principals/admin2_principal/principal-roles",
+        "GET /api/management/v1/principals/admin3_principal/principal-roles",
+        "GET /api/management/v1/principals/admin4_principal/principal-roles",
+        "GET /api/management/v1/principals/admin5_principal/principal-roles",
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1",
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1",
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1",
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1",
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1",
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1",
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1",
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1",
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1",
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1",
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1",
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1",
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1",
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1",
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1"
+      ]
+    }
+  },
+  "statements": [
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ? AND type_code = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 503,
+      "requests": 162,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN (<rows>) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 367,
+      "requests": 156,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND parent_id = ? AND type_code = ? AND realm_id = ? AND name = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 190,
+      "requests": 162,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_catalog_id = ? AND grantee_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 187,
+      "requests": 156,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 181,
+      "requests": 156,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 50,
+      "requests": 50,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = ? AND securable_catalog_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 42,
+      "requests": 34,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 15,
+      "requests": 15,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT target_catalog_id, target_id, policy_type_code, policy_catalog_id, policy_id, parameters FROM POLARIS_SCHEMA.POLICY_MAPPING_RECORD WHERE target_id = ? AND target_catalog_id = ? AND realm_id = ?",
+      "table": "policy_mapping_record",
+      "verb": "SELECT",
+      "occurrences": 10,
+      "requests": 5,
+      "params_observed": true
+    },
+    {
+      "sql": "SELECT principal_id, principal_client_id, main_secret_hash, secondary_secret_hash, secret_salt FROM POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA WHERE principal_client_id = ? AND realm_id = ?",
+      "table": "principal_authentication_data",
+      "verb": "SELECT",
+      "occurrences": 6,
+      "requests": 6,
+      "params_observed": false
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND type_code = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 5,
+      "requests": 5,
+      "params_observed": true
+    }
+  ],
+  "explains": [
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ? AND type_code = ? AND catalog_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ? AND type_code = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 503,
+      "requests": 162,
+      "per_request": 3.105,
+      "params_observed": true,
+      "params": "POLARIS, 9118527594773052894, 2, 0",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "idx_entities",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.029,
+          "Actual Total Time": 0.03,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '9118527594773052894'::bigint))",
+          "Rows Removed by Index Recheck": 0,
+          "Filter": "(type_code = 2)",
+          "Rows Removed by Filter": 0,
+          "Shared Hit Blocks": 3,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.083,
+        "Triggers": [],
+        "Execution Time": 0.045
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "idx_entities",
+      "rows_removed_by_filter": 0,
+      "actual_rows": 1,
+      "plan_rows": 1,
+      "shared_hit_blocks": 3,
+      "shared_read_blocks": 0,
+      "buffers": "hit=3 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.036,
+        "min": 0.009,
+        "max": 0.073
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN (<rows>) AND realm_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN ((?, ?), (?, ?)) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 367,
+      "requests": 156,
+      "per_request": 2.353,
+      "params_observed": true,
+      "params": "0, 2, 0, 3340119121637991836, POLARIS",
+      "plan": {
+        "Plan": {
+          "Node Type": "Bitmap Heap Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 8.59,
+          "Total Cost": 16.21,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.017,
+          "Actual Total Time": 0.02,
+          "Actual Rows": 2,
+          "Actual Loops": 1,
+          "Recheck Cond": "(((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '2'::bigint)) OR ((realm_id = 'POLARIS'::text) AND (id = '3340119121637991836'::bigint)))",
+          "Rows Removed by Index Recheck": 0,
+          "Filter": "(catalog_id = '0'::bigint)",
+          "Rows Removed by Filter": 0,
+          "Exact Heap Blocks": 3,
+          "Lossy Heap Blocks": 0,
+          "Shared Hit Blocks": 7,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "BitmapOr",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 8.59,
+              "Total Cost": 8.59,
+              "Plan Rows": 2,
+              "Plan Width": 0,
+              "Actual Startup Time": 0.012,
+              "Actual Total Time": 0.012,
+              "Actual Rows": 0,
+              "Actual Loops": 1,
+              "Shared Hit Blocks": 4,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0,
+              "Plans": [
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "idx_entities",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.3,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Actual Startup Time": 0.008,
+                  "Actual Total Time": 0.008,
+                  "Actual Rows": 1,
+                  "Actual Loops": 1,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '2'::bigint))",
+                  "Shared Hit Blocks": 2,
+                  "Shared Read Blocks": 0,
+                  "Shared Dirtied Blocks": 0,
+                  "Shared Written Blocks": 0,
+                  "Local Hit Blocks": 0,
+                  "Local Read Blocks": 0,
+                  "Local Dirtied Blocks": 0,
+                  "Local Written Blocks": 0,
+                  "Temp Read Blocks": 0,
+                  "Temp Written Blocks": 0
+                },
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Member",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "entities_pkey",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 4.29,
+                  "Plan Rows": 1,
+                  "Plan Width": 0,
+                  "Actual Startup Time": 0.004,
+                  "Actual Total Time": 0.004,
+                  "Actual Rows": 2,
+                  "Actual Loops": 1,
+                  "Index Cond": "((realm_id = 'POLARIS'::text) AND (id = '3340119121637991836'::bigint))",
+                  "Shared Hit Blocks": 2,
+                  "Shared Read Blocks": 0,
+                  "Shared Dirtied Blocks": 0,
+                  "Shared Written Blocks": 0,
+                  "Local Hit Blocks": 0,
+                  "Local Read Blocks": 0,
+                  "Local Dirtied Blocks": 0,
+                  "Local Written Blocks": 0,
+                  "Temp Read Blocks": 0,
+                  "Temp Written Blocks": 0
+                }
+              ]
+            }
+          ]
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.072,
+        "Triggers": [],
+        "Execution Time": 0.034
+      },
+      "scan": "Bitmap Heap Scan",
+      "relation": "entities",
+      "index": null,
+      "rows_removed_by_filter": 0,
+      "actual_rows": 2,
+      "plan_rows": 1,
+      "shared_hit_blocks": 7,
+      "shared_read_blocks": 0,
+      "buffers": "hit=7 read=0",
+      "parallel": false,
+      "node_types": [
+        "Bitmap Heap Scan",
+        "BitmapOr",
+        "Bitmap Index Scan",
+        "Bitmap Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.04,
+        "min": 0.032,
+        "max": 0.048
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND parent_id = ? AND type_code = ? AND realm_id = ? AND name = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND parent_id = ? AND type_code = ? AND realm_id = ? AND name = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 190,
+      "requests": 162,
+      "per_request": 1.173,
+      "params_observed": true,
+      "params": "0, 0, 2, POLARIS, root",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.004,
+          "Actual Total Time": 0.004,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (parent_id = '0'::bigint) AND (type_code = 2) AND (name = 'root'::text))",
+          "Rows Removed by Index Recheck": 0,
+          "Shared Hit Blocks": 3,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.02,
+        "Triggers": [],
+        "Execution Time": 0.012
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": 1,
+      "plan_rows": 1,
+      "shared_hit_blocks": 3,
+      "shared_read_blocks": 0,
+      "buffers": "hit=3 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.015,
+        "min": 0.01,
+        "max": 0.046
+      }
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_catalog_id = ? AND grantee_id = ? AND realm_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_catalog_id = ? AND grantee_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 187,
+      "requests": 156,
+      "per_request": 1.199,
+      "params_observed": true,
+      "params": "0, 9118527594773052894, POLARIS",
+      "plan": {
+        "Plan": {
+          "Node Type": "Seq Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.0,
+          "Total Cost": 1635.72,
+          "Plan Rows": 1,
+          "Plan Width": 36,
+          "Actual Startup Time": 2.104,
+          "Actual Total Time": 2.122,
+          "Actual Rows": 2,
+          "Actual Loops": 1,
+          "Filter": "((grantee_catalog_id = '0'::bigint) AND (grantee_id = '9118527594773052894'::bigint) AND (realm_id = 'POLARIS'::text))",
+          "Rows Removed by Filter": 60782,
+          "Shared Hit Blocks": 572,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.024,
+        "Triggers": [],
+        "Execution Time": 2.127
+      },
+      "scan": "Seq Scan",
+      "relation": "grant_records",
+      "index": null,
+      "rows_removed_by_filter": 60782,
+      "actual_rows": 2,
+      "plan_rows": 1,
+      "shared_hit_blocks": 572,
+      "shared_read_blocks": 0,
+      "buffers": "hit=572 read=0",
+      "parallel": false,
+      "node_types": [
+        "Seq Scan"
+      ],
+      "explain_ms": {
+        "median": 2.042,
+        "min": 2.005,
+        "max": 2.223
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 181,
+      "requests": 156,
+      "per_request": 1.16,
+      "params_observed": true,
+      "params": "9118527594773052894, POLARIS, 0",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "idx_entities",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.012,
+          "Actual Total Time": 0.013,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (id = '9118527594773052894'::bigint))",
+          "Rows Removed by Index Recheck": 0,
+          "Shared Hit Blocks": 3,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.07,
+        "Triggers": [],
+        "Execution Time": 0.026
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "idx_entities",
+      "rows_removed_by_filter": null,
+      "actual_rows": 1,
+      "plan_rows": 1,
+      "shared_hit_blocks": 3,
+      "shared_read_blocks": 0,
+      "buffers": "hit=3 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.015,
+        "min": 0.007,
+        "max": 0.044
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 50,
+      "requests": 50,
+      "per_request": 1.0,
+      "params_observed": true,
+      "params": "916305385450751176, 0, POLARIS, 916305385450751176, 6",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 8.31,
+          "Plan Rows": 1,
+          "Plan Width": 43,
+          "Actual Startup Time": 0.005,
+          "Actual Total Time": 0.006,
+          "Actual Rows": 2,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '916305385450751176'::bigint) AND (parent_id = '916305385450751176'::bigint) AND (type_code = 6))",
+          "Rows Removed by Index Recheck": 0,
+          "Filter": "(sub_type_code = 0)",
+          "Rows Removed by Filter": 0,
+          "Shared Hit Blocks": 4,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.043,
+        "Triggers": [],
+        "Execution Time": 0.012
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": 0,
+      "actual_rows": 2,
+      "plan_rows": 1,
+      "shared_hit_blocks": 4,
+      "shared_read_blocks": 0,
+      "buffers": "hit=4 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.013,
+        "min": 0.011,
+        "max": 0.028
+      }
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = ? AND securable_catalog_id = ? AND realm_id = ?",
+      "replayed_sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = ? AND securable_catalog_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 42,
+      "requests": 34,
+      "per_request": 1.235,
+      "params_observed": true,
+      "params": "3340119121637991836, 0, POLARIS",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Only Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "grant_records_pkey",
+          "Relation Name": "grant_records",
+          "Alias": "grant_records",
+          "Startup Cost": 0.41,
+          "Total Cost": 12.34,
+          "Plan Rows": 19,
+          "Plan Width": 36,
+          "Actual Startup Time": 0.005,
+          "Actual Total Time": 0.005,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (securable_catalog_id = '0'::bigint) AND (securable_id = '3340119121637991836'::bigint))",
+          "Rows Removed by Index Recheck": 0,
+          "Heap Fetches": 1,
+          "Shared Hit Blocks": 5,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.016,
+        "Triggers": [],
+        "Execution Time": 0.009
+      },
+      "scan": "Index Only Scan",
+      "relation": "grant_records",
+      "index": "grant_records_pkey",
+      "rows_removed_by_filter": null,
+      "actual_rows": 1,
+      "plan_rows": 19,
+      "shared_hit_blocks": 5,
+      "shared_read_blocks": 0,
+      "buffers": "hit=5 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Only Scan"
+      ],
+      "explain_ms": {
+        "median": 0.013,
+        "min": 0.009,
+        "max": 0.044
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 15,
+      "requests": 15,
+      "per_request": 1.0,
+      "params_observed": true,
+      "params": "0, 0, POLARIS, 0, 2",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 218.25,
+          "Plan Rows": 110,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.011,
+          "Actual Total Time": 0.333,
+          "Actual Rows": 1106,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (parent_id = '0'::bigint) AND (type_code = 2))",
+          "Rows Removed by Index Recheck": 0,
+          "Filter": "(sub_type_code = 0)",
+          "Rows Removed by Filter": 0,
+          "Shared Hit Blocks": 763,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.034,
+        "Triggers": [],
+        "Execution Time": 0.378
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": 0,
+      "actual_rows": 1106,
+      "plan_rows": 110,
+      "shared_hit_blocks": 763,
+      "shared_read_blocks": 0,
+      "buffers": "hit=763 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.456,
+        "min": 0.342,
+        "max": 0.68
+      }
+    },
+    {
+      "sql": "SELECT target_catalog_id, target_id, policy_type_code, policy_catalog_id, policy_id, parameters FROM POLARIS_SCHEMA.POLICY_MAPPING_RECORD WHERE target_id = ? AND target_catalog_id = ? AND realm_id = ?",
+      "replayed_sql": "SELECT target_catalog_id, target_id, policy_type_code, policy_catalog_id, policy_id, parameters FROM POLARIS_SCHEMA.POLICY_MAPPING_RECORD WHERE target_id = ? AND target_catalog_id = ? AND realm_id = ?",
+      "table": "policy_mapping_record",
+      "verb": "SELECT",
+      "occurrences": 10,
+      "requests": 5,
+      "per_request": 2.0,
+      "params_observed": true,
+      "params": "916305385450751176, 0, POLARIS",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "policy_mapping_record_pkey",
+          "Relation Name": "policy_mapping_record",
+          "Alias": "policy_mapping_record",
+          "Startup Cost": 0.15,
+          "Total Cost": 8.17,
+          "Plan Rows": 1,
+          "Plan Width": 68,
+          "Actual Startup Time": 0.001,
+          "Actual Total Time": 0.001,
+          "Actual Rows": 0,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (target_catalog_id = '0'::bigint) AND (target_id = '916305385450751176'::bigint))",
+          "Rows Removed by Index Recheck": 0,
+          "Shared Hit Blocks": 2,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 2,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.018,
+        "Triggers": [],
+        "Execution Time": 0.006
+      },
+      "scan": "Index Scan",
+      "relation": "policy_mapping_record",
+      "index": "policy_mapping_record_pkey",
+      "rows_removed_by_filter": null,
+      "actual_rows": 0,
+      "plan_rows": 1,
+      "shared_hit_blocks": 2,
+      "shared_read_blocks": 0,
+      "buffers": "hit=2 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.005,
+        "min": 0.004,
+        "max": 0.007
+      }
+    },
+    {
+      "sql": "SELECT principal_id, principal_client_id, main_secret_hash, secondary_secret_hash, secret_salt FROM POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA WHERE principal_client_id = ? AND realm_id = ?",
+      "replayed_sql": "SELECT principal_id, principal_client_id, main_secret_hash, secondary_secret_hash, secret_salt FROM POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA WHERE principal_client_id = ? AND realm_id = ?",
+      "table": "principal_authentication_data",
+      "verb": "SELECT",
+      "occurrences": 6,
+      "requests": 6,
+      "per_request": 1.0,
+      "params_observed": false,
+      "params": null,
+      "skipped": "parameters were redacted at capture (secret table); replay would need them reconstructed from the metastore"
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND type_code = ? AND catalog_id = ? AND parent_id = ?",
+      "replayed_sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND type_code = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 5,
+      "requests": 5,
+      "per_request": 1.0,
+      "params_observed": true,
+      "params": "POLARIS, 4, 0, 0",
+      "plan": {
+        "Plan": {
+          "Node Type": "Index Scan",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "constraint_name",
+          "Relation Name": "entities",
+          "Alias": "entities",
+          "Startup Cost": 0.29,
+          "Total Cost": 216.15,
+          "Plan Rows": 132,
+          "Plan Width": 298,
+          "Actual Startup Time": 0.007,
+          "Actual Total Time": 0.307,
+          "Actual Rows": 1105,
+          "Actual Loops": 1,
+          "Index Cond": "((realm_id = 'POLARIS'::text) AND (catalog_id = '0'::bigint) AND (parent_id = '0'::bigint) AND (type_code = 4))",
+          "Rows Removed by Index Recheck": 0,
+          "Shared Hit Blocks": 780,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.021,
+        "Triggers": [],
+        "Execution Time": 0.335
+      },
+      "scan": "Index Scan",
+      "relation": "entities",
+      "index": "constraint_name",
+      "rows_removed_by_filter": null,
+      "actual_rows": 1105,
+      "plan_rows": 132,
+      "shared_hit_blocks": 780,
+      "shared_read_blocks": 0,
+      "buffers": "hit=780 read=0",
+      "parallel": false,
+      "node_types": [
+        "Index Scan"
+      ],
+      "explain_ms": {
+        "median": 0.342,
+        "min": 0.299,
+        "max": 0.43
+      }
+    }
+  ]
+}

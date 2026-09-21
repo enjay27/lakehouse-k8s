@@ -1,0 +1,811 @@
+# ============================================================
+# HISTORY — NOT LIVE CONFIGURATION (2026-09-18).
+# The `fb-polaris-shipper` release was UNINSTALLED, together with VictoriaLogs and
+# `polaris-shared-logs-pvc` (logging/RUNBOOK-log-pvc-removal-2026-09-18.md, executed).
+# Nothing below describes anything running.
+#
+# Kept rather than deleted because it is the only record of how this leg was wired,
+# and of the four silent faults found in it (no tail DB; Skip_Long_Lines Off, which
+# STOPS the tail rather than skipping the line; no Rotate_Wait; no filesystem
+# buffering — .memory/completed.md). Do NOT helm install from it to "restore" the
+# leg: the PVC it tails no longer exists and Polaris writes no log file at all.
+# ============================================================
+# Fluent Bit — Polaris log shipper
+#   release   fb-polaris-shipper
+#   namespace datahub-hynix          (NOT `logging` — the log PVC is namespaced,
+#                                     and Polaris lives here)
+#   chart     fluent-bit-0.58.1      app 5.1.1
+#
+# This is NOT the DaemonSet. `fluent-bit/values.yaml` is that one
+# (container logs -> OpenSearch in Docker). Two releases, on purpose.
+#
+# RECONCILED against live revision 10 on 2026-09-03. `helm get values` matched
+# this file exactly, apart from key ordering and one real difference, since
+# corrected here: the live release streams on `app,level`, this file had asked
+# for `app,level,loggerName`. Everything below is what is deployed, plus the
+# luaScripts block and the lua filter, which are new.
+#
+# Still NOT accounted for by this repo: `polaris-shared-logs-pvc`, mounted below
+# and created by no manifest here (.memory/active-issues.md #5).
+#
+# Install — no --set flags, everything is in this file:
+#   helm upgrade --install fb-polaris-shipper fluent/fluent-bit \
+#     --version 0.58.1 -n datahub-hynix -f logging/fb-values.yaml
+#
+# Chart 0.58.1 renders `luaScripts` into a ConfigMap mounted at
+# /fluent-bit/scripts/<key>, which is what the lua filter's `script` path points
+# at. Classic `config:` is the chart's only format — there is no YAML-config
+# switch to migrate to.
+# ============================================================
+
+kind: Deployment
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+extraVolumes:
+  - name: polaris-logs
+    persistentVolumeClaim:
+      claimName: polaris-shared-logs-pvc
+
+  # Writable scratch for the tail offset DB and the filesystem buffer. The log
+  # PVC above is readOnly, so neither can live there.
+  #
+  # emptyDir survives a container restart (crash, OOM) but NOT pod replacement —
+  # and `helm upgrade` replaces the pod. On a fresh pod the DB is empty and
+  # `Read_from_Head true` re-reads the whole file, which VictoriaLogs does not
+  # deduplicate. To make that survive upgrades too, create a small PVC and swap
+  # the emptyDir for it:
+  #     kubectl -n datahub-hynix create -f - <<'EOF'
+  #     apiVersion: v1
+  #     kind: PersistentVolumeClaim
+  #     metadata: {name: fb-polaris-shipper-state}
+  #     spec:
+  #       accessModes: [ReadWriteOnce]
+  #       resources: {requests: {storage: 1Gi}}
+  #     EOF
+  #   then:  persistentVolumeClaim: {claimName: fb-polaris-shipper-state}
+  - name: flb-storage
+    emptyDir:
+      sizeLimit: 2Gi
+
+extraVolumeMounts:
+  - name: polaris-logs
+    mountPath: /logs
+    readOnly: true
+  - name: flb-storage
+    mountPath: /var/log/flb-storage
+
+# Rendered by the chart into a ConfigMap and mounted at /fluent-bit/scripts/.
+# This is the ONE authoritative copy of the script. To re-run its test cases:
+#   python3 logging/scripts/test-polaris-filters.py
+# which extracts the Lua from this file and executes it, so the tests can never
+# drift from what is deployed.
+luaScripts:
+  polaris_access_log.lua: |
+    -- polaris_access_log.lua — Fluent Bit Lua filter
+    --
+    -- Splits the Quarkus HTTP access-log line out of _msg into typed fields, and only
+    -- for records whose loggerName is io.quarkus.http.access-log. Every other Polaris
+    -- record passes through untouched.
+    --
+    -- Input _msg, as emitted by the pattern %h %l %u %t "%r" %s %b :
+    --   192.168.194.1 - root [03/Sep/2026:06:37:47 +0000] "DELETE /api/... HTTP/1.1" 404 133
+    --   \________/   ^  \__/  \____________________/       \____/ \_____/ \______/   \_/ \_/
+    --    client_ip   |  user      timestamp (dropped)      method  path   version    |   |
+    --                |                                                    (dropped)  |   |
+    --         %l, always "-", dropped                               http_status ------+   |
+    --                                                              response_size ---------+
+    --
+    -- Field names match §7 of archive/2026-09-03-archive/2026-09-03-polaris-logging-architecture-spec.md so the
+    -- LogsQL recipes there work unchanged.
+    --
+    -- _msg is left in place: it is the raw line, and it is what you read when the
+    -- parse is wrong.
+
+    local ACCESS_LOGGER = "io.quarkus.http.access-log"
+
+    -- Lua patterns, not regex. %S non-space, %u uppercase, %d digit, %[ a literal [.
+    -- The version token inside the quotes is consumed by [^"]* without capturing.
+    local PATTERN = '^(%S+) %S+ (%S+) %[[^%]]*%] "(%u+) (%S+)[^"]*" (%d+) (%S+)'
+
+    function polaris_access_log(tag, timestamp, record)
+        if record["loggerName"] ~= ACCESS_LOGGER then
+            return 0, timestamp, record   -- 0 = not modified, keep as-is
+        end
+
+        local msg = record["_msg"]
+        if type(msg) ~= "string" then
+            record["access_log_parse_error"] = true
+            return 2, timestamp, record
+        end
+
+        local ip, user, method, path, status, size = string.match(msg, PATTERN)
+
+        if ip == nil then
+            -- Never fail silently: a line from this logger that does not parse is a
+            -- pattern change, and it should be findable with
+            --   access_log_parse_error:true
+            record["access_log_parse_error"] = true
+            return 2, timestamp, record
+        end
+
+        record["client_ip"]            = ip
+        record["user_principal_name"]  = user
+        record["http_method"]          = method
+        record["api_path"]             = path
+        record["http_status"]          = tonumber(status)
+
+        -- %b writes "-" for a zero-byte body, which is CLF for 0, not for unknown.
+        record["response_size"]        = tonumber(size) or 0
+
+        -- 2, not 1: 1 tells Fluent Bit to take the timestamp we return as well, which
+        -- round-trips it through a Lua double. 2 means "record changed, timestamp
+        -- untouched", which is what actually happened here.
+        return 2, timestamp, record
+    end
+
+    -- ===========================================================================
+    -- polaris_noise_filter — decide what is stored, and count everything else
+    -- ===========================================================================
+    -- Evaluated in strict order; the first rule that matches wins.
+    --
+    --   0. the report tick (tag polaris.report) ....... becomes the flush report
+    --   1. level ERROR or WARN ........................ keep
+    --   2. not an access-log record ................... keep (untouched)
+    --   --- every access-log record is COUNTED here, before any decision ---
+    --   3. http_status >= 400, or unparseable ......... keep — ALL of them, no cap
+    --   4. PUT / DELETE / PATCH ....................... keep — all
+    --   5. POST under /api/management/ ................ keep — all
+    --      POST anywhere else .........................  counted only
+    --   6. GET / HEAD, 2xx ............................  counted only
+    --   7. anything else .............................. keep
+    --
+    -- What this preserves, deliberately: **100% of authorization failures** — every
+    -- 401 and 403 is a full record via rule 3 — and **100% of identity and grant
+    -- mutations**: management POST, every PUT, every DELETE. What it reduces to a
+    -- count is traffic that succeeded routinely.
+    --
+    -- Rule 5 is not an arbitrary split. In Polaris, POST is the CREATE verb:
+    -- create_principal, create_principal_role, create_catalog_role and
+    -- reset_principal_credentials are all POSTs, while PUT covers only assignment and
+    -- grants and DELETE only removal. Summarising POST wholesale would make a
+    -- principal invisibly created and visibly deleted, which is the audit asymmetry
+    -- this pipeline was built to expose. Catalog POSTs (create_table, commit_table,
+    -- the renames, report_metrics, oauth/tokens) are data-plane volume and are counted.
+    --
+    -- v2 deduplicated reads once per principal per KST day and kept a per-key table to
+    -- do it. v3 deletes that: a successful read is never stored individually, so there
+    -- is no key to remember and no cap to choose. The civil-day arithmetic, the two day
+    -- buckets and DEDUP_MAX_KEYS are gone with it.
+    --
+    -- Rule 1 has NO "deprecated config" exclusion and needs none.
+    -- polaris/values.yaml:315 sets `io.quarkus.config: "OFF"`, so those warnings are
+    -- never written at all — and the 2026-09-04 coverage run independently saw zero of
+    -- them across 122 calls. The values file alone would not be evidence here (#5); the
+    -- run agreeing with it is.
+
+    -- ── Tunables ───────────────────────────────────────────────────────────────────
+    local REPORT_TAG     = "polaris.report"
+    local REPORT_APP     = "polaris-shipper-report"
+    local SCHEMA_VERSION = 2   -- v2 (2026-09-07): distinct_resources/_principals now
+                               -- count only rows with requests > 0 (v1 counted zero-carry
+                               -- rows too, so an idle window reported resources it never
+                               -- saw) and carried_rows carries that number instead;
+                               -- counted_get -> counted_read, because READ_METHODS is
+                               -- GET *and* HEAD and v1 reported HEADs as GETs. Both are
+                               -- meaning changes to shipped field names -- which is what
+                               -- this constant is for. Additive in the same version:
+                               -- errors_4xx / errors_5xx / auth_denied (summary + rows),
+                               -- bytes_total, resources_other_distinct, windows_skipped.
+                               -- EVERY one of them is also in type_int_key on filter 3;
+                               -- a numeric field missing there stores as a string and
+                               -- numeric LogsQL filters return nothing, silently.
+    local WINDOW_SECONDS = 30      -- TEMPORARY FAST RUN (2026-09-04). Steady state is
+                                   -- 1800 (:00 and :30 wall-clock; KST is UTC+9:00
+                                   -- exactly, so that boundary is the same in both
+                                   -- clocks). Dropped to 30s so a coverage run crosses
+                                   -- three window boundaries in ~2 minutes instead of
+                                   -- ~90 -- see the handoff's section 4. REVERT to 1800
+                                   -- with Interval_Sec 30 when the run is done; nothing
+                                   -- else reads this constant. Note the boundary is now
+                                   -- every :00/:30 SECONDS, not minutes.
+    local MGMT_PREFIX    = "^/api/management/"
+
+    local READ_METHODS  = { GET = true, HEAD = true }
+    local WRITE_METHODS = { POST = true, PUT = true, DELETE = true, PATCH = true }
+    local KEEP_METHODS  = { PUT = true, DELETE = true, PATCH = true }
+
+    -- A counter key must be the RESOURCE, not the URL. /namespaces/ns/tables/t/metrics
+    -- is the same table as /namespaces/ns/tables/t, and counting them apart makes every
+    -- trend for that table wrong — measured, not supposed: v2 emitted two rows for one
+    -- table. Each pattern is matched against the query-stripped path and the match is
+    -- truncated to its own span. `.-` is lazy, so the catalog prefix is included and
+    -- tables of the same name in different catalogs do not collide.
+    local RESOURCE_PATTERNS = {
+        { kind = "table",      pattern = "^.-/namespaces/[^/]+/tables/[^/]+" },
+        { kind = "view",       pattern = "^.-/namespaces/[^/]+/views/[^/]+" },
+        { kind = "collection", pattern = "^.-/namespaces/[^/]+/tables$" },
+        { kind = "collection", pattern = "^.-/namespaces/[^/]+/views$" },
+        { kind = "namespace",  pattern = "^.-/namespaces/[^/]+$" },
+        { kind = "collection", pattern = "^.-/namespaces$" },
+    }
+
+    -- Bounds on the two margins. Beyond them, requests land in one __other__ row: the
+    -- totals stay exact and only per-key detail is capped, which is the difference
+    -- between this cap and one that would have lost counts.
+    local REPORT_MAX_RESOURCES  = 500
+    local REPORT_MAX_PRINCIPALS = 200
+    local REPORT_OTHER          = "__other__"
+
+    -- ── Helpers ────────────────────────────────────────────────────────────────────
+    -- Query string off before matching or keying. api_path itself is left alone: it is
+    -- the raw path, and it is what you read when something looks wrong.
+    local function path_only(p)
+        if type(p) ~= "string" then return "" end
+        return p:match("^[^?]*") or p
+    end
+
+    local function classify(path)
+        for _, r in ipairs(RESOURCE_PATTERNS) do
+            local span = path:match(r.pattern)
+            if span then return span, r.kind end
+        end
+        if path:find(MGMT_PREFIX) then return path, "management" end
+        return path, "other"
+    end
+
+    -- os.time() is used for the report window and deliberately NOT for anything about a
+    -- record: a replayed record must not be re-dated. _now_override is a test hook; the
+    -- dummy input never sets it, so it is inert in the deployed pipeline.
+    local function now_seconds(record)
+        return tonumber(record["_now_override"]) or os.time()
+    end
+
+    local function iso(t)
+        return os.date("!%Y-%m-%dT%H:%M:%SZ", t)
+    end
+
+    -- ── Window counters ────────────────────────────────────────────────────────────
+    -- Reset on every emit, so each report is a delta and needs no arithmetic to read.
+    local counts, report_seq = nil, 0
+
+    -- errors is the TOTAL and stays the total; the three below partition it by kind so
+    -- an alert can be written against one. A 404 is traffic, a 500 is an incident, and
+    -- schema v1 put both in the same integer. auth_denied (401|403) overlaps errors_4xx
+    -- deliberately: it is the security question, which was buried under 404s.
+    local function new_row()
+        return { requests = 0, reads = 0, writes = 0, errors = 0, response_bytes = 0,
+                 errors_4xx = 0, errors_5xx = 0, auth_denied = 0 }
+    end
+
+    -- carry_res / carry_pri implement ZERO-CARRY, for exactly one window: a resource
+    -- that falls from 100k reads to none emits an explicit 0 instead of vanishing from
+    -- the output, so the fall is a data point rather than a missing row. A carried row
+    -- that stays at zero is not carried again, so the set decays.
+    local function new_window(idx, partial, carry_res, carry_pri)
+        local w = {
+            window = idx, partial = partial and true or false,
+            access_seen = 0, access_counted = 0,
+            counted_read = 0, counted_post = 0,
+            errors_kept = 0, parse_errors = 0,
+            resources = {}, kinds = {}, n_resources = 0, resources_over = 0,
+            principals = {}, n_principals = 0, principals_over = 0,
+            other_keys = {}, n_other_keys = 0,
+            min_time = nil, max_time = nil,
+        }
+        for key, kind in pairs(carry_res or {}) do
+            w.resources[key] = new_row(); w.kinds[key] = kind
+            w.n_resources = w.n_resources + 1
+        end
+        for user in pairs(carry_pri or {}) do
+            w.principals[user] = new_row(); w.n_principals = w.n_principals + 1
+        end
+        return w
+    end
+
+    -- create=false means "increment this resource if it is already known, otherwise put
+    -- it in __other__". Errors pass create=false, so a client walking invented table
+    -- names cannot fill the key space with resources that never existed — the coverage
+    -- run hammered a table called `nope` twenty times. Their counts are NOT lost: they
+    -- land in __other__, which is what keeps the margin totals exact. And every one of
+    -- those requests is stored as a full record anyway, by rule 3.
+    --
+    -- resources_over counts REQUESTS folded, which cannot tell one broken client
+    -- hammering one URL from a scanner walking twenty names. n_other_keys counts the
+    -- DISTINCT keys folded, bounded by the same REPORT_MAX_RESOURCES so the set cannot
+    -- become the key space this branch exists to protect.
+    local function touch_resource(key, kind, create)
+        local r = counts.resources[key]
+        if r ~= nil then return r end
+        if (not create) or counts.n_resources >= REPORT_MAX_RESOURCES then
+            counts.resources_over = counts.resources_over + 1
+            if counts.other_keys[key] == nil
+               and counts.n_other_keys < REPORT_MAX_RESOURCES then
+                counts.other_keys[key] = true
+                counts.n_other_keys = counts.n_other_keys + 1
+            end
+            r = counts.resources[REPORT_OTHER]
+            if r == nil then
+                r = new_row()
+                counts.resources[REPORT_OTHER] = r
+                counts.kinds[REPORT_OTHER] = "other"
+                counts.n_resources = counts.n_resources + 1
+            end
+            return r
+        end
+        r = new_row()
+        counts.resources[key] = r
+        counts.kinds[key] = kind
+        counts.n_resources = counts.n_resources + 1
+        return r
+    end
+
+    local function touch_principal(user)
+        local p = counts.principals[user]
+        if p ~= nil then return p end
+        if counts.n_principals >= REPORT_MAX_PRINCIPALS then
+            counts.principals_over = counts.principals_over + 1
+            p = counts.principals[REPORT_OTHER]
+            if p == nil then
+                p = new_row()
+                counts.principals[REPORT_OTHER] = p
+                counts.n_principals = counts.n_principals + 1
+            end
+            return p
+        end
+        p = new_row()
+        counts.principals[user] = p
+        counts.n_principals = counts.n_principals + 1
+        return p
+    end
+
+    -- reads = GET|HEAD, writes = POST|PUT|DELETE|PATCH, errors = status >= 400, each by
+    -- method or status regardless of the other -- so `errors` deliberately OVERLAPS
+    -- reads and writes. Invariants: reads + writes <= requests, errors <= requests, and
+    --   sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors
+    -- The two margins must agree. A dashboard that checks it knows whether to trust a
+    -- trend before it draws one.
+    local function count_record(record, method, path, user, status, bytes, parse_failed)
+        if counts == nil then return end
+        counts.access_seen = counts.access_seen + 1
+
+        -- RFC3339 with a fixed format and zone sorts lexicographically, so min/max need
+        -- no parsing. They make a replay obvious: its window spans days.
+        local t = record["_time"]
+        if type(t) == "string" then
+            if counts.min_time == nil or t < counts.min_time then counts.min_time = t end
+            if counts.max_time == nil or t > counts.max_time then counts.max_time = t end
+        end
+
+        if parse_failed then
+            counts.parse_errors = counts.parse_errors + 1
+            return
+        end
+
+        local is_error = (status == nil or status >= 400)
+        local key, kind = classify(path)
+        local rows = { touch_resource(key, kind, not is_error), touch_principal(user) }
+        for _, row in ipairs(rows) do
+            row.requests = row.requests + 1
+            if READ_METHODS[method] then
+                row.reads = row.reads + 1
+            elseif WRITE_METHODS[method] then
+                row.writes = row.writes + 1
+            end
+            if is_error then
+                row.errors = row.errors + 1
+                -- status == nil is an unparsed or absent status. It is an error by the
+                -- rule above and it is NOT a 4xx: charging it to errors_4xx would make
+                -- "client errors" absorb the pipeline's own failures.
+                if status ~= nil then
+                    if status >= 500 then
+                        row.errors_5xx = row.errors_5xx + 1
+                    else
+                        row.errors_4xx = row.errors_4xx + 1
+                        if status == 401 or status == 403 then
+                            row.auth_denied = row.auth_denied + 1
+                        end
+                    end
+                end
+            end
+            row.response_bytes = row.response_bytes + bytes
+        end
+    end
+
+    -- ── Building the report ────────────────────────────────────────────────────────
+    -- Schema v2. Three record types on one envelope, all sharing the window's _time so
+    -- `stats by (_time)` groups a window. Field names are contract: renaming one after
+    -- a month of data is the expensive kind of mistake -- which is why v2 renames two
+    -- of them NOW, while the only consumer is the coverage harness. See SCHEMA_VERSION.
+    --
+    -- level stays "REPORT" rather than becoming INFO: it is the stream selector every
+    -- existing query and the harness's vlogs.py helper use. The cost is that the
+    -- severity column is meaningless for this stream -- a decision, not an oversight;
+    -- report_type is the discriminator.
+    local function build_report(idx, windows_skipped)
+        local starts, ends = iso(idx * WINDOW_SECONDS), iso((idx + 1) * WINDOW_SECONDS)
+        report_seq = report_seq + 1
+        local host = os.getenv("HOSTNAME") or "unknown"
+
+        local function base(kind)
+            return { app = REPORT_APP, level = "REPORT",
+                     schema_version = SCHEMA_VERSION, report_type = kind,
+                     report_seq = report_seq, hostname = host,
+                     window_start = starts, window_end = ends,
+                     window_seconds = WINDOW_SECONDS, _time = ends }
+        end
+
+        local out = {}
+        local s = base("summary")
+
+        -- The rows are built first, because the summary's cardinality and error split
+        -- are derived from them. v1 reported n_resources -- the number of rows EMITTED,
+        -- which includes zero-carry rows -- under a name that promises resources
+        -- touched, so a window with no traffic at all reported two distinct resources.
+        -- Active rows and carried rows are now separate fields, and neither is a guess.
+        local carry_res, carry_pri = {}, {}
+        local n_active_res, n_active_pri, n_carried = 0, 0, 0
+        local rows = {}
+        local tot_4xx, tot_5xx, tot_denied, tot_bytes = 0, 0, 0, 0
+
+        for key, r in pairs(counts.resources) do
+            local e = base("resource")
+            e.resource       = key
+            e.resource_kind  = counts.kinds[key] or "other"
+            e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
+            e.errors_4xx, e.errors_5xx, e.auth_denied = r.errors_4xx, r.errors_5xx, r.auth_denied
+            e.response_bytes = r.response_bytes
+            e._msg = string.format(
+                "seq=%d resource %s (%s): %d requests, %d reads, %d writes, "
+                .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes",
+                report_seq, key, e.resource_kind, r.requests, r.reads, r.writes,
+                r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes)
+            rows[#rows + 1] = e
+            if r.requests > 0 then
+                carry_res[key] = e.resource_kind
+                n_active_res = n_active_res + 1
+            else
+                n_carried = n_carried + 1
+            end
+            -- Summed over resources, not principals: the two margins are equal by the
+            -- invariant, so either side would do, and doing both would double-count.
+            tot_4xx    = tot_4xx + r.errors_4xx
+            tot_5xx    = tot_5xx + r.errors_5xx
+            tot_denied = tot_denied + r.auth_denied
+            tot_bytes  = tot_bytes + r.response_bytes
+        end
+
+        for user, r in pairs(counts.principals) do
+            local e = base("principal")
+            e.user_principal_name = user
+            e.requests, e.reads, e.writes, e.errors = r.requests, r.reads, r.writes, r.errors
+            e.errors_4xx, e.errors_5xx, e.auth_denied = r.errors_4xx, r.errors_5xx, r.auth_denied
+            e.response_bytes = r.response_bytes
+            e._msg = string.format(
+                "seq=%d principal %s: %d requests, %d reads, %d writes, "
+                .. "%d errors (%d 4xx, %d 5xx, %d denied), %d bytes",
+                report_seq, user, r.requests, r.reads, r.writes,
+                r.errors, r.errors_4xx, r.errors_5xx, r.auth_denied, r.response_bytes)
+            rows[#rows + 1] = e
+            if r.requests > 0 then
+                carry_pri[user] = true
+                n_active_pri = n_active_pri + 1
+            else
+                n_carried = n_carried + 1
+            end
+        end
+
+        s.access_seen         = counts.access_seen
+        s.access_kept         = counts.access_seen - counts.access_counted
+        s.access_counted      = counts.access_counted
+        s.counted_read        = counts.counted_read
+        s.counted_post        = counts.counted_post
+        s.errors_kept         = counts.errors_kept
+        s.parse_errors        = counts.parse_errors
+        s.errors_4xx          = tot_4xx
+        s.errors_5xx          = tot_5xx
+        s.auth_denied         = tot_denied
+        s.bytes_total         = tot_bytes
+        s.distinct_resources  = n_active_res
+        s.distinct_principals = n_active_pri
+        s.carried_rows        = n_carried
+        s.resources_other     = counts.resources_over
+        s.resources_other_distinct = counts.n_other_keys
+        s.principals_other    = counts.principals_over
+        s.windows_skipped     = windows_skipped or 0
+        s.min_record_time     = counts.min_time or ""
+        s.max_record_time     = counts.max_time or ""
+        s.partial_window      = counts.partial and "true" or "false"
+        s._msg = string.format(
+            "polaris shipper report seq=%d@%s %s..%s: %d access lines, %d kept, "
+            .. "%d counted (%d read, %d POST), %d errors kept (%d 4xx, %d 5xx, "
+            .. "%d denied), %d resources, %d principals, %d carried, %d bytes, "
+            .. "%d windows skipped",
+            report_seq, host, starts, ends, counts.access_seen, s.access_kept,
+            counts.access_counted, counts.counted_read, counts.counted_post,
+            counts.errors_kept, tot_4xx, tot_5xx, tot_denied,
+            n_active_res, n_active_pri, n_carried, tot_bytes, s.windows_skipped)
+
+        out[#out + 1] = s
+        for _, e in ipairs(rows) do out[#out + 1] = e end
+
+        return out, carry_res, carry_pri
+    end
+
+    -- The tick RATE is not the report period. A tick inside the current window is
+    -- dropped, so over-ticking is harmless and the window stays aligned to the
+    -- WINDOW_SECONDS grid across a restart. Skew: records arriving between a boundary
+    -- and the tick that notices it are counted into the window just closed. A summary,
+    -- not a ledger.
+    --
+    -- Over-ticking is harmless; UNDER-ticking is not, and the margin is the whole
+    -- reason Interval_Sec tracks WINDOW_SECONDS. This function reports whatever
+    -- `counts` holds under the index it was opened with, and records are accumulated
+    -- into the open window regardless of their own timestamps. If the tick period
+    -- reaches the window period, ordinary jitter lets two boundaries pass between
+    -- ticks: the skipped window never opens, its records are folded into the previous
+    -- window's index, and the counts stop being attributable to a wall-clock window.
+    -- Keep the tick well under WINDOW_SECONDS -- it is 5s against a 30s window here.
+    local function report_tick(timestamp, record)
+        local idx = math.floor(now_seconds(record) / WINDOW_SECONDS)
+        if counts == nil then
+            -- First tick after start: open a window rather than report an empty one.
+            -- Flagged partial, because the shipper missed the start of it.
+            counts = new_window(idx, true)
+            return -1, timestamp, record
+        end
+        if idx == counts.window then
+            return -1, timestamp, record
+        end
+        -- Windows between the one being closed and the one now open were never built,
+        -- so report_seq increments by 1 across a gap of any size and the gap is silent.
+        -- It is stated instead. EXPECT IT TO BE NON-ZERO ON THIS CLUSTER: the OrbStack
+        -- VM suspends with the MacBook, the tick timer does not fire, and a window that
+        -- never opened cannot be reported. Sleep looks like a large windows_skipped with
+        -- access_seen 0 and no min_record_time; a real tick failure looks like
+        -- windows_skipped >= 1 WITH a min/max span wider than window_seconds. Do not
+        -- alert on this field alone.
+        local skipped = idx - counts.window - 1
+        if skipped < 0 then skipped = 0 end
+        local out, carry_res, carry_pri = build_report(counts.window, skipped)
+        counts = new_window(idx, false, carry_res, carry_pri)
+        return 2, timestamp, out
+    end
+
+    -- ── Entry point ────────────────────────────────────────────────────────────────
+    function polaris_noise_filter(tag, timestamp, record)
+        -- 0. The report tick, from the dummy INPUT. It carries no log data: it becomes
+        --    the report records, or is dropped if the window has not turned over.
+        if tag == REPORT_TAG then
+            return report_tick(timestamp, record)
+        end
+
+        local level = record["level"]
+
+        -- 1. Errors and warnings always survive.
+        if level == "ERROR" or level == "WARN" then
+            return 0, timestamp, record
+        end
+
+        -- 2. Application logs pass through untouched.
+        if record["loggerName"] ~= ACCESS_LOGGER then
+            return 0, timestamp, record
+        end
+
+        -- COUNT FIRST, DECIDE SECOND. The counters must cover everything that can be
+        -- suppressed, or a suppressed record is lost rather than summarised -- which is
+        -- the single failure this design exists to prevent.
+        local method       = record["http_method"]
+        local path         = path_only(record["api_path"])
+        local user         = record["user_principal_name"] or "-"
+        local status       = tonumber(record["http_status"])
+        local bytes        = tonumber(record["response_size"]) or 0
+        local parse_failed = record["access_log_parse_error"] ~= nil
+
+        count_record(record, method, path, user, status, bytes, parse_failed)
+
+        -- 3. Anything that failed is kept, all of it, no cap. Also covers a line that
+        --    did not parse -- never drop what you could not read.
+        if parse_failed or status == nil or status >= 400 then
+            if counts ~= nil then counts.errors_kept = counts.errors_kept + 1 end
+            return 0, timestamp, record
+        end
+
+        -- 4. Mutations other than POST always survive.
+        if KEEP_METHODS[method] then
+            return 0, timestamp, record
+        end
+
+        -- 5. POST: management in full, catalog counted. See the header for why.
+        if method == "POST" then
+            if path:find(MGMT_PREFIX) then
+                return 0, timestamp, record
+            end
+            if counts ~= nil then
+                counts.counted_post   = counts.counted_post + 1
+                counts.access_counted = counts.access_counted + 1
+            end
+            return -1, timestamp, record
+        end
+
+        -- 6. Successful reads are counts, never records.
+        if READ_METHODS[method] then
+            if counts ~= nil then
+                counts.counted_read   = counts.counted_read + 1
+                counts.access_counted = counts.access_counted + 1
+            end
+            return -1, timestamp, record
+        end
+
+        -- 7. Everything else survives.
+        return 0, timestamp, record
+    end
+config:
+  service: |
+    [SERVICE]
+        Flush         1
+        Log_Level     info
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+        # Buffer to disk, not only to memory: a VictoriaLogs restart or a network
+        # stall no longer costs whatever was queued.
+        storage.path              /var/log/flb-storage/
+        storage.sync              normal
+        storage.checksum          off
+        storage.max_chunks_up     64
+        storage.backlog.mem_limit 32M
+
+  inputs: |
+    [INPUT]
+        Name              tail
+        Path              /logs/polaris.log
+        Tag               polaris.vlogs
+        Read_from_Head    true
+        Parser            json
+        Buffer_Chunk_Size 256k
+        Buffer_Max_Size   10MB
+
+        # On: a line longer than Buffer_Max_Size is skipped.
+        # Off (the old value): the tail STOPS on the file. Not "drops the line" —
+        # stops, and stays stopped. Stack traces are the long lines.
+        Skip_Long_Lines   On
+
+        # Offset DB. Without it, every restart re-reads from byte 0 and re-posts
+        # the file; VictoriaLogs does not deduplicate on ingest.
+        DB                /var/log/flb-storage/polaris_tail.db
+        DB.sync           normal
+
+        # Quarkus rotates polaris.log at maxFileSize. Give the tailer time to
+        # finish the rotated inode instead of losing its tail.
+        Refresh_Interval  5
+        Rotate_Wait       10
+
+        storage.type      filesystem
+
+    # The report tick. Carries no log data: filter 3 replaces it with the flush
+    # report when the window turns over, and drops it otherwise. The interval is
+    # therefore NOT the report period -- WINDOW_SECONDS in the Lua is, and it is
+    # aligned to the wall-clock WINDOW_SECONDS grid. This only has to tick often
+    # enough that the boundary is noticed promptly, and it must stay WELL UNDER
+    # WINDOW_SECONDS: at tick == window, jitter lets a boundary pass unnoticed and
+    # the skipped window's records are attributed to the previous window (see
+    # report_tick). 5s against the temporary 30s window bounds edge skew at 5s.
+    # REVERT to Interval_Sec 30 when WINDOW_SECONDS goes back to 1800.
+    [INPUT]
+        Name              dummy
+        Alias             polaris_report_tick
+        Tag               polaris.report
+        Dummy             {"tick":"polaris-report"}
+        Rate              1
+        Interval_Sec      5
+        Interval_NSec     0
+
+  filters: |
+    # 1. Standardize keys for VictoriaLogs.
+    #    Must run before the Lua filter below, which reads _msg.
+    [FILTER]
+        Name          modify
+        Alias         polaris_key_rename
+        Match         polaris.vlogs
+        Add           app polaris
+        Rename        message _msg
+        Rename        timestamp _time
+
+    # 2. Split the Quarkus access-log line out of _msg into typed fields.
+    #
+    #    Gated inside the script on loggerName == io.quarkus.http.access-log;
+    #    every other Polaris record returns untouched. Field names match §7 of
+    #    archive/2026-09-03-archive/2026-09-03-polaris-logging-architecture-spec.md, so the LogsQL recipes
+    #    there work as written:
+    #      client_ip  user_principal_name  http_method  api_path
+    #      http_status (int)  response_size (int)
+    #
+    #    _msg is kept — it is the raw line, and it is what you read when the
+    #    parse is wrong. A line from that logger that does NOT parse is tagged
+    #    access_log_parse_error:true rather than dropped silently.
+    #
+    #    type_int_key stops Fluent Bit encoding these as doubles; without it
+    #    VictoriaLogs stores "404.0" and numeric LogsQL filters miss.
+    [FILTER]
+        Name          lua
+        Alias         polaris_access_log
+        Match         polaris.vlogs
+        script        /fluent-bit/scripts/polaris_access_log.lua
+        call          polaris_access_log
+        type_int_key  http_status response_size
+
+    # 3. Decide what is worth storing. Drops before the field trimming below,
+    #    so nothing is spent tidying a record that is about to go.
+    #    Order (first match wins): ERROR/WARN keep -> non-access-log keep -> COUNT ->
+    #    4xx/5xx keep (all, no cap) -> PUT/DELETE/PATCH keep -> POST under
+    #    /api/management/ keep and every other POST counted only -> GET|HEAD counted
+    #    only -> keep. Successful reads are never stored individually, so there is
+    #    no dedup state and no cap to choose.
+    #    The full rule list and the tunables are at the top of the function.
+    #
+    #    Alias is what makes this filter's fluentbit_filter_drop_records_total
+    #    attributable: two `lua` filters are indistinguishable in the metrics without
+    #    it, which is why the 2026-09-04 coverage run could report no drop delta.
+    #    Match is polaris.* rather than polaris.vlogs so the report tick from the
+    #    dummy INPUT reaches THIS filter instance -- Lua state is per instance, and
+    #    the counters live in this one. The `modify` and parser filters above stay
+    #    on polaris.vlogs, so the tick never gets app=polaris and never goes near
+    #    the access-log parser: the report is its own category, not Polaris logging.
+    #
+    #    type_int_key: without it Fluent Bit encodes these as doubles and
+    #    VictoriaLogs stores "482.0", which numeric LogsQL filters miss. Same reason
+    #    as http_status on filter 2.
+    [FILTER]
+        Name          lua
+        Alias         polaris_noise_filter
+        Match         polaris.*
+        script        /fluent-bit/scripts/polaris_access_log.lua
+        call          polaris_noise_filter
+        type_int_key  schema_version report_seq window_seconds access_seen access_kept access_counted counted_read counted_post errors_kept parse_errors errors_4xx errors_5xx auth_denied bytes_total distinct_resources distinct_principals carried_rows resources_other resources_other_distinct principals_other windows_skipped requests reads writes errors response_bytes
+
+    # 4. Drop fields that cost storage on every single record and answer nothing.
+    #    processName is a ~60-byte absolute JVM path; loggerClassName is the
+    #    logging facade, not the logger; processId is always 1 in a container.
+    #    hostName, threadName and sequence are kept — sequence in particular makes
+    #    a gap in ingestion visible.
+    [FILTER]
+        Name          record_modifier
+        Alias         polaris_field_trim
+        Match         polaris.vlogs
+        Remove_key    processName
+        Remove_key    loggerClassName
+        Remove_key    processId
+
+  outputs: |
+    # Match polaris.* so the flush report ships alongside the logs. It lands on its
+    # own stream -- {app="polaris-shipper-report", level="REPORT"} -- so `app:polaris`
+    # queries are unaffected and the report is one LogsQL filter away:
+    #   app:polaris-shipper-report report_type:table | stats by (table_path) sum(reads)
+    [OUTPUT]
+        Name          http
+        Match         polaris.*
+        Host          vlsingle-victoria-logs-single-server.logging.svc.cluster.local
+        Port          9428
+        URI           /insert/jsonline?_msg_field=_msg&_time_field=_time&_stream_fields=app,level
+        Format        json_lines
+        Header        Content-Type application/json
+
+        # Fluent Bit otherwise adds its own `date` key, which duplicates _time on
+        # every record (observed: date=1788417313.911832 beside
+        # _time=...13.911654221Z — 178us apart, same event).
+        json_date_key false
+
+        # With storage.type filesystem above, a VictoriaLogs outage queues to disk
+        # and drains afterwards instead of being dropped.
+        Retry_Limit              5
+        storage.total_limit_size 1G

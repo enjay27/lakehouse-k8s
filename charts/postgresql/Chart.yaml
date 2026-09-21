@@ -1,0 +1,24 @@
+apiVersion: v2
+name: benchmarks-postgresql
+description: PostgreSQL Database for Apache Polaris - AI Data Platform (Bitnami based)
+type: application
+version: 1.0.0
+appVersion: "17.6.0"
+home: https://www.postgresql.org
+icon: https://www.postgresql.org/media/img/about/press/elephant.png
+sources:
+  - https://github.com/bitnami/charts/tree/main/bitnami/postgresql-ha
+keywords:
+  - database
+  - postgresql
+  - postgres
+  - sql
+maintainers:
+  - name: AIDP Team
+annotations:
+  category: Database
+  licenses: PostgreSQL
+dependencies:
+  - name: postgresql-ha
+    version: "16.3.2"
+    repository: oci://registry-1.docker.io/bitnamicharts

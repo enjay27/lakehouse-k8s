@@ -1,0 +1,27 @@
+{
+  "policy": {
+    "policy_id": "k8s-logs-3d",
+    "description": "k8s-logs-* (tier 1, every container unfiltered): delete 3 days after index creation. Kade 2026-09-18, down from the 5 days this index carried. NOTE: this is the shared index; PROPOSAL 5.3 said the shared policy is not changed, and that sentence is now superseded for the local cluster only.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          { "state_name": "delete", "conditions": { "min_index_age": "3d" } }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [ { "delete": {} } ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      {
+        "index_patterns": ["k8s-logs-*"],
+        "priority": 100
+      }
+    ]
+  }
+}

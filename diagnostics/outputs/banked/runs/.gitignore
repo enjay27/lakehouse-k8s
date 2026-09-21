@@ -1,0 +1,5 @@
+# Run manifests are provenance -- they pair with reports/doc-index-measurement-<id>.md
+# and are what notebook 03 consumes. Track them.
+*
+!.gitignore
+!*.json

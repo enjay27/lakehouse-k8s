@@ -1,0 +1,91 @@
+{
+  "index_patterns": [
+    "polaris-logs-*"
+  ],
+  "priority": 100,
+  "_meta": {
+    "source": "local-k8s: logging/opensearch/polaris-logs-template.json",
+    "written": "2026-09-16 (v6 mappings)",
+    "why": "The detail index opens every day on whatever document arrives first -- an access line, an exception log or a grant log -- so each daily index's field types are decided by chance. This pins the fields whose type matters to a query (ranges on http_status/response_size, date ranges on _time, booleans for the two flags) and leaves every other string to dynamic mapping.",
+    "measured_from": "2026-09-16 readout of polaris-logs-* (run 1789463971, 508 docs): http_status, response_size, sequence, threadId, exception.refId arrive as JSON integers; _time as an RFC3339 string with nanoseconds; access_log_parse_error / secret_redacted as booleans (absent on a normal record).",
+    "strings_left_dynamic": "superseded by v6_2026-09-16: undeclared strings follow dynamic_templates.strings_keyword_only.",
+    "_time": "date with the nanos format: Polaris writes 9 fractional digits. ignore_malformed so a surprise value costs the field, never the document.",
+    "restored_2026-09-18": "REVERSES the 2026-09-16 removal. threadName and threadId are shipped to polaris-logs-* again (fluent-bit/values.yaml polaris_field_trim lost its two Remove_key lines); ndc stays removed. The threadId: long mapping below is DEFENSIVE, not load-bearing: threadId arrives as a JSON integer and dynamic_templates.strings_keyword_only matches match_mapping_type string only, so dynamic mapping would reach long on its own. It is declared because this file's whole purpose is that a daily index must not have its field types decided by whichever document happens to arrive first. threadName gets NO explicit mapping and must not get one -- as an undeclared string it falls to strings_keyword_only, i.e. text with index:false plus a .keyword sub-field. QUERY threadName.keyword, NEVER bare threadName: a term, exists or match on the bare field finds nothing. Cost accepted with the change: ~47 B per detail doc (+7.2% access / +6.3% app). See active-issues #42.",
+    "not_retroactive": "applies only to indices created after it is applied.",
+    "pairs_with": "logging/scripts/step12-logs-index-template.sh",
+    "v6_2026-09-16": "REVIEW-pipeline P8 (decided: Kade). Strings were dynamic text + .keyword, i.e. analysed AND keyword-indexed. Now: every undeclared string is text with index:false (kept in _source, not analysed) plus the same .keyword sub-field every query in the repo already uses, so field paths do not change across old and new daily indices. message (the raw Polaris line; was _msg until schema v6) and exception.message stay full-text, without a keyword copy. client_ip is ip. CAVEAT: exists/term/match on a bare undeclared string (e.g. loggerName) finds nothing in new indices -- use loggerName.keyword."
+  },
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0,
+        "refresh_interval": "5s"
+      }
+    },
+    "mappings": {
+      "properties": {
+        "_time": {
+          "type": "date",
+          "format": "strict_date_optional_time_nanos||strict_date_optional_time||epoch_millis",
+          "ignore_malformed": true
+        },
+        "http_status": {
+          "type": "long"
+        },
+        "response_size": {
+          "type": "long"
+        },
+        "sequence": {
+          "type": "long"
+        },
+        "threadId": {
+          "type": "long"
+        },
+        "access_log_parse_error": {
+          "type": "boolean"
+        },
+        "secret_redacted": {
+          "type": "boolean"
+        },
+        "exception": {
+          "properties": {
+            "refId": {
+              "type": "long"
+            },
+            "message": {
+              "type": "text",
+              "norms": false
+            }
+          }
+        },
+        "message": {
+          "type": "text",
+          "norms": false
+        },
+        "client_ip": {
+          "type": "ip",
+          "ignore_malformed": true
+        }
+      },
+      "dynamic_templates": [
+        {
+          "strings_keyword_only": {
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "text",
+              "index": false,
+              "norms": false,
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 1024
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

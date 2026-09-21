@@ -1,0 +1,2282 @@
+"""
+log_coverage.py
+===============
+The logic behind `log-coverage/polaris_log_coverage.ipynb`: what the Polaris ->
+Fluent Bit -> VictoriaLogs pipeline is EXPECTED to store, what it actually
+stored, and the difference.
+
+THE EXPECTED COLUMN IS NOT A TABLE ANYONE TYPED
+-----------------------------------------------
+`PLAN-log-coverage.md` section 3 contains a hand-computed prediction of what
+each of the 43 driven operations should produce. It is useful for arguing
+about; it is exactly the wrong thing to measure against, because a table
+someone typed drifts from the filter it describes and nothing warns -- which is
+the failure mode both of these repos exist to avoid (`local-k8s`
+`.memory/README.md`: *written is not live*).
+
+So `Policy.predict()` extracts `polaris_access_log` and `polaris_noise_filter`
+out of the DEPLOYED `logging/fb-values.yaml` and runs them under a real Lua
+interpreter, over synthetic records shaped exactly like the ones Fluent Bit
+tails. The same mechanism `local-k8s/logging/scripts/test-polaris-filters.py`
+already uses, for the same reason: *the tests cannot drift from what ships*.
+
+**There is deliberately no Python re-implementation to fall back on.** A port
+that agrees with itself is not evidence, and the first time it disagreed with
+the Lua the notebook would report a pipeline finding that was really a
+translation bug. If the values file or a Lua binary is missing, `load_policy`
+raises and the expected column is reported as UNAVAILABLE.
+
+BOTH FILTERS, IN ORDER, NOT JUST THE SECOND
+-------------------------------------------
+`predict` runs `polaris_access_log` first and feeds its output to
+`polaris_noise_filter`, because that is the deployed order and because the
+parse is where the interesting edge cases live: a query string travels into the
+dedup key, `%b` writes `-` for a zero-byte body, and a line that does not parse
+has no `http_status` at all and is kept by rule 3's null branch.
+
+STATE IS REAL AND IS THE POINT
+------------------------------
+`polaris_noise_filter` keeps two day-buckets of seen keys in module-local Lua
+state. One `predict()` call runs the whole sequence in ONE interpreter, so
+asking it for twenty identical table GETs returns keep, drop, drop ... exactly
+as the shipper would. That is what makes the section 5 policy probes
+predictable rather than merely observed.
+
+THREE-WAY COVERAGE, NOT A PERCENTAGE
+------------------------------------
+The denominator comes from three unequal sources and they are kept apart, the
+argument being `diagnostics/api-sql-profile/probe_api_surface.py`'s and not
+re-litigated here:
+
+    spec       the 1.3.0 OpenAPI documents -- a statement about a VERSION.
+               Polaris 8181/8182 serves no document (measured 2026-08-31), so
+               these are vendored by `log-coverage/fetch_specs.sh`.
+    captured   `doc-api-sql-matrix-*.md` -- operations a live run ISSUED
+               against THIS deployment. Strongest, and a lower bound.
+    driven     `api_surface.operations()` -- what this notebook itself calls.
+
+Collapsing them into one number lets a feature-flagged endpoint this build does
+not serve count as a failure, and lets a genuinely missing one hide behind the
+same asterisk.
+"""
+
+import hashlib
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import tempfile
+import time
+from datetime import datetime, timezone
+
+# ----------------------------------------------------------------------
+# THE TRAFFIC HALF LIVES IN `traffic_helpers`, AND IS RE-EXPORTED HERE
+# ----------------------------------------------------------------------
+# Everything below used to be defined in this file. It was moved out so
+# `make_traffic` can be written without importing a logging module -- see
+# `traffic_helpers`' docstring and `SCENARIO-logging-test.md` §3. The names
+# are re-exported rather than relocated at every call site because
+# `polaris_log_coverage.ipynb` is the v1 RUN OF RECORD: it must keep
+# working, unedited, while the split happens around it.
+from traffic_helpers import (  # noqa: F401
+    _PARAM,
+    _as_int,
+    _SLUG,
+    _issued_path,
+    _token_fp,
+    CAT_PREFIX,
+    DELIBERATE_500_PREFIX,
+    MGMT_PREFIX,
+    PG_HA_500_LABELS,
+    Provoker,
+    api_of,
+    call_once,
+    call_path,
+    canonical,
+    classify_500,
+    classify_500s,
+    clients_of,
+    deprovision_run_principal,
+    drive_500,
+    drive_tagged,
+    elect_drive_identity,
+    full_path,
+    key_of,
+    principal_of,
+    principal_registry,
+    provision_run_principal,
+    provokers_500,
+    request_id,
+    tag_clients,
+)
+
+ACCESS_LOGGER = "io.quarkus.http.access-log"
+LUA_KEY = "polaris_access_log.lua"
+
+KEEP = "keep"
+DROP = "drop"
+
+#: Lua interpreters, in preference order. macOS ships none, but a TeX install
+#: provides `luatex --luaonly`, which is a standalone Lua 5.3 -- the same
+#: fallback `local-k8s/logging/scripts/test-polaris-filters.py` relies on.
+LUA_CANDIDATES = (
+    ("lua", ()),
+    ("lua5.4", ()),
+    ("lua5.3", ()),
+    ("luajit", ()),
+    ("luatex", ("--luaonly",)),
+)
+
+
+class PolicyUnavailable(RuntimeError):
+    """The deployed filter could not be loaded or executed.
+
+    Raised rather than degraded. The whole value of the expected column is that
+    it came from the file that ships; an expected column computed some other
+    way would be indistinguishable in the report from one that did.
+    """
+
+
+# ----------------------------------------------------------------------
+# the deployed filter, as an oracle
+# ----------------------------------------------------------------------
+def lua_binary():
+    for exe, pre in LUA_CANDIDATES:
+        path = shutil.which(exe)
+        if path:
+            return [path, *pre]
+    raise PolicyUnavailable(
+        "no Lua interpreter found (tried "
+        + ", ".join(e for e, _ in LUA_CANDIDATES)
+        + "). macOS ships none; `brew install lua`, or a TeX install provides "
+        "`luatex --luaonly`."
+    )
+
+
+def resolve_fb_values(explicit=None):
+    """Find the deployed Fluent Bit values file, or None.
+
+    In order: what the caller passed, `$FB_VALUES_PATH`, the documented
+    location, and finally the sibling checkout two levels up from this repo.
+    That last one resolves correctly both on the machine (`~/hynix/local-k8s`)
+    and inside a Cowork mount (`.../mnt/local-k8s`), which is what lets the
+    policy tests run in either place without a config file.
+    """
+    here = pathlib.Path(__file__).resolve().parents[1]
+    for cand in (
+        explicit,
+        os.environ.get("FB_VALUES_PATH"),
+        "~/hynix/local-k8s/logging/fb-values.yaml",
+        here / ".." / ".." / "local-k8s" / "logging" / "fb-values.yaml",
+    ):
+        if not cand:
+            continue
+        q = pathlib.Path(os.path.expanduser(str(cand)))
+        if q.is_file():
+            return q.resolve()
+    return None
+
+
+def load_policy(fb_values_path=None, key=LUA_KEY):
+    """Read the deployed Lua out of the Fluent Bit values file.
+
+    `fb_values_path` comes from `init_env()` (`FB_VALUES_PATH`), defaulting to
+    `~/hynix/local-k8s/logging/fb-values.yaml`. That file is the ONE
+    authoritative copy of the script -- the chart renders `luaScripts` into a
+    ConfigMap mounted at `/fluent-bit/scripts/`, and nothing is passed with
+    `--set`.
+    """
+    import yaml
+
+    p = resolve_fb_values(fb_values_path)
+    if p is None:
+        raise PolicyUnavailable(
+            "fb-values.yaml not found. Set fb_values_path in "
+            "src/config/local.yaml (see local.example.yaml), or export "
+            "FB_VALUES_PATH."
+        )
+    raw = p.read_bytes()
+    doc = yaml.safe_load(raw.decode("utf-8"))
+    scripts = (doc or {}).get("luaScripts") or {}
+    if key not in scripts:
+        raise PolicyUnavailable(
+            f"{p} has no luaScripts['{key}'] (found: {sorted(scripts)})"
+        )
+    return Policy(
+        script=scripts[key],
+        sha256=hashlib.sha256(raw).hexdigest(),
+        source=str(p),
+        values=(doc or {}),
+    )
+
+
+def deployed_policy_status(configmap_yaml, policy, key=LUA_KEY):
+    """Is the policy in the values file the policy that is RUNNING?
+
+    Returns (verdict, detail) where verdict is True (the ConfigMap carries the
+    same script), False (it does not), or None (could not tell -- no kubectl,
+    or nothing recognisable in the YAML).
+
+    WHY THIS GUARD EXISTS, AND IT IS NOT HYPOTHETICAL. On its first run
+    (2026-09-04) this notebook reported that NOTHING was dropped: 20 identical
+    table GETs all stored, every successful POST stored, the OAuth token
+    exchange stored. The retention policy was not broken -- it had never been
+    installed. `logging/fb-values.yaml` gained `polaris_noise_filter` in commit
+    2120ed9 at 08:26:18Z on 2026-09-03; the shipper pod had been running since
+    08:04:06Z, from commit 60b94d9, which has the access-log parser and no noise
+    filter. Parsed fields present, zero drops -- exactly what was measured.
+
+    That is this repo's signature failure (`local-k8s` `.memory/README.md`:
+    *written is not live*), and a coverage matrix taken against an undeployed
+    policy is a statement about a pipeline nobody is running. So the notebook
+    checks the ConfigMap before it drives anything, rather than discovering it
+    from the shape of the results afterwards.
+
+    Compared on whitespace-normalised text, because Helm re-emits the block
+    with its own indentation and a byte comparison would cry wolf every time.
+    """
+    if not configmap_yaml:
+        return None, "kubectl unavailable -- cannot tell what is deployed"
+    if "polaris_noise_filter" not in configmap_yaml:
+        return False, (
+            "the running ConfigMap has NO polaris_noise_filter. The retention "
+            "policy in fb-values.yaml has never been applied -- reinstall with\n"
+            "    helm upgrade --install fb-polaris-shipper fluent/fluent-bit \\\n"
+            "      --version 0.58.1 -n datahub-hynix -f logging/fb-values.yaml"
+        )
+
+    def norm(t):
+        return " ".join(t.split())
+
+    want = norm(policy.script)
+    have = norm(configmap_yaml)
+    if want in have:
+        return True, "the running ConfigMap carries this exact script"
+    return False, (
+        "the running ConfigMap has A polaris_noise_filter, but not the one in "
+        "fb-values.yaml -- the file has been edited since the last helm upgrade"
+    )
+
+
+def events_table(conn):
+    """Find and count the eventListener's audit table, whatever schema it is in.
+
+    NOT `public.events`. Polaris creates its objects in `POLARIS_SCHEMA`
+    (`api_trace` already knows this), and looking in `public` reports "no events
+    table in this metastore" for a table that is right there -- which the
+    2026-09-04 run did.
+
+    Returns a dict with `schema`, `rows` and `sample`, or `note` when there is
+    nothing to find.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT table_schema FROM information_schema.tables "
+            "WHERE lower(table_name) = 'events' ORDER BY table_schema LIMIT 1"
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"note": "no table named `events` in any schema of this metastore"}
+        schema = row[0]
+        cur.execute(f'SELECT count(*) FROM "{schema}".events')
+        rows = cur.fetchone()[0]
+        cur.execute(f'SELECT * FROM "{schema}".events LIMIT 3')
+        cols = [d[0] for d in cur.description]
+        sample = [dict(zip(cols, r)) for r in cur.fetchall()]
+    return {"schema": schema, "rows": rows, "sample": sample}
+
+
+def _lua_literal(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    s = str(value)
+    s = s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    return f'"{s}"'
+
+
+def _lua_table(record):
+    inner = ", ".join(
+        f"[{_lua_literal(k)}]={_lua_literal(v)}"
+        for k, v in record.items()
+        if v is not None
+    )
+    return "{" + inner + "}"
+
+
+class Policy:
+    """The deployed retention policy, executable.
+
+    Attributes:
+        script: the Lua source, straight out of `luaScripts`.
+        sha256: digest of the WHOLE values file, quoted in the report so a
+            later reader can tell which policy the expected column came from.
+        source: where it was read from.
+    """
+
+    def __init__(self, script, sha256, source, values=None):
+        self.script = script
+        self.sha256 = sha256
+        self.source = source
+        #: the WHOLE parsed values file. The report's cadence is not in the Lua
+        #: at all -- the tick comes from a `dummy` INPUT in the Fluent Bit
+        #: config, and the relationship between that interval and
+        #: WINDOW_SECONDS is what decides whether a window can be skipped.
+        self.values = values or {}
+
+    def predict(self, records):
+        """Run both filters over `records`, in order, in ONE interpreter.
+
+        Args:
+            records: the RAW records Fluent Bit tails, after the `modify`
+                filter renames `message`->`_msg` and `timestamp`->`_time`.
+                Build them with `access_log_record()` / `app_log_record()`.
+
+        Returns:
+            list of dicts: `verdict` ("keep"/"drop"), plus the fields the
+            access-log parser extracted (`http_method`, `http_status`,
+            `api_path`, `user_principal_name`, `response_size`) or None for a
+            record it left alone.
+
+        State carries ACROSS the list, deliberately -- rule 6's day-buckets are
+        what make "the same table GET twenty times" predictable.
+        """
+        records = list(records)
+        if not records:
+            return []
+        driver = [
+            self.script,
+            "",
+            "local RECORDS = {",
+        ]
+        driver += [f"  {_lua_table(r)}," for r in records]
+        driver += [
+            "}",
+            "for i = 1, #RECORDS do",
+            "  local rec = RECORDS[i]",
+            '  local _, _, r1 = polaris_access_log("t", 0, rec)',
+            "  local r = r1 or rec",
+            '  local code = polaris_noise_filter("t", 0, r)',
+            "  local function s(v) if v == nil then return '' end return tostring(v) end",
+            '  print(table.concat({i, code, s(r["http_method"]), s(r["http_status"]),',
+            '        s(r["api_path"]), s(r["user_principal_name"]), s(r["response_size"]),',
+            '        s(r["access_log_parse_error"])}, "\\t"))',
+            "end",
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "predict.lua"
+            f.write_text("\n".join(driver), encoding="utf-8")
+            proc = subprocess.run(
+                lua_binary() + [str(f)], capture_output=True, text=True
+            )
+        if proc.returncode != 0:
+            raise PolicyUnavailable(
+                f"the deployed Lua failed to run:\n{proc.stderr.strip()[:2000]}"
+            )
+        out = []
+        for line in proc.stdout.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            if len(parts) < 8:
+                continue
+            _, code, method, status, path, user, size, parse_err = parts[:8]
+            out.append(
+                {
+                    #: -1 is Fluent Bit's "drop this record". 0 and 2 are
+                    #: "keep" -- 0 unmodified, 2 modified-with-original-
+                    #: timestamp. Nothing else is emitted by this filter.
+                    "verdict": DROP if code.strip() == "-1" else KEEP,
+                    "code": int(code),
+                    "http_method": method or None,
+                    "http_status": int(status) if status.strip() else None,
+                    "api_path": path or None,
+                    "user_principal_name": user or None,
+                    "response_size": int(size) if size.strip() else None,
+                    "parse_error": bool(parse_err.strip()),
+                }
+            )
+        if len(out) != len(records):
+            raise PolicyUnavailable(
+                f"the Lua returned {len(out)} verdicts for {len(records)} records"
+            )
+        return out
+
+    def verdicts(self, records):
+        return [r["verdict"] for r in self.predict(records)]
+
+    # ------------------------------------------------------------------
+    # policy v3: records and report ticks in one interpreter
+    # ------------------------------------------------------------------
+    @property
+    def window_seconds(self):
+        """`WINDOW_SECONDS` as DEPLOYED. Never hardcode it, and never pass a
+        different one to `report_windows` -- the filter derives its window
+        index from its own constant, so a caller that assumes 60 while the
+        shipper runs 1800 crosses no boundary, gets no report back, and sees an
+        empty result rather than an error. That failure cost a debugging round
+        on 2026-09-04, which is why `report_windows` now refuses a mismatch.
+        """
+        m = re.search(r"^\s*(?:local\s+)?WINDOW_SECONDS\s*=\s*(\d+)", self.script, re.M)
+        if not m:
+            raise PolicyUnavailable(
+                "WINDOW_SECONDS is not in the deployed script -- this is not policy v3"
+            )
+        return int(m.group(1))
+
+    @property
+    def schema_version(self):
+        """`SCHEMA_VERSION` as DEPLOYED, so the module constant cannot drift alone.
+
+        IT DID DRIFT, and this property is what that cost. The filter shipped
+        schema v2 on 2026-09-07 while `log_coverage.SCHEMA_VERSION` stayed at 1,
+        and cell 0b's report was eight "unexpected fields", one "missing field"
+        and a `schema_version '2'` line, repeated per row -- a correct stored
+        window rendered as schema drift, with nothing naming the actual cause.
+        Compare this against the constant and the next bump says so in one line.
+        """
+        m = re.search(r"^\s*(?:local\s+)?SCHEMA_VERSION\s*=\s*(\d+)", self.script, re.M)
+        if not m:
+            raise PolicyUnavailable(
+                "SCHEMA_VERSION is not in the deployed script -- this filter emits "
+                "no report, or it is older than the scheduled-report design"
+            )
+        return int(m.group(1))
+
+    @property
+    def tick_seconds(self):
+        """`Interval_Sec` of the `dummy` INPUT that drives the report, as
+        DEPLOYED, or None if it cannot be found.
+
+        THE TICK RATE IS NOT THE REPORT PERIOD -- but it bounds two things the
+        period cannot. It bounds the STARTUP BLIND SPOT (records processed
+        before the first tick are counted into no window), and if it ever
+        reaches WINDOW_SECONDS it makes a SKIPPED WINDOW possible: a tick that
+        arrives late moves the window index by two, the filter reports the
+        window it was holding, and the one in between never existed at all.
+        """
+        #: `config.inputs` in the chart's values, NOT "any string containing
+        #: [INPUT]" -- the Lua script itself talks about the dummy INPUT in a
+        #: comment, and a looser search matches that instead.
+        cfg = ((self.values.get("config") or {}).get("inputs")) or ""
+        if not isinstance(cfg, str) or "[INPUT]" not in cfg:
+            return None
+        for block in cfg.split("[INPUT]")[1:]:
+            head = block.split("[")[0]
+            if REPORT_TAG in head:
+                m = re.search(r"Interval_Sec\s+(\d+)", head)
+                return int(m.group(1)) if m else None
+        return None
+
+    def run(self, events):
+        """Run records and `Tick`s through the deployed filter, IN ORDER.
+
+        Args:
+            events: a sequence mixing record dicts (from `access_log_record` /
+                `app_log_record`) and `Tick` objects.
+
+        Returns:
+            `(verdicts, reports)`. `verdicts` is one dict per RECORD event, in
+            order, shaped exactly like `predict()`'s. `reports` maps each tick
+            label that actually emitted to its list of report rows, with Lua
+            numbers converted to ints and `partial_window` left as the string
+            the filter writes.
+
+        THE ORDER MATTERS AND IS NOT COSMETIC. `report_tick` opens its first
+        window ON THE FIRST TICK: until one arrives `counts` is nil and
+        `count_record()` returns immediately, so records fed before the first
+        tick are routed by the policy but counted into no window at all. That
+        is a real property of the deployed filter -- bounded by the tick period
+        in production -- and the reason this method exists instead of a
+        `predict()` that takes a `now`.
+        """
+        events = list(events)
+        if not events:
+            return [], {}
+        driver = [self.script, "", _LUA_RUN_HELPERS]
+        for n, ev in enumerate(events):
+            if isinstance(ev, Tick):
+                driver.append(f"nb_tick({ev.at}, {_lua_literal(ev.label)})")
+            else:
+                driver.append(f"nb_record({n}, {_lua_table(ev)})")
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "run.lua"
+            f.write_text("\n".join(driver), encoding="utf-8")
+            proc = subprocess.run(
+                lua_binary() + [str(f)], capture_output=True, text=True
+            )
+        if proc.returncode != 0:
+            raise PolicyUnavailable(
+                f"the deployed Lua failed to run:\n{proc.stderr.strip()[:2000]}"
+            )
+
+        verdicts, rows, shapes = {}, {}, {}
+        for line in proc.stdout.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            if parts[0] == "V" and len(parts) >= 9:
+                _, n, code, method, status, path, user, size, parse_err = parts[:9]
+                verdicts[int(n)] = {
+                    "verdict": DROP if code.strip() == "-1" else KEEP,
+                    "code": int(code),
+                    "http_method": method or None,
+                    "http_status": int(status) if status.strip() else None,
+                    "api_path": path or None,
+                    "user_principal_name": user or None,
+                    "response_size": int(size) if size.strip() else None,
+                    "parse_error": bool(parse_err.strip()),
+                }
+            elif parts[0] == "T" and len(parts) >= 5:
+                shapes[parts[1]] = {
+                    "code": int(parts[2]),
+                    "returns": parts[3],
+                    "n": int(parts[4]),
+                }
+            elif parts[0] == "R" and len(parts) >= 6:
+                _, label, idx, key, lua_type, value = parts[:6]
+                rows.setdefault(label, {}).setdefault(int(idx), {})[key] = _coerce(
+                    lua_type, value
+                )
+
+        n_records = sum(1 for e in events if not isinstance(e, Tick))
+        if len(verdicts) != n_records:
+            raise PolicyUnavailable(
+                f"the Lua returned {len(verdicts)} verdicts for {n_records} records"
+            )
+        ordered = [verdicts[n] for n in sorted(verdicts)]
+        reports = {
+            label: [by_idx[i] for i in sorted(by_idx)] for label, by_idx in rows.items()
+        }
+        for label, shape in shapes.items():
+            if shape["n"] == 0 and label in reports:
+                continue
+            if shape["n"] and shape["returns"] != "table":
+                raise PolicyUnavailable(
+                    f"tick {label} returned {shape['returns']}, not a table"
+                )
+        self.last_tick_shapes = shapes
+        return ordered, reports
+
+    def report_windows(self, records, seconds=None, base=None, silent_windows=2):
+        """The standard scheduled-report sequence, without sleeping.
+
+        Opens a window, feeds `records` into it, then crosses
+        `silent_windows + 1` boundaries. Returns `(verdicts, reports)` with the
+        reports labelled `w1`, `w2`, ... -- `w1` holds the traffic, `w2` proves
+        ZERO-CARRY (a resource active in w1 emits an explicit 0) and `w3`
+        proves CARRY DECAY (a row that stayed 0 is not carried a third time).
+
+        `base` defaults to the current window's start, so the synthetic records
+        and the ticks agree about which window they are in.
+        """
+        deployed = self.window_seconds
+        seconds = deployed if seconds is None else int(seconds)
+        if seconds != deployed:
+            raise PolicyUnavailable(
+                f"asked for {seconds}s windows but the deployed filter runs "
+                f"{deployed}s. It indexes windows with its OWN constant, so this "
+                "would silently cross no boundary and emit no report."
+            )
+        if base is None:
+            base = window_bounds(time.time(), seconds)[0]
+        events = [Tick(base + 1, "open")]
+        events += list(records)
+        for i in range(silent_windows + 1):
+            events.append(Tick(base + (i + 1) * seconds + 1, f"w{i + 1}"))
+        verdicts, reports = self.run(events)
+        missing = [
+            f"w{i + 1}"
+            for i in range(silent_windows + 1)
+            if not reports.get(f"w{i + 1}")
+        ]
+        if missing:
+            raise PolicyUnavailable(
+                f"no report came back for {', '.join(missing)} -- the ticks did not "
+                "cross a boundary the filter recognised"
+            )
+        return verdicts, reports
+
+    def classify_paths(self, paths, method="GET", status=200, user="oracle"):
+        """`{path: (resource_key, resource_kind)}`, from the deployed classify().
+
+        `classify()` is local to the Lua and cannot be called directly, and
+        re-implementing `RESOURCE_PATTERNS` in Python is exactly the thing this
+        module refuses to do. So each path is driven through its OWN window and
+        the resource row the filter emits IS the answer.
+        """
+        paths = list(paths)
+        seconds, base = self.window_seconds, 0
+        events, labels = [Tick(base + 1, "open")], []
+        for i, path in enumerate(paths):
+            events.append(access_log_record(method, path, status, size=1, user=user))
+            label = f"p{i}"
+            events.append(Tick(base + (i + 1) * seconds + 1, label))
+            labels.append(label)
+        _, reports = self.run(events)
+        out = {}
+        for path, label in zip(paths, labels):
+            #: Every window after the first also carries the PREVIOUS window's
+            #: keys, seeded at zero -- that is the zero-carry behaviour, and it
+            #: means "the only resource row" is the wrong selector. The row this
+            #: path incremented is the one with a non-zero request count.
+            rows = [
+                r
+                for r in reports.get(label, [])
+                if r.get("report_type") == "resource" and r.get("requests")
+            ]
+            out[path] = (
+                (rows[0].get("resource"), rows[0].get("resource_kind"))
+                if len(rows) == 1
+                else (None, None)
+            )
+        return out
+
+
+# ----------------------------------------------------------------------
+# building the records the shipper would see
+# ----------------------------------------------------------------------
+def access_log_line(
+    method, path, status, size=0, user="root", ip="192.168.194.1", when=None
+):
+    """One Quarkus access-log line, pattern `%h %l %u %t "%r" %s %b`.
+
+    `%b` writes `-` for a zero-byte body -- CLF for 0, not for unknown -- and
+    the parser normalises it. Passing size=0 produces the `-` form on purpose,
+    because that is what a 204 actually writes.
+    """
+    stamp = time.strftime("%d/%b/%Y:%H:%M:%S +0000", time.gmtime(when or time.time()))
+    body = "-" if not size else str(size)
+    return f'{ip} - {user} [{stamp}] "{method} {path} HTTP/1.1" {status} {body}'
+
+
+def access_log_record(
+    method,
+    path,
+    status,
+    size=0,
+    user="root",
+    level="INFO",
+    time_rfc3339=None,
+    when=None,
+):
+    """A record shaped like the one the Lua filters receive.
+
+    That is AFTER the `modify` filter (`message`->`_msg`,
+    `timestamp`->`_time`, `app=polaris` added) and BEFORE the Lua -- which is
+    the only point in the chain where the retention decision is made.
+    """
+    t = time_rfc3339 or time.strftime(
+        "%Y-%m-%dT%H:%M:%S.000000000Z", time.gmtime(when or time.time())
+    )
+    return {
+        "app": "polaris",
+        "level": level,
+        "loggerName": ACCESS_LOGGER,
+        "_time": t,
+        "_msg": access_log_line(method, path, status, size, user, when=when),
+    }
+
+
+def app_log_record(
+    message,
+    level="INFO",
+    logger="org.apache.polaris.service.admin",
+    time_rfc3339=None,
+):
+    """A non-access-log record -- rule 2's "keep, untouched" path."""
+    return {
+        "app": "polaris",
+        "level": level,
+        "loggerName": logger,
+        "_time": time_rfc3339
+        or time.strftime("%Y-%m-%dT%H:%M:%S.000000000Z", time.gmtime()),
+        "_msg": message,
+    }
+
+
+def driven_inventory(items):
+    """What this notebook calls.
+
+    Accepts either `api_surface.operations()` or the rows `drive_tagged`
+    returns, and **prefer the rows**. The op templates abbreviate long paths
+    (`/v1/{cat}/.../tables/{tbl}`), and an ellipsis is not a path: it
+    canonicalises to something that matches nothing in either spec, exactly as
+    `query_profile.parse_api_matrix` found when it started dropping them. A
+    driven row carries `actual_path`, which is the URL that was really issued.
+    """
+    out = {}
+    for it in items:
+        if isinstance(it, dict):
+            label, method = it["label"], it["method"]
+            path = it.get("actual_path") or it["path"]
+        else:
+            label, method, path = it.label, it.method, it.path
+        if "..." in path:
+            #: Unresolvable, and guessing what the ellipsis stood for is how a
+            #: coverage number becomes fiction. Drive from rows, not templates.
+            continue
+        api = api_of(label)
+        k = key_of(api, method, path)
+        row = out.setdefault(
+            k,
+            {
+                "source": "driven",
+                "api": api,
+                "method": method.upper(),
+                "path": canonical(path),
+                "labels": [],
+            },
+        )
+        if label not in row["labels"]:
+            row["labels"].append(label)
+    return out
+
+
+def captured_inventory(reports_dir):
+    """From the newest `doc-api-sql-matrix-*.md` that actually parses.
+
+    By CONTENT, not by name: `-latest.md` is a copy whose mtime says nothing
+    about which run produced it, and a report that yields no operations is not
+    a newer inventory, it is a broken one. Same rule as
+    `probe_api_surface.newest_matrix`.
+    """
+    import query_profile as qp
+
+    d = pathlib.Path(reports_dir)
+    if not d.is_dir():
+        return {}, None
+    named = [p for p in d.glob("doc-api-sql-matrix-*.md") if "latest" not in p.name]
+    copies = [p for p in d.glob("doc-api-sql-matrix-*.md") if "latest" in p.name]
+    order = sorted(named, key=lambda p: p.stat().st_mtime, reverse=True) + sorted(
+        copies, key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    for p in order:
+        ops = qp.parse_api_matrix(p.read_text(encoding="utf-8"), read_only=False)
+        if ops:
+            out = {}
+            for method, path, label, status in ops:
+                api = api_of(label if label else path)
+                out[key_of(api, method, path)] = {
+                    "source": "captured",
+                    "api": api,
+                    "method": method.upper(),
+                    "path": canonical(path),
+                    "labels": [label],
+                    "observed_status": status,
+                }
+            return out, p
+    return {}, None
+
+
+def spec_inventory(spec_dir):
+    """From the vendored 1.3.0 OpenAPI documents.
+
+    A statement about a VERSION, never a coverage verdict: generic tables and
+    policies are feature-flagged in 1.3 and may be off in this build. Returns
+    ({} , []) when nothing is vendored -- `fetch_specs.sh` has not been run --
+    so the notebook reports the column as absent instead of inventing it.
+    """
+    import yaml
+
+    d = pathlib.Path(spec_dir)
+    files = sorted(d.glob("*.yml")) + sorted(d.glob("*.yaml")) if d.is_dir() else []
+    out, used = {}, []
+    for f in files:
+        api = "management" if "management" in f.name else "catalog"
+        doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+        paths = doc.get("paths") or {}
+        if not paths:
+            continue
+        used.append(
+            {
+                "file": f.name,
+                "api": api,
+                "sha256": hashlib.sha256(f.read_bytes()).hexdigest(),
+                "paths": len(paths),
+            }
+        )
+        for path, item in paths.items():
+            for method, spec in (item or {}).items():
+                if method.upper() not in (
+                    "GET",
+                    "HEAD",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE",
+                ):
+                    continue
+                k = key_of(api, method, path)
+                out.setdefault(
+                    k,
+                    {
+                        "source": "spec",
+                        "api": api,
+                        "method": method.upper(),
+                        "path": canonical(path),
+                        "operation_id": (spec or {}).get("operationId"),
+                    },
+                )
+    return out, used
+
+
+def coverage_rows(spec, captured, driven):
+    """One row per endpoint across all three sources, with a three-way verdict.
+
+    confirmed gap  this deployment SERVED it and the notebook does not
+                   drive it. A fact, and the number that should be zero.
+    unverified     driven here, never observed on this cluster before.
+                   An open question, resolved by running the notebook.
+    candidate      the spec names it; nothing observed it, nothing drives
+                   it. May not exist in this build at all.
+    driven         driven and previously observed. Nothing to report.
+    """
+    rows = []
+    for k in sorted(set(spec) | set(captured) | set(driven)):
+        api, method, path = k
+        in_spec, in_cap, in_drv = k in spec, k in captured, k in driven
+        if in_cap and not in_drv:
+            verdict = "confirmed gap"
+        elif in_drv and not in_cap:
+            verdict = "unverified"
+        elif in_drv and in_cap:
+            verdict = "driven"
+        else:
+            verdict = "candidate"
+        #: `or {}` at the end: an inventory entry can legitimately be an empty
+        #: dict (a spec path with no operationId), and `or` would then fall
+        #: through all three and hand None to `.get`.
+        meta = driven.get(k) or captured.get(k) or spec.get(k) or {}
+        rows.append(
+            {
+                "api": api,
+                "method": method,
+                "path": path,
+                "label": ", ".join(meta.get("labels", []))
+                or (spec.get(k, {}).get("operation_id") or ""),
+                "in_spec": in_spec,
+                "in_captured": in_cap,
+                "in_driven": in_drv,
+                "verdict": verdict,
+            }
+        )
+    return rows
+
+
+def expected_for(calls, policy, user="root"):
+    """The verdict the DEPLOYED filter gives each call in `calls`.
+
+    Runs the whole sequence in one interpreter so rule 6's per-day dedup state
+    is built up in issue order -- the same way the shipper sees it.
+
+    Calls that raised (no status) are skipped: the request never completed, so
+    there is no access-log line to predict. That is itself a finding when it
+    happens, and `drive_tagged` keeps the error.
+    """
+    indexed = [(i, c) for i, c in enumerate(calls) if c.get("status")]
+    records = [
+        access_log_record(
+            c["method"],
+            c.get("actual_path") or full_path(c["api"], c["path"]),
+            c["status"],
+            user=user,
+        )
+        for _, c in indexed
+    ]
+    verdicts = policy.predict(records)
+    out = [None] * len(calls)
+    for (i, _), v in zip(indexed, verdicts):
+        out[i] = v
+    return out
+
+
+# ======================================================================
+# policy v3: the scheduled flush report
+# ======================================================================
+#: The `dummy` INPUT ticks under this tag; the filter replaces the tick with an
+#: ARRAY of records on a window boundary and resets its counters. They land on
+#: their own stream, so `app:polaris` queries are unaffected.
+REPORT_TAG = "polaris.report"
+REPORT_APP = "polaris-shipper-report"
+REPORT_LEVEL = "REPORT"
+#: Bumped to 2 on 2026-09-07. **This constant is the one that goes stale**, and it
+#: did: the filter shipped v2 and this module stayed at 1, so cell 0b aborted with
+#: eight "unexpected fields" and one "missing field" -- a correct stored window read
+#: as schema drift. `Policy.schema_version` reads the deployed script instead, and
+#: the gate compares the two, so the next bump names itself in one line.
+SCHEMA_VERSION = 2
+REPORT_OTHER = "__other__"
+
+#: Schema v2, read off the deployed `build_report` on 2026-09-07 -- the source,
+#: not the gate's error message. Field names are contract: renaming one after a
+#: month of data is the expensive mistake, which is why v2 renames while the only
+#: consumer is this harness. v1 -> v2: `counted_get` becomes `counted_read`
+#: (READ_METHODS is GET *and* HEAD, so the old name undercounted by its own
+#: definition), the error split `errors_4xx` / `errors_5xx` / `auth_denied` and
+#: `bytes_total` appear on the summary and on every row, and `distinct_resources`
+#: / `distinct_principals` now count ACTIVE rows with `carried_rows` beside them --
+#: v1 reported rows EMITTED under a name promising resources touched, so an idle
+#: window claimed two distinct resources.
+ENVELOPE_FIELDS = frozenset(
+    {
+        "app",
+        "level",
+        "schema_version",
+        "report_type",
+        "report_seq",
+        "hostname",
+        "window_start",
+        "window_end",
+        "window_seconds",
+        "_time",
+        "_msg",
+    }
+)
+SUMMARY_FIELDS = frozenset(
+    {
+        "access_seen",
+        "access_kept",
+        "access_counted",
+        "counted_read",
+        "counted_post",
+        "errors_kept",
+        "parse_errors",
+        "errors_4xx",
+        "errors_5xx",
+        "auth_denied",
+        "bytes_total",
+        "distinct_resources",
+        "distinct_principals",
+        "carried_rows",
+        "resources_other",
+        "resources_other_distinct",
+        "principals_other",
+        "windows_skipped",
+        "min_record_time",
+        "max_record_time",
+        "partial_window",
+    }
+)
+RESOURCE_FIELDS = frozenset(
+    {
+        "resource",
+        "resource_kind",
+        "requests",
+        "reads",
+        "writes",
+        "errors",
+        "errors_4xx",
+        "errors_5xx",
+        "auth_denied",
+        "response_bytes",
+    }
+)
+PRINCIPAL_FIELDS = frozenset(
+    {
+        "user_principal_name",
+        "requests",
+        "reads",
+        "writes",
+        "errors",
+        "errors_4xx",
+        "errors_5xx",
+        "auth_denied",
+        "response_bytes",
+    }
+)
+FIELDS_BY_TYPE = {
+    "summary": SUMMARY_FIELDS,
+    "resource": RESOURCE_FIELDS,
+    "principal": PRINCIPAL_FIELDS,
+}
+
+#: The filter writes these as "" when a window saw no records (`counts.min_time or ""`),
+#: and VictoriaLogs DOES NOT STORE EMPTY VALUES -- so they are simply absent from
+#: a stored quiet window. Measured 2026-09-04: every silent window reported them
+#: as "missing fields".
+#: Absent and empty are the same statement here, and neither is schema drift.
+EMPTY_DROPPED_FIELDS = frozenset({"min_record_time", "max_record_time"})
+
+#: VictoriaLogs adds these to every record it returns -- they are not fields the
+#: filter emitted, so a strict field check must not read them as schema drift.
+#: The verify run on 2026-09-04 reported all six stored rows as carrying
+#: "unexpected fields" because of exactly this, which would have fired on every
+#: window of the real run.
+VLOGS_META = frozenset({"_stream", "_stream_id"})
+
+#: Properties of the PROCESS that emitted the report, not of the window. The
+#: oracle runs on a laptop and the pipeline runs in a pod, so comparing these
+#: would report a mismatch on every row. `hostname` is
+#: `os.getenv("HOSTNAME") or "unknown"`; `report_seq` is a per-process counter
+#: that restarts at 1 when the shipper does; `_msg` embeds `report_seq`.
+#: `windows_skipped` joins them for the same reason at one remove: it counts
+#: boundaries the tick never noticed, which on this cluster means the OrbStack VM
+#: was suspended with the MacBook. That is a fact about a laptop lid, and no
+#: oracle running under `_now_override` can predict it.
+VOLATILE_FIELDS = frozenset({"hostname", "report_seq", "_msg", "windows_skipped"})
+
+#: The six values `classify()` can return. All six must appear in a run.
+RESOURCE_KINDS = ("table", "view", "collection", "namespace", "management", "other")
+
+KEPT = "kept"
+COUNTED = "counted"
+
+#: The Lua side of `Policy.run`. Kept as one string so the driver stays boring
+#: and every emitted line is `TAG \t ...` -- a format that survives a `_msg`
+#: containing anything, because tabs and newlines are stripped on the way out.
+_LUA_RUN_HELPERS = """
+local function nb_esc(v)
+  return (tostring(v):gsub("[\\t\\n\\r]", " "))
+end
+local function nb_emit(label, idx, rec)
+  for k, v in pairs(rec) do
+    print(string.format("R\\t%s\\t%d\\t%s\\t%s\\t%s",
+          label, idx, nb_esc(k), type(v), nb_esc(v)))
+  end
+end
+function nb_record(n, rec)
+  local _, _, r1 = polaris_access_log("t", 0, rec)
+  local r = r1 or rec
+  local code = polaris_noise_filter("t", 0, r)
+  local function s(v) if v == nil then return "" end return nb_esc(v) end
+  print(table.concat({"V", n, code, s(r["http_method"]), s(r["http_status"]),
+        s(r["api_path"]), s(r["user_principal_name"]), s(r["response_size"]),
+        s(r["access_log_parse_error"])}, "\\t"))
+end
+function nb_tick(at, label)
+  local code, ts, out = polaris_noise_filter("polaris.report", 0,
+                                             { _now_override = at })
+  local n = 0
+  if type(out) == "table" and type(out[1]) == "table" then n = #out end
+  print(table.concat({"T", label, tostring(code), type(out), tostring(n)}, "\\t"))
+  for i = 1, n do nb_emit(label, i, out[i]) end
+end
+"""
+
+
+class Tick:
+    """A report tick, to be interleaved with records in `Policy.run`.
+
+    `at` sets `_now_override`, the filter's own test hook -- it is read by
+    `now_seconds()` and is INERT in the deployed pipeline, because the dummy
+    INPUT never sets it. That is what lets the oracle cross window boundaries
+    deterministically instead of sleeping through them.
+    """
+
+    __slots__ = ("at", "label")
+
+    def __init__(self, at, label=None):
+        self.at = int(at)
+        self.label = label if label is not None else f"t{self.at}"
+
+    def __repr__(self):
+        return f"Tick({self.at}, {self.label!r})"
+
+
+def report_tick(now=None):
+    """The record the dummy INPUT emits. `_now_override` only when asked."""
+    return {} if now is None else {"_now_override": int(now)}
+
+
+def window_index(when, seconds):
+    return int(when) // int(seconds)
+
+
+def window_bounds(when, seconds):
+    """`(start, end)` of the window containing `when`, as epoch seconds.
+
+    The filter derives both from `floor(now / WINDOW_SECONDS)`, so a
+    `window_start` is ALWAYS a multiple of `window_seconds`. A stored record
+    whose `window_start` is not aligned did not come from this filter.
+    """
+    seconds = int(seconds)
+    start = window_index(when, seconds) * seconds
+    return start, start + seconds
+
+
+def _iso_z(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(epoch)))
+
+
+def _coerce(lua_type, text):
+    if lua_type == "number":
+        try:
+            f = float(text)
+        except ValueError:
+            return text
+        return int(f) if f.is_integer() else f
+    if lua_type == "boolean":
+        return text == "true"
+    return text
+
+
+def row_key(row):
+    """The join key for a report row: what makes it unique within a window."""
+    kind = row.get("report_type")
+    if kind == "resource":
+        return row.get("resource", "")
+    if kind == "principal":
+        return row.get("user_principal_name", "")
+    return ""
+
+
+def disposition(verdict):
+    """`kept` or `counted`.
+
+    Every access-log record is COUNTED before any keep/drop decision -- that is
+    what `access_seen` means -- so these are not exclusive categories in the
+    summary. `counted` here is the notebook's column: the record left no
+    individual trace and exists only inside an aggregate.
+    """
+    return KEPT if verdict == KEEP else COUNTED
+
+
+def _epoch_of(iso_z):
+    try:
+        return int(
+            datetime.strptime(str(iso_z), "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def check_invariants(rows, strict_fields=True, merged=False):
+    """Every violation in ONE window's report rows, as readable strings.
+
+    Runs unchanged against the oracle's output and against what VictoriaLogs
+    stored, which is the point: the same assertions on both sides make a
+    difference between them a pipeline finding rather than a test artefact.
+
+    A NOTE ON WHICH OF THESE IS EVIDENCE. `access_kept + access_counted ==
+    access_seen` is TAUTOLOGICAL in the filter -- `build_report` computes
+    `access_kept = access_seen - access_counted` and nothing counts kept
+    records independently -- so on oracle rows it can never fail and proves
+    nothing. On STORED rows it is worth checking anyway, because there it is a
+    transport check: three fields that must still agree after Fluent Bit's
+    array split and VictoriaLogs' ingest.
+
+    The real self-check is the MARGIN pair. `errors` deliberately overlaps
+    `reads` and `writes` -- reads/writes are counted by method, errors by
+    status -- so the only cross-check the schema has is that the resource
+    margin and the principal margin agree. If they disagree the report is
+    miscounting and no trend built on it can be trusted.
+    """
+    bad = []
+    rows = list(rows)
+    if not rows:
+        return ["no rows at all"]
+
+    summaries = [r for r in rows if r.get("report_type") == "summary"]
+    resources = [r for r in rows if r.get("report_type") == "resource"]
+    principals = [r for r in rows if r.get("report_type") == "principal"]
+    known = ("summary", "resource", "principal")
+    other = [r for r in rows if r.get("report_type") not in known]
+    if len(summaries) != 1:
+        bad.append(f"expected exactly 1 summary row, found {len(summaries)}")
+    for r in other:
+        bad.append(f"unknown report_type {r.get('report_type')!r}")
+
+    for r in rows:
+        kind = r.get("report_type")
+        missing = ENVELOPE_FIELDS - set(r)
+        if missing:
+            bad.append(f"{kind} row missing envelope fields: {sorted(missing)}")
+        if strict_fields and kind in FIELDS_BY_TYPE:
+            body = {
+                f
+                for f in set(r) - ENVELOPE_FIELDS - VLOGS_META
+                if not f.startswith("_stream")
+            }
+            want = FIELDS_BY_TYPE[kind]
+            if body - want:
+                bad.append(f"{kind} row has unexpected fields: {sorted(body - want)}")
+            gone = (want - body) - EMPTY_DROPPED_FIELDS
+            if gone:
+                bad.append(f"{kind} row is missing fields: {sorted(gone)}")
+        if _as_int(r.get("schema_version"), -1) != SCHEMA_VERSION:
+            bad.append(f"{kind} row has schema_version {r.get('schema_version')!r}")
+        if r.get("_time") != r.get("window_end"):
+            bad.append(f"{kind} row _time {r.get('_time')!r} != window_end")
+
+        secs = _as_int(r.get("window_seconds"), 0)
+        start, end = _epoch_of(r.get("window_start")), _epoch_of(r.get("window_end"))
+        if not secs:
+            bad.append(f"{kind} row has no usable window_seconds")
+        elif start is None or end is None:
+            bad.append(f"{kind} row has unparseable window bounds")
+        else:
+            if start % secs:
+                bad.append(
+                    f"window_start {r.get('window_start')} is not aligned to "
+                    f"{secs}s -- the filter derives it from floor(now/W), so "
+                    "an unaligned start did not come from this filter"
+                )
+            span = end - start
+            if merged:
+                #: a merged range covers N consecutive windows, so its span is a
+                #: positive multiple. Everything else -- alignment, the margins,
+                #: the per-row bounds -- still has to hold exactly.
+                if span <= 0 or span % secs:
+                    bad.append(
+                        f"merged range spans {span}s, not a whole multiple of {secs}s"
+                    )
+            elif span != secs:
+                bad.append(f"window spans {span}s, window_seconds says {secs}")
+
+    for r in resources + principals:
+        req = _as_int(r.get("requests"))
+        rd, wr, er = (_as_int(r.get(k)) for k in ("reads", "writes", "errors"))
+        who = r.get("resource") or r.get("user_principal_name")
+        if rd + wr > req:
+            bad.append(f"{who}: reads+writes {rd + wr} > requests {req}")
+        if er > req:
+            bad.append(f"{who}: errors {er} > requests {req}")
+        #: v2's error split. INEQUALITY ON PURPOSE: a record whose status did not
+        #: parse is an error charged to NEITHER half -- `count_record` increments
+        #: `errors` and returns, deliberately, so that "client errors" does not
+        #: absorb the pipeline's own failures. Demanding equality here would fail
+        #: on exactly the line the whole retention policy exists to keep.
+        if "errors_4xx" in r or "errors_5xx" in r:
+            e4, e5 = (_as_int(r.get(k)) for k in ("errors_4xx", "errors_5xx"))
+            den = _as_int(r.get("auth_denied"))
+            if e4 + e5 > er:
+                bad.append(f"{who}: errors_4xx+errors_5xx {e4 + e5} > errors {er}")
+            if den > e4:
+                bad.append(f"{who}: auth_denied {den} > errors_4xx {e4}")
+
+    if summaries:
+        s = summaries[0]
+        seen = _as_int(s.get("access_seen"))
+        kept = _as_int(s.get("access_kept"))
+        counted = _as_int(s.get("access_counted"))
+        parse_errors = _as_int(s.get("parse_errors"))
+        if kept + counted != seen:
+            bad.append(
+                f"access_kept + access_counted ({kept} + {counted}) != "
+                f"access_seen ({seen}) -- these three are computed together in "
+                "the filter, so a mismatch here is transport damage"
+            )
+        res_margin = sum(_as_int(r.get("requests")) for r in resources)
+        pri_margin = sum(_as_int(r.get("requests")) for r in principals)
+        want = seen - parse_errors
+        if not (res_margin == pri_margin == want):
+            bad.append(
+                f"MARGINS DISAGREE: sum(resource.requests)={res_margin}, "
+                f"sum(principal.requests)={pri_margin}, "
+                f"access_seen-parse_errors={want}. The report is miscounting; "
+                "no trend built on it can be trusted."
+            )
+
+        #: v2 EXTENDS THE SELF-CHECK, and this is new capability rather than more
+        #: fields. Under v1 the only counter reconciled across two independently
+        #: built row sets was `requests`; an error attributed to the wrong
+        #: principal, or bytes charged to the wrong resource, had nowhere to show
+        #: up. Each of these is now built once per resource and once per
+        #: principal, so a disagreement names the counter.
+        for field in MARGIN_FIELDS[1:]:
+            if not any(field in r for r in resources + principals):
+                continue
+            a = sum(_as_int(r.get(field)) for r in resources)
+            b = sum(_as_int(r.get(field)) for r in principals)
+            if a != b:
+                bad.append(
+                    f"MARGINS DISAGREE on {field}: sum(resource)={a}, "
+                    f"sum(principal)={b}"
+                )
+
+        #: The summary's split is SUMMED OVER RESOURCES by `build_report` (not
+        #: over principals -- the margin above makes either side do, and doing
+        #: both would double-count). So on oracle rows this holds by
+        #: construction; on STORED rows it is a transport check across Fluent
+        #: Bit's array split, which is where it can actually fail.
+        for field, source in (
+            ("errors_4xx", "errors_4xx"),
+            ("errors_5xx", "errors_5xx"),
+            ("auth_denied", "auth_denied"),
+            ("bytes_total", "response_bytes"),
+        ):
+            if field not in s:
+                continue
+            total = sum(_as_int(r.get(source)) for r in resources)
+            if _as_int(s.get(field)) != total:
+                bad.append(
+                    f"summary.{field}={s.get(field)} but "
+                    f"sum(resource.{source})={total}"
+                )
+        if "errors_4xx" in s and _as_int(s.get("auth_denied")) > _as_int(
+            s.get("errors_4xx")
+        ):
+            bad.append(
+                f"summary.auth_denied={s.get('auth_denied')} > "
+                f"errors_4xx={s.get('errors_4xx')}"
+            )
+
+        #: CARDINALITY, v2. `distinct_resources` counts rows with traffic, NOT
+        #: rows emitted -- v1 conflated them and an idle window reported two
+        #: distinct resources while showing zero of everything. The carried rows
+        #: are the difference and are now a field, so the three close exactly
+        #: against the row count. A merge drops carried rows entirely, which is
+        #: why `merge_windows` sets `carried_rows` to 0 rather than summing it.
+        active_res = sum(1 for r in resources if _as_int(r.get("requests")) > 0)
+        active_pri = sum(1 for r in principals if _as_int(r.get("requests")) > 0)
+        if _as_int(s.get("distinct_resources")) != active_res:
+            bad.append(
+                f"distinct_resources={s.get('distinct_resources')} but "
+                f"{active_res} resource row(s) carry traffic "
+                f"({len(resources)} emitted)"
+            )
+        if _as_int(s.get("distinct_principals")) != active_pri:
+            bad.append(
+                f"distinct_principals={s.get('distinct_principals')} but "
+                f"{active_pri} principal row(s) carry traffic "
+                f"({len(principals)} emitted)"
+            )
+        if "carried_rows" in s:
+            carried = _as_int(s.get("carried_rows"))
+            emitted = len(rows) - 1
+            if active_res + active_pri + carried != emitted:
+                bad.append(
+                    f"CARDINALITY: distinct_resources {active_res} + "
+                    f"distinct_principals {active_pri} + carried_rows {carried} "
+                    f"!= {emitted} rows beside the summary"
+                )
+    return bad
+
+
+def diff_reports(expected, actual, ignore=VOLATILE_FIELDS | VLOGS_META):
+    """Field-by-field diff of two windows' report rows.
+
+    This is what makes "all schema coverage" a DIFF rather than a set of
+    hand-written expectations: `expected` comes from the deployed Lua under
+    `_now_override`, `actual` from VictoriaLogs, and anything that does not
+    match names the row and the field rather than saying a call went missing.
+
+    Rows join on `(report_type, row_key)`. `ignore` defaults to the fields that
+    describe the emitting PROCESS rather than the window -- comparing those
+    would fail on every row, since the oracle does not run in the shipper pod --
+    PLUS `VLOGS_META`, which VictoriaLogs ADDS on the way out. The filter never
+    emitted `_stream` / `_stream_id`, so the oracle cannot have them and every
+    stored row otherwise contributes two guaranteed mismatches: 34 of the 60
+    fixture mismatches listed for run `1788744260`, and the same fault
+    `check_invariants` was fixed for on 2026-09-04. It is in the DEFAULT rather
+    than left to the caller because the caller forgot.
+    """
+    ignore = set(ignore or ())
+
+    def index(rows):
+        return {(r.get("report_type"), row_key(r)): r for r in rows}
+
+    exp, act = index(expected), index(actual)
+    out = []
+    for key in sorted(set(exp) | set(act), key=lambda k: (str(k[0]), str(k[1]))):
+        kind, name = key
+        e, a = exp.get(key), act.get(key)
+        if e is None:
+            out.append(
+                {
+                    "report_type": kind,
+                    "key": name,
+                    "field": "",
+                    "expected": "",
+                    "actual": "(row present)",
+                    "status": "extra",
+                }
+            )
+            continue
+        if a is None:
+            out.append(
+                {
+                    "report_type": kind,
+                    "key": name,
+                    "field": "",
+                    "expected": "(row expected)",
+                    "actual": "",
+                    "status": "missing",
+                }
+            )
+            continue
+        for field in sorted((set(e) | set(a)) - ignore):
+            ev, av = e.get(field), a.get(field)
+            same = str(ev) == str(av) or (
+                _as_int(ev, None) is not None and _as_int(ev, None) == _as_int(av, None)
+            )
+            out.append(
+                {
+                    "report_type": kind,
+                    "key": name,
+                    "field": field,
+                    "expected": ev,
+                    "actual": av,
+                    "status": "match" if same else "differs",
+                }
+            )
+    return out
+
+
+def report_mismatches(diff):
+    """Just the rows of `diff_reports` that are not a match."""
+    return [d for d in diff if d["status"] != "match"]
+
+
+#: THE HARDCODED LIST THAT USED TO LIVE HERE IS THE BUG THIS PIPELINE KEEPS
+#: REPEATING. `SUMMABLE_SUMMARY_FIELDS` and `ROW_COUNTERS` named the v1 counters,
+#: so when the filter shipped v2 the merge added `errors` and silently did not add
+#: `errors_4xx` -- in the SAME ROW, with no exception and a plausible number out.
+#: `type_int_key` on the shipper failed the same way, and so did the Prometheus
+#: parser. So the merge now derives what to add FROM THE ROW ITSELF, and a field
+#: nobody has heard of yet is summed rather than dropped.
+#:
+#: What must never be summed, and why each one:
+#:   envelope     `window_seconds` x5 windows is 150, `report_seq` is a counter,
+#:                `schema_version` is 2. Adding any of them is nonsense.
+#:   identity     the row's own key, and `resource_kind`. A principal named "42"
+#:                is a string that looks like a number.
+#:   cardinality  `distinct_*` count ACTIVE rows and are recomputed from the merged
+#:                set; adding them double-counts every resource that stayed busy.
+#:   carried      a carried row is all-zero and does not survive a merge at all, so
+#:                the merged set has none: `carried_rows` is recomputed as 0.
+#:   union        `resources_other_distinct` counts DISTINCT `__other__` keys, and
+#:                the keys are not emitted as rows -- so the union across windows is
+#:                not derivable from the merge. Reported as the max, which is a
+#:                lower bound, and said to be one.
+ROW_IDENTITY_FIELDS = frozenset({"resource", "resource_kind", "user_principal_name"})
+CARDINALITY_FIELDS = frozenset({"distinct_resources", "distinct_principals"})
+UNION_FIELDS = frozenset({"resources_other_distinct"})
+NON_SUMMABLE_FIELDS = (
+    ROW_IDENTITY_FIELDS | CARDINALITY_FIELDS | UNION_FIELDS | {"carried_rows"}
+)
+
+#: The numeric fields the deployed filter hands to `type_int_key` (fb-values.yaml,
+#: read 2026-09-07). NOT what the merge iterates -- it derives that from the row --
+#: but the list a `field:>0` sweep should cover, because a counter stored as the
+#: STRING "3.0" renders in every count and matches no range filter, silently.
+NUMERIC_FIELDS = frozenset(
+    {
+        "schema_version",
+        "report_seq",
+        "window_seconds",
+        "access_seen",
+        "access_kept",
+        "access_counted",
+        "counted_read",
+        "counted_post",
+        "errors_kept",
+        "parse_errors",
+        "errors_4xx",
+        "errors_5xx",
+        "auth_denied",
+        "bytes_total",
+        "distinct_resources",
+        "distinct_principals",
+        "carried_rows",
+        "resources_other",
+        "resources_other_distinct",
+        "principals_other",
+        "windows_skipped",
+        "requests",
+        "reads",
+        "writes",
+        "errors",
+        "response_bytes",
+    }
+)
+
+#: The six counters reconciled across two independently built row sets. Under v1
+#: only `requests` was, and a single identity satisfied even that by accident.
+MARGIN_FIELDS = (
+    "requests",
+    "errors",
+    "errors_4xx",
+    "errors_5xx",
+    "auth_denied",
+    "response_bytes",
+)
+
+_NUMERIC_TEXT = re.compile(r"^-?\d+(?:\.\d+)?$")
+
+
+def summable_fields(row):
+    """The fields of `row` a merge may add up -- DERIVED, never listed.
+
+    VictoriaLogs hands every field back as a string, so "is it numeric" is a
+    question about the VALUE and not about the type. `partial_window` is
+    "true"/"false" and `min_record_time` is a timestamp; neither survives the
+    test. Everything excluded by name is excluded for a reason recorded above.
+    """
+    skip = ENVELOPE_FIELDS | NON_SUMMABLE_FIELDS | VLOGS_META
+    out = set()
+    for key, value in (row or {}).items():
+        name = str(key)
+        if name in skip or name.startswith("_"):
+            continue
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            out.add(name)
+        elif isinstance(value, str) and _NUMERIC_TEXT.match(value.strip()):
+            out.add(name)
+    return out
+
+
+def merge_windows(windows):
+    """Aggregate several consecutive windows' rows into one comparable set.
+
+    A run that takes longer than `WINDOW_SECONDS` is spread across every window
+    it touches. At the deployed 1800 that was rarely more than one; at 30 it is
+    ALWAYS several, and reading a single window then reports whatever happened
+    to land in the last 30 seconds -- which on 2026-09-04 was the cleanup
+    DELETEs and nothing else: 8 records, all errors, one `__other__` row, and a
+    coverage matrix that looked like the pipeline had lost the entire run.
+
+    Args:
+        windows: an iterable of row-lists, one per window, in any order.
+
+    Returns:
+        a list shaped like one window's rows -- one summary, the merged
+        resource rows, the merged principal rows -- so `check_invariants` and
+        `diff_reports` take it unchanged.
+
+    Carried zero rows contribute nothing and must not create a key: a resource
+    that was active before this range and merely echoed at 0 inside it is not a
+    resource this range saw.
+    """
+    rows = [r for w in windows for r in (w or [])]
+    if not rows:
+        return []
+    summaries = [r for r in rows if r.get("report_type") == "summary"]
+    if not summaries:
+        return []
+
+    def merge(kind, key_field):
+        #: `setdefault(key, dict(r))` and then "is it the same object?" does NOT
+        #: work here: dict(r) is always a copy, so the first row of every key was
+        #: added to itself and every count came out doubled. Track the key.
+        #:
+        #: The fields added are the UNION of what each row of this key offered,
+        #: so a window that omitted a zero does not remove the field from the
+        #: merged row, and a field this module has never heard of is still summed.
+        out, fields = {}, {}
+        for r in (r for r in rows if r.get("report_type") == kind):
+            key = r.get(key_field)
+            here = summable_fields(r)
+            if key not in out:
+                acc = dict(r)
+                for f in here:
+                    acc[f] = _as_int(r.get(f))
+                out[key], fields[key] = acc, set(here)
+            else:
+                acc = out[key]
+                for f in here:
+                    acc[f] = _as_int(acc.get(f)) + _as_int(r.get(f))
+                fields[key] |= here
+        #: A row that was only ever carried at zero is not a row this range saw.
+        return [
+            row
+            for key, row in out.items()
+            if any(_as_int(row.get(f)) for f in fields[key])
+        ]
+
+    res = merge("resource", "resource")
+    pri = merge("principal", "user_principal_name")
+
+    ordered = sorted(summaries, key=lambda r: str(r.get("window_start", "")))
+    s = dict(ordered[0])
+    for f in sorted(set().union(*(summable_fields(r) for r in summaries))):
+        s[f] = sum(_as_int(r.get(f)) for r in summaries)
+    #: Recomputed, never summed -- see NON_SUMMABLE_FIELDS.
+    s["distinct_resources"] = len(res)
+    s["distinct_principals"] = len(pri)
+    #: No carried row survives the merge, so the merged set contains none and the
+    #: cardinality rule (`distinct_* + carried_rows == rows - 1`) still closes.
+    if any("carried_rows" in r for r in summaries):
+        s["carried_rows"] = 0
+    #: A LOWER BOUND, and said to be one: the `__other__` keys are not emitted as
+    #: rows, so their union across windows cannot be recovered from the merge.
+    if any("resources_other_distinct" in r for r in summaries):
+        s["resources_other_distinct"] = max(
+            _as_int(r.get("resources_other_distinct")) for r in summaries
+        )
+    s["window_start"] = ordered[0].get("window_start")
+    s["window_end"] = ordered[-1].get("window_end")
+    s["_time"] = s["window_end"]
+    any_partial = any(str(r.get("partial_window")) == "true" for r in summaries)
+    s["partial_window"] = "true" if any_partial else "false"
+    times = [
+        t
+        for r in summaries
+        for t in (r.get("min_record_time"), r.get("max_record_time"))
+        if t
+    ]
+    s["min_record_time"] = min(times) if times else ""
+    s["max_record_time"] = max(times) if times else ""
+    #: `.get`, not `[...]`. The merged `_msg` is a human convenience and must not
+    #: be the thing that raises: a row missing a counter is a schema question for
+    #: `check_invariants` to report, not a KeyError from a format string three
+    #: functions away from the cause.
+    s["_msg"] = (
+        f"merged {len(summaries)} windows {s.get('window_start')}.."
+        f"{s.get('window_end')}: {_as_int(s.get('access_seen'))} access lines, "
+        f"{_as_int(s.get('access_kept'))} kept, "
+        f"{_as_int(s.get('access_counted'))} counted, "
+        f"{len(res)} resources, {len(pri)} principals"
+    )
+    return [s] + res + pri
+
+
+def mgmt_post_stats(calls, expected, prefix=MGMT_PREFIX):
+    """Management POSTs driven, and how many the deployed policy keeps.
+
+    This is the number the v2 audit hole is reported by, so it is computed
+    from `call_path` and split by status. A management POST that returned
+    4xx/5xx is kept by the ERROR rule whatever rule 5 does -- first match wins
+    in the filter and the error rule is matched first -- so counting it as
+    evidence for "rule 5 keeps management POSTs" overstates what the run
+    proved. Run 1 drove six, of which one (a 403 on `reset`) is in that
+    position.
+
+    Args:
+        calls: the driven call rows.
+        expected: `expected_for(...)` output, aligned with `calls`.
+
+    Returns:
+        {"driven", "kept", "kept_2xx", "kept_error", "rows"}, where `rows` is
+        `[(label, path, status, verdict)]` for every management POST driven.
+    """
+    rows = []
+    for call, exp in zip(calls, expected or [None] * len(calls)):
+        if (call.get("method") or "").upper() != "POST":
+            continue
+        path = call_path(call)
+        if not path.startswith(prefix):
+            continue
+        rows.append(
+            (
+                call.get("label"),
+                path,
+                call.get("status"),
+                (exp or {}).get("verdict"),
+            )
+        )
+    kept = [r for r in rows if r[3] == KEEP]
+    err = [r for r in kept if _as_int(r[2]) >= 400]
+    return {
+        "driven": len(rows),
+        "kept": len(kept),
+        "kept_2xx": len(kept) - len(err),
+        "kept_error": len(err),
+        "rows": rows,
+    }
+
+
+def resource_rows(rows):
+    """`{resource: row}` for the resource rows of a (merged) report."""
+    return {r.get("resource"): r for r in rows if r.get("report_type") == "resource"}
+
+
+def counted_where(calls, keys, rows, other=REPORT_OTHER):
+    """For each call, the report row that ACTUALLY moved -- PLAN section 7.
+
+    `resource_row` says which key a path CLASSIFIES to, which is where the
+    call lands *if it succeeds*. That is not the same question. An error on a
+    resource nobody has read successfully passes `create=false` and increments
+    `__other__` instead, so for a 4xx/5xx row the classified key is a
+    counterfactual. Without this column the matrix cannot do the thing it was
+    added for -- name the row that is wrong -- and an oracle diff arrives as a
+    number instead of a list.
+
+    Args:
+        calls: the driven call rows.
+        keys: `Policy.classify_paths` output, `{path: (resource, kind)}`.
+        rows: the merged report rows this run's windows produced.
+
+    Returns:
+        a list aligned with `calls`: the resource key that carries this call,
+        `__other__`, `"ABSENT"` when neither exists, or `""` for a call that
+        never completed.
+    """
+    present = resource_rows(rows)
+    out = []
+    for call in calls:
+        if not call.get("status"):
+            out.append("")
+            continue
+        key = (keys or {}).get(call_path(call).split("?")[0]) or (None, None)
+        if key[0] and key[0] in present:
+            out.append(key[0])
+        elif other in present:
+            out.append(other)
+        else:
+            out.append("ABSENT")
+    return out
+
+
+def reconcile_merged_rows(rows, calls, keys, other=REPORT_OTHER):
+    """Does the merged report hold the rows THIS RUN can account for?
+
+    A row count on its own is not readable. Run 1 reported `merged rows: 49`
+    beside 30 distinct resource keys with a success and 4 error-only keys --
+    about fifteen rows the run could not explain -- and the report said
+    nothing, because nothing compared the two. The likely innocent
+    explanation (rows carried at zero from a window before the run, or another
+    client on the cluster) is still an explanation someone has to be given the
+    means to check.
+
+    Returns:
+        {"expected", "actual", "unexplained", "missing", "counts"} -- the first
+        four as sorted key lists, `counts` as the row arithmetic.
+    """
+    present = resource_rows(rows)
+    expected = set()
+    saw_error = False
+    for call in calls:
+        status = _as_int(call.get("status"), None)
+        if status is None:
+            continue
+        key = (keys or {}).get(call_path(call).split("?")[0]) or (None, None)
+        if status >= 400:
+            saw_error = True
+            continue
+        if key[0]:
+            expected.add(key[0])
+    if saw_error:
+        expected.add(other)
+    actual = set(present)
+    principals = [r for r in rows if r.get("report_type") == "principal"]
+    summaries = [r for r in rows if r.get("report_type") == "summary"]
+    return {
+        "expected": sorted(expected),
+        "actual": sorted(actual),
+        "unexplained": sorted(actual - expected),
+        "missing": sorted(expected - actual),
+        "counts": {
+            "summary": len(summaries),
+            "resource": len(present),
+            "principal": len(principals),
+            "total": len(rows),
+            "resource_expected": len(expected),
+        },
+    }
+
+
+def reconcile_volume(stored, calls, run=None, id_field="mdc.requestId"):
+    """Where every stored record went, so the volume figure adds up.
+
+    Run 1 reported 2,117 records for 132 calls and a matrix whose columns summed
+    to 2,109. Eight records were attributed to nothing, and since `app_lines` is
+    `len(found) - len(access)` from the same pull, the two figures should agree
+    by construction. They differ because a record can carry a request id this
+    run minted for a call that is not in `ALL_CALLS`, or no request id at all.
+    Name both rather than leaving a residue.
+
+    Returns:
+        {"total", "attributed", "run_other", "untagged", "reconciles"}.
+    """
+    ids = {c.get("request_id") for c in calls if c.get("request_id")}
+    prefix = f"nb-{run}-" if run else None
+    attributed = run_other = untagged = 0
+    for rec in stored:
+        rid = rec.get(id_field)
+        if not rid:
+            untagged += 1
+        elif rid in ids:
+            attributed += 1
+        elif prefix and str(rid).startswith(prefix):
+            run_other += 1
+        else:
+            untagged += 1
+    total = len(stored)
+    return {
+        "total": total,
+        "attributed": attributed,
+        "run_other": run_other,
+        "untagged": untagged,
+        "reconciles": attributed + run_other + untagged == total,
+    }
+
+
+def named_assertions(rows, summary=None, started=None, ended=None):
+    """The checks PLAN section 7 names, each as `(name, ok, detail)`.
+
+    These were computed or implied by run 1 and stated by none of it. A
+    report that says "invariants OK" and leaves the named assertions to the
+    reader's memory is a report that cannot be audited later: `/metrics`
+    folding onto its table is the v2 two-rows-per-table bug staying fixed, and
+    nothing in the results document said so.
+
+    `ok` is None where the run gave the check nothing to decide on. `started`
+    and `ended` override the window range the time fields are checked against;
+    they default to the summary's own `window_start` / `window_end`, which is
+    the only bound that is a statement about the pipeline.
+    """
+    res = resource_rows(rows)
+    summary = summary or next(
+        (r for r in rows if r.get("report_type") == "summary"), {}
+    )
+    out = []
+
+    metrics = sorted(k for k in res if k and k.endswith("/metrics"))
+    out.append(
+        (
+            "no /metrics row (it folds onto its table; v2 emitted two)",
+            not metrics,
+            metrics or "none",
+        )
+    )
+
+    other = _as_int(summary.get("resources_other"), None)
+    out.append(
+        (
+            "resources_other > 0 (an error never creates a resource key)",
+            None if other is None else other > 0,
+            other,
+        )
+    )
+
+    seen = [_as_int(r.get("response_bytes")) for r in res.values()]
+    out.append(
+        (
+            "response_bytes takes both a zero and a non-zero value",
+            bool(seen) and any(v == 0 for v in seen) and any(v > 0 for v in seen),
+            f"{sum(1 for v in seen if v == 0)} zero, "
+            f"{sum(1 for v in seen if v > 0)} non-zero",
+        )
+    )
+
+    #: THE BOUND IS THE WINDOW RANGE, NOT THE WALL CLOCK. These are the
+    #: timestamps of the records the WINDOWS saw, so the only thing assertable
+    #: about them is that they fall inside the windows being summarised.
+    #: Bracketing them against the notebook's own start and end reads as a
+    #: check and is not one: the merged range always runs past `RUN_END` (to
+    #: the last window's boundary) and opens before `STARTED` (the first window
+    #: opened before the notebook did), so any traffic in either overhang fails
+    #: an assertion about the pipeline that is really an assertion about when a
+    #: human pressed run. Run `1788744260` FAILED it in exactly that way:
+    #: max_record_time 01:25:18Z against a `RUN_END` a few seconds earlier,
+    #: inside a window that closed at 01:25:30Z.
+    lo, hi = summary.get("min_record_time"), summary.get("max_record_time")
+    w0 = started if started is not None else _epoch_of(summary.get("window_start"))
+    w1 = ended if ended is not None else _epoch_of(summary.get("window_end"))
+    label = "min/max_record_time fall inside the merged window range"
+    if not (lo and hi):
+        #: VictoriaLogs does not store empty values, so a quiet window simply
+        #: has no time fields. Absent is not drift and not a failure.
+        out.append((label, None, "absent (quiet window)"))
+    elif w0 is None or w1 is None:
+        out.append((label, None, f"{lo} .. {hi}"))
+    else:
+        a, b = _epoch_of(str(lo)[:19] + "Z"), _epoch_of(str(hi)[:19] + "Z")
+        ok = a is not None and b is not None and a >= int(w0) and b <= int(w1)
+        detail = f"{lo} .. {hi}"
+        if not ok:
+            detail += f"   (window range {_iso_z(int(w0))} .. {_iso_z(int(w1))})"
+        out.append((label, ok, detail))
+    return out
+
+
+def principal_mix(rows):
+    """`{principal: {requests, reads, writes, errors}}` from a report's rows.
+
+    The margin equality is the schema's only real self-check, and with ONE
+    principal it is satisfied identically by a global counter: every principal
+    total is the run total, so a filter that never attributed anything would
+    pass. PLAN section 6.2 asks for two principals with different mixes for
+    exactly that reason, and this is what makes the difference readable.
+    """
+    return {
+        r.get("user_principal_name"): {
+            f: _as_int(r.get(f)) for f in ("requests", "reads", "writes", "errors")
+        }
+        for r in rows
+        if r.get("report_type") == "principal"
+    }
+
+
+def correlation_stats(stored, calls, id_field="mdc.requestId"):
+    """How many of THESE calls had their request id recovered.
+
+    Run `1788745242` reported "147 distinct ids recovered from 146 calls" --
+    more ids than calls, because the numerator counted every run-minted id in
+    the pull (cell 1's correlation probe among them, which is deliberately not
+    in `ALL_CALLS`) while the denominator counted the calls. **A ratio whose
+    halves come from different populations cannot be read literally**, and
+    correlation is the statistic the entire per-call matrix rests on.
+
+    Returns:
+        {"calls", "with_id", "recovered", "missing", "other_ids"} -- `missing`
+        names the calls whose id never came back, which is the half worth
+        reading.
+    """
+    ids = {c.get("request_id") for c in calls if c.get("request_id")}
+    seen = {r.get(id_field) for r in stored if r.get(id_field)}
+    return {
+        "calls": len(calls),
+        "with_id": len(ids),
+        "recovered": len(ids & seen),
+        "missing": sorted(ids - seen),
+        "other_ids": len(seen - ids),
+    }
+
+
+def correlation_by_disposition(stored, calls, expected, id_field="mdc.requestId"):
+    """Correlation split by what the POLICY DID with each call.
+
+    THE UNSPLIT RATIO PUNISHES THE POLICY FOR WORKING. A **kept** call must be
+    recoverable -- that is the pipeline's promise, and a miss there is a real
+    fault. A **counted** call is recoverable only INCIDENTALLY, through whatever
+    application lines it happened to emit, because rule 6 dropped its access-log
+    line on purpose.
+
+    Run `1788759324` reported "154 of 157 recovered" and named three probes: the
+    2nd and 3rd of three identical `load_table` calls, and a `commit_table`. All
+    three were `expected=drop, disposition=counted, stored=0, app_lines=0`. The
+    FIRST read emitted one application line and the warm repeats emitted none --
+    so they left **no trace at all**, exactly as designed, and the ratio reported
+    that as a correlation failure.
+
+    Returns `{"kept": {...}, "counted": {...}}`, each with `with_id`,
+    `recovered`, `missing`. **Only the `kept` half is an assertion**; the
+    `counted` half measures how VISIBLE a counted call happens to be, which is
+    the sharpened form of what v3 gave up.
+    """
+    seen = {str(r.get(id_field)) for r in (stored or ()) if r.get(id_field)}
+    out = {
+        KEPT: {"with_id": 0, "recovered": 0, "missing": []},
+        COUNTED: {"with_id": 0, "recovered": 0, "missing": []},
+    }
+    expected = list(expected or [])
+    for i, call in enumerate(calls or ()):
+        rid = call.get("request_id")
+        exp = expected[i] if i < len(expected) else None
+        verdict = (exp or {}).get("verdict") if isinstance(exp, dict) else None
+        if not rid or verdict is None:
+            continue
+        bucket = out[disposition(verdict)]
+        bucket["with_id"] += 1
+        if str(rid) in seen:
+            bucket["recovered"] += 1
+        else:
+            bucket["missing"].append(str(rid))
+    return out
+
+
+def invisible_calls(calls, expected, stored_by_id, id_field="mdc.requestId"):
+    """Calls that left NO record of any kind -- not even an application line.
+
+    v3's stated cost was "successful reads leave no INDIVIDUAL record; they are
+    counted, not lost". Run `1788759324` sharpens it: a counted call whose
+    application logging is also silent leaves **nothing at all**, and what
+    decides that is CACHE WARMTH. Three identical `load_table` calls: the first
+    emitted one application line, the second and third emitted none.
+
+    So the honest statement of the trade-off is not "the access line is dropped"
+    but "a warm repeat of a successful read is invisible end to end". That is
+    worth stating in the results rather than leaving a reader to infer that a
+    counted call is always findable through its application lines.
+    """
+    out = []
+    expected = list(expected or [])
+    for i, call in enumerate(calls or ()):
+        rid = call.get("request_id")
+        exp = expected[i] if i < len(expected) else None
+        verdict = (exp or {}).get("verdict") if isinstance(exp, dict) else None
+        if not rid or verdict is None or disposition(verdict) != COUNTED:
+            continue
+        if not (stored_by_id or {}).get(str(rid)):
+            out.append(call)
+    return out
+
+
+#: Substrings of a FIELD NAME that mean the field carries a throwable. Matched
+#: against keys only -- a message mentioning an exception is not one.
+EXCEPTION_KEY_HINTS = ("exception", "stacktrace", "stack_trace", "throwable", "frames")
+
+
+def exception_fields(record):
+    """The field names in `record` that carry a throwable -- NAMES, not a bool.
+
+    A NAME IS NOT A SHAPE, AND THIS IS THE MISTAKE THIS FUNCTION EXISTS FOR.
+    On 2026-09-07 this notebook reported "0 of 5 WARN/ERROR records carried an
+    exception object" and a `grep -c stackTrace` on the source log returned 0,
+    and the two were read as corroboration. They were the same error twice:
+    this build emits Quarkus's **structured** exception output -- an object
+    carrying a `frames` array of `{class, method, line}` -- so there is no
+    `stackTrace` string to grep for, and `"exception" in record` fails against
+    a nested object that a store has flattened into `exception.frames` /
+    `exception.exceptionType`. The traces were there the whole time.
+
+    So this returns the names it found and the caller reports them. A check
+    that can only say yes or no cannot tell "absent" from "looked for the wrong
+    name", and the two have opposite remedies: one is a logging change, the
+    other is a one-line fix here.
+
+    Covers the shapes this pipeline can produce: a nested or flattened object
+    under any of `EXCEPTION_KEY_HINTS`, and a `formatted` trace sitting as text
+    inside some other field's value.
+    """
+    found = []
+    for key, value in (record or {}).items():
+        lowered = str(key).lower()
+        if any(hint in lowered for hint in EXCEPTION_KEY_HINTS):
+            found.append(str(key))
+        elif isinstance(value, str) and ("\n\tat " in value or ".java:" in value):
+            found.append(f"{key} (formatted trace in the value)")
+    return sorted(found)
+
+
+# ---------------------------------------------------------------------------
+# COVERAGE: 500 ERROR
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. `neg.500_null_pointer` has returned 200 for three runs: the
+# `create_catalog_no_endpoint` provocation stopped reproducing on this build,
+# and nothing noticed because "0 of 0 records carried an exception object"
+# reads exactly like an answer. The only 500s ever stored arrived BY ACCIDENT,
+# from the PG-HA read-after-write failures on `iceberg.create_namespace` and
+# `create_view` -- which are writes that COMMITTED, and therefore say nothing
+# about the unhandled-exception path. So the ERROR path has never been driven
+# on purpose, and `errors_5xx` has never been exercised against the real
+# pipeline.
+#
+# A 500 IS TWO RECORDS, NOT ONE, and the whole section turns on the split:
+#
+#   the access-log line   loggerName io.quarkus.http.access-log, http_status
+#                         500. Rule 3 KEEPS it, and every access-log record is
+#                         COUNTED before any keep/drop decision -- so it is
+#                         kept AND counted, and it moves `errors`, `errors_5xx`
+#                         and the row's own `errors`.
+#   the application line  the ERROR record the handler logs. Not an access-log
+#                         record, so rule 2 hands it to rule 1: KEPT and NOT
+#                         counted. This is the one carrying `exception.frames`.
+#
+# The two join on `mdc.requestId`. A check that looks at one of them can pass
+# while the other is missing, which is how a half-working ERROR path would
+# survive a run.
+
+
+#: The v2 report's error split. Absent on a schema v1 window, and the
+#: difference between "absent" and "zero" is the difference between a check
+#: that is VOID and one that PASSED.
+ERROR_SPLIT_FIELDS = ("errors", "errors_4xx", "errors_5xx", "auth_denied")
+
+
+def error_record_pair(records, request_id, id_field="mdc.requestId"):
+    """Both halves of one 500, split by logger, with the exception names found.
+
+    `exception_fields` is applied to the application lines only and returns
+    NAMES: the payload is stored FLATTENED as `exception.frames`, so a check
+    for a key called `exception` reports absence for a record that carries the
+    trace. That mistake was made twice and agreed with itself both times.
+    """
+    mine = [r for r in (records or ()) if str(r.get(id_field, "")) == str(request_id)]
+    access = [r for r in mine if r.get("loggerName") == ACCESS_LOGGER]
+    app = [r for r in mine if r.get("loggerName") != ACCESS_LOGGER]
+    found = {}
+    for rec in app:
+        names = exception_fields(rec)
+        if names:
+            found.setdefault(rec.get("loggerName") or "(no loggerName)", []).extend(
+                names
+            )
+    return {
+        "request_id": str(request_id),
+        "access": access[0] if access else None,
+        "access_records": len(access),
+        "app_records": len(app),
+        "levels": sorted({str(r.get("level")) for r in app if r.get("level")}),
+        "exception_fields": {k: sorted(set(v)) for k, v in found.items()},
+        "loggers": sorted(
+            {str(r.get("loggerName")) for r in app if r.get("loggerName")}
+        ),
+    }
+
+
+#: What the application half of a 500 turned out to be. THE THREE ARE DIFFERENT
+#: RESULTS AND ONLY ONE OF THEM IS ABOUT THE PIPELINE.
+#:
+#:   unhandled  an application line carrying a throwable -- `exception.frames`
+#:              or whatever the store called it. The trace survived; this is
+#:              the outcome section 5c exists to demonstrate.
+#:   handled    application line(s), no throwable anywhere. Polaris CAUGHT the
+#:              failure and mapped it to a 500, logging it without attaching
+#:              the exception. Nothing was lost in transit -- there was never a
+#:              trace to carry -- so this is a fact about the PROVOCATION and
+#:              reporting it as a pipeline failure would be wrong.
+#:   absent     no application line at all for a request that returned 500.
+#:              Rule 2 keeps every non-access-log record untouched, so this is
+#:              the only one of the three that accuses the pipeline -- or says
+#:              Polaris logged nothing at all for the failure.
+TRACE_UNHANDLED = "unhandled"
+TRACE_HANDLED = "handled"
+TRACE_ABSENT = "absent"
+
+
+def trace_verdict(pair):
+    """`unhandled` / `handled` / `absent` for one `error_record_pair` result.
+
+    Written because the alternative collapses two different findings into one
+    FAIL. A 500 that Polaris handled and logged at WARN carries no throwable,
+    and a check that only asks "did a trace arrive?" reports that identically
+    to a pipeline that dropped one -- with opposite remedies: change the probe,
+    or fix the shipper.
+    """
+    pair = pair or {}
+    if pair.get("exception_fields"):
+        return TRACE_UNHANDLED
+    if _as_int(pair.get("app_records")) > 0:
+        return TRACE_HANDLED
+    return TRACE_ABSENT
+
+
+def trace_verdicts(pairs):
+    """`{verdict: [pair, ...]}` over `error_record_pair` results."""
+    out = {TRACE_UNHANDLED: [], TRACE_HANDLED: [], TRACE_ABSENT: []}
+    for pair in pairs or ():
+        out[trace_verdict(pair)].append(pair)
+    return out
+
+
+def driven_status_mix(calls):
+    """`{"n_5xx": .., "n_4xx": .., "n_auth_denied": ..}` over driven call rows.
+
+    THE BURST IS ONLY PURE IF THE LADDER FIRES. When no rung provokes a 500 its
+    twelve calls come back 4xx and land in the very window the checks call
+    "pure-500", so a hardcoded `driven_4xx=0` turns the harness's own traffic
+    into a FAIL against the filter. Run 1788759324 did exactly that: the ladder
+    returned 422/422/400/409 and the window check reported
+    `a 500 does not increment errors_4xx: errors_4xx=13, driven 4xx=0`.
+    Count what was actually driven and compare against that.
+    """
+    out = {"n_5xx": 0, "n_4xx": 0, "n_auth_denied": 0}
+    for call in calls or ():
+        status = call.get("status")
+        if status is None:
+            continue
+        status = int(status)
+        if status >= 500:
+            out["n_5xx"] += 1
+        elif status >= 400:
+            out["n_4xx"] += 1
+            if status in (401, 403):
+                out["n_auth_denied"] += 1
+    return out
+
+
+def check_500_window(rows, driven_500, driven_4xx=0, driven_auth_denied=0):
+    """The `errors_5xx` assertions, as `(name, ok, detail)` -- `ok=None` = VOID.
+
+    Written for a PURE-500 BURST: a window into which this notebook drove
+    nothing but 500s, so `errors_4xx` and `auth_denied` have a predicted value
+    of zero and the negative cases have something to catch. Pass
+    `driven_4xx` / `driven_auth_denied` if the burst was not pure; the checks
+    then compare against what was driven rather than against zero.
+
+    `>=` on the 5xx count, `==` on the 4xx and auth negatives. The asymmetry is
+    deliberate: neighbour traffic and a PG-HA read-after-write 500 can ADD to
+    `errors_5xx` in the same window, but nothing this notebook drove can add a
+    4xx to a pure-500 burst, so an inequality there would pass a filter that
+    charged the 500 to the wrong counter -- the exact bug the split exists to
+    catch.
+    """
+    rows = list(rows or ())
+    summary = next((r for r in rows if r.get("report_type") == "summary"), {})
+    out = []
+
+    present = [f for f in ERROR_SPLIT_FIELDS if f in summary]
+    if "errors_5xx" not in present:
+        out.append(
+            (
+                "the window carries the v2 error split",
+                None,
+                "`errors_5xx` is absent from the summary row -- this window came "
+                "from a schema v1 filter, or the field was not stored. Every check "
+                "below is VOID, not passed. Fields seen: "
+                + (", ".join(present) or "none of them"),
+            )
+        )
+        return out
+    out.append(("the window carries the v2 error split", True, ", ".join(present)))
+
+    #: THE SUMMARY HAS NO `errors` FIELD -- it has `errors_kept`, which counts
+    #: access records the ERROR RULE kept, not error requests. Reading
+    #: `summary["errors"]` returned 0 and run 1788759324 printed
+    #: `errors_4xx + errors_5xx <= errors: 13 + 1 <= 0  FAIL` against a window
+    #: whose numbers were perfectly consistent. The true count for the window is
+    #: the resource margin, which the filter builds the split from in the first
+    #: place.
+    errors = sum(
+        _as_int(r.get("errors")) for r in rows if r.get("report_type") == "resource"
+    )
+    e5 = _as_int(summary.get("errors_5xx"))
+    e4 = _as_int(summary.get("errors_4xx"))
+    denied = _as_int(summary.get("auth_denied"))
+
+    out.append(
+        (
+            f"errors_5xx >= the {driven_500} driven 500(s)",
+            e5 >= driven_500,
+            f"errors_5xx={e5}, driven={driven_500}"
+            + (
+                "  (>= because neighbour traffic and a PG-HA 500 land in the "
+                "same window)"
+                if e5 > driven_500
+                else ""
+            ),
+        )
+    )
+    out.append(
+        (
+            "a 500 does not increment errors_4xx",
+            e4 == driven_4xx,
+            f"errors_4xx={e4}, driven 4xx={driven_4xx}",
+        )
+    )
+    out.append(
+        (
+            "a 500 does not increment auth_denied",
+            denied == driven_auth_denied,
+            f"auth_denied={denied}, driven 401/403={driven_auth_denied}",
+        )
+    )
+    out.append(
+        (
+            "auth_denied <= errors_4xx",
+            denied <= e4,
+            f"{denied} <= {e4}",
+        )
+    )
+    #: INEQUALITY ON PURPOSE. A record with no parsable status is an error
+    #: charged to neither split, so the two halves are a lower bound on
+    #: `errors` and demanding equality would fail on a line that did not parse.
+    out.append(
+        (
+            "errors_4xx + errors_5xx <= errors",
+            e4 + e5 <= errors,
+            f"{e4} + {e5} <= {errors}",
+        )
+    )
+
+    for field in ("errors", "errors_5xx"):
+        res = sum(
+            _as_int(r.get(field)) for r in rows if r.get("report_type") == "resource"
+        )
+        pri = sum(
+            _as_int(r.get(field)) for r in rows if r.get("report_type") == "principal"
+        )
+        has = any(
+            field in r
+            for r in rows
+            if r.get("report_type") in ("resource", "principal")
+        )
+        out.append(
+            (
+                f"margin: sum(resource.{field}) == sum(principal.{field})",
+                None if not has else res == pri,
+                f"{res} vs {pri}" if has else f"no row carries `{field}`",
+            )
+        )
+    return out

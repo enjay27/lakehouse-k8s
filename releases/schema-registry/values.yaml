@@ -1,0 +1,41 @@
+# ============================================================
+# Schema Registry (Bitnami) — Avro/JSON schema management
+# Namespace: datahub-hynix
+# ============================================================
+
+replicaCount: 1
+
+kafka:
+  enabled: false          # use existing Kafka
+
+externalKafka:
+  brokers:
+    - benchmarks-kafka:9092
+
+# Schema compatibility mode
+# BACKWARD: new schema can read old data (recommended)
+# FULL: both forward and backward compatible
+schemaRegistryUrlParams:
+  SCHEMA_COMPATIBILITY_LEVEL: BACKWARD
+
+service:
+  type: ClusterIP
+  ports:
+    http: 8081            # REST API port
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+# Liveness / readiness
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 15

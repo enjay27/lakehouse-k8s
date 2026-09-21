@@ -1,0 +1,1117 @@
+{
+  "capture": "capture-admin-index",
+  "run_id": "20260831-111255",
+  "generated": "2026-08-31 02:43:49",
+  "access_records": 162,
+  "statements": 1461,
+  "orphan_statements": 0,
+  "shapes": [
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND id = ? AND type_code = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 484,
+      "requests": 162,
+      "labels": {
+        "POST /oauth/tokens": 6,
+        "GET  /catalogs/{name}": 18,
+        "GET  /namespaces": 30,
+        "GET  /namespaces/{ns}/tables": 30,
+        "GET  /namespaces/{ns}/views": 30,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables": 6,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies": 6,
+        "GET  /catalogs": 15,
+        "GET  /principals": 15,
+        "GET  /principals/{name}": 15,
+        "GET /api/management/v1/principals/admin1_principal/principal-roles": 3,
+        "GET  /principal-roles": 15,
+        "GET  /principal-roles/{name}": 15,
+        "GET  /principal-roles/{n}/principals": 15,
+        "GET /api/management/v1/principal-roles/admin1_principal_role/catalog-roles/admin1_catalog": 3,
+        "GET  /catalogs/{c}/catalog-roles": 15,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal": 3,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles": 3,
+        "GET  /catalog-roles/{r}/grants": 15,
+        "GET /api/catalog/v1/config": 15,
+        "GET  /namespaces/{ns}": 15,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1": 3,
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 3,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 3,
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 3,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 3,
+        "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies": 5,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables": 6,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies": 6,
+        "GET /api/management/v1/principals/admin2_principal/principal-roles": 3,
+        "GET /api/management/v1/principal-roles/admin2_principal_role/catalog-roles/admin2_catalog": 3,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal": 3,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles": 3,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1": 3,
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 3,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 3,
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 3,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 3,
+        "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies": 5,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables": 6,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies": 6,
+        "GET /api/management/v1/principals/admin3_principal/principal-roles": 3,
+        "GET /api/management/v1/principal-roles/admin3_principal_role/catalog-roles/admin3_catalog": 3,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal": 3,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles": 3,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1": 3,
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 3,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 3,
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 3,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 3,
+        "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies": 5,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables": 6,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies": 6,
+        "GET /api/management/v1/principals/admin4_principal/principal-roles": 3,
+        "GET /api/management/v1/principal-roles/admin4_principal_role/catalog-roles/admin4_catalog": 3,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal": 3,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles": 3,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1": 3,
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 3,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 3,
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 3,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 3,
+        "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies": 5,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables": 6,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies": 6,
+        "GET /api/management/v1/principals/admin5_principal/principal-roles": 3,
+        "GET /api/management/v1/principal-roles/admin5_principal_role/catalog-roles/admin5_catalog": 3,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal": 3,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles": 3,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1": 3,
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 3,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 3,
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 3,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 3,
+        "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies": 5
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE (catalog_id, id) IN (<rows>) AND realm_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 367,
+      "requests": 156,
+      "labels": {
+        "GET  /catalogs/{name}": 12,
+        "GET  /namespaces": 20,
+        "GET  /namespaces/{ns}/tables": 20,
+        "GET  /namespaces/{ns}/views": 20,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables": 4,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies": 4,
+        "GET  /catalogs": 10,
+        "GET  /principals": 10,
+        "GET  /principals/{name}": 10,
+        "GET /api/management/v1/principals/admin1_principal/principal-roles": 3,
+        "GET  /principal-roles": 10,
+        "GET  /principal-roles/{name}": 10,
+        "GET  /principal-roles/{n}/principals": 15,
+        "GET /api/management/v1/principal-roles/admin1_principal_role/catalog-roles/admin1_catalog": 3,
+        "GET  /catalogs/{c}/catalog-roles": 10,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal": 2,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles": 3,
+        "GET  /catalog-roles/{r}/grants": 15,
+        "GET /api/catalog/v1/config": 10,
+        "GET  /namespaces/{ns}": 10,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1": 2,
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 3,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 3,
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 4,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 4,
+        "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies": 2,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables": 4,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies": 4,
+        "GET /api/management/v1/principals/admin2_principal/principal-roles": 3,
+        "GET /api/management/v1/principal-roles/admin2_principal_role/catalog-roles/admin2_catalog": 3,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal": 2,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles": 3,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1": 2,
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 3,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 3,
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 4,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 4,
+        "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies": 2,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables": 4,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies": 4,
+        "GET /api/management/v1/principals/admin3_principal/principal-roles": 3,
+        "GET /api/management/v1/principal-roles/admin3_principal_role/catalog-roles/admin3_catalog": 3,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal": 2,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles": 3,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1": 2,
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 3,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 3,
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 4,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 4,
+        "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies": 2,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables": 4,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies": 4,
+        "GET /api/management/v1/principals/admin4_principal/principal-roles": 3,
+        "GET /api/management/v1/principal-roles/admin4_principal_role/catalog-roles/admin4_catalog": 3,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal": 2,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles": 3,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1": 2,
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 3,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 3,
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 4,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 4,
+        "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies": 2,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables": 4,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies": 4,
+        "GET /api/management/v1/principals/admin5_principal/principal-roles": 3,
+        "GET /api/management/v1/principal-roles/admin5_principal_role/catalog-roles/admin5_catalog": 3,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal": 2,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles": 3,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1": 2,
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 3,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 3,
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 4,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 4,
+        "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies": 2
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE id = ? AND realm_id = ? AND catalog_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 181,
+      "requests": 156,
+      "labels": {
+        "GET  /catalogs/{name}": 6,
+        "GET  /namespaces": 10,
+        "GET  /namespaces/{ns}/tables": 10,
+        "GET  /namespaces/{ns}/views": 10,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies": 2,
+        "GET  /catalogs": 5,
+        "GET  /principals": 5,
+        "GET  /principals/{name}": 5,
+        "GET /api/management/v1/principals/admin1_principal/principal-roles": 2,
+        "GET  /principal-roles": 5,
+        "GET  /principal-roles/{name}": 5,
+        "GET  /principal-roles/{n}/principals": 10,
+        "GET /api/management/v1/principal-roles/admin1_principal_role/catalog-roles/admin1_catalog": 2,
+        "GET  /catalogs/{c}/catalog-roles": 5,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles": 2,
+        "GET  /catalog-roles/{r}/grants": 10,
+        "GET /api/catalog/v1/config": 5,
+        "GET  /namespaces/{ns}": 5,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin2_principal/principal-roles": 2,
+        "GET /api/management/v1/principal-roles/admin2_principal_role/catalog-roles/admin2_catalog": 2,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles": 2,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin3_principal/principal-roles": 2,
+        "GET /api/management/v1/principal-roles/admin3_principal_role/catalog-roles/admin3_catalog": 2,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles": 2,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin4_principal/principal-roles": 2,
+        "GET /api/management/v1/principal-roles/admin4_principal_role/catalog-roles/admin4_catalog": 2,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles": 2,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin5_principal/principal-roles": 2,
+        "GET /api/management/v1/principal-roles/admin5_principal_role/catalog-roles/admin5_catalog": 2,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles": 2,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies": 1
+      }
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE grantee_catalog_id = ? AND grantee_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 171,
+      "requests": 156,
+      "labels": {
+        "GET  /catalogs/{name}": 6,
+        "GET  /namespaces": 10,
+        "GET  /namespaces/{ns}/tables": 10,
+        "GET  /namespaces/{ns}/views": 10,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies": 2,
+        "GET  /catalogs": 5,
+        "GET  /principals": 5,
+        "GET  /principals/{name}": 5,
+        "GET /api/management/v1/principals/admin1_principal/principal-roles": 2,
+        "GET  /principal-roles": 5,
+        "GET  /principal-roles/{name}": 5,
+        "GET  /principal-roles/{n}/principals": 5,
+        "GET /api/management/v1/principal-roles/admin1_principal_role/catalog-roles/admin1_catalog": 2,
+        "GET  /catalogs/{c}/catalog-roles": 5,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "GET  /catalog-roles/{r}/grants": 10,
+        "GET /api/catalog/v1/config": 5,
+        "GET  /namespaces/{ns}": 5,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin2_principal/principal-roles": 2,
+        "GET /api/management/v1/principal-roles/admin2_principal_role/catalog-roles/admin2_catalog": 2,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin3_principal/principal-roles": 2,
+        "GET /api/management/v1/principal-roles/admin3_principal_role/catalog-roles/admin3_catalog": 2,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin4_principal/principal-roles": 2,
+        "GET /api/management/v1/principal-roles/admin4_principal_role/catalog-roles/admin4_catalog": 2,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin5_principal/principal-roles": 2,
+        "GET /api/management/v1/principal-roles/admin5_principal_role/catalog-roles/admin5_catalog": 2,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies": 1
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND parent_id = ? AND type_code = ? AND realm_id = ? AND name = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 162,
+      "requests": 162,
+      "labels": {
+        "POST /oauth/tokens": 6,
+        "GET  /catalogs/{name}": 6,
+        "GET  /namespaces": 10,
+        "GET  /namespaces/{ns}/tables": 10,
+        "GET  /namespaces/{ns}/views": 10,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies": 2,
+        "GET  /catalogs": 5,
+        "GET  /principals": 5,
+        "GET  /principals/{name}": 5,
+        "GET /api/management/v1/principals/admin1_principal/principal-roles": 1,
+        "GET  /principal-roles": 5,
+        "GET  /principal-roles/{name}": 5,
+        "GET  /principal-roles/{n}/principals": 5,
+        "GET /api/management/v1/principal-roles/admin1_principal_role/catalog-roles/admin1_catalog": 1,
+        "GET  /catalogs/{c}/catalog-roles": 5,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "GET  /catalog-roles/{r}/grants": 5,
+        "GET /api/catalog/v1/config": 5,
+        "GET  /namespaces/{ns}": 5,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin2_principal/principal-roles": 1,
+        "GET /api/management/v1/principal-roles/admin2_principal_role/catalog-roles/admin2_catalog": 1,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin3_principal/principal-roles": 1,
+        "GET /api/management/v1/principal-roles/admin3_principal_role/catalog-roles/admin3_catalog": 1,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin4_principal/principal-roles": 1,
+        "GET /api/management/v1/principal-roles/admin4_principal_role/catalog-roles/admin4_catalog": 1,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies": 1,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies": 2,
+        "GET /api/management/v1/principals/admin5_principal/principal-roles": 1,
+        "GET /api/management/v1/principal-roles/admin5_principal_role/catalog-roles/admin5_catalog": 1,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal": 1,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1": 1,
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 1,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": 1,
+        "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 1,
+        "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": 1,
+        "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies": 1
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, sub_type_code FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 50,
+      "requests": 50,
+      "labels": {
+        "GET  /namespaces": 10,
+        "GET  /namespaces/{ns}/tables": 10,
+        "GET  /namespaces/{ns}/views": 10,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies": 2,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies": 2,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies": 2,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies": 2,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables": 2,
+        "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies": 2
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE catalog_id = ? AND sub_type_code = ? AND realm_id = ? AND parent_id = ? AND type_code = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 15,
+      "requests": 15,
+      "labels": {
+        "GET  /principals": 5,
+        "GET  /principal-roles": 5,
+        "GET  /catalogs/{c}/catalog-roles": 5
+      }
+    },
+    {
+      "sql": "SELECT securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code FROM POLARIS_SCHEMA.GRANT_RECORDS WHERE securable_id = ? AND securable_catalog_id = ? AND realm_id = ?",
+      "table": "grant_records",
+      "verb": "SELECT",
+      "occurrences": 10,
+      "requests": 10,
+      "labels": {
+        "GET  /principal-roles/{n}/principals": 5,
+        "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles": 1,
+        "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles": 1
+      }
+    },
+    {
+      "sql": "SELECT target_catalog_id, target_id, policy_type_code, policy_catalog_id, policy_id, parameters FROM POLARIS_SCHEMA.POLICY_MAPPING_RECORD WHERE target_id = ? AND target_catalog_id = ? AND realm_id = ?",
+      "table": "policy_mapping_record",
+      "verb": "SELECT",
+      "occurrences": 10,
+      "requests": 5,
+      "labels": {
+        "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies": 2,
+        "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies": 2,
+        "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies": 2,
+        "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies": 2,
+        "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies": 2
+      }
+    },
+    {
+      "sql": "SELECT principal_id, principal_client_id, main_secret_hash, secondary_secret_hash, secret_salt FROM POLARIS_SCHEMA.PRINCIPAL_AUTHENTICATION_DATA WHERE principal_client_id = ? AND realm_id = ?",
+      "table": "principal_authentication_data",
+      "verb": "SELECT",
+      "occurrences": 6,
+      "requests": 6,
+      "labels": {
+        "POST /oauth/tokens": 6
+      }
+    },
+    {
+      "sql": "SELECT id, catalog_id, parent_id, type_code, name, entity_version, sub_type_code, create_timestamp, drop_timestamp, purge_timestamp, to_purge_timestamp, last_update_timestamp, properties, internal_properties, grant_records_version, location_without_scheme FROM POLARIS_SCHEMA.ENTITIES WHERE realm_id = ? AND type_code = ? AND catalog_id = ? AND parent_id = ?",
+      "table": "entities",
+      "verb": "SELECT",
+      "occurrences": 5,
+      "requests": 5,
+      "labels": {
+        "GET  /catalogs": 5
+      }
+    }
+  ],
+  "labels": {
+    "POST /oauth/tokens": {
+      "requests": 6,
+      "statements": 18,
+      "tables": {
+        "entities": 12,
+        "principal_authentication_data": 6
+      }
+    },
+    "GET  /catalogs/{name}": {
+      "requests": 6,
+      "statements": 48,
+      "tables": {
+        "entities": 42,
+        "grant_records": 6
+      }
+    },
+    "GET  /namespaces": {
+      "requests": 10,
+      "statements": 90,
+      "tables": {
+        "entities": 80,
+        "grant_records": 10
+      }
+    },
+    "GET  /namespaces/{ns}/tables": {
+      "requests": 10,
+      "statements": 90,
+      "tables": {
+        "entities": 80,
+        "grant_records": 10
+      }
+    },
+    "GET  /namespaces/{ns}/views": {
+      "requests": 10,
+      "statements": 90,
+      "tables": {
+        "entities": 80,
+        "grant_records": 10
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/generic-tables": {
+      "requests": 2,
+      "statements": 18,
+      "tables": {
+        "entities": 16,
+        "grant_records": 2
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin1_catalog/namespaces/ns1/policies": {
+      "requests": 2,
+      "statements": 18,
+      "tables": {
+        "entities": 16,
+        "grant_records": 2
+      }
+    },
+    "GET  /catalogs": {
+      "requests": 5,
+      "statements": 45,
+      "tables": {
+        "entities": 40,
+        "grant_records": 5
+      }
+    },
+    "GET  /principals": {
+      "requests": 5,
+      "statements": 45,
+      "tables": {
+        "entities": 40,
+        "grant_records": 5
+      }
+    },
+    "GET  /principals/{name}": {
+      "requests": 5,
+      "statements": 40,
+      "tables": {
+        "entities": 35,
+        "grant_records": 5
+      }
+    },
+    "GET /api/management/v1/principals/admin1_principal/principal-roles": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET  /principal-roles": {
+      "requests": 5,
+      "statements": 45,
+      "tables": {
+        "entities": 40,
+        "grant_records": 5
+      }
+    },
+    "GET  /principal-roles/{name}": {
+      "requests": 5,
+      "statements": 40,
+      "tables": {
+        "entities": 35,
+        "grant_records": 5
+      }
+    },
+    "GET  /principal-roles/{n}/principals": {
+      "requests": 5,
+      "statements": 55,
+      "tables": {
+        "entities": 45,
+        "grant_records": 10
+      }
+    },
+    "GET /api/management/v1/principal-roles/admin1_principal_role/catalog-roles/admin1_catalog": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET  /catalogs/{c}/catalog-roles": {
+      "requests": 5,
+      "statements": 45,
+      "tables": {
+        "entities": 40,
+        "grant_records": 5
+      }
+    },
+    "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal": {
+      "requests": 1,
+      "statements": 8,
+      "tables": {
+        "entities": 7,
+        "grant_records": 1
+      }
+    },
+    "GET /api/management/v1/catalogs/admin1_catalog/catalog-roles/owner_principal/principal-roles": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET  /catalog-roles/{r}/grants": {
+      "requests": 5,
+      "statements": 55,
+      "tables": {
+        "entities": 45,
+        "grant_records": 10
+      }
+    },
+    "GET /api/catalog/v1/config": {
+      "requests": 5,
+      "statements": 40,
+      "tables": {
+        "entities": 35,
+        "grant_records": 5
+      }
+    },
+    "GET  /namespaces/{ns}": {
+      "requests": 5,
+      "statements": 40,
+      "tables": {
+        "entities": 35,
+        "grant_records": 5
+      }
+    },
+    "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1": {
+      "requests": 1,
+      "statements": 8,
+      "tables": {
+        "entities": 7,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": {
+      "requests": 1,
+      "statements": 9,
+      "tables": {
+        "entities": 8,
+        "grant_records": 1
+      }
+    },
+    "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/tables/tbl1": {
+      "requests": 1,
+      "statements": 9,
+      "tables": {
+        "entities": 8,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": {
+      "requests": 1,
+      "statements": 10,
+      "tables": {
+        "entities": 9,
+        "grant_records": 1
+      }
+    },
+    "HEAD /api/catalog/v1/admin1_catalog/namespaces/ns1/views/vw1": {
+      "requests": 1,
+      "statements": 10,
+      "tables": {
+        "entities": 9,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin1_catalog/applicable-policies": {
+      "requests": 1,
+      "statements": 12,
+      "tables": {
+        "entities": 9,
+        "policy_mapping_record": 2,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/generic-tables": {
+      "requests": 2,
+      "statements": 18,
+      "tables": {
+        "entities": 16,
+        "grant_records": 2
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin2_catalog/namespaces/ns1/policies": {
+      "requests": 2,
+      "statements": 18,
+      "tables": {
+        "entities": 16,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/principals/admin2_principal/principal-roles": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/principal-roles/admin2_principal_role/catalog-roles/admin2_catalog": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal": {
+      "requests": 1,
+      "statements": 8,
+      "tables": {
+        "entities": 7,
+        "grant_records": 1
+      }
+    },
+    "GET /api/management/v1/catalogs/admin2_catalog/catalog-roles/owner_principal/principal-roles": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1": {
+      "requests": 1,
+      "statements": 8,
+      "tables": {
+        "entities": 7,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": {
+      "requests": 1,
+      "statements": 9,
+      "tables": {
+        "entities": 8,
+        "grant_records": 1
+      }
+    },
+    "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/tables/tbl1": {
+      "requests": 1,
+      "statements": 9,
+      "tables": {
+        "entities": 8,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": {
+      "requests": 1,
+      "statements": 10,
+      "tables": {
+        "entities": 9,
+        "grant_records": 1
+      }
+    },
+    "HEAD /api/catalog/v1/admin2_catalog/namespaces/ns1/views/vw1": {
+      "requests": 1,
+      "statements": 10,
+      "tables": {
+        "entities": 9,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin2_catalog/applicable-policies": {
+      "requests": 1,
+      "statements": 12,
+      "tables": {
+        "entities": 9,
+        "policy_mapping_record": 2,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/generic-tables": {
+      "requests": 2,
+      "statements": 18,
+      "tables": {
+        "entities": 16,
+        "grant_records": 2
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin3_catalog/namespaces/ns1/policies": {
+      "requests": 2,
+      "statements": 18,
+      "tables": {
+        "entities": 16,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/principals/admin3_principal/principal-roles": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/principal-roles/admin3_principal_role/catalog-roles/admin3_catalog": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal": {
+      "requests": 1,
+      "statements": 8,
+      "tables": {
+        "entities": 7,
+        "grant_records": 1
+      }
+    },
+    "GET /api/management/v1/catalogs/admin3_catalog/catalog-roles/owner_principal/principal-roles": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1": {
+      "requests": 1,
+      "statements": 8,
+      "tables": {
+        "entities": 7,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": {
+      "requests": 1,
+      "statements": 9,
+      "tables": {
+        "entities": 8,
+        "grant_records": 1
+      }
+    },
+    "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/tables/tbl1": {
+      "requests": 1,
+      "statements": 9,
+      "tables": {
+        "entities": 8,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": {
+      "requests": 1,
+      "statements": 10,
+      "tables": {
+        "entities": 9,
+        "grant_records": 1
+      }
+    },
+    "HEAD /api/catalog/v1/admin3_catalog/namespaces/ns1/views/vw1": {
+      "requests": 1,
+      "statements": 10,
+      "tables": {
+        "entities": 9,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin3_catalog/applicable-policies": {
+      "requests": 1,
+      "statements": 12,
+      "tables": {
+        "entities": 9,
+        "policy_mapping_record": 2,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/generic-tables": {
+      "requests": 2,
+      "statements": 18,
+      "tables": {
+        "entities": 16,
+        "grant_records": 2
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin4_catalog/namespaces/ns1/policies": {
+      "requests": 2,
+      "statements": 18,
+      "tables": {
+        "entities": 16,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/principals/admin4_principal/principal-roles": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/principal-roles/admin4_principal_role/catalog-roles/admin4_catalog": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal": {
+      "requests": 1,
+      "statements": 8,
+      "tables": {
+        "entities": 7,
+        "grant_records": 1
+      }
+    },
+    "GET /api/management/v1/catalogs/admin4_catalog/catalog-roles/owner_principal/principal-roles": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1": {
+      "requests": 1,
+      "statements": 8,
+      "tables": {
+        "entities": 7,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": {
+      "requests": 1,
+      "statements": 9,
+      "tables": {
+        "entities": 8,
+        "grant_records": 1
+      }
+    },
+    "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/tables/tbl1": {
+      "requests": 1,
+      "statements": 9,
+      "tables": {
+        "entities": 8,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": {
+      "requests": 1,
+      "statements": 10,
+      "tables": {
+        "entities": 9,
+        "grant_records": 1
+      }
+    },
+    "HEAD /api/catalog/v1/admin4_catalog/namespaces/ns1/views/vw1": {
+      "requests": 1,
+      "statements": 10,
+      "tables": {
+        "entities": 9,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin4_catalog/applicable-policies": {
+      "requests": 1,
+      "statements": 12,
+      "tables": {
+        "entities": 9,
+        "policy_mapping_record": 2,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/generic-tables": {
+      "requests": 2,
+      "statements": 18,
+      "tables": {
+        "entities": 16,
+        "grant_records": 2
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin5_catalog/namespaces/ns1/policies": {
+      "requests": 2,
+      "statements": 18,
+      "tables": {
+        "entities": 16,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/principals/admin5_principal/principal-roles": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/principal-roles/admin5_principal_role/catalog-roles/admin5_catalog": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal": {
+      "requests": 1,
+      "statements": 8,
+      "tables": {
+        "entities": 7,
+        "grant_records": 1
+      }
+    },
+    "GET /api/management/v1/catalogs/admin5_catalog/catalog-roles/owner_principal/principal-roles": {
+      "requests": 1,
+      "statements": 11,
+      "tables": {
+        "entities": 9,
+        "grant_records": 2
+      }
+    },
+    "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1": {
+      "requests": 1,
+      "statements": 8,
+      "tables": {
+        "entities": 7,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": {
+      "requests": 1,
+      "statements": 9,
+      "tables": {
+        "entities": 8,
+        "grant_records": 1
+      }
+    },
+    "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/tables/tbl1": {
+      "requests": 1,
+      "statements": 9,
+      "tables": {
+        "entities": 8,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": {
+      "requests": 1,
+      "statements": 10,
+      "tables": {
+        "entities": 9,
+        "grant_records": 1
+      }
+    },
+    "HEAD /api/catalog/v1/admin5_catalog/namespaces/ns1/views/vw1": {
+      "requests": 1,
+      "statements": 10,
+      "tables": {
+        "entities": 9,
+        "grant_records": 1
+      }
+    },
+    "GET /api/catalog/polaris/v1/admin5_catalog/applicable-policies": {
+      "requests": 1,
+      "statements": 12,
+      "tables": {
+        "entities": 9,
+        "policy_mapping_record": 2,
+        "grant_records": 1
+      }
+    }
+  }
+}
