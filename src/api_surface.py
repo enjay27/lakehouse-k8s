@@ -979,19 +979,67 @@ def drop_catalog_tree(catalog, adm_pc, adm_ic):
         report["error"] = d.text[:200]
         #: Say what is still there. "Not empty" without an inventory is the
         #: message that sent 2026-09-02 looking for the residue by hand.
-        left = {}
-        try:
-            left["namespaces"] = [".".join(x) for x in walk_namespaces(catalog, adm_ic)]
-            rr = adm_pc.list_catalog_roles(catalog)
-            if rr.status_code < 300:
-                left["catalog_roles"] = [
-                    x["name"] if isinstance(x, dict) else x
-                    for x in rr.json().get("roles", [])
-                ]
-        except Exception as exc:  # noqa: BLE001
-            left["inventory_error"] = f"{type(exc).__name__}: {exc}"
-        report["remaining"] = left
+        report["remaining"] = remaining_in_catalog(catalog, adm_pc, adm_ic)
     return report
+
+
+def remaining_in_catalog(catalog, adm_pc, adm_ic):
+    """What is STILL in a catalog that refused to be deleted. Never raises.
+
+    "Catalog X cannot be dropped, it is not empty" names no entity, and this
+    repo has now chased that sentence three times: 2026-09-02 by hand,
+    2026-09-14 (`apimatrix1789366561_cat`), and run `1789955605`, where the
+    fixture catalog held on AFTER the `{prefix}_shared` role was deleted 204
+    and every named namespace was gone. A teardown that prints the refusal and
+    not the residue hands the next session the same walk.
+
+    Uses `walk_namespaces`, so a nested namespace is found; the notebook's old
+    sweep listed the top level only and joined multi-level names with a dot.
+
+    **An empty result is itself a finding.** If Polaris says the catalog is not
+    empty and nothing here can see anything in it, the residue is invisible to
+    the API that is supposed to manage it -- which is the shape a write that
+    committed during a 500 would leave.
+    """
+    left = {}
+    try:
+        namespaces = [tuple(x) for x in walk_namespaces(catalog, adm_ic)]
+        left["namespaces"] = [".".join(x) for x in namespaces]
+    except Exception as exc:  # noqa: BLE001
+        namespaces, left["namespaces_error"] = [], f"{type(exc).__name__}: {exc}"
+    for levels in namespaces:
+        for kind, lister in (
+            ("tables", adm_ic.list_tables),
+            ("views", adm_ic.list_views),
+        ):
+            try:
+                r = lister(catalog, list(levels))
+                if r.status_code < 300:
+                    names = [
+                        i.get("name") if isinstance(i, dict) else str(i)
+                        for i in (r.json().get("identifiers") or [])
+                    ]
+                    if names:
+                        left[f"{'.'.join(levels)}/{kind}"] = names
+            except Exception as exc:  # noqa: BLE001
+                left[f"{'.'.join(levels)}/{kind}_error"] = (
+                    f"{type(exc).__name__}: {exc}"
+                )
+    try:
+        r = adm_pc.list_catalog_roles(catalog)
+        left["catalog_roles"] = (
+            [x["name"] if isinstance(x, dict) else x for x in r.json().get("roles", [])]
+            if r.status_code < 300
+            else f"[{r.status_code}]"
+        )
+    except Exception as exc:  # noqa: BLE001
+        left["catalog_roles_error"] = f"{type(exc).__name__}: {exc}"
+    left["nothing_visible"] = not any(
+        v
+        for k, v in left.items()
+        if k != "catalog_roles" or [x for x in (v or ()) if x != BUILTIN_CATALOG_ROLE]
+    )
+    return left
 
 
 def teardown_fixture(fx, adm_pc, adm_ic, sweep_stale=True):

@@ -859,3 +859,47 @@ def test_the_shared_role_has_one_name_and_the_teardown_can_ask_for_it():
         fx, pc, "some_prole", privileges=["TABLE_READ_DATA"]
     )
     assert out["catalog_role"] == surf.shared_role_name(fx)
+
+
+# ----------------------------------------------------------------------
+# "not empty" must name the entity
+# ----------------------------------------------------------------------
+
+
+def test_the_inventory_finds_a_nested_namespace_and_its_contents():
+    """`GET /namespaces` returns the top level only. A residue one level down
+    is exactly what the old top-level sweep could not see, and `probe_ns.nested`
+    is a namespace this run creates on purpose."""
+    ic = FakeTree({"probe_ns": (["t1"], ["v1"])})
+    pc = FakeCatalogs(roles=["catalog_admin", "leftover_role"])
+    left = surf.remaining_in_catalog("cat", pc, ic)
+    assert "probe_ns" in left["namespaces"]
+    assert left["probe_ns/tables"] == ["t1"]
+    assert left["probe_ns/views"] == ["v1"]
+    assert left["catalog_roles"] == ["catalog_admin", "leftover_role"]
+    assert left["nothing_visible"] is False
+
+
+def test_an_empty_inventory_is_itself_the_finding():
+    """If Polaris says a catalog is not empty and nothing here can see anything
+    in it, the residue is invisible to the API that is meant to manage it --
+    the shape a write that committed during a 500 leaves. Run 1789955605 is
+    where that mattered: `apimatrix1789955605_cat` refused to drop after every
+    named entity was gone AND `{prefix}_shared` had been deleted 204."""
+    left = surf.remaining_in_catalog(
+        "cat", FakeCatalogs(roles=["catalog_admin"]), FakeTree({})
+    )
+    assert left["namespaces"] == []
+    assert left["nothing_visible"] is True
+
+
+def test_the_inventory_never_raises_when_a_client_fails():
+    class _Broken:
+        def __getattr__(self, name):
+            def boom(*a, **k):
+                raise RuntimeError("no cluster")
+
+            return boom
+
+    left = surf.remaining_in_catalog("cat", _Broken(), _Broken())
+    assert "namespaces_error" in left and "catalog_roles_error" in left
