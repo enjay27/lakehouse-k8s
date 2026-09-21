@@ -46,7 +46,7 @@ Docs index: [`README.md`](README.md). Monitoring team: [`NOTE-monitoring-team-ha
 | 4 | Decide **P5** (Lua in the Helm release vs separate ConfigMap) before the GitOps port | K | — | decision recorded in the review |
 | 5 | **Phase 3** (plan §3): 3.1 load test (pod CPU for `#31`/P1) · 3.2 row caps · 3.3 one-day size · 3.4 one vs two prod indices · 3.5 GitOps port · 3.6 tier-1 credentials to a Secret (`#4`) · 3.7 prod Polaris log level / replicas · 3.8 dashboards and alerts (use `.keyword` and `message`) | see plan | 1 for 3.3/3.8 | see plan |
 | 6 | `#24` upstream report (four NPEs) — Kade's call | K | — | filed or declined |
-| ~~7~~ | **DONE 2026-09-16:** `polaris-logging.drawio` redrawn for v6 (two Polaris indices + `k8s-logs`); sample-data guide `GUIDE-sample-data.ko.md` added | C | — | — |
+| ~~7~~ | **DONE 2026-09-16:** `polaris-logging.drawio` redrawn for v6 (two Polaris indices + `k8s-logs`); sample-data guide added (that 09-16 edition is now `archive/2026-09-16-GUIDE-sample-data.ko.md`; current: `GUIDE-sample-data-2026-09-21.ko.md`) | C | — | — |
 | 8 | Git leftovers: `.git/_to_delete/`, `.git/objects/*/tmp_obj_*`. Not Claude's, uncommitted: `polaris/values.yaml`, `postgresql/values.yaml`, `Claude outputs/*` | K | — | — |
 
 ## 4. Not read on the cluster — do not state as fact

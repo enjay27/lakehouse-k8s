@@ -37,6 +37,7 @@ Their old paths resolve through this table.
 | `logging/HANDOFF-harness-schema-v2-2026-09-07.md` | [`2026-09-07-HANDOFF-harness-schema-v2.md`](2026-09-07-HANDOFF-harness-schema-v2.md) | `../SCHEMA-report.md` |
 | `logging/HANDOFF-polaris-log-coverage-2026-09-07.md` | [`2026-09-07-HANDOFF-polaris-log-coverage.md`](2026-09-07-HANDOFF-polaris-log-coverage.md) | `../scripts/step10` + `step11` readouts |
 | `logging/POLARIS-LOGGING-GUIDE.ko.md` | [`2026-09-07-POLARIS-LOGGING-GUIDE.ko.md`](2026-09-07-POLARIS-LOGGING-GUIDE.ko.md) | describes the VictoriaLogs era (09-07). The current system: `../SPEC-polaris-audit-logging.ko.md` |
+| `logging/GUIDE-sample-data.ko.md` | [`2026-09-16-GUIDE-sample-data.ko.md`](2026-09-16-GUIDE-sample-data.ko.md) | [`../GUIDE-sample-data-2026-09-21.ko.md`](../GUIDE-sample-data-2026-09-21.ko.md). **그 판의 상세 샘플에는 `threadName`/`threadId` 가 없다** — 09-18 복원(`#42`) 이전에 손으로 쓴 것이라 09-19 이후 인덱스와 다르다 |
 | `logging/polaris-logging-architecture-spec.md` | [`2026-09-03-polaris-logging-architecture-spec.md`](2026-09-03-polaris-logging-architecture-spec.md) | 09-03 design for a PVC → VictoriaLogs shipper. **That leg was removed 2026-09-18** — nothing it describes is running |
 
 ## What is NOT here

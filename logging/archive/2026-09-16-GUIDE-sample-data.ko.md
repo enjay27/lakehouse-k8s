@@ -1,3 +1,15 @@
+> ## ⚠ 과거 문서 — 2026-09-16 판. 현재판은 [`../GUIDE-sample-data-2026-09-21.ko.md`](../GUIDE-sample-data-2026-09-21.ko.md)
+>
+> **이 문서의 상세 샘플은 지금의 인덱스와 다릅니다.** 아래 머리말은 `threadName`·`threadId` 가 "더 이상 없다"고
+> 적고 있는데, 두 필드는 **2026-09-18 에 복원됐습니다**(`#42`). 09-19 이후에 생긴 `polaris-logs-*` 문서는 모두
+> 두 필드를 갖고 있고, 조회는 **`threadName.keyword`** 로 해야 합니다. 이 문서의 샘플 약 100개에는 그 둘이 없습니다.
+>
+> 요약(`polaris-report-*`) 샘플과 §11 의 DQL, 그리고 §1 의 "적재되지 않은 것은 요약에 숫자로 남는다" 설명은
+> 여전히 맞습니다. 상세 문서의 필드 목록만 믿지 마십시오.
+>
+> 현재판은 손으로 쓰지 않고 `logging/scripts/step14-sample-doc.py` 가 export 에서 생성합니다 —
+> 바로 이런 식으로 조용히 틀려지는 것을 막기 위해서입니다.
+
 # OpenSearch 샘플 데이터 — `polaris-logs-*` (상세) · `polaris-report-*` (요약), 스키마 v6
 
 > 신규 엔지니어 공유용 샘플입니다. 2026-09-16 에 OpenSearch Dev Tools 로 export 한 두 인덱스의 `_source` 에서 레코드를 골라 옮겼습니다.
