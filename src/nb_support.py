@@ -6,6 +6,7 @@ Shared utilities for all Polaris error case notebooks.
 
 import json
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -70,6 +71,11 @@ WATCHDOG_TABLE = "watchdog-table"
 ENV = None
 CFG = {}
 POLARIS_URL = REALM = ROOT_CLIENT = ROOT_SECRET = POLARIS_USER_SECRET = None
+#: Quarkus management interface -- `/q/health`, `/q/health/ready`, `/q/metrics`.
+#: A DIFFERENT port from the Polaris APIs. Both the Catalog API and the
+#: Management API are served on 8181; 8182 is Quarkus and is NOT the Polaris
+#: Management API. Asking 8181 for /q/health returns 404.
+POLARIS_MGMT_URL = None
 OPENSEARCH_HOST = None
 OPENSEARCH_PORT = 9200
 OPENSEARCH_USER = None
@@ -88,6 +94,9 @@ PG_URL = None
 PG_CONFIG = {}
 VLOGS_URL = FB_METRICS_URL = FB_VALUES_PATH = None
 BASE_MGMT = BASE_CAT = None
+#: Quarkus management port. 8182 on this cluster -- NOT 8282, which is what
+#: the upstream docs default to (.memory/environments-platform.md).
+QUARKUS_MGMT_PORT = 8182
 PURGE_DELETES_FILES = None
 POLARIS_VERSION = None
 mc = None  # MinioREST client (built by init_env)
@@ -104,7 +113,7 @@ def init_env(env=None):
     global ENV, CFG, POLARIS_URL, REALM, ROOT_CLIENT, ROOT_SECRET
     global POLARIS_USER_SECRET
     global OPENSEARCH_HOST, OPENSEARCH_PORT, OPENSEARCH_USER, OPENSEARCH_PASS
-    global LOG_INDEX, POLARIS_CONTAINER, BASE_MGMT, BASE_CAT
+    global LOG_INDEX, POLARIS_CONTAINER, BASE_MGMT, BASE_CAT, POLARIS_MGMT_URL
     global MINIO_ENDPOINT, MINIO_ENDPOINT_INTERNAL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, BUCKET
     global PG_HOST, PG_PORT, PG_DB, PG_USER, PG_PASSWORD, PG_URL, PG_CONFIG
     global PURGE_DELETES_FILES, POLARIS_VERSION, mc
@@ -180,6 +189,12 @@ def init_env(env=None):
 
     BASE_MGMT = f"{POLARIS_URL}/api/management/v1"
     BASE_CAT = f"{POLARIS_URL}/api/catalog/v1"
+    # Quarkus management interface. Config key wins; otherwise derive it by
+    # swapping the Polaris API port for the Quarkus one, so an existing
+    # <env>.yaml that predates this key keeps working.
+    POLARIS_MGMT_URL = os.environ.get("POLARIS_MGMT_URL") or CFG.get("polaris_mgmt_url") or re.sub(
+        r":(\d+)(/|$)", lambda m: f":{QUARKUS_MGMT_PORT}{m.group(2)}", POLARIS_URL
+    )
 
     # Build the MinIO REST client (pure requests + SigV4; no s3fs/boto3)
     try:

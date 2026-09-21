@@ -2,6 +2,9 @@
 # Do NOT put prod secrets in a committed file. Prefer env vars:
 #   export POLARIS_ROOT_SECRET=...  MINIO_ACCESS_KEY=...  MINIO_SECRET_KEY=...  POSTGRES_PASSWORD=...
 polaris_url: http://<PROD_POLARIS_HOST>:8181
+# Quarkus management interface (/q/health, /q/metrics) -- a DIFFERENT port
+# from the Polaris APIs, which are both on 8181. Omit to derive :8182.
+# polaris_mgmt_url: http://<HOST>:8182
 minio_endpoint: http://<PROD_MINIO_HOST>:9000
 minio_endpoint_internal: http://<PROD_MINIO_INTERNAL>:9000
 opensearch_host: <PROD_OPENSEARCH_HOST>

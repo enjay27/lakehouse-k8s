@@ -315,3 +315,23 @@ literal. Bootstrap resolves the repo root by `pyproject.toml` marker — verifie
 both the notebook's directory and the repo root, and it is the template for M1.
 
 `pytest` 996 passed. **Never run against a cluster**; T01-T06 unproven on 1.6.0.
+
+### 2026-09-21 — the availability 404 was the Quarkus port, and PolarisREST's paths are clean
+
+Kade's run returned 404. Cause: `/q/health` is the **Quarkus management interface on
+8182**, not a Polaris API — it appears in neither OpenAPI document. Both Polaris APIs
+(Catalog and Management) are on **8181**, as `roadmap/catalog.md` § 2026-08 already
+settled. The notebook asked 8181 for `/q/health` and read the 404 as a health failure.
+
+`init_env` now exposes **`POLARIS_MGMT_URL`** — config key `polaris_mgmt_url`, else
+`POLARIS_MGMT_URL` env var, else derived by swapping the port for
+`QUARKUS_MGMT_PORT` (8182), so an `<env>.yaml` that predates the key keeps working.
+
+**All 22 URLs PolarisREST builds were validated against the vendored 1.6.0 documents:
+0 mismatches.** The client is safe to convert notebooks onto. That check is now
+`tests/test_api_paths.py` (3 cases) rather than a one-off: it compares the client
+against the same documents that are the denominator for the 297-cell matrix, so the
+two can never disagree about what a path is. It skips, naming `fetch_specs.sh`, when
+the documents are absent.
+
+`pytest` 999 passed.

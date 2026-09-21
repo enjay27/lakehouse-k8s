@@ -7,6 +7,9 @@
 # Prefer injecting secrets via env vars rather than committing them:
 #   export POLARIS_ROOT_SECRET=...  MINIO_ACCESS_KEY=...  MINIO_SECRET_KEY=...  OPENSEARCH_PASS=...
 polaris_url: http://<DEV_POLARIS_HOST>:8181
+# Quarkus management interface (/q/health, /q/metrics) -- a DIFFERENT port
+# from the Polaris APIs, which are both on 8181. Omit to derive :8182.
+# polaris_mgmt_url: http://<HOST>:8182
 minio_endpoint: http://<DEV_MINIO_HOST>:9000
 minio_endpoint_internal: http://<DEV_MINIO_INTERNAL>:9000
 opensearch_host: <DEV_OPENSEARCH_HOST>

@@ -72,3 +72,22 @@ suite touches a cluster**; that gap is the thing worth closing next if the worry
 against PROD", but T03 and T04 create and drop a namespace and a table. They do it
 inside the watchdog's own catalog and clean up, which is probably the intent — but the
 CLAUDE.md wording and the behaviour disagree, and one of them should change.
+
+## Postscript — the 404 (same day)
+
+Kade ran it with credentials exported and got a 404. It was not RBAC, not 1.6.0, and
+not PolarisREST: `/q/health` is the **Quarkus** management interface on 8182. Both
+Polaris APIs are on 8181, so the client's single `base_url` is correct for everything
+it does — but `/q/health` is not something it does, and the raw `requests.get` I
+carried over from the original notebook pointed at the wrong port.
+
+Worth keeping because of how the failure presented: **a wrong path and a missing entity
+are both 404.** T06 exists to correlate "health says UP" with "a write failed", so a
+404 on the health probe made it report a health problem that did not exist. In a repo
+whose grid is built on reading status codes, a path bug and a state bug wear the same
+answer.
+
+The fix is `POLARIS_MGMT_URL`, derived so nobody has to edit their gitignored config.
+The durable part is `tests/test_api_paths.py`: every URL PolarisREST builds is checked
+against the vendored OpenAPI documents (22 paths, 0 mismatches today), plus an
+assertion that the client never reaches a `/q/` path at all.

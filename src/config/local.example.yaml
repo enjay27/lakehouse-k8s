@@ -2,6 +2,9 @@
 # Copy to local.yaml and fill in. local.yaml is gitignored (may hold secrets).
 # This is the DEFAULT env (init_env() with no arg loads "local") — the safe target.
 polaris_url: http://<LOCAL_HOST>:8181
+# Quarkus management interface (/q/health, /q/metrics) -- a DIFFERENT port
+# from the Polaris APIs, which are both on 8181. Omit to derive :8182.
+# polaris_mgmt_url: http://<HOST>:8182
 minio_endpoint: http://<LOCAL_HOST>:9000
 minio_endpoint_internal: http://benchmarks-minio.datahub-hynix.svc.cluster.local:9000
 opensearch_host: localhost
