@@ -15,9 +15,10 @@ JVM existed by 22:21 the same day.**
 and `polaris.log` (first line 22:21:43 `Installed features` — the new pod's startup), both mtime 22:21.
 So the NEW pod's first write rolled the OLD pod's file. The old pod still holds its own rotation state
 (next roll due 19:00, suffix -18): its next write goes to the renamed inode, and its first write then
-rolls the new pod's `polaris.log` to the same `-18.gz` name. Likely HPA trigger: memory target 80 % of
-a 1Gi request against `InitialRAMPercentage=50` of a 2Gi limit — the JVM starts near the threshold.
-(Inference; confirm with `kubectl get hpa`.)
+rolls the new pod's `polaris.log` to the same `-18.gz` name. HPA trigger NOT the memory baseline, as I
+first guessed: `kubectl get hpa` at ~22:25 showed cpu 1%/80%, memory 32%/80%, replicas 2 — a transient
+spike, cause unknown. At that load it scales back to 1 after the 5-min stabilisation window; the
+ReplicaSet usually deletes the NEWER pod, which leaves the old one with the stale rotation state.
 
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
