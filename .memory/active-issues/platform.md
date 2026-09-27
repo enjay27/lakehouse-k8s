@@ -89,6 +89,22 @@ may all land on one pod. Flow: `shared|perpod` (configure + precheck, no traffic
 could not import `make_traffic` since the 2026-09-21 move (`.parent.parent / "src"` → a path that does
 not exist); now walks up to `src/` like the notebooks. Its `--dry-run` builds 297 requests.
 
+**RESULT (Kade, 2026-09-28, 2 pods, maxFileSize 50k, maxBackupIndex 5000, no roll index near the cap):**
+
+| mode | load (4000 tagged requests) | traffic `run_traffic.py --profile full` |
+|---|---|---|
+| `shared` (one file) | **found 2220, MISSING 1780 (44.5 %)**, gaps scattered (5, 7, 10, 11, 13 …) | not pasted |
+| `perpod` (control) | **found 4000, MISSING 0**, dup 0 | issued 327, found 329, MISSING 0, dup 5, 2 ids not in the issued list |
+
+Scattered gaps, not oldest-first, is the signature of the other JVM writing into a file already rolled
+away and deleted — not of `maxBackupIndex`. **One shared file loses nearly half the lines under rotation;
+one file per pod loses none. Decided and measured: one file per pod.** The perpod `LOSS` verdict came only
+from the 5 duplicated ids — almost certainly the harness sending two requests under one id
+(`grant_privilege`'s skip-if-present GET + PUT and its 404 retry, `polaris_rest.py`), which the
+"exactly one per id" contract since 2026-09-21 does not cover. step15 now prints each duplicate's lines
+and fails only on the same line appearing twice. **#48 CLOSED for the log-file design**; the orphan case
+belongs to the batch job (P1).
+
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
 `logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the

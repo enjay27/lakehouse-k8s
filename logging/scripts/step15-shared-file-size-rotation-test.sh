@@ -93,6 +93,7 @@ import collections, gzip, json, os, re, sys
 out, run, issued, load, load_n = sys.argv[1:6]
 ACCESS = "io.quarkus.http.access-log"
 nb = collections.Counter(); ld = collections.Counter(); bad = []
+seen_at = collections.defaultdict(list)   # rid -> [(host, timestamp, message)]
 top = collections.defaultdict(int)
 print(f"{'file':66} {'lines':>6} {'drive':>5} {'load':>5}  hostNames")
 for f in sorted(os.listdir(out)):
@@ -111,7 +112,9 @@ for f in sorted(os.listdir(out)):
         hosts.add(rec.get("hostName", "?"))
         if rec.get("loggerName") != ACCESS: continue
         rid = (rec.get("mdc") or {}).get("requestId") or ""
-        if rid.startswith(f"nb-{run}-"): nb[rid] += 1; a += 1
+        if rid.startswith(f"nb-{run}-"):
+            nb[rid] += 1; a += 1
+            seen_at[rid].append((rec.get("hostName", "?"), rec.get("timestamp", "?"), rec.get("message", "")[:90]))
         if load:
             mm = re.search(r"sizetest=" + re.escape(load) + r"-(\d+)", rec.get("message", ""))
             if mm: ld[int(mm.group(1))] += 1; b += 1
@@ -122,6 +125,14 @@ for base, t in sorted(top.items()):
     valid &= not flag
     print(f"highest roll index {base}: .{t}" + ("   <-- AT maxBackupIndex: rolls were deleted, INVALID" if flag else ""))
 dups = {k: v for k, v in nb.items() if v > 1}
+# A duplicated id is only log corruption if the SAME line appears twice. Two different requests
+# under one id is the traffic harness reusing it (grant_privilege's skip_if_present GET + PUT, its
+# 404 retry on PG-HA lag -- polaris_rest.py), which says nothing about rotation.
+true_dups = {k: v for k, v in dups.items() if len(set(seen_at[k])) < len(seen_at[k])}
+for k in sorted(dups):
+    kind = "SAME LINE TWICE (log duplication)" if k in true_dups else "different requests, one id (harness reuse)"
+    print(f"   dup {k}: {kind}")
+    for h, ts, m in seen_at[k]: print(f"        {h}  {ts}  {m}")
 if os.path.isfile(issued):
     if issued.endswith(".json"):   # run_traffic.py's traffic-<RUN>.json: calls[].request_id
         ids = [c["request_id"] for c in json.load(open(issued)).get("calls", []) if c.get("request_id")]
@@ -131,13 +142,14 @@ if os.path.isfile(issued):
     foreign = [k for k in nb if k not in set(ids)]
     print(f"\ntraffic {run}: issued {len(ids)} | found {len(nb)} | MISSING {len(missing)} | duplicated {len(dups)} | not in issued list {len(foreign)}")
     for i in missing[:25]: print("   missing", i)
-    nb_ok = not missing and not dups
+    for k in foreign[:10]: print("   not issued", k, seen_at[k][0])
+    nb_ok = not missing and not true_dups
 else:
     total = int(issued)
     print(f"\ntraffic {run}: TOTAL {total} | found {len(nb)} distinct | duplicated {len(dups)}"
           + ("" if len(nb) == total else f"   <-- {total - len(nb):+d} vs TOTAL"))
     print("   (setup calls before section 3b may also carry nb-<run>- ids; an ids-file settles it)")
-    nb_ok = len(nb) >= total and not dups
+    nb_ok = len(nb) >= total and not true_dups
 if load:
     n = int(load_n); lmiss = [i for i in range(1, n + 1) if ld[i] == 0]
     ldup = sum(1 for v in ld.values() if v > 1)
