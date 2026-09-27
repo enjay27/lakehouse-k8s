@@ -8,7 +8,8 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 **#48 — OPEN. File logging is back on with ONE `polaris.log` shared by every replica, so `#8`'s
 hazard returns the moment a second Polaris JVM exists.** 2026-09-27. Written, not rolled.
 
-`logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, chart's own `<fullname>-logs` PVC) for the
+`logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
+`logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the
 batch pipeline in `logging/PLAN-polaris-log-batch-2026-09-27.md`. Kade chose one file for the whole
 Deployment over per-pod files. Checked from the chart, not the cluster: every replica renders the same
 ConfigMap, `quarkus.log.file.path = /deployments/logs/polaris.log`, and nothing in `templates/` or
@@ -28,8 +29,8 @@ Also written with it, each to be confirmed from the running pod (PLAN step 2):
 `QUARKUS_LOG_FILE_ROTATION_ROTATE_ON_BOOT=false`, `TZ=Asia/Seoul` (the suffix is formatted in the JVM
 zone; `timestamp`/`_time` gain `+09:00`, which the `_time` date mapping accepts), `maxFileSize: 2Gi`
 (size roll made unreachable — it cannot be disabled once a suffix is set), `maxBackupIndex: 50`,
-`storage.className: ""` (cluster default, as minio/postgresql), `helm.sh/resource-policy: keep` on
-the claim. **NOT VERIFIED: no helm, no kubectl from the Cowork session that wrote it.**
+the claim outside the release (first cut used the chart's own `<fullname>-logs`; Kade's first check found
+no such claim — `NotFound` — and asked for the PVC to exist first). **NOT VERIFIED: no helm, no kubectl from the Cowork session that wrote it.**
 
 **#47 — The operational report window is 1 hour, not 30 minutes. Decided 2026-09-21, not rolled, and
 the thing to watch after it rolls is not size but the per-window caps.** 2026-09-21.

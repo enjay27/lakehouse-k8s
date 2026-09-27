@@ -5,7 +5,8 @@
 ## Now — 2026-09-27 (Polaris logging → PVC + hourly batch: step 1 written, not rolled)
 
 **Polaris file logging is back on in `charts/polaris/values.yaml`** — JSON `polaris.log`, hourly KST
-roll to `.yyyy-MM-dd-HH.gz`, on the chart's own `benchmarks-polaris-logs` PVC — step 1 of
+roll to `.yyyy-MM-dd-HH.gz`, on `polaris-logs-pvc` (**`kubectl apply -f logging/k8s/polaris-logs-pvc.yaml` before
+`helm upgrade`**; chart uses `existingClaim`) — step 1 of
 [`logging/PLAN-polaris-log-batch-2026-09-27.md`](logging/PLAN-polaris-log-batch-2026-09-27.md).
 **NEEDS KADE:** the PLAN's step-2 checklist (render gate, roll, then the running pod). **One file for
 all replicas is `#48`** — safe only while one Polaris pod runs. Batch script + CronJob not started.

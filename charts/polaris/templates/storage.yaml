@@ -14,7 +14,8 @@
   limitations under the License.
 **/}}
 
-{{- if .Values.logging.file.enabled }}
+{{- /* Not rendered when an existing claim is used (logging.file.storage.existingClaim). */ -}}
+{{- if and .Values.logging.file.enabled (not .Values.logging.file.storage.existingClaim) }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

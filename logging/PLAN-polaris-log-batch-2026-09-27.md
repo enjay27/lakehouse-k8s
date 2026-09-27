@@ -6,7 +6,7 @@ Steps 2–6 are not started. Decisions below are Kade's, 2026-09-27.
 ## Target flow
 
 ```
-Polaris ──JSON, hourly .gz roll──▶ PVC <fullname>-logs  (/deployments/logs)
+Polaris ──JSON, hourly .gz roll──▶ PVC polaris-logs-pvc  (/deployments/logs)
 K8s CronJob (Python, "3 * * * *" Asia/Seoul) ──▶ processed-logs/ + aggregated-logs/ on the same PVC
 Observability team (theirs from here) ──fetch from PVC──▶ OpenSearch
 ```
@@ -53,7 +53,8 @@ sources), so every step is idempotent.
 
 ## Steps
 
-1. **Polaris config + PVC** — `charts/polaris/values.yaml`, `templates/storage.yaml`. *Written.*
+1. **Polaris config + PVC** — `charts/polaris/values.yaml`; the claim is `logging/k8s/polaris-logs-pvc.yaml`,
+   created **before** the release and outside it, referenced by `logging.file.storage.existingClaim`. *Written.*
 2. **Spike on OrbStack (Kade)** — checks below.
 3. Batch script (`charts/polaris/files/log-batch/`, stdlib only) + `tests/test_polaris_log_batch.py`.
 4. Parity: same raw input through `logging/scripts/step11-replay-window.py` (Lua) and the job; diff.
@@ -64,10 +65,11 @@ sources), so every step is idempotent.
 
 ```bash
 kubectl config current-context                                   # must be orbstack
+kubectl apply -f logging/k8s/polaris-logs-pvc.yaml -n datahub-hynix   # FIRST; Pending until a pod mounts it
 helm lint charts/polaris
 helm upgrade --install benchmarks-polaris ./charts/polaris -n datahub-hynix --dry-run=client --debug
 helm upgrade --install benchmarks-polaris ./charts/polaris -n datahub-hynix
-kubectl -n datahub-hynix get pvc benchmarks-polaris-logs                     # Bound, class local-path
+kubectl -n datahub-hynix get pvc polaris-logs-pvc                            # Bound after the roll, class local-path
 kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
   grep -E 'quarkus.log.file|rotation' /deployments/config/application.properties
 kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- env | grep -E 'TZ|QUARKUS_LOG_FILE'

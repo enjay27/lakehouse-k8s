@@ -305,7 +305,7 @@ spec:
         {{- if .Values.logging.file.enabled }}
         - name: logs-storage
           persistentVolumeClaim:
-            claimName: {{ include "polaris.fullnameWithSuffix" (list . "logs") }}
+            claimName: {{ .Values.logging.file.storage.existingClaim | default (include "polaris.fullnameWithSuffix" (list . "logs")) }}
         {{- end }}
         - name: temp-dir
           emptyDir: {}

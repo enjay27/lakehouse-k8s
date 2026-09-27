@@ -1,0 +1,33 @@
+# Polaris log volume — created BEFORE the Polaris release, and outside it (2026-09-27, Kade).
+#
+# Why not the chart's own claim: its lifecycle would be the release's. This claim holds the raw
+# logs, the batch job's done/ originals and its processed/aggregated outputs; it must survive a
+# helm uninstall/reinstall and be mountable by the log-batch CronJob independently of Polaris.
+# charts/polaris/values.yaml points at it with logging.file.storage.existingClaim.
+#
+#   kubectl config current-context                     # must be orbstack
+#   kubectl apply -f logging/k8s/polaris-logs-pvc.yaml -n datahub-hynix
+#   kubectl -n datahub-hynix get pvc polaris-logs-pvc  # Pending is EXPECTED until a pod mounts it
+#
+# OrbStack's default class is local-path, which binds WaitForFirstConsumer: the claim stays
+# Pending until the Polaris pod is scheduled, then goes Bound. local-path does not enforce the
+# requested size — the node disk is the real ceiling, so the batch job's 3-day retention matters.
+#
+# DELETING THIS CLAIM DELETES THE LOGS. It needs its own explicit authorisation (CLAUDE.md).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: polaris-logs-pvc
+  namespace: datahub-hynix
+  labels:
+    app.kubernetes.io/name: polaris
+    app.kubernetes.io/component: logs
+spec:
+  accessModes:
+    - ReadWriteOnce          # single node; the CronJob pod lands on the same node
+  volumeMode: Filesystem
+  # storageClassName omitted on purpose: the cluster default (local-path on OrbStack),
+  # the same convention charts/minio and charts/postgresql use.
+  resources:
+    requests:
+      storage: 5Gi

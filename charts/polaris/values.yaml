@@ -304,12 +304,15 @@ logging:
       # .gz = compressed at roll. Hourly files are never deleted by Quarkus (#44): the batch
       # job moves them to done/ and deletes done/ and its outputs after 3 days.
       fileSuffix: .yyyy-MM-dd-HH.gz
-    # The chart's OWN claim (templates/storage.yaml, <fullname>-logs), created because
-    # enabled is true. className "" = the cluster default, the same convention minio and
-    # postgresql use on this OrbStack node (local-path). local-path does NOT enforce `size`:
-    # the real ceiling is the node disk, which is why the batch job's retention matters.
-    # The claim carries helm.sh/resource-policy: keep -- helm uninstall leaves the logs.
+    # existingClaim SET (2026-09-27): the claim is created FIRST, outside the release, by
+    # logging/k8s/polaris-logs-pvc.yaml -- `kubectl apply` it before `helm upgrade`, or the pod
+    # sits in Pending on a missing claim. The logs, done/ and the batch outputs then outlive any
+    # helm uninstall, and the log-batch CronJob mounts the same claim by name.
+    # With existingClaim empty the chart creates its own <fullname>-logs claim instead
+    # (templates/storage.yaml, annotated helm.sh/resource-policy: keep); className and size
+    # below apply only to that case.
     storage:
+      existingClaim: polaris-logs-pvc
       className: ""
       size: 5Gi
       selectorLabels: {}

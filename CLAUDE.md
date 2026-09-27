@@ -33,8 +33,8 @@ single most important thing on this page.
   `/var/log/containers/*.log` into **OpenSearch** in three tiers — tier 1 `k8s-logs-*`,
   tier 2 `polaris-logs-*`, tier 3 `polaris-report-*` (**schema v6**) — from Polaris's stdout.
   **As of 2026-09-27 (written, not rolled) Polaris also writes a JSON log file**, `polaris.log`,
-  rolled hourly (KST) to `.yyyy-MM-dd-HH.gz` on the chart's own `<fullname>-logs` PVC at
-  `/deployments/logs`, for the hourly batch job in `logging/PLAN-polaris-log-batch-2026-09-27.md`.
+  rolled hourly (KST) to `.yyyy-MM-dd-HH.gz` on PVC `polaris-logs-pvc` at `/deployments/logs` —
+  created **before** the release by `kubectl apply -f logging/k8s/polaris-logs-pvc.yaml`, for the hourly batch job in `logging/PLAN-polaris-log-batch-2026-09-27.md`.
   One file for all replicas — see active-issues `#48` before scaling Polaris past one pod.
   A Lua change is **`bash releases/fluent-bit/apply-lua.sh`** — `kubectl apply -k` alone leaves
   the old script running with no warning, and there is **no hot reload**.

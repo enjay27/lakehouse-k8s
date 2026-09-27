@@ -22,3 +22,12 @@ those to OpenSearch. Plan: `logging/PLAN-polaris-log-batch-2026-09-27.md`.
 No helm or kubectl from Cowork, and `get.helm.sh` is blocked by the egress proxy, so not even
 `helm template` ran. The values file parses as YAML and the four env vars and file block read back as
 intended — that is all.
+
+## Follow-up — the PVC comes first, outside the release
+Kade's `kubectl get pvc benchmarks-polaris-logs` returned `NotFound` and he asked for the PVC to be
+created first. The chart's claim only exists once `helm upgrade` has rendered it, and its lifecycle
+is the release's. Now: `logging/k8s/polaris-logs-pvc.yaml` (`polaris-logs-pvc`, 5Gi RWO, default
+class) is applied with kubectl before the upgrade, and the chart gained
+`logging.file.storage.existingClaim` — `storage.yaml` skips its own claim when set, `deployment.yaml`
+mounts the named one. local-path binds WaitForFirstConsumer, so `Pending` after the apply is normal.
+Why the chart claim was missing was not established from here (no cluster reach).
