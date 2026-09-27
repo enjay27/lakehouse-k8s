@@ -6,7 +6,19 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 ## Open
 
 **#48 — OPEN. File logging is back on with ONE `polaris.log` shared by every replica, so `#8`'s
-hazard returns the moment a second Polaris JVM exists.** 2026-09-27. Written, not rolled.
+hazard returns the moment a second Polaris JVM exists.** 2026-09-27. **ROLLED ~18:34 KST, and a second
+JVM existed by 22:21 the same day.**
+
+**Evidence (Kade, 2026-09-27 ~22:25 KST):** two pods of ONE ReplicaSet (`6f86777d49-l5q8m`, age 3h49m;
+`6f86777d49-nvj5j`, age 3m28s) — same pod-template hash, so HPA scale-out, not a rollout. In the PVC:
+`polaris.log.2026-09-27-18.gz` (gzip -t ok; JSON; first/last `timestamp` 18:35:07 / 18:51:18 +09:00)
+and `polaris.log` (first line 22:21:43 `Installed features` — the new pod's startup), both mtime 22:21.
+So the NEW pod's first write rolled the OLD pod's file. The old pod still holds its own rotation state
+(next roll due 19:00, suffix -18): its next write goes to the renamed inode, and its first write then
+rolls the new pod's `polaris.log` to the same `-18.gz` name. Likely HPA trigger: memory target 80 % of
+a 1Gi request against `InitialRAMPercentage=50` of a 2Gi limit — the JVM starts near the threshold.
+(Inference; confirm with `kubectl get hpa`.)
+
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
 `logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the

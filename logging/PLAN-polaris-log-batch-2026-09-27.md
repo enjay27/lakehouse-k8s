@@ -83,10 +83,11 @@ kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -l /deployments/lo
 kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- tail -2 /deployments/logs/polaris.log
 ```
 
-- [ ] PVC Bound; pod `Running`; `polaris.log` exists and is **written by uid 10000** (local-path perms)
-- [ ] each line is one JSON object (`QUARKUS_LOG_FILE_JSON_ENABLED` took effect), `timestamp` ends `+09:00`
-- [ ] after the next hour + one request: `polaris.log.YYYY-MM-DD-HH.gz` exists, named in **KST**, and decompresses fully
+- [x] PVC Bound; pod `Running`; `polaris.log` exists and is **written by uid 10000** (local-path perms) — 2026-09-27
+- [x] each line is one JSON object (`QUARKUS_LOG_FILE_JSON_ENABLED` took effect), `timestamp` ends `+09:00` — 2026-09-27
+- [x] after the next hour + one request: `polaris.log.YYYY-MM-DD-HH.gz` exists, named in **KST**, and decompresses fully — `-18.gz`, 18:35–18:51 only
       (the UBI9 image has no `zcat` — copy it out: `kubectl cp` then `gzip -t`)
-- [ ] an idle hour produces no file; the late roll carries the hour of its content
+- [x] an idle hour produces no file; the late roll carries the hour of its content — 19–21 absent, `-18` rolled at 22:21
+- [ ] **FAILED PREMISE: a second replica appeared the same day (HPA) — `#48` is live, decision pending**
 - [ ] container restart mid-hour (`kill 1`) does **not** roll (rotate-on-boot=false) and nothing is lost
 - [ ] console output and the Fluent Bit tiers are unchanged apart from the `+09:00` offset
