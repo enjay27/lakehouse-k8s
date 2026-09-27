@@ -76,6 +76,14 @@ hour and deletes the oldest beyond it, and at `maxFileSize 100k` 3000 requests (
 sets `maxBackupIndex=5000` and prints each file group's highest roll index. Production is unaffected
 (2Gi per hour never size-rolls), but it is a live demonstration that `maxBackupIndex` DELETES.
 
+**step15 v3 (Kade: "refer traffic test: diagnostics/ladders/log-coverage/polaris_api_traffic_v1.ipynb").**
+The check now rides the notebook's own contract — section 13: the log "must hold EXACTLY <TOTAL> access
+lines from this run, one per id" — by counting `mdc.requestId = nb-<RUN>-*` on access lines across the
+test file and all its rolls. A background curl load (`?sizetest=<load>-<i>`, new connection per request)
+keeps both pods writing and rolling while the notebook runs, since the notebook's keep-alive sessions
+may all land on one pod. Flow: `shared|perpod` (configure + precheck, no traffic) → `load` → notebook →
+`verify <RUN> <TOTAL|ids-file> <load>` → `restore`. Analyzer checked on synthetic files only.
+
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
 `logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the
