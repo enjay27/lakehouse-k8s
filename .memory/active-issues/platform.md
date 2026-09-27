@@ -83,6 +83,11 @@ test file and all its rolls. A background curl load (`?sizetest=<load>-<i>`, new
 keeps both pods writing and rolling while the notebook runs, since the notebook's keep-alive sessions
 may all land on one pod. Flow: `shared|perpod` (configure + precheck, no traffic) → `load` → notebook →
 `verify <RUN> <TOTAL|ids-file> <load>` → `restore`. Analyzer checked on synthetic files only.
+**v4 — no notebook (Kade):** `step15 run shared|perpod` does it all: configure → load → `run_traffic.py
+--profile full` (same grid as the notebook, via `make_traffic.drive`) → verify against its
+`traffic-<RUN>.json` `calls[].request_id`, the exact issued list. Found on the way: `run_traffic.py`
+could not import `make_traffic` since the 2026-09-21 move (`.parent.parent / "src"` → a path that does
+not exist); now walks up to `src/` like the notebooks. Its `--dry-run` builds 297 requests.
 
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by

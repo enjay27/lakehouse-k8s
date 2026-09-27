@@ -9,10 +9,10 @@ it does that is not argument parsing belongs in the module instead.
 Two things it will do, cheapest first:
 
     # 1. build all 286 requests and contact NOTHING. Safe with Polaris down.
-    uv run python log-coverage/run_traffic.py --dry-run
+    uv run python diagnostics/ladders/log-coverage/run_traffic.py --dry-run
 
     # 2. actually drive Polaris. THIS MUTATES -- see the warning below.
-    uv run python log-coverage/run_traffic.py --profile smoke
+    uv run python diagnostics/ladders/log-coverage/run_traffic.py --profile smoke
 
 There used to be a middle tier: `--spec-check`, which validated every request
 against the vendored documents through a Prism mock, without a cluster. It was
@@ -37,7 +37,14 @@ import json
 import pathlib
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+# Walk up to the repo's src/ rather than counting .parent levels: the 2026-09-21 merge moved
+# this file from log-coverage/ to diagnostics/ladders/log-coverage/, and the fixed
+# `.parent.parent / "src"` then pointed at diagnostics/ladders/src, which does not exist --
+# `import make_traffic` failed. Same walk as the notebooks' bootstrap.
+_ROOT = pathlib.Path(__file__).resolve().parent
+while not (_ROOT / "src").is_dir() and _ROOT != _ROOT.parent:
+    _ROOT = _ROOT.parent
+sys.path.insert(0, str(_ROOT / "src"))
 
 import make_traffic as mt  # noqa: E402
 
