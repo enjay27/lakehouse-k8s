@@ -63,17 +63,22 @@ dirs; then checkpoint `H` (tmp + replace) with the source files, sizes and count
 **Housekeeping.** After H is checkpointed:
 - rolls named for hours ≤ H move to `done/YYYYMMDD/` (a roll of H cannot contain lines of H+1: the
   first H+1 record is what rotates the file);
-- **orphaned `.log` files move to `done/` too** (Kade, 2026-09-28): a current `polaris-<pod>.log` whose
-  last complete line is in an hour ≤ H, whose mtime is > 120 s old and that has no unterminated tail
-  (or whose tail already went to `malformed/`). It lands as `done/YYYYMMDD/polaris-<pod>.log.<hour>.orphan`
-  — labelled with the hour it holds, so a later file of the same name (container restart keeps the pod
-  name) cannot collide.
-  *Safe for a pod that is only idle, not gone:* nothing can be appended to that file (Polaris rotates
-  before writing the first line of a new hour), and the moved file is complete. On its next write the
-  pod's rotation finds no `polaris-<pod>.log` to rename, reports it on stderr and opens a fresh file.
-  **That last part is inferred from how the JBoss handler rotates, not observed — step 2 checklist.**
-  The job can also tell the two apart after the fact: an idle pod reappears with a new file of the
-  same name; a gone pod never does.
+- **orphaned `.log` files move to `done/` too** (Kade, 2026-09-28). ORPHAN = BOTH of:
+  1. **its pod no longer exists** — the job lists the Polaris pods through the Kubernetes API
+     (`app.kubernetes.io/instance=benchmarks-polaris`, any phase, Terminating included) and the name in
+     `polaris-<pod>.log` is not among them. A pod's `HOSTNAME` is its name, so the file name is the key;
+  2. **the file is complete** — last complete line in an hour ≤ H, quiet > 120 s, no unterminated tail
+     (or it already went to `malformed/`).
+  Both, not either: (1) alone would misread a pod created between the API call and the directory scan;
+  (2) alone cannot tell a gone pod from an idle one. With both, a live pod's file is never moved, so
+  the job never renames a file a JVM holds open. An idle live pod's complete file stays where it is; it
+  is still read for its hour by timestamp, and when the pod finally rotates it the `.gz` goes to `done/`
+  by the name rule. **If the API call fails, the run moves no `.log` at all** and says so — processing
+  does not depend on it.
+  Lands as `done/YYYYMMDD/polaris-<pod>.log.<hour>.orphan`, labelled with the hour it holds.
+  Needs: a ServiceAccount for the CronJob with a namespaced, read-only Role (`pods`: `get`, `list`) in
+  `datahub-hynix`; the job calls the API with stdlib `urllib` and the mounted SA token + CA — no
+  Kubernetes client library, still stdlib only.
 - the run reports each moved orphan (pod, hour, lines) in its output and in the hour's summary row.
 
 Retention (D5) deletes `done/`, outputs and `malformed/` 3 days after publication.
@@ -123,8 +128,6 @@ kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- sh -c 'tail -2 /deplo
 - [x] after the hour: `polaris-<pod>.log.<hour>.gz` per pod that wrote — `bmt4t`, `rz56d` → `-22.gz` at 23:02
 - [x] orphan: `2tklb` removed by the HPA; its file (22:37–22:48) is unrotated for good — the job seals it as `-22.gz`
 - [x] shared-era files moved to `legacy-shared/` so the batch job never reads them (22:40)
-- [ ] **orphan move on a live, idle pod:** `mv` its `polaris-<pod>.log` aside by hand, send one request to
-      that pod (port-forward), then check: a new `polaris-<pod>.log` exists, the request's line is in it,
-      the pod did not restart, and what the rotation printed to stderr
+- [x] ~~orphan move on a live, idle pod~~ — no longer needed: with the pod-list check a live pod's file is never moved (2026-09-28)
 - [ ] container restart mid-hour (`kill 1`) does **not** roll (rotate-on-boot=false) and nothing is lost
 - [ ] console output and the Fluent Bit tiers are unchanged apart from the `+09:00` offset

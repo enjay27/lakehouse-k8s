@@ -107,8 +107,11 @@ and fails only on the same line appearing twice. **#48 CLOSED for the log-file d
 belongs to the batch job (P1). **2026-09-28 (Kade): no orphan special case at all** — the job reads every pod's
 current `.log` as well as its rolls and keeps the lines by `timestamp` in `[H, H+1)`, so a removed pod's
 unrotated file is just another source. PLAN *Batch algorithm* revised. Orphaned `.log` files (last line in a published
-hour, quiet > 120 s) then move to `done/…/polaris-<pod>.log.<hour>.orphan` (Kade). OPEN: that a live but
-idle pod survives its file being moved — inferred from the JBoss rotation code path, not yet observed.
+hour, quiet > 120 s) then move to `done/…/polaris-<pod>.log.<hour>.orphan` (Kade). **Refined the same day
+(Kade): an orphan must ALSO be a pod the Kubernetes API no longer lists** — the CronJob lists
+`benchmarks-polaris` pods (read-only namespaced Role) and a file whose pod name is absent is orphaned.
+Both conditions, so a live pod's file is never moved; the untested "idle pod finds its file moved"
+path is gone. API failure → move nothing that run.
 
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
