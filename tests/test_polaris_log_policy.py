@@ -1,4 +1,4 @@
-"""The audit policy in charts/polaris/files/log-batch/polaris_log_batch.py (P1b).
+"""The audit policy in images/polaris-log-batch/polaris_log_batch.py (P1b).
 
 A port of releases/fluent-bit/polaris_access_log.lua (policy v5) to a batch over one KST hour.
 Each test writes real-shaped Polaris JSON lines (Quarkus access-log messages, allow-listed and
@@ -17,7 +17,7 @@ sys.path.insert(
     0,
     str(
         pathlib.Path(__file__).resolve().parent.parent
-        / "charts/polaris/files/log-batch"
+        / "images/polaris-log-batch"
     ),
 )
 import polaris_log_batch as plb  # noqa: E402

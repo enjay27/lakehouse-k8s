@@ -3,7 +3,7 @@
 
 Feeds the same records, in timestamp order, through
   * releases/fluent-bit/polaris_access_log.lua (policy v5 / report v6), in LuaJIT via `lupa`, and
-  * charts/polaris/files/log-batch/polaris_log_batch.py AuditPolicy (policy v5 / report v7),
+  * images/polaris-log-batch/polaris_log_batch.py AuditPolicy (policy v5 / report v7),
 and compares the kept records and every summary / resource / principal / app_dropped counter.
 
     pip install lupa          # not a project dependency; bundles LuaJIT 2.1 (Fluent Bit's runtime)
@@ -28,7 +28,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve()
 while not (ROOT / "charts").is_dir() and ROOT != ROOT.parent:
     ROOT = ROOT.parent
-sys.path.insert(0, str(ROOT / "charts/polaris/files/log-batch"))
+sys.path.insert(0, str(ROOT / "images/polaris-log-batch"))
 import polaris_log_batch as plb  # noqa: E402
 
 LUA = ROOT / "releases/fluent-bit/polaris_access_log.lua"

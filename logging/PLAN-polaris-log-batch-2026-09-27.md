@@ -91,7 +91,7 @@ unpublished hour from files still in place, to identical bytes.
 1. **Polaris config + PVC** — `charts/polaris/values.yaml`; the claim is `logging/k8s/polaris-logs-pvc.yaml`,
    created **before** the release and outside it, referenced by `logging.file.storage.existingClaim`. *Written.*
 2. **Spike on OrbStack (Kade)** — checks below.
-3. Batch script (`charts/polaris/files/log-batch/polaris_log_batch.py`, stdlib only, Python ≥ 3.10) +
+3. Batch script (`images/polaris-log-batch/polaris_log_batch.py`, stdlib only, Python ≥ 3.10) +
    `tests/test_polaris_log_batch.py`. **P1a written 2026-09-28**: selection by timestamp, per-hour
    checkpoint, atomic publish, orphans (pod list + completeness), malformed, corrupt rolls, retention,
    lock, dry run — **26 tests green**. **P1b written 2026-09-28**: `AuditPolicy` = policy v5 ported
@@ -102,9 +102,13 @@ unpublished hour from files still in place, to identical bytes.
 4. Parity: **`logging/scripts/step16-batch-lua-parity.py`** runs the Lua filter itself (LuaJIT via `lupa`)
    and the batch on the same records — **identical on 5 seeds × ~5,300 lines** (2026-09-28); a
    deliberately broken rule shows up as a diff. Still to do: `--file` against real per-pod files.
-5. CronJob + ConfigMap + ServiceAccount/Role templates in `charts/polaris` — **written 2026-09-28**:
-   `templates/log-batch.yaml`, `values.yaml` `logBatch:`, `.helmignore` (bytecode). NOT rendered (no helm
-   from Cowork). Then: parallel run with Fluent Bit tiers 2/3; reconcile.
+5. **A separate build and release** (Kade, 2026-09-28 — first written inside the Polaris chart as
+   `templates/log-batch.yaml` + a ConfigMap, then moved out the same day): image
+   `images/polaris-log-batch/` (Dockerfile, the script baked in) and chart `charts/polaris-log-batch/`
+   (ServiceAccount, pods-read-only Role, CronJob). The Polaris chart no longer mentions the batch; the
+   two share only `polaris-logs-pvc`, and the batch chart states the Polaris facts it depends on under
+   `polaris:` (claim, logsDir, podPrefix, podSelector). NOT rendered or built from Cowork. Then:
+   parallel run with Fluent Bit tiers 2/3; reconcile.
 6. Handover contract to the Observability team; retire tiers 2/3.
 
 ## Step 2 — what the spike must establish (from the running object)

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: polaris-log-batch
+description: >-
+  Hourly batch over Polaris's per-pod log files on the shared log PVC -> processed-logs /
+  aggregated-logs / malformed. Released separately from the Polaris chart.
+  Logic: logging/SPEC-polaris-log-batch.ko.md
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

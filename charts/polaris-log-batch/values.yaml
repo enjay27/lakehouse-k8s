@@ -1,0 +1,71 @@
+# polaris-log-batch -- its own release, independent of the Polaris chart (Kade, 2026-09-28).
+#
+#   docker build -t polaris-log-batch:0.1.0 images/polaris-log-batch
+#   helm upgrade --install polaris-log-batch ./charts/polaris-log-batch \
+#     -f charts/polaris-log-batch/values.yaml -n datahub-hynix
+#
+# It shares exactly one thing with Polaris: the log PVC. Everything under `polaris:` below must match
+# the running Polaris release, because this chart cannot read that release's values.
+
+image:
+  repository: polaris-log-batch
+  tag: "0.1.0"
+  # OrbStack: the image is built into the local Docker daemon and never pulled. In production point
+  # repository at the internal registry Jenkins pushes to, and use IfNotPresent.
+  pullPolicy: Never
+
+schedule: "3 * * * *"
+# Kubernetes >= 1.27. The script computes KST itself; this only makes the schedule read as KST.
+timeZone: Asia/Seoul
+suspend: false
+activeDeadlineSeconds: 3000   # a run normally takes seconds; stop a stuck one before the next hour
+startingDeadlineSeconds: 600
+backoffLimit: 1
+successfulJobsHistoryLimit: 3
+failedJobsHistoryLimit: 3
+
+# --- the Polaris side. Must match the Polaris release; nothing here is derived from it. ----------
+polaris:
+  # the claim Polaris writes to (charts/polaris values: logging.file.storage.existingClaim)
+  logsClaim: polaris-logs-pvc
+  # where Polaris mounts it (logging.file.logsDir); mounted at the same path here
+  logsDir: /deployments/logs
+  # file names are polaris-<pod>.log; a pod belongs to Polaris when its name starts with this
+  # (the Polaris Deployment's name + "-")
+  podPrefix: benchmarks-polaris-
+  # label selector of the Polaris pods (charts/polaris polaris.selectorLabels). The orphan rule asks
+  # the API which of these pods still exist.
+  podSelector: app.kubernetes.io/instance=benchmarks-polaris,app.kubernetes.io/name=benchmarks-polaris
+
+# Same uid/gid as the Polaris container (charts/polaris values: containerSecurityContext.runAsUser,
+# podSecurityContext.fsGroup), so both write the PVC as one owner.
+podSecurityContext:
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 10000
+  runAsGroup: 10001
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# The whole hour's lines are held in memory while they are judged; size the limit to production's
+# hourly volume before going there.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# ReadWriteOnce: on a multi-node cluster the Job must land on the node holding the log volume
+# (podAffinity to the Polaris pods), or the volume must be RWX. OrbStack is one node: empty.
+affinity: {}
+imagePullSecrets: []
+
+# e.g. ["--no-pod-list"] to process without moving orphans, or ["--dry-run"]
+extraArgs: []

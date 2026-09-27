@@ -227,41 +227,6 @@ extraVolumes: []
 extraVolumeMounts: []
 extraInitContainers: []
 
-# -- Hourly log batch (templates/log-batch.yaml, logging/SPEC-polaris-log-batch.ko.md).
-#    Renders only when logging.file.enabled is also true. Reads the per-pod log files on the log PVC at
-#    HH:03 KST and writes processed-logs/ aggregated-logs/ malformed/ next to them.
-logBatch:
-  enabled: true
-  schedule: "3 * * * *"
-  # Kubernetes >= 1.27. The script computes KST itself; this only makes the schedule read as KST.
-  timeZone: Asia/Seoul
-  suspend: false
-  # Standard library only, so a stock image. Pin by digest for production.
-  image:
-    repository: python
-    tag: "3.11-slim"
-    pullPolicy: IfNotPresent
-  # A run normally takes seconds; the deadline stops a stuck one before the next hour's run.
-  activeDeadlineSeconds: 3000
-  startingDeadlineSeconds: 600
-  backoffLimit: 1
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
-  # The whole hour's audit-relevant lines are held in memory while they are judged; size the limit
-  # to production's hourly volume before going there.
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
-  # ReadWriteOnce: on a multi-node cluster the Job must land on the node that holds the log volume
-  # (podAffinity to the Polaris pods), or the volume must be RWX. OrbStack is one node: empty.
-  affinity: {}
-  # e.g. ["--no-pod-list"] to process without moving orphans, or ["--dry-run"]
-  extraArgs: []
-
 # -- Event Listener (감사 로그): 모든 API 작업을 PostgreSQL events 테이블에 기록 (create table)
 # -- https://github.com/apache/polaris/blob/apache-polaris-1.6.0/runtime/service/src/main/java/org/apache/polaris/service/events/listeners/PolarisPersistenceEventListener.java
 # -- https://github.com/apache/polaris/blob/apache-polaris-1.6.0/runtime/service/src/main/java/org/apache/polaris/service/events/listeners/PolarisEventListener.java

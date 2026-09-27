@@ -1,12 +1,14 @@
 # Polaris 로그 배치 — 동작 명세
 
 > **상태 (2026-09-28)** — Polaris 파드별 로그 파일 + PVC 는 **로컬(OrbStack)에 적용·검증 완료**.
-> 배치 스크립트는 **작성·테스트 완료**, 배포용 템플릿(`charts/polaris/templates/log-batch.yaml`)도 **작성 완료 — 아직 렌더·배포 전**.
+> 배치는 **Polaris 와 별개로 빌드·배포**한다: 자체 이미지(`images/polaris-log-batch/`) + 자체 차트(`charts/polaris-log-batch/`)
+> + 자체 릴리스. 둘이 공유하는 것은 로그 PVC 하나뿐이다. 스크립트·테스트 완료, **차트는 아직 렌더·배포 전**.
 > 이 문서는 "무엇을, 왜 그렇게 하는가" 만 다룬다. 코드 수준 설명은 스크립트 주석을 볼 것.
 >
 > | 무엇 | 어디 |
 > |---|---|
-> | 배치 스크립트 | `charts/polaris/files/log-batch/polaris_log_batch.py` (Python 표준 라이브러리만) |
+> | 배치 스크립트 · 이미지 | `images/polaris-log-batch/polaris_log_batch.py` (Python 표준 라이브러리만), `Dockerfile` |
+> | 배포 차트 | `charts/polaris-log-batch/` (릴리스 `polaris-log-batch`) |
 > | 테스트 | `tests/test_polaris_log_batch.py` (프레임워크 26개), `tests/test_polaris_log_policy.py` (정책 14개) |
 > | Lua 동등성 검사 | `logging/scripts/step16-batch-lua-parity.py` |
 > | 공유 파일 손실 측정 | `logging/scripts/step15-shared-file-size-rotation-test.sh`, active-issues `#48` |
@@ -265,10 +267,14 @@ Lua 는 레코드를 메모리에 잡아 두고 액세스 줄을 기다렸지만
 
 ## 11. 남은 일과 알려진 제약
 
-- **배포 전.** `charts/polaris/templates/log-batch.yaml` 에 ConfigMap(스크립트) · ServiceAccount · Role/RoleBinding
-  (pods get/list) · CronJob(매시 03분 KST, `Forbid`, Polaris 와 같은 보안 컨텍스트, `python:3.11-slim`) 을
-  작성했다. `values.yaml` 의 `logBatch:` 로 켜고 끈다. **Job 파드는 Polaris 의 selector 라벨을 달지 않는다** —
-  달면 Polaris Service 가 카탈로그 트래픽을 Job 파드로 보낸다. `helm lint` / dry-run / 실제 실행은 아직.
+- **배포 전.** 배치는 Polaris 차트와 **분리된 빌드·릴리스**다 (Kade, 2026-09-28):
+  - 이미지 `images/polaris-log-batch/` — `python:3.11-slim` + 스크립트, uid/gid 10000/10001 (Polaris 와 같은 소유자).
+    OrbStack 은 로컬 Docker 이미지를 그대로 쓰므로 `docker build` 만 하면 된다. 운영은 Jenkins 가 사내 레지스트리로.
+  - 차트 `charts/polaris-log-batch/` — ServiceAccount · Role/RoleBinding(pods get/list) · CronJob(매시 03분 KST,
+    `Forbid`). Polaris 차트의 값을 읽을 수 없으므로 **PVC 이름, 마운트 경로, 파드 이름 접두사, 파드 selector 를
+    values 의 `polaris:` 에 명시**한다 — Polaris 릴리스와 어긋나면 안 된다.
+  - **Job 파드는 Polaris 의 selector 라벨을 달지 않는다** — 달면 Polaris Service 가 카탈로그 트래픽을 Job 파드로 보낸다.
+  - `helm lint` / dry-run / 실제 실행은 아직.
 - **운영 클러스터 저장소.** 여러 노드에서 HPA 로 파드가 흩어지면 ReadWriteOnce PVC 는 한 노드에만 붙는다 →
   RWX 스토리지 또는 한 노드 고정이 필요 (운영 저장소 담당과 확인할 것).
 - **메모리.** 한 시간 분량의 적재 대상 줄을 메모리에 올려 판정한다. 운영 트래픽의 시간당 크기에 맞춰

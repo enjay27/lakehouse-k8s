@@ -1,4 +1,4 @@
-"""charts/polaris/files/log-batch/polaris_log_batch.py -- the hourly Polaris log batch (P1a).
+"""images/polaris-log-batch/polaris_log_batch.py -- the hourly Polaris log batch (P1a).
 
 Every test builds a log directory in tmp_path with the file names Polaris really writes
 (polaris-<pod>.log, polaris-<pod>.log.<YYYY-MM-DD-HH>[.N].gz), sets mtimes explicitly, and runs the
@@ -21,7 +21,7 @@ sys.path.insert(
     0,
     str(
         pathlib.Path(__file__).resolve().parent.parent
-        / "charts/polaris/files/log-batch"
+        / "images/polaris-log-batch"
     ),
 )
 import polaris_log_batch as plb  # noqa: E402

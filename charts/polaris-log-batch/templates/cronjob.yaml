@@ -1,0 +1,70 @@
+{{- /*
+  The Job pod carries this chart's labels only -- never Polaris's selector labels, which would put it
+  behind the Polaris Service and in front of catalog traffic.
+*/ -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "logbatch.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "logbatch.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  {{- with .Values.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ .Values.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ .Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.failedJobsHistoryLimit }}
+  suspend: {{ .Values.suspend }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "logbatch.labels" . | nindent 12 }}
+        spec:
+          serviceAccountName: {{ include "logbatch.name" . }}
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- range . }}
+            - name: {{ . | quote }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.podSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: log-batch
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              {{- with .Values.containerSecurityContext }}
+              securityContext:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              args:
+                - --log-dir={{ .Values.polaris.logsDir }}
+                - --pod-prefix={{ .Values.polaris.podPrefix }}
+                - --selector={{ .Values.polaris.podSelector }}
+                {{- range .Values.extraArgs }}
+                - {{ . | quote }}
+                {{- end }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - name: logs
+                  mountPath: {{ .Values.polaris.logsDir }}
+          volumes:
+            - name: logs
+              persistentVolumeClaim:
+                claimName: {{ .Values.polaris.logsClaim }}

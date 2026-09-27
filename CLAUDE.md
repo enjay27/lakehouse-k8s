@@ -59,6 +59,8 @@ single most important thing on this page.
 .memory/              operational index; see .memory/README.md
 charts/               LOCAL charts — this repo is the source of truth
                         minio/ polaris/ postgresql/ (postgresql is an UMBRELLA chart)
+                        polaris-log-batch/ (its own release; shares only the log PVC with polaris)
+images/               container images built from this repo — polaris-log-batch/ (Dockerfile + script)
 releases/             VALUES-ONLY against upstream charts — airflow argo datahub
                         fluent-bit jupyter kafka schema-registry spark
 logging/              the audit-logging domain: SPEC, guides, opensearch/ templates,
