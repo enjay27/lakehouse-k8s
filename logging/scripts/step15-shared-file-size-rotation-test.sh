@@ -12,6 +12,12 @@
 #   bash logging/scripts/step15-shared-file-size-rotation-test.sh count <run> '<file glob>'
 #        # re-count a finished run in any files, e.g. the real per-pod logs
 #
+# SECOND VERSION MEASURED ITS OWN RING (2026-09-27): shared found 160/3000, but the per-pod CONTROL
+# also lost 1929/3000, both from id 1 up. maxBackupIndex (50 in values.yaml) bounds the .N rolls
+# within one period and DELETES the oldest past it; at 100k per file 3000 requests out-rolled it.
+# A control that fails means the test was broken, not the design. Now --set maxBackupIndex=5000,
+# and the analysis flags any file group whose highest .N index reaches the bound.
+#
 # FIRST VERSION NEVER TESTED ANYTHING (2026-09-27): the chart has no config-checksum annotation,
 # so `helm upgrade` rewrote the ConfigMap but left the pods running the old file name, and all
 # 3000 requests went to the real polaris-<pod>.log files. Every mode now does `rollout restart`
@@ -73,6 +79,12 @@ for f in sorted(os.listdir(out)):
         m = pat.search(rec.get("message", ""))
         if m: seen[int(m.group(1))] += 1; ids += 1
     print(f"{f:70} {lines:6} {ids:5}  {','.join(sorted(hosts))}")
+idx = collections.defaultdict(int)
+for f in os.listdir(out):
+    m2 = re.match(r"(.+?\.log)\.\d{4}-\d{2}-\d{2}-\d{2}\.(\d+)\.gz$", f)
+    if m2: idx[m2.group(1)] = max(idx[m2.group(1)], int(m2.group(2)))
+for base, top in sorted(idx.items()):
+    print(f"highest roll index for {base}: .{top}" + ("   <-- AT OR NEAR maxBackupIndex: oldest rolls were deleted, result invalid" if top >= 5000 - 1 else ""))
 missing = [i for i in range(1, n + 1) if seen[i] == 0]
 dups = sum(1 for c in seen.values() if c > 1)
 print(f"\nsent {n} | found {len(seen)} distinct | MISSING {len(missing)} | duplicated {dups} | unparseable lines/files {bad}")
@@ -95,6 +107,7 @@ echo "== $MODE: upgrade with fileName=$NAME, maxFileSize=100k, minReplicas=2"
 helm upgrade --install $REL $CHART -f $VALUES -n $NS \
   --set-string "logging.file.fileName=$NAME" \
   --set-string logging.file.rotation.maxFileSize=100k \
+  --set logging.file.rotation.maxBackupIndex=5000 \
   --set autoscaling.minReplicas=2
 kubectl -n $NS rollout restart deploy/$REL          # the ConfigMap change alone rolls nothing
 kubectl -n $NS rollout status deploy/$REL --timeout=10m

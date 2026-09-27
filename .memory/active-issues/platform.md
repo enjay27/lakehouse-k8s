@@ -69,6 +69,13 @@ has no config-checksum annotation, so `helm upgrade` rewrote the ConfigMap and r
 after every upgrade and refuses to send traffic until each running pod's `quarkus.log.file.path` is
 the test one and the test file exists.
 
+**Second runs (Kade): shared found 160/3000, per-pod CONTROL found 1071/3000 — both missing from id 1.**
+The control failing means the TEST was broken: `maxBackupIndex` 50 bounds the `.N` rolls within one
+hour and deletes the oldest beyond it, and at `maxFileSize 100k` 3000 requests (plus whatever else each
+401 logs) out-rolled it — oldest ids gone in both modes. Not evidence either way on sharing. step15 now
+sets `maxBackupIndex=5000` and prints each file group's highest roll index. Production is unaffected
+(2Gi per hour never size-rolls), but it is a live demonstration that `maxBackupIndex` DELETES.
+
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
 `logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the
