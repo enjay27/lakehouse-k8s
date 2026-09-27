@@ -20,6 +20,14 @@ first guessed: `kubectl get hpa` at ~22:25 showed cpu 1%/80%, memory 32%/80%, re
 spike, cause unknown. At that load it scales back to 1 after the 5-min stabilisation window; the
 ReplicaSet usually deletes the NEWER pod, which leaves the old one with the stale rotation state.
 
+**CONFIRMED BY EXPERIMENT (Kade, 2026-09-27 ~22:35 KST).** One request port-forwarded to the OLD pod
+(`l5q8m`, 401 on `/api/catalog/v1/config`). Afterwards `polaris.log.2026-09-27-18.gz` held only
+`22:21:43.086…` .. `22:21:43.579…` +09:00 — the NEW pod's startup lines — and none of the 18:35–18:51
+content it held minutes earlier. The old pod's first write after its stale 19:00 deadline rolled the
+new pod's file onto the existing `-18` name: the real hour 18 is overwritten and 22:xx is labelled 18.
+"Pods only append, so one file is safe" (the premise of the one-file decision) is false here: appends
+are fine, the per-JVM rename-and-reopen is not. Until fixed it recurs every hour while 2+ pods run.
+
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
 `logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the
