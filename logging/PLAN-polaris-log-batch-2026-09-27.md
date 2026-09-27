@@ -19,8 +19,9 @@ the tier-2 detail documents (policy v5), **aggregated logs** are the tier-3 sche
 
 ```
 /deployments/logs/
-  polaris.log                          active file (Polaris only)
-  polaris.log.2026-09-27-10.gz         hourly roll; .N.gz extras if size rotation ever fires
+  polaris-<pod>.log                    active file, one per pod (Polaris only)
+  polaris-<pod>.log.2026-09-27-10.gz   hourly roll per pod; .N.gz extras if size rotation ever fires
+  legacy-shared/                       the shared-file era (2026-09-27 18:34–rollout), quarantined by hand
   done/20260927/                       originals after processing (job moves them)
   processed-logs/20260927-10.jsonl     one event per line + event_id
   aggregated-logs/20260927-10.jsonl    v6 report rows for the hour
@@ -33,7 +34,7 @@ the tier-2 detail documents (policy v5), **aggregated logs** are the tier-3 sche
 | # | decision |
 |---|---|
 | Rotation | `fileSuffix: .yyyy-MM-dd-HH.gz`, `maxFileSize: 2Gi` (size roll unreachable, cannot be disabled), `maxBackupIndex: 50`, `rotate-on-boot=false` |
-| File | **one `polaris.log` for the whole Deployment** (Kade). Every replica gets the same ConfigMap path; the HPA does not create per-pod files. Safe only with one writer — see active-issues `#48` |
+| File | **one file per pod**, `polaris-${HOSTNAME}.log` (Kade, 2026-09-27). First rolled as one shared `polaris.log`; `#48` showed two pods overwrite each other's hourly rolls. The job merges every pod's files for hour H into ONE processed and ONE aggregated file, so downstream still sees one file per hour. A pod the HPA removes leaves its last `polaris-<pod>.log` unrotated: the job **seals** it (gzip to that file's hour, tmp + rename) once the pod is confirmed gone — read-only `get/list pods` RBAC for the CronJob's ServiceAccount, plus an idle guard |
 | D2 | the HH:03 run reads **every** source for the previous hour (`-10.gz`, `-10.1.gz`, …). A source for H arriving later → rebuild H from `done/` + the new file, replace atomically; stable `event_id` makes re-indexing idempotent |
 | D3 | malformed line → `malformed/`, rest of the file processed, counted as `rejected`. A `.gz` that fails to decode is retried 3 runs, then the whole file moves to `malformed/` |
 | D4 | **KST**: `TZ=Asia/Seoul` on Polaris (the suffix uses the JVM zone), `timeZone: Asia/Seoul` on the CronJob, fixed +09:00 in Python |
@@ -80,7 +81,7 @@ kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
   grep -E 'quarkus.log.file|rotation' /deployments/config/application.properties
 kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- env | grep -E 'TZ|QUARKUS_LOG_FILE'
 kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- ls -l /deployments/logs
-kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- tail -2 /deployments/logs/polaris.log
+kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- sh -c 'tail -2 /deployments/logs/polaris-$HOSTNAME.log'
 ```
 
 - [x] PVC Bound; pod `Running`; `polaris.log` exists and is **written by uid 10000** (local-path perms) — 2026-09-27
@@ -88,6 +89,8 @@ kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- tail -2 /deployments/
 - [x] after the next hour + one request: `polaris.log.YYYY-MM-DD-HH.gz` exists, named in **KST**, and decompresses fully — `-18.gz`, 18:35–18:51 only
       (the UBI9 image has no `zcat` — copy it out: `kubectl cp` then `gzip -t`)
 - [x] an idle hour produces no file; the late roll carries the hour of its content — 19–21 absent, `-18` rolled at 22:21
-- [ ] **FAILED PREMISE: a second replica appeared the same day (HPA) — `#48` is live, decision pending**
+- [x] **FAILED PREMISE: a second replica appeared the same day (HPA)** — `#48` confirmed by experiment; switched to one file per pod
+- [ ] per-pod roll: `ls` shows `polaris-<pod>.log` for each running pod and, after the hour, `polaris-<pod>.log.<hour>.gz`
+- [ ] shared-era files moved to `legacy-shared/` so the batch job never reads them
 - [ ] container restart mid-hour (`kill 1`) does **not** roll (rotate-on-boot=false) and nothing is lost
 - [ ] console output and the Fluent Bit tiers are unchanged apart from the `+09:00` offset

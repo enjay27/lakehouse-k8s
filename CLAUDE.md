@@ -32,10 +32,10 @@ single most important thing on this page.
 - **Fluent Bit:** one release, the DaemonSet `benchmarks-fluent-bit`, tailing
   `/var/log/containers/*.log` into **OpenSearch** in three tiers — tier 1 `k8s-logs-*`,
   tier 2 `polaris-logs-*`, tier 3 `polaris-report-*` (**schema v6**) — from Polaris's stdout.
-  **As of 2026-09-27 (written, not rolled) Polaris also writes a JSON log file**, `polaris.log`,
+  **As of 2026-09-27 Polaris also writes a JSON log file per pod**, `polaris-<pod>.log`,
   rolled hourly (KST) to `.yyyy-MM-dd-HH.gz` on PVC `polaris-logs-pvc` at `/deployments/logs` —
   created **before** the release by `kubectl apply -f logging/k8s/polaris-logs-pvc.yaml`, for the hourly batch job in `logging/PLAN-polaris-log-batch-2026-09-27.md`.
-  One file for all replicas — see active-issues `#48` before scaling Polaris past one pod.
+  Per pod because one shared file lost data within hours of rolling — active-issues `#48`.
   A Lua change is **`bash releases/fluent-bit/apply-lua.sh`** — `kubectl apply -k` alone leaves
   the old script running with no warning, and there is **no hot reload**.
   **Query `threadName.keyword`, never the bare field.**

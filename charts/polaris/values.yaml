@@ -281,12 +281,16 @@ logging:
     json: false
     format: "%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{2.}] (%t) [%X{requestId}] %s%e%n"
     logsDir: /deployments/logs
-    # ONE FILE FOR THE WHOLE DEPLOYMENT (decided 2026-09-27, Kade). Every replica reads the same
-    # ConfigMap, so every replica writes this same path -- the HPA does not make per-pod files.
-    # That is only safe with one writer: HPA scale-out or a RollingUpdate puts 2+ JVMs on this
-    # file, each rotating on its own, which is #8 and possibly #40. See #48. The per-pod
-    # alternative is one line: fileName: polaris-${HOSTNAME}.log
-    fileName: polaris.log
+    # ONE FILE PER POD (2026-09-27, Kade, after #48 was confirmed by experiment). Every replica
+    # reads the same ConfigMap, so a fixed name puts every replica on one file -- and each JVM
+    # renames and reopens it on its own clock. The same day, one request to the older of two pods
+    # rolled the newer pod's 22:21 lines onto the existing -18.gz name and erased hour 18.
+    # ${HOSTNAME} is a Quarkus (SmallRye) config expression, resolved from the env var Kubernetes
+    # sets to the pod name, so each pod rotates only its own file:
+    #   polaris-benchmarks-polaris-6f86777d49-l5q8m.log.2026-09-27-23.gz
+    # Helm passes ${...} through untouched (it is not Go-template syntax). If the variable were
+    # missing Quarkus would refuse to start -- loud, not silent. Confirm from the pod's ls.
+    fileName: polaris-${HOSTNAME}.log
     rotation:
       # HOURLY, TIME-DRIVEN. The batch job (every HH:03) reads the previous hour's .gz files.
       # Rotation is LAZY: JBoss rolls on the first write after the hour, not on a clock, so an

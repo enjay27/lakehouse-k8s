@@ -28,6 +28,11 @@ new pod's file onto the existing `-18` name: the real hour 18 is overwritten and
 "Pods only append, so one file is safe" (the premise of the one-file decision) is false here: appends
 are fine, the per-JVM rename-and-reopen is not. Until fixed it recurs every hour while 2+ pods run.
 
+**FIX WRITTEN, NOT ROLLED (2026-09-27, Kade chose it):** `logging.file.fileName: polaris-${HOSTNAME}.log`
+— one file per pod, the batch job merges them per hour and seals files of deleted pods. Open until the
+pod's `ls` shows per-pod names after the upgrade. Shared-era leftovers (`polaris.log`,
+`polaris.log.2026-09-27-18.gz` — now mislabelled 22:21 content) go to `legacy-shared/`, not to the job.
+
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
 `logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the
