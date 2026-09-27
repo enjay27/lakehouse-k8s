@@ -76,6 +76,7 @@ def cfg(d, pods=(A, B), **kw):
     lister = kw.pop("lister", None)
     if lister is None and pods is not None:
         lister = lambda: set(pods)  # noqa: E731
+    kw.setdefault("policy", plb.PassthroughPolicy())  # framework tests: every line kept
     return plb.Config(str(d), pod_lister=lister, **kw)
 
 

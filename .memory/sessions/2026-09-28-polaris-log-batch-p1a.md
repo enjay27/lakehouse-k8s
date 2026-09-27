@@ -31,3 +31,18 @@ a copy and wrote it back. The two `.isorted` leftovers and a pytest `__pycache__
 ## Not done
 Full suite not run (the VM lacks pandas etc.); only this module's tests. No CronJob, Role or ConfigMap
 yet (P3). Policy port (P1b).
+
+## P1b — the Lua policy, same day
+`AuditPolicy` ports `polaris_access_log.lua` (policy v5). Batch-driven changes, all written down in
+`logging/SPEC-polaris-log-batch.ko.md` §9.1 as report schema 7: one KST hour for all pods (`pods`
+replaces `hostname`/`report_seq`; no `windows_skipped`/`partial_window`/`held_pending`); the request-id
+pair is found by looking ±30 s (so it crosses the hour); an error request joins its resource row if
+the resource succeeded anywhere in the hour (the Lua could only see the rows existing at that instant);
+evaluation in timestamp order.
+
+Parity: `logging/scripts/step16-batch-lua-parity.py` loads the real Lua in LuaJIT (`pip install lupa`)
+and feeds both sides the same records. First run: 8 diffs, all one bug of mine -- principal rows
+carried `last_*_bytes`, which the Lua only puts on resource rows. After the fix: identical on seeds
+7, 1, 2, 3, 11 (~5,300 lines each). Sensitivity: a first "break rule 4" probe showed 0 diffs because
+rule 7 keeps a DELETE anyway -- the probe was wrong, not the harness; breaking rule 6 (HEAD) produced
+the expected diffs. Asserts in the job became explicit raises (python -O strips asserts).

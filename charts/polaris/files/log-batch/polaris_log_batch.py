@@ -22,9 +22,10 @@ EXACTLY ONCE PER HOUR. The checkpoint is per hour. An hour is written to .tmp/, 
 into place, and only then recorded; a crash anywhere means the next run redoes that hour from files
 still in place, producing the same lines with the same event_id (sha1 of the raw line).
 
-P1a SCOPE: the policy is a passthrough -- every valid line is a processed line, and the aggregated file
-holds one summary row. The port of policy v5 / report schema v6 (releases/fluent-bit/
-polaris_access_log.lua) is P1b and replaces `PassthroughPolicy`.
+POLICY. AuditPolicy is releases/fluent-bit/polaris_access_log.lua (policy v5) ported to a batch:
+processed-logs holds what the Lua kept for polaris-logs-* (tier 2); aggregated-logs holds one summary
+row plus resource / principal / app_dropped rows -- report schema 7, i.e. v6 adapted to a complete
+KST hour (see the policy section). The logic in Korean: logging/SPEC-polaris-log-batch.ko.md.
 """
 
 from __future__ import annotations
@@ -246,15 +247,558 @@ def classify(f, lines):
 
 
 # ---------------------------------------------------------------------------- policy
+#
+# A port of releases/fluent-bit/polaris_access_log.lua (policy v5, report schema v6) to a batch that
+# sees the whole hour at once. What is the same: the keep/count rules 1-7, the allow-list, the 404
+# rule, commit harvesting, the credential guard, the resource classification, the row caps. What a
+# batch changes (report schema 7, logging/SPEC-polaris-log-batch.ko.md):
+#   * the window is the KST clock hour, complete -- no ticks, no partial or skipped windows;
+#   * the request-id hold is resolved by looking both ways (+-30 s, across the hour boundary), not
+#     by holding records in memory until the access line arrives;
+#   * an error request joins its resource row if that resource had a success or a commit ANYWHERE in
+#     the hour -- the streaming filter could only see rows that existed at that instant;
+#   * records are evaluated in timestamp order, so caps and role forcing are deterministic;
+#   * one report per hour for all pods: `hostname` / `report_seq` give way to `pods`.
+
+REPORT_SCHEMA_VERSION = 7
+
+ACCESS_LOGGER = "io.quarkus.http.access-log"
+ACCESS_RE = re.compile(r'^(\S+) \S+ (\S+) \[[^\]]*\] "([A-Z]+) (\S+)[^"]*" (\d+) (\S+)')
+
+APP_ALLOW = frozenset(
+    {
+        "org.apache.polaris.service.exception.IcebergExceptionMapper",
+        "org.apache.polaris.service.admin.PolarisServiceImpl",
+    }
+)
+COMMIT_LOGGER = "org.apache.polaris.service.catalog.iceberg.IcebergCatalog"
+COMMIT_RE = re.compile(r"^Successfully committed to ([A-Za-z]+) (\S+) in (\d+) ms")
+COMMIT_KINDS = {"table": "tables", "view": "views"}
+CATALOG_API = "/api/catalog/v1/"
+NS_SEPARATOR = "%1F"
+SECRET_RE = re.compile(r"(clientSecret:\s*)(\S+)")
+
+READ_METHODS = frozenset({"GET", "HEAD"})
+WRITE_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
+KEEP_METHODS = frozenset({"PUT", "DELETE", "PATCH"})
+
+HOLD_SECONDS = 30  # how far from an app line its access line may be and still decide it
+REPORT_MAX_RESOURCES = 500
+REPORT_MAX_PRINCIPALS = 200
+REPORT_MAX_ROLE_KEYS = 100
+REPORT_MAX_DROPPED_LOGGERS = 50
+REPORT_OTHER = "__other__"
+REPORT_ERRORS = "__errors__"
+ROLE_KINDS = frozenset({"catalog-role", "principal-role"})
+
+# the tier-2 field trim (releases/fluent-bit/values.yaml, polaris_field_trim)
+TRIMMED_FIELDS = ("processName", "loggerClassName", "processId", "ndc")
+
+# order is priority -- identical to the Lua table, see the comments there for why
+RESOURCE_PATTERNS = [
+    (kind, re.compile(rx))
+    for kind, rx in (
+        ("principal-role", r"^.*?/principal-roles/[^/]+"),
+        ("collection", r"^.*?/principal-roles$"),
+        ("catalog-role", r"^.*?/catalog-roles/[^/]+"),
+        ("collection", r"^.*?/catalog-roles$"),
+        ("auth", r"^.*?/oauth/tokens$"),
+        ("config", r"^.*?/v1/config$"),
+        ("table", r"^.*?/tables/rename$"),
+        ("view", r"^.*?/views/rename$"),
+        ("transaction", r"^.*?/transactions/commit$"),
+        ("collection", r"^.*?/namespaces/[^/]+/register$"),
+        ("namespace", r"^.*?/namespaces/[^/]+/properties$"),
+        ("table", r"^.*?/namespaces/[^/]+/tables/[^/]+"),
+        ("view", r"^.*?/namespaces/[^/]+/views/[^/]+"),
+        ("collection", r"^.*?/namespaces/[^/]+/tables$"),
+        ("collection", r"^.*?/namespaces/[^/]+/views$"),
+        ("namespace", r"^.*?/namespaces/[^/]+$"),
+        ("collection", r"^.*?/namespaces$"),
+        ("catalog", r"^.*?/catalogs/[^/]+"),
+        ("collection", r"^.*?/catalogs$"),
+        ("principal", r"^.*?/principals/[^/]+"),
+        ("collection", r"^.*?/principals$"),
+    )
+]
+
+
+def parse_access(rec):
+    """Add client_ip .. response_size to an access record. False (and access_log_parse_error) if
+    the Quarkus pattern `%h %l %u %t "%r" %s %b` did not match -- a changed log pattern must show.
+    """
+    m = (
+        ACCESS_RE.match(rec.get("message") or "")
+        if isinstance(rec.get("message"), str)
+        else None
+    )
+    if not m:
+        rec["access_log_parse_error"] = True
+        return False
+    ip, user, method, path, status, size = m.groups()
+    rec["client_ip"], rec["user_principal_name"] = ip, user
+    rec["http_method"], rec["api_path"] = method, path
+    rec["http_status"] = int(status)
+    rec["response_size"] = (
+        int(size) if size.isdigit() else 0
+    )  # CLF %b writes "-" for 0 bytes
+    return True
+
+
+def redact_secret(rec):
+    """Credential guard: a clientSecret that is not Polaris's own mask becomes <redacted>."""
+    msg = rec.get("message")
+    if not isinstance(msg, str) or "clientSecret" not in msg:
+        return False
+    hit = False
+
+    def sub(m):
+        nonlocal hit
+        if m.group(2) in ("*", "<redacted>"):
+            return m.group(0)
+        hit = True
+        return m.group(1) + "<redacted>"
+
+    out = SECRET_RE.sub(sub, msg)
+    if hit:
+        rec["message"], rec["secret_redacted"] = out, True
+    return hit
+
+
+def path_only(p):
+    return p.split("?", 1)[0] if isinstance(p, str) else ""
+
+
+def api_of(path):
+    if path.startswith("/api/management/"):
+        return "management"
+    if path.startswith("/api/catalog/"):
+        return "catalog"
+    return "other"
+
+
+def classify_path(path):
+    for kind, rx in RESOURCE_PATTERNS:
+        m = rx.match(path)
+        if m:
+            return m.group(0), kind
+    return path, "other"
+
+
+def commit_key(kind, ident):
+    seg = COMMIT_KINDS.get(kind)
+    parts = [p for p in ident.split(".") if p]
+    if seg is None or len(parts) < 3:
+        return None
+    return f"{CATALOG_API}{parts[0]}/namespaces/{NS_SEPARATOR.join(parts[1:-1])}/{seg}/{parts[-1]}"
+
+
+def request_id(rec):
+    m = rec.get("mdc")
+    if isinstance(m, dict):
+        rid = m.get("requestId")
+        if isinstance(rid, str) and rid:
+            return rid
+    return None
+
+
+def new_row():
+    return {
+        "requests": 0,
+        "reads": 0,
+        "writes": 0,
+        "errors": 0,
+        "errors_4xx": 0,
+        "errors_5xx": 0,
+        "auth_denied": 0,
+        "response_bytes": 0,
+    }
+
+
+def bump(row, method, status, size, is_error):
+    row["requests"] += 1
+    if method in READ_METHODS:
+        row["reads"] += 1
+    elif method in WRITE_METHODS:
+        row["writes"] += 1
+    if is_error:
+        row["errors"] += 1
+        if status >= 500:
+            row["errors_5xx"] += 1
+        else:
+            row["errors_4xx"] += 1
+            if status in (401, 403):
+                row["auth_denied"] += 1
+    row["response_bytes"] += size
+    if size > 0 and not is_error and 200 <= status < 300:
+        if method in READ_METHODS:
+            row["last_read_bytes"] = size
+        elif method in WRITE_METHODS:
+            row["last_write_bytes"] = size
+
+
+class HourReport:
+    """The v6 counters for one hour, filled in timestamp order."""
+
+    def __init__(self, persistent_keys):
+        self.persistent = (
+            persistent_keys  # resources with a success or commit anywhere in H
+        )
+        self.resources, self.kinds, self.apis = {}, {}, {}
+        self.principals, self.dropped = {}, {}
+        self.other_keys = set()
+        self.c = dict.fromkeys(
+            (
+                "access_seen access_counted role_keys_forced counted_read counted_post "
+                "errors_kept parse_errors resources_over principals_over dropped_total "
+                "counted_404 app_dropped_404 held_orphans"
+            ).split(),
+            0,
+        )
+        self.min_time = self.max_time = None
+
+    def _add(self, key, kind, api):
+        self.resources[key], self.kinds[key], self.apis[key] = new_row(), kind, api
+        return self.resources[key]
+
+    def resource(self, key, kind, api, create):
+        if key in self.resources:
+            return self.resources[key]
+        if not create:
+            return self.resources.get(REPORT_ERRORS) or self._add(
+                REPORT_ERRORS, "error", "mixed"
+            )
+        real = (
+            len(self.resources)
+            - (REPORT_ERRORS in self.resources)
+            - (REPORT_OTHER in self.resources)
+        )
+        if real >= REPORT_MAX_RESOURCES:
+            self.c["resources_over"] += 1
+            if len(self.other_keys) < REPORT_MAX_RESOURCES:
+                self.other_keys.add(key)
+            return self.resources.get(REPORT_OTHER) or self._add(
+                REPORT_OTHER, "other", "mixed"
+            )
+        return self._add(key, kind, api)
+
+    def principal(self, user):
+        if user in self.principals:
+            return self.principals[user]
+        if (
+            len(self.principals) - (REPORT_OTHER in self.principals)
+            >= REPORT_MAX_PRINCIPALS
+        ):
+            self.c["principals_over"] += 1
+            user = REPORT_OTHER
+            if user in self.principals:
+                return self.principals[user]
+        self.principals[user] = new_row()
+        return self.principals[user]
+
+    def count_access(self, rec, parsed):
+        self.c["access_seen"] += 1
+        t = rec.get("timestamp")
+        if isinstance(t, str):
+            self.min_time = (
+                t if self.min_time is None or t < self.min_time else self.min_time
+            )
+            self.max_time = (
+                t if self.max_time is None or t > self.max_time else self.max_time
+            )
+        if not parsed:
+            self.c["parse_errors"] += 1
+            return
+        method, status, size = (
+            rec["http_method"],
+            rec["http_status"],
+            rec["response_size"],
+        )
+        path = path_only(rec["api_path"])
+        key, kind = classify_path(path)
+        is_error = status >= 400
+        create = (not is_error) or key in self.persistent
+        if not create and kind in ROLE_KINDS:
+            if key in self.resources:
+                create = True
+            elif self.c["role_keys_forced"] < REPORT_MAX_ROLE_KEYS:
+                self.c["role_keys_forced"] += 1
+                create = True
+        bump(
+            self.resource(key, kind, api_of(path), create),
+            method,
+            status,
+            size,
+            is_error,
+        )
+        user = rec.get("user_principal_name") or "-"
+        bump(self.principal(user), method, status, size, is_error)
+
+    def count_commit(self, msg):
+        m = COMMIT_RE.match(msg) if isinstance(msg, str) else None
+        if not m:
+            return
+        kind, ident, ms = m.group(1), m.group(2), int(m.group(3))
+        key = commit_key(kind, ident)
+        if key is None:
+            return
+        row = self.resource(key, kind, "catalog", True)
+        if "commit_count" not in row:
+            row.update(
+                commit_count=1, commit_ms_sum=ms, commit_ms_min=ms, commit_ms_max=ms
+            )
+        else:
+            row["commit_count"] += 1
+            row["commit_ms_sum"] += ms
+            row["commit_ms_min"] = min(row["commit_ms_min"], ms)
+            row["commit_ms_max"] = max(row["commit_ms_max"], ms)
+
+    def count_dropped(self, logger):
+        name = logger if isinstance(logger, str) and logger else "-"
+        if name not in self.dropped and len(self.dropped) >= REPORT_MAX_DROPPED_LOGGERS:
+            name = REPORT_OTHER
+        self.dropped[name] = self.dropped.get(name, 0) + 1
+        self.c["dropped_total"] += 1
+
+    def rows(self, h, pods):
+        start, end = h.isoformat(), (h + HOUR).isoformat()
+
+        def base(kind):
+            return {
+                "schema_version": REPORT_SCHEMA_VERSION,
+                "report_type": kind,
+                "window_start": start,
+                "window_end": end,
+                "window_seconds": 3600,
+                "_time": end,
+            }
+
+        rows, tot = [], dict(errors_4xx=0, errors_5xx=0, auth_denied=0, bytes_total=0)
+        n_res = 0
+        for key in sorted(self.resources):
+            r = self.resources[key]
+            tot["errors_4xx"] += r["errors_4xx"]
+            tot["errors_5xx"] += r["errors_5xx"]
+            tot["auth_denied"] += r["auth_denied"]
+            tot["bytes_total"] += r["response_bytes"]
+            if r["requests"] > 0 or "commit_count" in r:
+                e = base("resource")
+                e.update(
+                    resource=key, resource_kind=self.kinds[key], api_kind=self.apis[key]
+                )
+                e.update(r)
+                rows.append(e)
+                n_res += r["requests"] > 0
+        for user in sorted(self.principals):
+            e = base("principal")
+            e["user_principal_name"] = user
+            # like the Lua: a principal row has no last_*_bytes (they describe a resource)
+            e.update(
+                {
+                    k: v
+                    for k, v in self.principals[user].items()
+                    if not k.startswith("last_")
+                }
+            )
+            rows.append(e)
+        for name in sorted(self.dropped):
+            e = base("app_dropped")
+            e.update(logger_name=name, dropped=self.dropped[name])
+            rows.append(e)
+        c = self.c
+        s = base("summary")
+        s.update(
+            pods=pods,
+            access_seen=c["access_seen"],
+            access_kept=c["access_seen"] - c["access_counted"],
+            access_counted=c["access_counted"],
+            role_keys_forced=c["role_keys_forced"],
+            counted_read=c["counted_read"],
+            counted_post=c["counted_post"],
+            errors_kept=c["errors_kept"],
+            parse_errors=c["parse_errors"],
+            **tot,
+            distinct_resources=n_res,
+            distinct_principals=len(self.principals),
+            resources_other=c["resources_over"],
+            resources_other_distinct=len(self.other_keys),
+            principals_other=c["principals_over"],
+            app_dropped_total=c["dropped_total"],
+            counted_404=c["counted_404"],
+            app_dropped_404=c["app_dropped_404"],
+            held_orphans=c["held_orphans"],
+        )
+        if (
+            self.min_time is not None
+        ):  # absent, never "", in an hour without access lines
+            s["min_record_time"], s["max_record_time"] = self.min_time, self.max_time
+        s["message"] = (
+            f"polaris batch report {hour_key(h)} ({len(pods)} pods): {c['access_seen']} access "
+            f"lines, {s['access_kept']} kept, {c['access_counted']} counted ({c['counted_read']} "
+            f"read, {c['counted_post']} POST, {c['counted_404']} 404), {c['errors_kept']} errors "
+            f"kept ({tot['errors_4xx']} 4xx, {tot['errors_5xx']} 5xx, {tot['auth_denied']} "
+            f"denied), {n_res} resources, {len(self.principals)} principals, "
+            f"{c['dropped_total']} app lines dropped, {tot['bytes_total']} bytes"
+        )
+        return s, rows
 
 
 class PassthroughPolicy:
-    """P1a: every valid line is kept as-is. Replaced by the policy v5 / schema v6 port in P1b."""
+    """Every valid line kept as-is, one bare summary row. For framework tests and replays that
+    want the raw lines; the CronJob runs AuditPolicy."""
 
-    name = "passthrough-p1a"
+    name = "passthrough"
 
-    def keep(self, rec):
-        return True
+    def apply(self, entries, context, h, key):
+        out = [processed_doc(e["rec"], e["raw"], key) for e in entries]
+        summary = {
+            "schema_version": REPORT_SCHEMA_VERSION,
+            "report_type": "summary",
+            "window_start": h.isoformat(),
+            "window_end": (h + HOUR).isoformat(),
+            "window_seconds": 3600,
+            "_time": (h + HOUR).isoformat(),
+            "pods": sorted({e["pod"] for e in entries}),
+        }
+        return out, 0, summary, []
+
+
+def access_status_index(entries):
+    """request id -> [(epoch, status)] for every parsed access line in the context window."""
+    idx = {}
+    for e in entries:
+        rec = e["rec"]
+        if rec.get("loggerName") != ACCESS_LOGGER:
+            continue
+        rid = request_id(rec)
+        if rid is None:
+            continue
+        m = (
+            ACCESS_RE.match(rec.get("message") or "")
+            if isinstance(rec.get("message"), str)
+            else None
+        )
+        if m:
+            idx.setdefault(rid, []).append((e["ts"].timestamp(), int(m.group(5))))
+    return idx
+
+
+def matching_status(idx, rid, t):
+    """The status of this request id's access line: the nearest one AT OR AFTER the app line within
+    HOLD_SECONDS (the usual order -- the reason is logged first), else the nearest before it.
+    """
+    cands = idx.get(rid) or []
+    after = [(at - t, st) for at, st in cands if 0 <= at - t <= HOLD_SECONDS]
+    if after:
+        return min(after)[1]
+    before = [(t - at, st) for at, st in cands if 0 < t - at <= HOLD_SECONDS]
+    return min(before)[1] if before else None
+
+
+class AuditPolicy:
+    """Policy v5 over one hour. `apply` returns (processed docs, dropped count, summary, rows)."""
+
+    name = "policy-v5/report-v7"
+
+    def apply(self, entries, context, h, key):
+        """entries: the hour's valid lines; context: valid lines in [H-30 s, H+1 h+30 s]."""
+        entries = sorted(entries, key=lambda e: (e["ts"], e["file"], e["line_no"]))
+        status_idx = access_status_index(context)
+        persistent = set()
+        for e in entries:  # pass 1: which resources exist in H regardless of order
+            rec = e["rec"]
+            if rec.get("loggerName") == ACCESS_LOGGER and rec.get("level") not in (
+                "ERROR",
+                "WARN",
+            ):
+                m = (
+                    ACCESS_RE.match(rec.get("message") or "")
+                    if isinstance(rec.get("message"), str)
+                    else None
+                )
+                if m and int(m.group(5)) < 400:
+                    persistent.add(classify_path(path_only(m.group(4)))[0])
+            elif rec.get("loggerName") == COMMIT_LOGGER and isinstance(
+                rec.get("message"), str
+            ):
+                cm = COMMIT_RE.match(rec["message"])
+                if cm and commit_key(cm.group(1), cm.group(2)):
+                    persistent.add(commit_key(cm.group(1), cm.group(2)))
+        rep = HourReport(persistent)
+        out, dropped = [], 0
+        for e in entries:
+            rec = dict(e["rec"])
+            keep = self._decide(rec, e["ts"], rep, status_idx)
+            if keep:
+                for f in TRIMMED_FIELDS:
+                    rec.pop(f, None)
+                out.append(processed_doc(rec, e["raw"], key))
+            else:
+                dropped += 1
+        pods = sorted({e["pod"] for e in entries})
+        summary, rows = rep.rows(h, pods)
+        # never publish an hour whose books do not balance (explicit, not assert: -O strips those)
+        if len(entries) != len(out) + dropped:
+            raise RuntimeError("policy lost or invented a line")
+        counted = (
+            summary["access_counted"]
+            + summary["app_dropped_total"]
+            + summary["app_dropped_404"]
+        )
+        if dropped != counted:
+            raise RuntimeError(
+                f"policy accounting broke: dropped {dropped} != counted {counted}"
+            )
+        return out, dropped, summary, rows
+
+    def _decide(self, rec, ts, rep, status_idx):
+        redact_secret(rec)
+        level, logger = rec.get("level"), rec.get("loggerName")
+        is_access = logger == ACCESS_LOGGER
+        parsed = parse_access(rec) if is_access else False
+        if level in ("ERROR", "WARN"):  # 1
+            return True
+        if not is_access:  # 2
+            if logger == COMMIT_LOGGER:  # 2a
+                rep.count_commit(rec.get("message"))
+            if logger in APP_ALLOW:  # 2b
+                rid = request_id(rec)
+                if rid is None:
+                    return True
+                status = matching_status(status_idx, rid, ts.timestamp())
+                if status is None:
+                    rec["held_orphan"] = True
+                    rep.c["held_orphans"] += 1
+                    return True
+                if status == 404:
+                    rep.c["app_dropped_404"] += 1
+                    return False
+                return True
+            rep.count_dropped(logger)  # 2c
+            return False
+        rep.count_access(rec, parsed)
+        status, method = rec.get("http_status"), rec.get("http_method")
+        path = path_only(rec.get("api_path"))
+        if status == 404:  # 3'
+            rep.c["counted_404"] += 1
+            rep.c["access_counted"] += 1
+            return False
+        if status is None or status >= 400:  # 3
+            rep.c["errors_kept"] += 1
+            return True
+        if method in KEEP_METHODS:  # 4
+            return True
+        if method == "POST":  # 5
+            if path.startswith("/api/management/"):
+                return True
+            rep.c["counted_post"] += 1
+            rep.c["access_counted"] += 1
+            return False
+        if method in READ_METHODS:  # 6
+            rep.c["counted_read"] += 1
+            rep.c["access_counted"] += 1
+            return False
+        return True  # 7
 
 
 def processed_doc(rec, raw, key):
@@ -359,12 +903,11 @@ def process_hour(cfg, files, h, now_epoch, pods, pod_error):
     """Everything for hour h, in memory. Nothing is written here."""
     key = hour_key(h)
     h0, h1 = epoch(h), epoch(h + HOUR)
-    processed, malformed, sources, corrupt = [], [], [], []
-    by_pod, by_level = {}, {}
-    lines_in = dropped = 0
+    c0, c1 = h0 - HOLD_SECONDS, h1 + HOLD_SECONDS  # context for the request-id match
+    entries, context, malformed, sources, corrupt = [], [], [], [], []
 
     for f in files:
-        if f.mtime < h0:  # last written before H: cannot hold an H line
+        if f.mtime < c0:  # last written before the context window: nothing to read
             continue
         try:
             lines, _tail = read_file(f, now_epoch, cfg.quiet)
@@ -373,10 +916,11 @@ def process_hour(cfg, files, h, now_epoch, pods, pod_error):
             continue
         n_here = 0
         for line_no, raw, rec, ts, hour in classify(f, lines):
+            if ts is not None and c0 <= ts.timestamp() < c1:
+                context.append({"rec": rec, "ts": ts})
             if hour != h:
                 continue
             n_here += 1
-            lines_in += 1
             if rec is None:
                 malformed.append(
                     {
@@ -387,13 +931,16 @@ def process_hour(cfg, files, h, now_epoch, pods, pod_error):
                     }
                 )
                 continue
-            if not cfg.policy.keep(rec):
-                dropped += 1
-                continue
-            processed.append(processed_doc(rec, raw, key))
-            by_pod[f.pod] = by_pod.get(f.pod, 0) + 1
-            lvl = str(rec.get("level", "?"))
-            by_level[lvl] = by_level.get(lvl, 0) + 1
+            entries.append(
+                {
+                    "rec": rec,
+                    "ts": ts,
+                    "raw": raw,
+                    "pod": f.pod,
+                    "file": f.name,
+                    "line_no": line_no,
+                }
+            )
         if n_here:
             sources.append({"file": f.name, "lines": n_here})
 
@@ -415,48 +962,48 @@ def process_hour(cfg, files, h, now_epoch, pods, pod_error):
         if pods is not None and f.pod not in pods and quiet:
             entry["unterminated_tail"] = tail is not None
             orphans.append((f, entry, tail))
+            if tail is not None:
+                malformed.append(
+                    {
+                        "reason": "unterminated last line of an orphaned file (pod killed mid-write)",
+                        "file": f.name,
+                        "line_no": None,
+                        "raw": tail.decode("utf-8", "replace"),
+                    }
+                )
         elif pods is not None and f.pod in pods and floor_hour(last_ts) < h:
             idle.append(entry)
-    for f, entry, tail in orphans:
-        if tail is not None:
-            malformed.append(
-                {
-                    "reason": "unterminated last line of an orphaned file (pod killed mid-write)",
-                    "file": f.name,
-                    "line_no": None,
-                    "raw": tail.decode("utf-8", "replace"),
-                }
-            )
-            lines_in += 1
 
-    assert lines_in == len(processed) + dropped + len(
-        malformed
-    ), "line accounting broke"
-    summary = {
-        "report_type": "summary",
-        "schema": SCHEMA,
-        "policy": cfg.policy.name,
-        "hour": key,
-        "window_start": h.isoformat(),
-        "window_end": (h + HOUR).isoformat(),
-        "window_seconds": 3600,
-        "lines_in": lines_in,
-        "processed": len(processed),
-        "dropped": dropped,
-        "malformed": len(malformed),
-        "by_pod": dict(sorted(by_pod.items())),
-        "by_level": dict(sorted(by_level.items())),
-        "sources": sources,
-        "corrupt_files": corrupt,
-        "orphans_moved": None if pods is None else [e for _, e, _ in orphans],
-        "pod_list_error": pod_error,
-        "idle_log_files": None if pods is None else idle,
-    }
+    processed, dropped, summary, rows = cfg.policy.apply(entries, context, h, key)
+    by_pod = {}
+    for e in entries:
+        by_pod[e["pod"]] = by_pod.get(e["pod"], 0) + 1
+    lines_in = len(entries) + len(malformed)
+    if lines_in != len(processed) + dropped + len(malformed):
+        raise RuntimeError("line accounting broke")
+    summary.update(
+        {
+            "hour": key,
+            "batch_schema": SCHEMA,
+            "policy": cfg.policy.name,
+            "lines_in": lines_in,
+            "processed": len(processed),
+            "dropped": dropped,
+            "malformed": len(malformed),
+            "by_pod": dict(sorted(by_pod.items())),
+            "sources": sources,
+            "corrupt_files": corrupt,
+            "orphans_moved": None if pods is None else [e for _, e, _ in orphans],
+            "pod_list_error": pod_error,
+            "idle_log_files": None if pods is None else idle,
+        }
+    )
     return {
         "key": key,
         "processed": processed,
         "malformed": malformed,
         "summary": summary,
+        "rows": rows,
         "orphans": orphans,
         "corrupt": corrupt,
     }
@@ -477,10 +1024,11 @@ def publish(cfg, result, now_epoch):
     )
     summary = dict(result["summary"])
     summary["published_at"] = dt.datetime.fromtimestamp(now_epoch, KST).isoformat()
+    body = [summary] + result["rows"]
     atomic_write(
         d,
         os.path.join(d, "aggregated-logs", f"{key}.jsonl"),
-        (dumps(summary) + "\n").encode(),
+        "".join(dumps(r) + "\n" for r in body).encode(),
     )
     return summary
 
@@ -550,7 +1098,7 @@ class Config:
             retention,
             max_hours,
         )
-        self.policy = policy or PassthroughPolicy()
+        self.policy = policy or AuditPolicy()
         self.dry_run = dry_run
 
 

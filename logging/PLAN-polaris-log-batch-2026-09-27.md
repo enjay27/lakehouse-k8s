@@ -94,11 +94,15 @@ unpublished hour from files still in place, to identical bytes.
 3. Batch script (`charts/polaris/files/log-batch/polaris_log_batch.py`, stdlib only, Python ≥ 3.10) +
    `tests/test_polaris_log_batch.py`. **P1a written 2026-09-28**: selection by timestamp, per-hour
    checkpoint, atomic publish, orphans (pod list + completeness), malformed, corrupt rolls, retention,
-   lock, dry run — **26 tests green**. The policy is a PASSTHROUGH (every valid line is processed; the
-   aggregated file is one summary row). **P1b: port policy v5 / report schema v6 from the Lua.**
+   lock, dry run — **26 tests green**. **P1b written 2026-09-28**: `AuditPolicy` = policy v5 ported
+   (rules 1-7, allow-list, 404 rule, request-id match ±30 s across the hour, commit harvest, credential
+   guard, tier-2 field trim) + report schema 7 (v6 over a complete KST hour; differences in
+   `logging/SPEC-polaris-log-batch.ko.md` §9.1) — **14 policy tests green**.
    Run by hand: `python3 polaris_log_batch.py --log-dir DIR [--no-pod-list] [--now ISO] [--dry-run]`.
-4. Parity: same raw input through `logging/scripts/step11-replay-window.py` (Lua) and the job; diff.
-5. CronJob + ConfigMap templates in `charts/polaris`; parallel run with Fluent Bit tiers 2/3; reconcile.
+4. Parity: **`logging/scripts/step16-batch-lua-parity.py`** runs the Lua filter itself (LuaJIT via `lupa`)
+   and the batch on the same records — **identical on 5 seeds × ~5,300 lines** (2026-09-28); a
+   deliberately broken rule shows up as a diff. Still to do: `--file` against real per-pod files.
+5. CronJob + ConfigMap + ServiceAccount/Role templates in `charts/polaris`; parallel run with Fluent Bit tiers 2/3; reconcile.
 6. Handover contract to the Observability team; retire tiers 2/3.
 
 ## Step 2 — what the spike must establish (from the running object)
