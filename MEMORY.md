@@ -2,15 +2,15 @@
 
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here.
 
-## Now — 2026-09-27 (Polaris logging → PVC + hourly batch: step 1 rolled, per-pod fix written)
+## Now — 2026-09-27 (Polaris logging → PVC + hourly batch: step 1 rolled, one file per pod)
 
 **Polaris file logging is ROLLED** (~18:34 KST) — JSON, hourly KST
 roll to `.yyyy-MM-dd-HH.gz`, on `polaris-logs-pvc` (**`kubectl apply -f logging/k8s/polaris-logs-pvc.yaml` before
 `helm upgrade`**; chart uses `existingClaim`) — step 1 of
 [`logging/PLAN-polaris-log-batch-2026-09-27.md`](logging/PLAN-polaris-log-batch-2026-09-27.md).
 Rotation verified (KST name, JSON, hour-bounded content, lazy roll). **The shared `polaris.log` lost
-hour 18 to a second (HPA) pod — `#48`, confirmed.** Fix written, NOT rolled: `polaris-${HOSTNAME}.log`.
-**NEEDS KADE:** upgrade with `-f`, then quarantine the shared-era files. Batch script not started.
+hour 18 to a second (HPA) pod — `#48`, confirmed.** Fixed and rolled 22:37: `polaris-${HOSTNAME}.log`, one
+file per pod; shared-era files in `legacy-shared/`. **Next:** first per-pod hourly `.gz`, then P1 (batch script).
 
 **2026-09-21 — the merge.** **`local-k8s` and `polaris-learning` are one repo.** 554 files at HEAD relocated;
 both pre-merge histories are here on their own refs (`git log archive/local-k8s`,

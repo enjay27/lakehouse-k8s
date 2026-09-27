@@ -90,7 +90,8 @@ kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- sh -c 'tail -2 /deplo
       (the UBI9 image has no `zcat` — copy it out: `kubectl cp` then `gzip -t`)
 - [x] an idle hour produces no file; the late roll carries the hour of its content — 19–21 absent, `-18` rolled at 22:21
 - [x] **FAILED PREMISE: a second replica appeared the same day (HPA)** — `#48` confirmed by experiment; switched to one file per pod
-- [ ] per-pod roll: `ls` shows `polaris-<pod>.log` for each running pod and, after the hour, `polaris-<pod>.log.<hour>.gz`
-- [ ] shared-era files moved to `legacy-shared/` so the batch job never reads them
+- [x] per-pod files: `polaris-<pod>.log` for each of 3 running pods, names = pod names (22:37)
+- [ ] after the hour: `polaris-<pod>.log.<hour>.gz` per pod that wrote
+- [x] shared-era files moved to `legacy-shared/` so the batch job never reads them (22:40)
 - [ ] container restart mid-hour (`kill 1`) does **not** roll (rotate-on-boot=false) and nothing is lost
 - [ ] console output and the Fluent Bit tiers are unchanged apart from the `+09:00` offset

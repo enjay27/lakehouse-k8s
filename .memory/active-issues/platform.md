@@ -33,6 +33,15 @@ are fine, the per-JVM rename-and-reopen is not. Until fixed it recurs every hour
 pod's `ls` shows per-pod names after the upgrade. Shared-era leftovers (`polaris.log`,
 `polaris.log.2026-09-27-18.gz` — now mislabelled 22:21 content) go to `legacy-shared/`, not to the job.
 
+**ROLLED ~22:37 KST (Kade).** `ls` shows one file per pod, named after the pod: `polaris-benchmarks-polaris-
+7f4d69c67c-{2tklb,bmt4t,rz56d}.log` (~3.58 KB each, startup lines) — `${HOSTNAME}` expanded. Three pods came
+up in the new ReplicaSet, so the HPA scaled out during the roll again (a JVM-startup CPU spike is the likely
+trigger, unconfirmed). `legacy-shared/` holds the shared-era `polaris.log` (15229 B, last write 22:37 when the
+old pods stopped) and `polaris.log.2026-09-27-18.gz` — now 942 B with mtime 22:30, down from 1241 B at 22:21:
+**overwritten a second time** before the move, more evidence for this entry. Open until each pod's first
+hourly `.gz` appears under its own name; closing it also needs the batch job's orphan sealing, because the
+HPA scaling back from 3 leaves unrotated `polaris-<pod>.log` files that nothing else will ever roll.
+
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
 `logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the
