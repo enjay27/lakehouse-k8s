@@ -17,7 +17,7 @@ pod's `.gz` AND current `.log`; orphan = pod gone from the API AND file complete
 green; `step16` = Lua parity, identical on 5 seeds. Logic (Korean): `logging/SPEC-polaris-log-batch.ko.md`.
 **P3: built and released SEPARATELY from Polaris** — image `images/polaris-log-batch/`, chart
 `charts/polaris-log-batch/` (release `polaris-log-batch`). Not built/rendered yet. **NEEDS KADE:** docker build,
-helm lint + dry-run + install, one manual Job run.
+helm lint + dry-run + install, one manual Job run — **`logging/HANDOFF-polaris-log-batch-2026-09-28.md`**.
 
 **2026-09-21 — the merge.** **`local-k8s` and `polaris-learning` are one repo.** 554 files at HEAD relocated;
 both pre-merge histories are here on their own refs (`git log archive/local-k8s`,
