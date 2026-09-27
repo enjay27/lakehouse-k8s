@@ -5,6 +5,32 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#48 — OPEN. File logging is back on with ONE `polaris.log` shared by every replica, so `#8`'s
+hazard returns the moment a second Polaris JVM exists.** 2026-09-27. Written, not rolled.
+
+`logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, chart's own `<fullname>-logs` PVC) for the
+batch pipeline in `logging/PLAN-polaris-log-batch-2026-09-27.md`. Kade chose one file for the whole
+Deployment over per-pod files. Checked from the chart, not the cluster: every replica renders the same
+ConfigMap, `quarkus.log.file.path = /deployments/logs/polaris.log`, and nothing in `templates/` or
+`values.yaml` puts a pod name in it — **the HPA does not create per-pod files.**
+
+One writer is safe. Two are not: HPA scale-out (max 3) or a RollingUpdate's surge pod each open the
+same path with independent JBoss rotation state — one renames the file while the other keeps writing
+into the renamed inode, or rolls the other's fresh lines under the previous hour's name. `#40`'s
+bursts of same-size `.1`–`.14` rolls minutes apart are the shape this produces, and were never ruled
+out. **Watch for it:** records from two `hostName`s inside one rotated file, or an hour with two
+same-name rolls. **The fix is one line** — `fileName: polaris-${HOSTNAME}.log` (Kubernetes sets
+`HOSTNAME` to the pod name) — plus the batch job sealing a deleted pod's last file. The other safe
+shape is `replicaCount: 1`, HPA off, `strategy: Recreate`.
+
+Also written with it, each to be confirmed from the running pod (PLAN step 2):
+`QUARKUS_LOG_FILE_JSON_ENABLED=true` (the variable `#38` deleted, live again now the handler is on),
+`QUARKUS_LOG_FILE_ROTATION_ROTATE_ON_BOOT=false`, `TZ=Asia/Seoul` (the suffix is formatted in the JVM
+zone; `timestamp`/`_time` gain `+09:00`, which the `_time` date mapping accepts), `maxFileSize: 2Gi`
+(size roll made unreachable — it cannot be disabled once a suffix is set), `maxBackupIndex: 50`,
+`storage.className: ""` (cluster default, as minio/postgresql), `helm.sh/resource-policy: keep` on
+the claim. **NOT VERIFIED: no helm, no kubectl from the Cowork session that wrote it.**
+
 **#47 — The operational report window is 1 hour, not 30 minutes. Decided 2026-09-21, not rolled, and
 the thing to watch after it rolls is not size but the per-window caps.** 2026-09-21.
 

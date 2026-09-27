@@ -189,34 +189,40 @@ extraEnv:
       -XX:MaxRAMPercentage=65.0
       -XX:InitialRAMPercentage=50.0
 
-  # JSON logging for Fluent Bit (Quarkus 3.29.4 new key).
-  # Console only. The two QUARKUS_LOG_FILE_JSON_* variables that used to sit here were
-  # removed 2026-09-18: #38 established they format a handler that is switched off, and
-  # with the log PVC gone there is nothing for a file handler to write to either.
+  # JSON logging (Quarkus 3.29.4 new key). The ENV VAR is what takes effect: the chart's
+  # logging.console.json / logging.file.json render the old key, which is inert (#33).
   - name: QUARKUS_LOG_CONSOLE_JSON_ENABLED
     value: "true"
 
-# -- LOG PVC REMOVED 2026-09-18 (Kade). This block used to mount `polaris-shared-logs-pvc`
-#    at /deployments/logs:
-#
-#      extraVolumes:      - name: polaris-log-volume
-#                           persistentVolumeClaim: {claimName: polaris-shared-logs-pvc}
-#      extraVolumeMounts: - name: polaris-log-volume
-#                           mountPath: /deployments/logs
-#
-#    It is gone because its only two consumers are going: `fb-polaris-shipper` (which
-#    tailed it into VictoriaLogs) and this deployment. Polaris logs reach OpenSearch from
-#    STDOUT via the Fluent Bit DaemonSet, which never touched this volume.
-#
-#    THE PVC IS NOT CREATED BY THIS REPO and never was, so removing these lines does not
-#    delete it -- that is a separate, destructive step. Order matters (the PVC's protection
-#    finalizer parks it in Terminating while any pod still mounts it):
-#    logging/RUNBOOK-log-pvc-removal-2026-09-18.md.
-#
-#    It also removed a trap that had never fired: the chart mounts its OWN `logs-storage`
-#    volume at .Values.logging.file.logsDir when logging.file.enabled is true -- the same
-#    /deployments/logs claimed above. Both together are a duplicate mountPath, which the
-#    API server rejects. Only `enabled: false` kept it quiet.
+  # FILE LOGGING BACK ON 2026-09-27 (Kade) -- logging/PLAN-polaris-log-batch-2026-09-27.md.
+  # The hourly CronJob batch reads the rotated .gz files from the chart's own logs PVC.
+  # Same JSON-by-env pattern as the console. The identical variable was deleted 2026-09-18
+  # (#38) only because the handler it formats was off; with `logging.file.enabled: true`
+  # it is live again. JSON makes one event exactly one line (stack traces included), which
+  # the batch job's line-by-line parse depends on.
+  - name: QUARKUS_LOG_FILE_JSON_ENABLED
+    value: "true"
+  # rotate-on-boot=false: a container restart keeps appending to the same polaris.log and the
+  # hourly roll labels it by its last-modified hour. With the Quarkus default (true) a restart
+  # rotates mid-hour to the SAME -HH name the top-of-hour roll will use again -- two rolls
+  # competing for one file name. Not exposed by the chart, hence the env var. (#48)
+  - name: QUARKUS_LOG_FILE_ROTATION_ROTATE_ON_BOOT
+    value: "false"
+  # KST (decided 2026-09-27). The rotation suffix is formatted in the JVM's default zone and
+  # Quarkus has no separate setting for it, so the zone of the whole JVM is the zone of the
+  # file names. The JVM ships its own tzdb, so TZ works without OS tzdata. Side effect: the
+  # payload `timestamp` (Fluent Bit's `_time`) now carries +09:00; polaris-logs-template.json
+  # maps `_time` as strict_date_optional_time, which accepts an offset. @timestamp comes from
+  # the CRI envelope and does not change.
+  - name: TZ
+    value: Asia/Seoul
+
+# -- LOG VOLUME. Since 2026-09-27 the log volume is the chart's OWN claim, declared under
+#    `logging.file.storage` and mounted at `logging.file.logsDir` by the chart itself
+#    (templates/storage.yaml + deployment.yaml `logs-storage`). Do NOT also mount anything at
+#    /deployments/logs here: two volumes on one mountPath is rejected by the API server (#38).
+#    The hand-made `polaris-shared-logs-pvc` that used to sit here was removed 2026-09-18
+#    (logging/RUNBOOK-log-pvc-removal-2026-09-18.md) and is not coming back.
 extraVolumes: []
 extraVolumeMounts: []
 extraInitContainers: []
@@ -264,50 +270,47 @@ logging:
     json: false
     format: "%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{2.}] (%t) [%X{requestId}] %s%e%n"
   file:
-    enabled: false
+    # ON since 2026-09-27 (Kade): Polaris -> PVC -> hourly CronJob batch (processed-logs,
+    # aggregated-logs) -> Observability team -> OpenSearch.
+    # logging/PLAN-polaris-log-batch-2026-09-27.md. Console stays on: the Fluent Bit tiers keep
+    # running in parallel until the batch output is reconciled against them.
+    enabled: true
     threshold: INFO
+    # false ON PURPOSE: true renders the old `quarkus.log.file.json` key (#33's shape). JSON is
+    # switched on by QUARKUS_LOG_FILE_JSON_ENABLED in extraEnv, and `format` is then ignored.
     json: false
     format: "%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{2.}] (%t) [%X{requestId}] %s%e%n"
     logsDir: /deployments/logs
+    # ONE FILE FOR THE WHOLE DEPLOYMENT (decided 2026-09-27, Kade). Every replica reads the same
+    # ConfigMap, so every replica writes this same path -- the HPA does not make per-pod files.
+    # That is only safe with one writer: HPA scale-out or a RollingUpdate puts 2+ JVMs on this
+    # file, each rotating on its own, which is #8 and possibly #40. See #48. The per-pod
+    # alternative is one line: fileName: polaris-${HOSTNAME}.log
     fileName: polaris.log
     rotation:
-      # THIS WHOLE BLOCK IS INERT, AND AFTER 2026-09-18 IT IS INERT TWICE OVER: the handler
-      # is off (`enabled: false` above, #38) and the PVC it used to write to is being
-      # removed. Kept, with the reasoning, because turning file logging back on without
-      # reading this would now fill the node.
+      # HOURLY, TIME-DRIVEN. The batch job (every HH:03) reads the previous hour's .gz files.
+      # Rotation is LAZY: JBoss rolls on the first write after the hour, not on a clock, so an
+      # idle hour produces no file and a quiet pod's file can appear late. The job processes
+      # whatever .gz exists and never assumes hour H is complete at H+1:03.
       #
-      # WHY 5 AND NOT 45. An earlier pass today raised maxBackupIndex to 45 (a 460Mi ring)
-      # sized against the 5Gi PVC. With no PVC, logsDir is the CONTAINER'S WRITABLE LAYER
-      # -- OrbStack's single node disk, shared with every other pod and with the Iceberg
-      # warehouse. A 460Mi ceiling there is worse than the 60Mi it replaced, so it is back:
-      #
-      #   10Mi x (5 + 1) = 60Mi, on node ephemeral storage, lost on every pod restart.
-      #
-      # QUARKUS HAS NO AGE-BASED RETENTION (#44). max-file-size, max-backup-index and
-      # file-suffix are the whole of it; "delete files older than N days" cannot be
-      # expressed here. Retention is therefore a byte cap, and the arithmetic above is the
-      # contract -- change the multiplicand, not your expectations.
-      maxFileSize: 10Mi
-      maxBackupIndex: 5
-      # fileSuffix MUST STAY NULL. A suffix switches JBoss to
-      # PeriodicSizeRotatingFileHandler, where maxBackupIndex bounds only the numeric index
-      # WITHIN one day and the daily roll mints a new basename that NOTHING EVER DELETES.
-      # That is how the PVC came to hold ~130 files and 27MB back to 08-21 under a declared
-      # bound of 5 -- the bound was real, it just was not bounding days (#44).
-      #
-      # The live pod rotated with .yyyy-MM-dd.gz while this file said `~`, so this value had
-      # never been in effect (#20's shape). Confirm from the running object, never here:
-      #   kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
-      #     grep rotation /deployments/config/application.properties
-      fileSuffix: ~
-    # NOT `polaris-shared-logs-pvc`. This declares the chart's OWN claim
-    # (templates/storage.yaml, named <fullname>-logs), which renders only when
-    # logging.file.enabled is true -- so it has never been created. The PVC being removed
-    # on 2026-09-18 is the hand-made one that extraVolumes used to mount; nothing in this
-    # repo ever created it. Leaving this here means `enabled: true` would provision a
-    # proper claim rather than write to node disk, which is the only sane way back.
+      # A suffix makes Quarkus use PeriodicSizeRotatingFileHandler, so size rotation cannot be
+      # switched off, only made unreachable. 2Gi is far above any real hour. If it ever fires,
+      # the extra files are named <suffix-without-.gz>.N.gz -- the 2026-09-09 listing showed
+      # polaris.log.2026-09-09.1.gz .. .11.gz (#40) -- and the job reads all of them.
+      maxFileSize: 2Gi
+      # Bounds the .N index WITHIN one hour only; past it the oldest of that hour is DELETED.
+      # 50 is insurance, not a ring.
+      maxBackupIndex: 50
+      # .gz = compressed at roll. Hourly files are never deleted by Quarkus (#44): the batch
+      # job moves them to done/ and deletes done/ and its outputs after 3 days.
+      fileSuffix: .yyyy-MM-dd-HH.gz
+    # The chart's OWN claim (templates/storage.yaml, <fullname>-logs), created because
+    # enabled is true. className "" = the cluster default, the same convention minio and
+    # postgresql use on this OrbStack node (local-path). local-path does NOT enforce `size`:
+    # the real ceiling is the node disk, which is why the batch job's retention matters.
+    # The claim carries helm.sh/resource-policy: keep -- helm uninstall leaves the logs.
     storage:
-      className: standard
+      className: ""
       size: 5Gi
       selectorLabels: {}
   # 카테고리별 로그 레벨

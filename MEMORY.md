@@ -2,9 +2,15 @@
 
 **Index, not the record.** Only what would be *false* the moment it goes stale lives here.
 
-## Now — 2026-09-21 (the merge: two repos became one, nothing deployed changed)
+## Now — 2026-09-27 (Polaris logging → PVC + hourly batch: step 1 written, not rolled)
 
-**`local-k8s` and `polaris-learning` are one repo as of today.** 554 files at HEAD relocated;
+**Polaris file logging is back on in `charts/polaris/values.yaml`** — JSON `polaris.log`, hourly KST
+roll to `.yyyy-MM-dd-HH.gz`, on the chart's own `benchmarks-polaris-logs` PVC — step 1 of
+[`logging/PLAN-polaris-log-batch-2026-09-27.md`](logging/PLAN-polaris-log-batch-2026-09-27.md).
+**NEEDS KADE:** the PLAN's step-2 checklist (render gate, roll, then the running pod). **One file for
+all replicas is `#48`** — safe only while one Polaris pod runs. Batch script + CronJob not started.
+
+**2026-09-21 — the merge.** **`local-k8s` and `polaris-learning` are one repo.** 554 files at HEAD relocated;
 both pre-merge histories are here on their own refs (`git log archive/local-k8s`,
 `archive/polaris-learning`; `git log --all --grep=` searches both). Why and the full path
 mapping: [`docs/MERGE-2026-09-21.md`](docs/MERGE-2026-09-21.md).

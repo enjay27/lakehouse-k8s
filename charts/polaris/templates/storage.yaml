@@ -22,6 +22,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "polaris.labels" . | nindent 4 }}
+  annotations:
+    # Audit logs outlive the release: helm uninstall must not delete them (CLAUDE.md: PVC
+    # deletion needs its own explicit authorisation). Added 2026-09-27.
+    helm.sh/resource-policy: keep
 spec:
   accessModes:
     - ReadWriteOnce
