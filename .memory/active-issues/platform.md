@@ -106,7 +106,9 @@ from the 5 duplicated ids — almost certainly the harness sending two requests 
 and fails only on the same line appearing twice. **#48 CLOSED for the log-file design**; the orphan case
 belongs to the batch job (P1). **2026-09-28 (Kade): no orphan special case at all** — the job reads every pod's
 current `.log` as well as its rolls and keeps the lines by `timestamp` in `[H, H+1)`, so a removed pod's
-unrotated file is just another source. PLAN *Batch algorithm* revised.
+unrotated file is just another source. PLAN *Batch algorithm* revised. Orphaned `.log` files (last line in a published
+hour, quiet > 120 s) then move to `done/…/polaris-<pod>.log.<hour>.orphan` (Kade). OPEN: that a live but
+idle pod survives its file being moved — inferred from the JBoss rotation code path, not yet observed.
 
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by

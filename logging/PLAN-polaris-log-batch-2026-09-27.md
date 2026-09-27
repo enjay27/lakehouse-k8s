@@ -60,10 +60,23 @@ first (catch-up after missed runs is automatic). The checkpoint is **per hour**,
 + rejected`; write `.tmp/`, fsync, `os.replace` into `processed-logs/` and `aggregated-logs/`, fsync
 dirs; then checkpoint `H` (tmp + replace) with the source files, sizes and counts.
 
-**Housekeeping.** After H is checkpointed, rolls named for hours ≤ H move to `done/YYYYMMDD/` (a roll
-of H cannot contain lines of H+1: the first H+1 record is what rotates the file). Current `.log` files
-are never moved. Retention (D5) deletes `done/`, outputs, `malformed/` and orphaned `.log` files
-(mtime > 3 days).
+**Housekeeping.** After H is checkpointed:
+- rolls named for hours ≤ H move to `done/YYYYMMDD/` (a roll of H cannot contain lines of H+1: the
+  first H+1 record is what rotates the file);
+- **orphaned `.log` files move to `done/` too** (Kade, 2026-09-28): a current `polaris-<pod>.log` whose
+  last complete line is in an hour ≤ H, whose mtime is > 120 s old and that has no unterminated tail
+  (or whose tail already went to `malformed/`). It lands as `done/YYYYMMDD/polaris-<pod>.log.<hour>.orphan`
+  — labelled with the hour it holds, so a later file of the same name (container restart keeps the pod
+  name) cannot collide.
+  *Safe for a pod that is only idle, not gone:* nothing can be appended to that file (Polaris rotates
+  before writing the first line of a new hour), and the moved file is complete. On its next write the
+  pod's rotation finds no `polaris-<pod>.log` to rename, reports it on stderr and opens a fresh file.
+  **That last part is inferred from how the JBoss handler rotates, not observed — step 2 checklist.**
+  The job can also tell the two apart after the fact: an idle pod reappears with a new file of the
+  same name; a gone pod never does.
+- the run reports each moved orphan (pod, hour, lines) in its output and in the hour's summary row.
+
+Retention (D5) deletes `done/`, outputs and `malformed/` 3 days after publication.
 
 `flock .state/lock` + `concurrencyPolicy: Forbid`. A crash anywhere → the next run redoes the
 unpublished hour from files still in place, to identical bytes.
@@ -110,5 +123,8 @@ kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- sh -c 'tail -2 /deplo
 - [x] after the hour: `polaris-<pod>.log.<hour>.gz` per pod that wrote — `bmt4t`, `rz56d` → `-22.gz` at 23:02
 - [x] orphan: `2tklb` removed by the HPA; its file (22:37–22:48) is unrotated for good — the job seals it as `-22.gz`
 - [x] shared-era files moved to `legacy-shared/` so the batch job never reads them (22:40)
+- [ ] **orphan move on a live, idle pod:** `mv` its `polaris-<pod>.log` aside by hand, send one request to
+      that pod (port-forward), then check: a new `polaris-<pod>.log` exists, the request's line is in it,
+      the pod did not restart, and what the rotation printed to stderr
 - [ ] container restart mid-hour (`kill 1`) does **not** roll (rotate-on-boot=false) and nothing is lost
 - [ ] console output and the Fluent Bit tiers are unchanged apart from the `+09:00` offset
