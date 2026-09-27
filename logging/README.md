@@ -50,6 +50,7 @@ one and says what superseded it.
 
 | status | files |
 |---|---|
+| **test** | `step15-shared-file-size-rotation-test.sh` (`shared` / `perpod` / `restore`: can N pods share one log file with fast size rotation? counts every tagged request across all rolls — #48) |
 | **live** | `step14-sample-doc.py` (샘플 문서 생성; 인자 두 개 = 상세·요약 export) · `step2-render-gate.sh` (render gate) · `step3-postupgrade.sh` (post-roll) · `step9-report-index-template.sh` · `step12-logs-index-template.sh` · `step13-ism-apply.sh` (retention; dry run by default, `--apply` to write) · `step10-v4-window-readout.sh` (one window, three sources) · `step11-replay-window.py` (replay; `POLARIS_LUA=` for a candidate) · `test-schema-v3/v4/v5/v6.lua` · `test-first-tick.lua` · `test-raw-access-shim.lua` · `devtools-json-fix.py` |
 | **finished / superseded** — **moved to `scripts/attic/` 2026-09-16** (P11; old docs cite the old paths) | `step0-preflight.sh` · `step4-report-readout.sh` · `step5-probe-apply-verify.sh` · `step6-tier2-readout.sh` · `step7-dedup-check.sh` · `step8-subset-proof.sh` · `test-polaris-filters.py` (tests the shipper's Lua) · `report_readout.py` (used by step4) |
 | harnesses | `candidates/diff-v5-v6.lua` (v5 vs v6) · `diff-refactor.lua` · `bench-refactor.lua` · `bench-classify.lua` (pre-v6 scripts: they feed `_msg`) · `tier1-to-lua.py` |

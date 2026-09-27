@@ -54,6 +54,13 @@ unrotated file belongs to one hour — a pod rolls before writing the first line
 seal name is that file's last-write hour: `…-2tklb.log.2026-09-27-22.gz`. Its last line may be cut
 if the pod was killed mid-write (D3: `malformed/`). This file is P1's first real sealing fixture.
 
+**Re-asked 2026-09-27 (Kade): one file for all pods, with small SIZE rotation?** Written as a countable
+test instead of argued: `logging/scripts/step15-shared-file-size-rotation-test.sh shared|perpod|restore`
+— 2 pods, `maxFileSize 100k`, N requests each tagged `?sizetest=<run>-<i>`, every i must appear exactly
+once across all rolls. Prediction (mine, unverified): `shared` loses lines — each JVM keeps its own byte
+count and rolls on its own; the other JVM keeps writing into the renamed file, which the `.gz` roll then
+compresses and deletes. `perpod` is the control and should lose none. Not yet run.
+
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
 `logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the
