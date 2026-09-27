@@ -1,7 +1,7 @@
 # Polaris 로그 배치 — 동작 명세
 
 > **상태 (2026-09-28)** — Polaris 파드별 로그 파일 + PVC 는 **로컬(OrbStack)에 적용·검증 완료**.
-> 배치 스크립트는 **작성·테스트 완료, 아직 배포 전** (CronJob·Role·ConfigMap 은 다음 단계).
+> 배치 스크립트는 **작성·테스트 완료**, 배포용 템플릿(`charts/polaris/templates/log-batch.yaml`)도 **작성 완료 — 아직 렌더·배포 전**.
 > 이 문서는 "무엇을, 왜 그렇게 하는가" 만 다룬다. 코드 수준 설명은 스크립트 주석을 볼 것.
 >
 > | 무엇 | 어디 |
@@ -265,8 +265,10 @@ Lua 는 레코드를 메모리에 잡아 두고 액세스 줄을 기다렸지만
 
 ## 11. 남은 일과 알려진 제약
 
-- **배포 전.** CronJob(매시 03분 KST, `Forbid`), ConfigMap(스크립트), ServiceAccount + Role, PVC 마운트를
-  `charts/polaris` 에 추가하는 것이 다음 단계.
+- **배포 전.** `charts/polaris/templates/log-batch.yaml` 에 ConfigMap(스크립트) · ServiceAccount · Role/RoleBinding
+  (pods get/list) · CronJob(매시 03분 KST, `Forbid`, Polaris 와 같은 보안 컨텍스트, `python:3.11-slim`) 을
+  작성했다. `values.yaml` 의 `logBatch:` 로 켜고 끈다. **Job 파드는 Polaris 의 selector 라벨을 달지 않는다** —
+  달면 Polaris Service 가 카탈로그 트래픽을 Job 파드로 보낸다. `helm lint` / dry-run / 실제 실행은 아직.
 - **운영 클러스터 저장소.** 여러 노드에서 HPA 로 파드가 흩어지면 ReadWriteOnce PVC 는 한 노드에만 붙는다 →
   RWX 스토리지 또는 한 노드 고정이 필요 (운영 저장소 담당과 확인할 것).
 - **메모리.** 한 시간 분량의 적재 대상 줄을 메모리에 올려 판정한다. 운영 트래픽의 시간당 크기에 맞춰

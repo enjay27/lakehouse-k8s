@@ -1,0 +1,4 @@
+# Added 2026-09-28 with files/log-batch/: a pytest run that imports the script leaves bytecode next
+# to it, and Helm packages everything under the chart directory it is not told to ignore.
+__pycache__/
+*.pyc

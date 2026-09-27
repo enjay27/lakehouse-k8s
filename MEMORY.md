@@ -15,7 +15,8 @@ rotation, per-pod 0 — `#48` closed.** Batch design revised 09-28: select lines
 pod's `.gz` AND current `.log`; orphan = pod gone from the API AND file complete. **P1a written** —
 `charts/polaris/files/log-batch/polaris_log_batch.py`. **P1b done**: policy v5 ported, report schema 7; 40 tests
 green; `step16` = Lua parity, identical on 5 seeds. Logic (Korean): `logging/SPEC-polaris-log-batch.ko.md`.
-**Next:** P3 — CronJob/ConfigMap/Role in `charts/polaris`, not deployed yet.
+**P3 written, NOT rendered/deployed**: `charts/polaris/templates/log-batch.yaml` + `logBatch:` values.
+**NEEDS KADE:** helm lint + dry-run + upgrade (`-f`), then one manual Job run.
 
 **2026-09-21 — the merge.** **`local-k8s` and `polaris-learning` are one repo.** 554 files at HEAD relocated;
 both pre-merge histories are here on their own refs (`git log archive/local-k8s`,

@@ -102,7 +102,9 @@ unpublished hour from files still in place, to identical bytes.
 4. Parity: **`logging/scripts/step16-batch-lua-parity.py`** runs the Lua filter itself (LuaJIT via `lupa`)
    and the batch on the same records — **identical on 5 seeds × ~5,300 lines** (2026-09-28); a
    deliberately broken rule shows up as a diff. Still to do: `--file` against real per-pod files.
-5. CronJob + ConfigMap + ServiceAccount/Role templates in `charts/polaris`; parallel run with Fluent Bit tiers 2/3; reconcile.
+5. CronJob + ConfigMap + ServiceAccount/Role templates in `charts/polaris` — **written 2026-09-28**:
+   `templates/log-batch.yaml`, `values.yaml` `logBatch:`, `.helmignore` (bytecode). NOT rendered (no helm
+   from Cowork). Then: parallel run with Fluent Bit tiers 2/3; reconcile.
 6. Handover contract to the Observability team; retire tiers 2/3.
 
 ## Step 2 — what the spike must establish (from the running object)
