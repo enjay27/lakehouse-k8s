@@ -36,7 +36,7 @@ the tier-2 detail documents (policy v5), **aggregated logs** are the tier-3 sche
 | Rotation | `fileSuffix: .yyyy-MM-dd-HH.gz`, `maxFileSize: 2Gi` (size roll unreachable, cannot be disabled), `maxBackupIndex: 50`, `rotate-on-boot=false` |
 | File | **one file per pod**, `polaris-${HOSTNAME}.log` (Kade, 2026-09-27; **measured 2026-09-28 by step15: a shared file lost 1780/4000 lines under rotation, per-pod lost 0**). First rolled as one shared `polaris.log`; `#48` showed two pods overwrite each other's hourly rolls. The job merges every pod's lines for hour H into ONE processed and ONE aggregated file, so downstream still sees one file per hour. **Orphans need no special case** (2026-09-28, see *Selection*): a removed pod's unrotated `polaris-<pod>.log` is read like any other file. No sealing, no RBAC, the job never renames a file a JVM may hold |
 | D2 | **SELECT BY TIMESTAMP, NOT BY FILE** (Kade, 2026-09-28). The HH:03 run reads every pod's `.gz` rolls **and every pod's current `.log`**, and keeps only lines whose `timestamp` falls in the previous hour `[H:00:00, H+1:00:00)` KST. At 11:03 a current file holds 10:xx and 11:00–11:03 lines; the job takes the 10:xx ones. **No sort** — OpenSearch orders by the `timestamp` field. Because current files are read, every line of H exists on disk at H+1:03, so the late-file rebuild of the first design is gone. `event_id` = sha1 of the raw line: the same line read from a `.log` and later from its `.gz` gets the same id |
-| D3 | malformed line → `malformed/`, rest of the file processed, counted as `rejected`. A `.gz` that fails to decode is retried 3 runs, then the whole file moves to `malformed/` |
+| D3 | malformed line → `malformed/`, rest of the file processed, counted as `rejected`. A `.gz` that fails to decode **defers the hour** while it is < 120 s old (probably still being compressed), and once older moves whole to `malformed/files/` and is listed in the hour's `corrupt_files` (P1a: mtime-based instead of "3 runs" — no per-file retry state) |
 | D4 | **KST**: `TZ=Asia/Seoul` on Polaris (the suffix uses the JVM zone), `timeZone: Asia/Seoul` on the CronJob, fixed +09:00 in Python |
 | D5 | the job deletes `done/`, outputs and `malformed/` **3 days after publication** (checkpoint time, not the hour in the name). 3 days is the Observability team's pickup deadline |
 
@@ -91,7 +91,12 @@ unpublished hour from files still in place, to identical bytes.
 1. **Polaris config + PVC** — `charts/polaris/values.yaml`; the claim is `logging/k8s/polaris-logs-pvc.yaml`,
    created **before** the release and outside it, referenced by `logging.file.storage.existingClaim`. *Written.*
 2. **Spike on OrbStack (Kade)** — checks below.
-3. Batch script (`charts/polaris/files/log-batch/`, stdlib only) + `tests/test_polaris_log_batch.py`.
+3. Batch script (`charts/polaris/files/log-batch/polaris_log_batch.py`, stdlib only, Python ≥ 3.10) +
+   `tests/test_polaris_log_batch.py`. **P1a written 2026-09-28**: selection by timestamp, per-hour
+   checkpoint, atomic publish, orphans (pod list + completeness), malformed, corrupt rolls, retention,
+   lock, dry run — **26 tests green**. The policy is a PASSTHROUGH (every valid line is processed; the
+   aggregated file is one summary row). **P1b: port policy v5 / report schema v6 from the Lua.**
+   Run by hand: `python3 polaris_log_batch.py --log-dir DIR [--no-pod-list] [--now ISO] [--dry-run]`.
 4. Parity: same raw input through `logging/scripts/step11-replay-window.py` (Lua) and the job; diff.
 5. CronJob + ConfigMap templates in `charts/polaris`; parallel run with Fluent Bit tiers 2/3; reconcile.
 6. Handover contract to the Observability team; retire tiers 2/3.

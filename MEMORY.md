@@ -12,7 +12,8 @@ Rotation verified (KST name, JSON, hour-bounded content, lazy roll). **The share
 hour 18 to a second (HPA) pod — `#48`, confirmed.** Fixed and rolled 22:37: `polaris-${HOSTNAME}.log`, one
 file per pod; shared-era files in `legacy-shared/`. **Measured (step15, 09-28): shared file lost 44.5 % under
 rotation, per-pod 0 — `#48` closed.** Batch design revised 09-28: select lines by `timestamp` from every
-pod's `.gz` AND current `.log` — no orphan handling. **Next:** P1 (batch script). `step15 restore` if not done.
+pod's `.gz` AND current `.log`; orphan = pod gone from the API AND file complete. **P1a written** —
+`charts/polaris/files/log-batch/polaris_log_batch.py`, 26 tests green, passthrough policy. **Next:** P1b (Lua policy port).
 
 **2026-09-21 — the merge.** **`local-k8s` and `polaris-learning` are one repo.** 554 files at HEAD relocated;
 both pre-merge histories are here on their own refs (`git log archive/local-k8s`,
