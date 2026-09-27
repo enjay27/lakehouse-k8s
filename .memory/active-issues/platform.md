@@ -59,7 +59,15 @@ test instead of argued: `logging/scripts/step15-shared-file-size-rotation-test.s
 — 2 pods, `maxFileSize 100k`, N requests each tagged `?sizetest=<run>-<i>`, every i must appear exactly
 once across all rolls. Prediction (mine, unverified): `shared` loses lines — each JVM keeps its own byte
 count and rolls on its own; the other JVM keeps writing into the renamed file, which the `.gz` roll then
-compresses and deletes. `perpod` is the control and should lose none. Not yet run.
+compresses and deletes. `perpod` is the control and should lose none.
+
+**First runs (Kade, runs `1790518433` shared, `1790518698` perpod) tested NOTHING:** same pods before and
+after (`7f4d69c67c-bmt4t/rz56d`, 36–41 min old), no `polaris-sizetest-*` file, found 0 of 3000. The chart
+has no config-checksum annotation, so `helm upgrade` rewrote the ConfigMap and rolled no pod — `#38`'s
+"pod ran an older ConfigMap for days", again. The 6000 tagged requests went into the real
+`polaris-<pod>.log` files instead (`count` mode can recount them there). step15 now `rollout restart`s
+after every upgrade and refuses to send traffic until each running pod's `quarkus.log.file.path` is
+the test one and the test file exists.
 
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by

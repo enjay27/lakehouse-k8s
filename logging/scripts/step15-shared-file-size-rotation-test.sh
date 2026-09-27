@@ -9,6 +9,13 @@
 #   bash logging/scripts/step15-shared-file-size-rotation-test.sh shared    # one file, all pods
 #   bash logging/scripts/step15-shared-file-size-rotation-test.sh perpod    # control: file per pod
 #   bash logging/scripts/step15-shared-file-size-rotation-test.sh restore   # back to values.yaml
+#   bash logging/scripts/step15-shared-file-size-rotation-test.sh count <run> '<file glob>'
+#        # re-count a finished run in any files, e.g. the real per-pod logs
+#
+# FIRST VERSION NEVER TESTED ANYTHING (2026-09-27): the chart has no config-checksum annotation,
+# so `helm upgrade` rewrote the ConfigMap but left the pods running the old file name, and all
+# 3000 requests went to the real polaris-<pod>.log files. Every mode now does `rollout restart`
+# after the upgrade and REFUSES to send traffic until every running pod has created the test file.
 #
 # Each mode: helm upgrade with TEMPORARY --set overrides (values.yaml is not edited) —
 #   maxFileSize 100k (rolls every ~250 access lines), minReplicas 2 (two writers guaranteed) —
@@ -19,7 +26,7 @@
 set -euo pipefail
 NS=datahub-hynix; REL=benchmarks-polaris; CHART=./charts/polaris; VALUES=charts/polaris/values.yaml
 LOGDIR=/deployments/logs; N=${N:-3000}; PY=${PY:-python3}
-MODE=${1:?usage: $0 shared|perpod|restore}
+MODE=${1:?usage: $0 shared|perpod|restore|count}
 
 ctx=$(kubectl config current-context)
 [ "$ctx" = orbstack ] || { echo "context is '$ctx', not orbstack — refusing" >&2; exit 1; }
@@ -29,38 +36,23 @@ case "$MODE" in
   perpod) NAME='polaris-sizetest-${HOSTNAME}.log' ;;
   restore)
     helm upgrade --install $REL $CHART -f $VALUES -n $NS
+    kubectl -n $NS rollout restart deploy/$REL      # ConfigMap changes do not roll pods on their own
     kubectl -n $NS rollout status deploy/$REL --timeout=10m
     kubectl -n $NS exec deploy/$REL -- sh -c "cd $LOGDIR && mkdir -p sizetest && mv polaris-sizetest-* sizetest/ 2>/dev/null; ls -ln sizetest | tail -5"
     exit 0 ;;
+  count) : ;;
   *) echo "unknown mode $MODE" >&2; exit 1 ;;
 esac
 
-echo "== archiving files from any earlier test run into $LOGDIR/sizetest/"
-kubectl -n $NS exec deploy/$REL -- sh -c "cd $LOGDIR && mkdir -p sizetest && mv polaris-sizetest-* sizetest/ 2>/dev/null; true"
-
-echo "== $MODE: upgrade with fileName=$NAME, maxFileSize=100k, minReplicas=2"
-helm upgrade --install $REL $CHART -f $VALUES -n $NS \
-  --set-string "logging.file.fileName=$NAME" \
-  --set-string logging.file.rotation.maxFileSize=100k \
-  --set autoscaling.minReplicas=2
-kubectl -n $NS rollout status deploy/$REL --timeout=10m
-sleep 20   # let the HPA reach its new floor
-kubectl -n $NS get pods -l app.kubernetes.io/instance=$REL
-
-RUN=$(date +%s)
-echo "== sending $N requests (run $RUN) through svc/$REL"
-kubectl -n $NS run sizetest-$RUN --rm -i --restart=Never --image=curlimages/curl --command -- \
-  sh -c "i=1; while [ \$i -le $N ]; do curl -s -o /dev/null http://$REL:8181/api/catalog/v1/config?sizetest=$RUN-\$i; i=\$((i+1)); done; echo sent $N"
-sleep 10   # let the last lines flush
-
-OUT=$(mktemp -d /tmp/sizetest-$MODE-XXXX)
-echo "== copying test files to $OUT"
-for f in $(kubectl -n $NS exec deploy/$REL -- sh -c "cd $LOGDIR && ls polaris-sizetest-* 2>/dev/null"); do
-  kubectl -n $NS exec deploy/$REL -- cat "$LOGDIR/$f" > "$OUT/$f"
-done
-ls -ln "$OUT"
-
-$PY - "$OUT" "$RUN" "$N" <<'PY'
+collect_and_count() {   # $1 = run id, $2 = file glob inside $LOGDIR
+  local run=$1 glob=$2 out f
+  out=$(mktemp -d /tmp/sizetest-$MODE-XXXX)
+  echo "== copying $glob to $out"
+  for f in $(kubectl -n $NS exec deploy/$REL -- sh -c "cd $LOGDIR && ls $glob 2>/dev/null"); do
+    kubectl -n $NS exec deploy/$REL -- cat "$LOGDIR/$f" > "$out/$f"
+  done
+  ls -ln "$out"
+  $PY - "$out" "$run" "$N" <<'PY'
 import gzip, json, os, re, sys, collections
 out, run, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
 pat = re.compile(r"sizetest=" + re.escape(run) + r"-(\d+)")
@@ -88,4 +80,42 @@ if missing: print("first missing ids:", missing[:20])
 if len(seen) == 0: print("NO test lines found — is the access log enabled? check one file by hand.")
 print("VERDICT:", "no loss" if not missing and not bad and seen else "LOSS OR CORRUPTION")
 PY
-echo "== files kept in $OUT; run '$0 restore' when done"
+  echo "== files kept in $out"
+}
+
+if [ "$MODE" = count ]; then
+  collect_and_count "${2:?run id}" "${3:?file glob, quoted}"
+  exit 0
+fi
+
+echo "== archiving files from any earlier test run into $LOGDIR/sizetest/"
+kubectl -n $NS exec deploy/$REL -- sh -c "cd $LOGDIR && mkdir -p sizetest && mv polaris-sizetest-* sizetest/ 2>/dev/null; true"
+
+echo "== $MODE: upgrade with fileName=$NAME, maxFileSize=100k, minReplicas=2"
+helm upgrade --install $REL $CHART -f $VALUES -n $NS \
+  --set-string "logging.file.fileName=$NAME" \
+  --set-string logging.file.rotation.maxFileSize=100k \
+  --set autoscaling.minReplicas=2
+kubectl -n $NS rollout restart deploy/$REL          # the ConfigMap change alone rolls nothing
+kubectl -n $NS rollout status deploy/$REL --timeout=10m
+sleep 20   # let the HPA reach its new floor and startup lines land
+kubectl -n $NS get pods -l app.kubernetes.io/instance=$REL
+
+echo "== precheck: every running pod must already write the test file"
+for pod in $(kubectl -n $NS get pods -l app.kubernetes.io/instance=$REL \
+               --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}'); do
+  got=$(kubectl -n $NS exec "$pod" -- sh -c "grep -o 'quarkus.log.file.path=.*' /deployments/config/application.properties")
+  echo "   $pod  $got"
+  case "$got" in *polaris-sizetest-*) ;; *) echo "   $pod is NOT on the test config — refusing to send traffic" >&2; exit 1 ;; esac
+done
+kubectl -n $NS exec deploy/$REL -- sh -c "cd $LOGDIR && ls -ln polaris-sizetest-*" \
+  || { echo "no polaris-sizetest-* file yet — refusing to send traffic" >&2; exit 1; }
+
+RUN=$(date +%s)
+echo "== sending $N requests (run $RUN) through svc/$REL"
+kubectl -n $NS run sizetest-$RUN --rm -i --restart=Never --image=curlimages/curl --command -- \
+  sh -c "i=1; while [ \$i -le $N ]; do curl -s -o /dev/null http://$REL:8181/api/catalog/v1/config?sizetest=$RUN-\$i; i=\$((i+1)); done; echo sent $N"
+sleep 10   # let the last lines flush
+
+collect_and_count "$RUN" "polaris-sizetest-*"
+echo "== run '$0 restore' when done"
