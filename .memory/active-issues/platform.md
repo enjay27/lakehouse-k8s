@@ -42,6 +42,12 @@ old pods stopped) and `polaris.log.2026-09-27-18.gz` — now 942 B with mtime 22
 hourly `.gz` appears under its own name; closing it also needs the batch job's orphan sealing, because the
 HPA scaling back from 3 leaves unrotated `polaris-<pod>.log` files that nothing else will ever roll.
 
+**Per-pod hourly roll VERIFIED (Kade, 23:02 KST):** `…-bmt4t.log.2026-09-27-22.gz` (37141 B) and
+`…-rz56d.log.2026-09-27-22.gz` (31975 B), each rolled at 23:02 on that pod's first write after 23:00, each
+under its own name — no collision. `…-2tklb.log` (231675 B, last write 22:48) did NOT roll: either that pod
+is idle, or the HPA removed it and this is the first real orphan. The collision half of this entry is
+closed; the orphan half moves to the batch job (P1), which must seal files like this one.
+
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
 `logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the
