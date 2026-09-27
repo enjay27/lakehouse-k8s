@@ -104,7 +104,9 @@ from the 5 duplicated ids — almost certainly the harness sending two requests 
 (`grant_privilege`'s skip-if-present GET + PUT and its 404 retry, `polaris_rest.py`), which the
 "exactly one per id" contract since 2026-09-21 does not cover. step15 now prints each duplicate's lines
 and fails only on the same line appearing twice. **#48 CLOSED for the log-file design**; the orphan case
-belongs to the batch job (P1).
+belongs to the batch job (P1). **2026-09-28 (Kade): no orphan special case at all** — the job reads every pod's
+current `.log` as well as its rolls and keeps the lines by `timestamp` in `[H, H+1)`, so a removed pod's
+unrotated file is just another source. PLAN *Batch algorithm* revised.
 
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
