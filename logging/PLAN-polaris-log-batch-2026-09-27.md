@@ -19,7 +19,7 @@ the tier-2 detail documents (policy v5), **aggregated logs** are the tier-3 sche
 
 ```
 /deployments/logs/
-  polaris-<pod>.log                    active file, one per pod (Polaris only)
+  polaris-<pod>.log                    active file, one per pod (Polaris only) — read in place, never moved
   polaris-<pod>.log.2026-09-27-10.gz   hourly roll per pod; .N.gz extras if size rotation ever fires
   legacy-shared/                       the shared-file era (2026-09-27 18:34–rollout), quarantined by hand
   done/20260927/                       originals after processing (job moves them)
@@ -34,23 +34,39 @@ the tier-2 detail documents (policy v5), **aggregated logs** are the tier-3 sche
 | # | decision |
 |---|---|
 | Rotation | `fileSuffix: .yyyy-MM-dd-HH.gz`, `maxFileSize: 2Gi` (size roll unreachable, cannot be disabled), `maxBackupIndex: 50`, `rotate-on-boot=false` |
-| File | **one file per pod**, `polaris-${HOSTNAME}.log` (Kade, 2026-09-27; **measured 2026-09-28 by step15: a shared file lost 1780/4000 lines under rotation, per-pod lost 0**). First rolled as one shared `polaris.log`; `#48` showed two pods overwrite each other's hourly rolls. The job merges every pod's files for hour H into ONE processed and ONE aggregated file, so downstream still sees one file per hour. A pod the HPA removes leaves its last `polaris-<pod>.log` unrotated: the job **seals** it (gzip to that file's hour, tmp + rename) once the pod is confirmed gone — read-only `get/list pods` RBAC for the CronJob's ServiceAccount, plus an idle guard |
-| D2 | the HH:03 run reads **every** source for the previous hour (`-10.gz`, `-10.1.gz`, …). A source for H arriving later → rebuild H from `done/` + the new file, replace atomically; stable `event_id` makes re-indexing idempotent |
+| File | **one file per pod**, `polaris-${HOSTNAME}.log` (Kade, 2026-09-27; **measured 2026-09-28 by step15: a shared file lost 1780/4000 lines under rotation, per-pod lost 0**). First rolled as one shared `polaris.log`; `#48` showed two pods overwrite each other's hourly rolls. The job merges every pod's lines for hour H into ONE processed and ONE aggregated file, so downstream still sees one file per hour. **Orphans need no special case** (2026-09-28, see *Selection*): a removed pod's unrotated `polaris-<pod>.log` is read like any other file. No sealing, no RBAC, the job never renames a file a JVM may hold |
+| D2 | **SELECT BY TIMESTAMP, NOT BY FILE** (Kade, 2026-09-28). The HH:03 run reads every pod's `.gz` rolls **and every pod's current `.log`**, and keeps only lines whose `timestamp` falls in the previous hour `[H:00:00, H+1:00:00)` KST. At 11:03 a current file holds 10:xx and 11:00–11:03 lines; the job takes the 10:xx ones. **No sort** — OpenSearch orders by the `timestamp` field. Because current files are read, every line of H exists on disk at H+1:03, so the late-file rebuild of the first design is gone. `event_id` = sha1 of the raw line: the same line read from a `.log` and later from its `.gz` gets the same id |
 | D3 | malformed line → `malformed/`, rest of the file processed, counted as `rejected`. A `.gz` that fails to decode is retried 3 runs, then the whole file moves to `malformed/` |
 | D4 | **KST**: `TZ=Asia/Seoul` on Polaris (the suffix uses the JVM zone), `timeZone: Asia/Seoul` on the CronJob, fixed +09:00 in Python |
 | D5 | the job deletes `done/`, outputs and `malformed/` **3 days after publication** (checkpoint time, not the hour in the name). 3 days is the Observability team's pickup deadline |
 
-## Batch algorithm (step 3)
+## Batch algorithm (step 3) — revised 2026-09-28
 
-0. `flock .state/lock`, exit 0 if held (`concurrencyPolicy: Forbid` as well).
-1. Load checkpoint. 2. Inbox = rotated `.gz` not in checkpoint, mtime older than 120 s.
-3. Group by hour from the file name. 4. Per hour, oldest first: decode all sources (gzip CRC at
-   EOF), apply policy → processed + aggregates; assert `in = processed + dropped + counted_404 +
-   rejected`; write `.tmp/`, fsync, `os.replace`, fsync dirs; update checkpoint (tmp + replace);
-   move sources to `done/`. 5. Retention sweep.
+**Target hour.** A run at `HH:03` publishes every hour from `last_published + 1` through `HH-1`, oldest
+first (catch-up after missed runs is automatic). The checkpoint is **per hour**, not per file.
 
-Crash anywhere → the next run recomputes to identical bytes (outputs are a pure function of the
-sources), so every step is idempotent.
+**Selection for hour H** (why it is complete and never double-counts):
+- Candidates: every `polaris-<pod>.log` and `polaris-<pod>.log.<hour>[.N].gz` whose **mtime ≥ H:00:00**.
+  A file last written before H cannot hold an H line. This one rule covers rolls of H, the few
+  boundary-skew lines a roll of H+1 can open with, current files, and orphans of removed pods.
+- Keep a line iff its `timestamp` ∈ `[H:00:00, H+1:00:00)`; parse the offset, compare in KST.
+- **Current files are read while Polaris writes them.** Only newline-terminated lines count; an
+  unterminated last line is ignored while the file's mtime is < 120 s old, and goes to `malformed/`
+  once older (a pod killed mid-write).
+- An idle pod that later rolls its file to `…-HH.gz` re-exposes lines of an already-published hour;
+  the per-hour checkpoint never reopens that hour, and the mtime rule keeps old rolls out of later hours.
+
+**Publish H.** Apply policy v5 → processed + aggregates; assert `in = processed + dropped + counted_404
++ rejected`; write `.tmp/`, fsync, `os.replace` into `processed-logs/` and `aggregated-logs/`, fsync
+dirs; then checkpoint `H` (tmp + replace) with the source files, sizes and counts.
+
+**Housekeeping.** After H is checkpointed, rolls named for hours ≤ H move to `done/YYYYMMDD/` (a roll
+of H cannot contain lines of H+1: the first H+1 record is what rotates the file). Current `.log` files
+are never moved. Retention (D5) deletes `done/`, outputs, `malformed/` and orphaned `.log` files
+(mtime > 3 days).
+
+`flock .state/lock` + `concurrencyPolicy: Forbid`. A crash anywhere → the next run redoes the
+unpublished hour from files still in place, to identical bytes.
 
 ## Steps
 
