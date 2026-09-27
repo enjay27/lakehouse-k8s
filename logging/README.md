@@ -7,6 +7,7 @@ first table describes the pipeline as it runs**. When a dated document disagrees
 
 | file | read it for |
 |---|---|
+| [`SPEC-polaris-log-batch.ko.md`](SPEC-polaris-log-batch.ko.md) | **the batch pipeline's logic, in Korean** — per-pod files and why, selection by timestamp, exactly-once per hour, orphans, the ported policy v5 and report schema 7 (and how it differs from v6), verification. Start here for the batch; the PLAN is the decision log |
 | [`PLAN-polaris-log-batch-2026-09-27.md`](PLAN-polaris-log-batch-2026-09-27.md) | **the next architecture** — Polaris → PVC (hourly `.gz`) → Python CronJob → processed/aggregated JSONL → Observability team. Step 1 (file logging + PVC) written, not rolled; the SPEC below still describes what runs |
 | [`SPEC-polaris-audit-logging.ko.md`](SPEC-polaris-audit-logging.ko.md) | **START HERE** — the specification of the running system (Korean). Policy, schema, indices, retention, deploy procedure, and §11's list of what is known-broken |
 | [`HANDOFF-thread-fields-2026-09-18.md`](HANDOFF-thread-fields-2026-09-18.md) | **a completed-task record, not a to-do** — `threadName`/`threadId` were restored, rolled and verified on 2026-09-18 (`#42`). Read it for *why*, and for what the 1.6.0 upgrade changed under the pipeline |
