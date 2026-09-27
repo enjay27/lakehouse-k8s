@@ -63,12 +63,18 @@ sources), so every step is idempotent.
 
 ## Step 2 — what the spike must establish (from the running object)
 
+**`-f charts/polaris/values.yaml` is not optional.** Without any `-f`/`--set`, Helm prints
+`copying values from old release` and re-applies the previous revision's user-supplied values
+(the old values.yaml copy, `logging.file.enabled: false`) OVER the new chart defaults. First try on
+2026-09-27 rendered `existingClaim: polaris-logs-pvc` (a new key, so it came from the chart
+default) next to `quarkus.log.file.enabled=false` (an old key, so the old revision won).
+
 ```bash
 kubectl config current-context                                   # must be orbstack
 kubectl apply -f logging/k8s/polaris-logs-pvc.yaml -n datahub-hynix   # FIRST; Pending until a pod mounts it
 helm lint charts/polaris
-helm upgrade --install benchmarks-polaris ./charts/polaris -n datahub-hynix --dry-run=client --debug
-helm upgrade --install benchmarks-polaris ./charts/polaris -n datahub-hynix
+helm upgrade --install benchmarks-polaris ./charts/polaris -f charts/polaris/values.yaml -n datahub-hynix --dry-run=client --debug
+helm upgrade --install benchmarks-polaris ./charts/polaris -f charts/polaris/values.yaml -n datahub-hynix
 kubectl -n datahub-hynix get pvc polaris-logs-pvc                            # Bound after the roll, class local-path
 kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- \
   grep -E 'quarkus.log.file|rotation' /deployments/config/application.properties

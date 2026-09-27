@@ -31,3 +31,10 @@ class) is applied with kubectl before the upgrade, and the chart gained
 `logging.file.storage.existingClaim` — `storage.yaml` skips its own claim when set, `deployment.yaml`
 mounts the named one. local-path binds WaitForFirstConsumer, so `Pending` after the apply is normal.
 Why the chart claim was missing was not established from here (no cluster reach).
+
+## Follow-up — the first dry run rendered file logging OFF
+My step-2 commands had no `-f`. Helm then copies the previous revision's user-supplied values
+(`copying values from old release ... version=12`), which carry the old `enabled: false`; only keys
+revision 12 never had (`existingClaim`) came from the new chart. The runbooks always pass
+`-f polaris/values.yaml` — I dropped it. PLAN commands fixed. Before the first `-f` upgrade, check
+revision 12 for `--set` values that are not in values.yaml, or they are dropped.
