@@ -48,6 +48,12 @@ under its own name — no collision. `…-2tklb.log` (231675 B, last write 22:48
 is idle, or the HPA removed it and this is the first real orphan. The collision half of this entry is
 closed; the orphan half moves to the batch job (P1), which must seal files like this one.
 
+**ORPHAN CONFIRMED (Kade, ~23:05 KST):** only `bmt4t` and `rz56d` are running; the HPA removed `2tklb`.
+`polaris-benchmarks-polaris-7f4d69c67c-2tklb.log` (22:37–22:48) will never roll. Every line in an
+unrotated file belongs to one hour — a pod rolls before writing the first line of a new hour — so the
+seal name is that file's last-write hour: `…-2tklb.log.2026-09-27-22.gz`. Its last line may be cut
+if the pod was killed mid-write (D3: `malformed/`). This file is P1's first real sealing fixture.
+
 
 `logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
 `logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the

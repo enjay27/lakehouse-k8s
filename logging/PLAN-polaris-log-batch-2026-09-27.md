@@ -92,7 +92,7 @@ kubectl -n datahub-hynix exec deploy/benchmarks-polaris -- sh -c 'tail -2 /deplo
 - [x] **FAILED PREMISE: a second replica appeared the same day (HPA)** — `#48` confirmed by experiment; switched to one file per pod
 - [x] per-pod files: `polaris-<pod>.log` for each of 3 running pods, names = pod names (22:37)
 - [x] after the hour: `polaris-<pod>.log.<hour>.gz` per pod that wrote — `bmt4t`, `rz56d` → `-22.gz` at 23:02
-- [ ] orphan: `2tklb`'s file unrotated since 22:48 — pod idle or removed? (the batch job's sealing case)
+- [x] orphan: `2tklb` removed by the HPA; its file (22:37–22:48) is unrotated for good — the job seals it as `-22.gz`
 - [x] shared-era files moved to `legacy-shared/` so the batch job never reads them (22:40)
 - [ ] container restart mid-hour (`kill 1`) does **not** roll (rotate-on-boot=false) and nothing is lost
 - [ ] console output and the Fluent Bit tiers are unchanged apart from the `+09:00` offset
