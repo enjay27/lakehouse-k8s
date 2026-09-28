@@ -41,11 +41,12 @@ single most important thing on this page.
   **Query `threadName.keyword`, never the bare field.**
 - **OpenSearch:** **3.5.0**, runs in **Docker, outside the cluster and outside this repo**.
   Index templates and ISM policies are ours (`logging/opensearch/`).
-- **VictoriaLogs:** **GONE 2026-09-18** — release, shipper and its 50 Gi PVC all removed.
-  `logging/fb-values.yaml` is history, not configuration.
+- **VictoriaLogs:** **GONE 2026-09-18** — release, shipper and its 50 Gi PVC all removed, and
+  its client code on 2026-09-29. The shipper's values survive only as
+  `tests/fixtures/fb-values-shipper.yaml`, the log-coverage oracle's input: a fixture, not configuration.
 
 ### Suite
-- **Language:** Python 3.11+, dependencies via `uv` (`pyproject.toml` / `uv.lock`).
+- **Language:** Python 3.12+ (`.python-version`), dependencies via `uv` (`pyproject.toml` / `uv.lock`).
 - **Runtimes:** Jupyter notebooks (`.ipynb`), pytest.
 - **Core libraries:** pandas, numpy, requests, psycopg2, sqlalchemy, matplotlib, seaborn.
 
@@ -63,11 +64,11 @@ charts/               LOCAL charts — this repo is the source of truth
 images/               container images built from this repo — polaris-log-batch/ (Dockerfile + script)
 releases/             VALUES-ONLY against upstream charts — airflow argo datahub
                         fluent-bit jupyter kafka schema-registry spark
-logging/              the audit-logging domain: SPEC, guides, opensearch/ templates,
-                        candidates/ (Lua harnesses), scripts/ (step2-step14)
+logging/              the audit-logging domain: README (start here), SPECs, handoffs, k8s/ (log PVC),
+                        opensearch/ templates + ISM, scripts/ (Lua tests, step2-step16)
 schema/               Polaris DDL. schema_v3.sql is the ASF-shipped file and THE AUTHORITY
 src/                  reusable Python modules imported by notebooks and tests
-tests/                pytest suite (22 modules)
+tests/                pytest suite (24 modules) + fixtures/
 notebooks/            per-domain test notebooks: admin availability etl lifecycle
                         privilege purge rbac scenario error-cases datahub-error-cases
 diagnostics/          inspect notebooks, plus:
@@ -75,9 +76,13 @@ diagnostics/          inspect notebooks, plus:
   outputs/banked/       TRACKED evidence — runs/ baselines/ reports/
   outputs/captures/     GITIGNORED — hundreds of MB, never committed
 runbooks/             deterministic operational runs
-archive/              superseded docs, and the two pre-merge CLAUDE.md / MEMORY.md files
-docs/                 MERGE-2026-09-21.md — what this merge did and why
+docs/                 MERGE-2026-09-21.md — what the merge did and why
+                        DELETED-2026-09-29.md — every file the cleanup removed, and how to read it back
 ```
+
+**A path an older note names may not exist any more.** Superseded documents are deleted, not moved
+to an `archive/` directory: look the path up in `docs/DELETED-2026-09-29.md` and read it with
+`git show v-archive/pre-cleanup-2026-09-29:<path>`.
 
 **`charts/` vs `releases/` is load-bearing.** A file under `charts/` changes what ships. A file
 under `releases/` is a values overlay on someone else's chart. Do not move things between them.
@@ -115,13 +120,15 @@ never assume one's variables apply to another. Selected with `init_env(<env>)`:
 ### Notebook import convention
 ```python
 import sys, pathlib
-sys.path.insert(0, str(pathlib.Path.cwd().parent.parent / "src"))
+_ROOT = pathlib.Path.cwd()
+while not (_ROOT / "src").is_dir() and _ROOT != _ROOT.parent:   # walk up to the repo root
+    _ROOT = _ROOT.parent
+sys.path.insert(0, str(_ROOT / "src"))
 from polaris_test_utils import *
 init_env("local")
 require_not_prod("...")     # mutating notebooks only
 ```
-> **Merge note:** notebooks moved one level deeper (`notebooks/<domain>/`), so the bootstrap
-> depth changed. Fixing these is a tracked follow-up, not done in the merge commit.
+The walk-up works at any depth; `tests/test_notebook_bootstrap.py` checks every notebook resolves it.
 
 ---
 
@@ -328,3 +335,6 @@ git log --all -S'<code string>'      # pickaxe across every ref
 
 `git blame` on `main` stops at the merge commit — that is expected. Cross the seam with
 `--all` searches, or check out the archive ref. See `docs/MERGE-2026-09-21.md`.
+
+The tree **before the 2026-09-29 cleanup** is branch `archive/pre-cleanup-2026-09-29` and tag
+`v-archive/pre-cleanup-2026-09-29` (`cf6eae8`); what it removed is `docs/DELETED-2026-09-29.md`.

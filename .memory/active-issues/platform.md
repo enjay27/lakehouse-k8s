@@ -201,7 +201,7 @@ the Polaris mount itself. So:
   which the API server rejects outright. `enabled: false` is the only reason nobody hit it. So
   **`#38`'s "the handler is off" was also load-bearing for the deployment rendering at all.**
 - Sequence, finalizer trap and per-step verification:
-  [`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](../logging/RUNBOOK-log-pvc-removal-2026-09-18.md).
+  [`logging/RUNBOOK-log-pvc-removal-2026-09-18.md`](../../docs/DELETED-2026-09-29.md).
   **Nothing has been run** — the repo no longer mounts the PVC, the cluster still does.
 
 **The finding above is unaffected.** Quarkus still has no age-based retention; that is why "3
@@ -233,7 +233,7 @@ every run** and refuses to proceed otherwise — verified by reintroducing the e
 managed and in state `hot`, action `transition`, step `attempt_transition_step`,
 `step_status: condition_not_met` — **that last line is the one that matters: ISM is actively
 evaluating the age condition, not merely attached.** Figures and dates in
-[`roadmap.md`](roadmap.md).
+[`roadmap.md`](../roadmap/platform.md).
 
 **ISM stores more than we wrote, and it is not drift.** The stored `delete` action carries a
 `retry: {count: 3, backoff: exponential, delay: 1m}` block, plus `error_notification: null`,
@@ -634,7 +634,7 @@ committed and a resolution that then dereferenced null.
 requests in 60s) on a single-node cluster, and nothing was watching. For
 `polaris-learning`: this is the **repeatable provoker** `HANDOFF-500-coverage` §4.1 says does
 not exist — API-only, no `kubectl`, no `pg_wal_replay_pause()`. Detail in
-[`sessions/2026-09-07-500-coverage-review.md`](sessions/2026-09-07-500-coverage-review.md).
+[`sessions/2026-09-07-500-coverage-review.md`](../sessions/2026-09-07-500-coverage-review.md).
 
 **#14 — The noise filter governs 4.5% of the volume, and policy v2 is not running yet. OPEN.**
 
@@ -790,9 +790,9 @@ Run `1788760757`: **8 of 8** WARN/ERROR records carry an exception payload, stor
 VictoriaLogs flattens nested objects, so a query for `exception` matches nothing and a
 `grep -c stackTrace` finds nothing — **two searches for a name this build does not emit,
 agreeing with each other**, which is what the `0 of 5` was. Query `exception.*`, never
-`exception`. The fact with its numbers is in [`roadmap.md`](roadmap.md), *Handing back*; the
+`exception`. The fact with its numbers is in [`roadmap.md`](../roadmap/platform.md), *Handing back*; the
 review that re-proved it is
-[`sessions/2026-09-07-500-coverage-review.md`](sessions/2026-09-07-500-coverage-review.md).
+[`sessions/2026-09-07-500-coverage-review.md`](../sessions/2026-09-07-500-coverage-review.md).
 Only the `%D` half of that row is still open, and it is Polaris-side.
 
 **READING THE REPORT STREAM — three false findings came from not doing this.** Every query
@@ -938,7 +938,7 @@ they said.** 2026-09-14. Measured from the OpenSearch report + log exports, not 
   it deliberately, so a replayed record is not re-dated — and must be argued as one.
 
 Full derivation, including the wrong turn that nearly filed this as a constant 30s shift, in
-[`sessions/2026-09-14-window-skew-review.md`](sessions/2026-09-14-window-skew-review.md).
+[`sessions/2026-09-14-window-skew-review.md`](../sessions/2026-09-14-window-skew-review.md).
 
 **2026-09-15 — FIX CONFIRMED by run `1789460891`; two corrections.** Bursts started +11.5s and
 +6.6s past the boundary; errors per row 2 / 251 == detail docs, by label, no shift. (a) **The tick
@@ -946,7 +946,7 @@ does drift**: same pod, `seq` unbroken 440→854, offset 3.673s → 2.77s — di
 not the timer. The `Interval_Sec + 1.5` lag is immune; a hardcoded 3.673 is not. (b) The run put
 **every phase in one window**, so per-phase window gates (Gate 4's grant count on a busy role) read
 the whole matrix. Downgrade to MONITOR once phases are one-per-window again.
-[`sessions/2026-09-15-rerun-1789460891-review.md`](sessions/2026-09-15-rerun-1789460891-review.md).
+[`sessions/2026-09-15-rerun-1789460891-review.md`](../sessions/2026-09-15-rerun-1789460891-review.md).
 
 ## Resolved, kept because they recur
 
@@ -1571,7 +1571,7 @@ with whether the two table comments made it in (absent if the script that ran pr
 INFO (Kade's decision). **None of it has been rendered, linted or applied** — prepared in a
 Cowork session with no `kubectl`/`helm`/`psql` reach. This is written-not-running
 configuration, which in this repo is the whole game. Until step 3–5 of
-[`polaris/RUNBOOK-upgrade-1.6.0.md`](../polaris/RUNBOOK-upgrade-1.6.0.md) have been run and
+[`polaris/RUNBOOK-upgrade-1.6.0.md`](../../docs/DELETED-2026-09-29.md) have been run and
 read back from the running object, **the running Polaris is 1.3.0 with DEBUG console output**
 and the values file describes something else. Do not answer "what log level is Polaris at"
 from the file.
@@ -2010,7 +2010,7 @@ matches `kube.*`. **Fluent Bit routes a record to every matching output** and bo
 **Consequence for measurement, which is why this is filed rather than just fixed:** any count
 over `k8s-logs` is **~2x inflated**, so it must be deduplicated on `sequence` before it is
 compared with anything — including the tier-1 vs tier-2 comparison in
-[`PLAN-opensearch-cutover`](../logging/PLAN-opensearch-cutover-2026-09-08.md) §7.
+[`PLAN-opensearch-cutover`](../../docs/DELETED-2026-09-29.md) §7.
 
 **And `sequence` cannot carry that load either.** It is the JBoss per-`ExtLogRecord` counter,
 **per JVM from JVM start** (2026-09-03 audit: 3723/3724 = ~3.7k records since JVM start). It
@@ -2250,7 +2250,7 @@ render; its APP_ALLOW check would have failed. Fix is the full command with the 
 repo Lua reproduces all 64 report rows with 0 mismatches over 30 fields; G1–G6, G8 and **Gate 2** pass
 (`probe_tbl` 1941 == last 2xx write). v4 integers map `long`. #27 stays open only for template (#25), the
 1800 revert and ISM. **2026-09-16 later: template applied (37/37), nested-namespace key PASS (run 1789535345,
-one row, commit_count 2) — #27 open only for the 1800 revert and ISM.** [`sessions/2026-09-16-v4-phase0-matrix-window.md`](sessions/2026-09-16-v4-phase0-matrix-window.md). What changes when it rolls:
+one row, commit_count 2) — #27 open only for the 1800 revert and ISM.** [`sessions/2026-09-16-v4-phase0-matrix-window.md`](../sessions/2026-09-16-v4-phase0-matrix-window.md). What changes when it rolls:
 app-log allow-list (`IcebergExceptionMapper`, `PolarisServiceImpl`; WARN/ERROR exempt), dropped lines
 counted as `report_type: app_dropped`, `commit_count/commit_ms_*` on table/view rows, zero-carry
 deleted (`carried_rows` gone), clientSecret guard. `WINDOW_SECONDS` stays **30** — the 1800 revert is
@@ -2391,7 +2391,7 @@ orphan timeout → stored with `held_orphan: true`). Lua ships as ConfigMap `pol
   Polaris assigns `requestId` without a client header (production question — if not, 404 app lines are kept).
 - **Order:** tests → `kubectl kustomize` + helm dry-run → step2 (two args) → **`kubectl apply -k fluent-bit/`
   BEFORE `helm upgrade`** (missing ConfigMap = ContainerCreating) → step3 → step9 re-apply (41 fields) →
-  traffic → step10/11 → runbook B/C/D. [`logging/archive/2026-09-16-RUNBOOK-lua-hot-reload.md`](../logging/archive/2026-09-16-RUNBOOK-lua-hot-reload.md).
+  traffic → step10/11 → runbook B/C/D. [`logging/archive/2026-09-16-RUNBOOK-lua-hot-reload.md`](../../docs/DELETED-2026-09-29.md).
 - **Until it rolls, #27's rule stands:** the running release is v4 and any `helm upgrade` of the *old* values
   still needs `--set-file`. After v5 is rolled, `--set-file` must NOT be used (it would re-add a luascripts key
   nobody reads, harmless, but a sign the wrong runbook is being followed).

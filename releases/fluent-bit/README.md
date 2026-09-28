@@ -15,8 +15,8 @@ PVC; `logging/fb-values.yaml` is its values file and is history, not configurati
 | `values.yaml.bak` | an actual backup, from before the OpenSearch cutover. Not current, not a variant |
 
 Everything else about the pipeline — schema, index templates, retention, runbooks, sample documents —
-is in [`../logging/`](../logging/README.md). The specification is
-[`../logging/SPEC-polaris-audit-logging.ko.md`](../logging/SPEC-polaris-audit-logging.ko.md).
+is in [`../logging/`](../../logging/README.md). The specification is
+[`../logging/SPEC-polaris-audit-logging.ko.md`](../../logging/SPEC-polaris-audit-logging.ko.md).
 
 ## The three traps
 

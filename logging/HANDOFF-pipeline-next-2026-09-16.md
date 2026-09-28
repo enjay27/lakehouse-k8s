@@ -7,7 +7,7 @@
 > `SPEC-polaris-audit-logging.ko.md` §11-21 (the per-window row caps) and §11-22 (slower outage detection).
 
 **Final state of the 2026-09-16 Cowork session** (Lua refactor, thread-field trim, whole-pipeline review, schema v6 — commits
-`5315e0d`..the one that added this line). Supersedes [`archive/2026-09-16-HANDOFF-audit-log-next.md`](archive/2026-09-16-HANDOFF-audit-log-next.md).
+`5315e0d`..the one that added this line). Supersedes [`archive/2026-09-16-HANDOFF-audit-log-next.md`](../docs/DELETED-2026-09-29.md).
 Reviews: `REVIEW-pipeline-2026-09-16.md` (deleted 2026-09-29, see `docs/DELETED-2026-09-29.md`) (decided, rolled except P5/P10) ·
 `REVIEW-lua-refactor-2026-09-16.md` (deleted 2026-09-29, see `docs/DELETED-2026-09-29.md`) (rolled). Issues: `#30` `#31` `#32` verified, `#29` dropped,
 `#18` closed by P2 (the output is gone), `#24` `#4` open. Plan: `PLAN-audit-log-todo-2026-09-16.md` (deleted 2026-09-29, see `docs/DELETED-2026-09-29.md`).

@@ -1,6 +1,6 @@
 # Merge follow-ups — deferred by the 2026-09-21 merge
 
-**Open: M3, M6, M10. Everything else is closed** (M1, M8-suite and M9 on 2026-09-21; the rest in the
+**Open: M3, M6. Everything else is closed** (M1, M8-suite and M9 on 2026-09-21; the rest in the
 2026-09-29 cleanup on branch `refactor/2026-09-29-cleanup`).
 
 | # | what | state |
@@ -14,4 +14,4 @@
 | M7 | `repository-map-*.md` describe the pre-merge layout | **DONE 2026-09-29** — deleted; `CLAUDE.md` carries the layout |
 | M8 | Neither DoD gate had run | **DONE 2026-09-29.** Suite: pytest green (1069). Platform: `helm lint` all four local charts; `--dry-run=client` minio, polaris, polaris-log-batch and fluent-bit. **postgresql still not dry-run** — its `postgresql-ha` subchart is not downloaded (`helm dependency build` first) |
 | M9 | 20 of 21 test modules failed to import | **FIXED 2026-09-21** |
-| M10 | A clone cannot pass the suite until `fetch_specs.sh` runs | **OPEN** until the root `README.md` says so |
+| M10 | A clone cannot pass the suite until `fetch_specs.sh` runs | **DONE 2026-09-29** — the root `README.md` says so |
