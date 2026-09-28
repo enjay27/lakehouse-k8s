@@ -263,9 +263,14 @@ nesting had last been correct.
 Never commit a state you have not verified. Run the gate for your half, then:
 
 ```bash
-git status            # check BEFORE -A, never after
-git add -A && git commit
+git status                  # check BEFORE staging
+git add <explicit paths>    # never -A (even scoped to a directory) while the tree holds work that isn't yours
+git diff --cached --stat    # read it BEFORE committing
+git commit
 ```
+
+`git add -A diagnostics …` once committed 884 lines of Kade's uncommitted notebook edits into a
+cleanup commit (2026-09-29, caught and rebuilt; `.memory/sessions/2026-09-29-repo-cleanup.md`).
 
 ### Message style
 
