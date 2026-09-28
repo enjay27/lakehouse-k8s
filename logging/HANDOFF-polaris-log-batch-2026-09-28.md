@@ -21,13 +21,15 @@ Observability team (not us) ---------------------> fetch from the PVC -> OpenSea
 | `polaris-logs-pvc` (`logging/k8s/polaris-logs-pvc.yaml`) | **live** on OrbStack, Bound | Kade, 2026-09-27 |
 | Polaris file logging (`charts/polaris/values.yaml`): JSON, `polaris-${HOSTNAME}.log`, `.yyyy-MM-dd-HH.gz`, `TZ=Asia/Seoul`, rotate-on-boot off | **live**, verified from the running pods | `-18.gz` (09-27), per-pod `-22.gz` at 23:02, `2tklb` orphan |
 | One file per pod, not a shared file | **decided by measurement** | step15: shared lost 44.5 % / 44.2 % of load, 61 % of real traffic; per-pod 0 (`#48`, closed) |
-| Batch script `images/polaris-log-batch/polaris_log_batch.py` | **written, tested** — not yet run on the cluster | 40 tests green; step16 parity with the real Lua identical on 5 seeds |
-| Image `images/polaris-log-batch/Dockerfile` | **written, never built** | — |
-| Chart `charts/polaris-log-batch/` (SA, Role, RoleBinding, CronJob) | **written, never rendered or installed** | no helm in the Cowork session |
+| Batch script `images/polaris-log-batch/polaris_log_batch.py` | **live** — run on the cluster 2026-09-29 | 40 tests green; step16 parity identical on 5 seeds; manual run = local rehearsal on every count |
+| Image `images/polaris-log-batch/Dockerfile` | **built** `polaris-log-batch:0.1.0` (`6cbd52db993f`) into OrbStack's Docker | 2026-09-29 |
+| Chart `charts/polaris-log-batch/` (SA, Role, RoleBinding, CronJob) | **installed**, release `polaris-log-batch` rev 1; memory limit raised to **2Gi** | lint + dry-run clean; `can-i list pods` yes; `.memory/sessions/2026-09-29-polaris-log-batch-first-run.md` |
 | Fluent Bit tiers 2/3 | still running, untouched | — |
 
-Everything that says "written" was produced in a Cowork session with no cluster reach and no `helm`:
-**nothing in the batch half has been built, rendered or run yet.**
+**2026-09-29: steps 0–3 below are DONE** (and step 4, see the session record). The first manual run
+published 27 hours (`20260927-22` .. `20260929-00`), moved 2 rolls + 14 orphans to `done/`, and matched a
+local `--dry-run` rehearsal on every count. The rehearsal peaked at **838 MB** RSS against the old 1Gi
+limit (step15's 64 MB files), hence 2Gi. Remaining: step 5 onwards.
 
 ## Do next, in this order
 

@@ -329,3 +329,19 @@ cluster it describes no longer exists.
   2026-09-10, with `.keyword` throughout and a rule that row-level gates pin `window_start` instead
   of sorting by time. The notebook had already diverged from the guide, which is how Gate 5 returned
   63 requests over 4 docs while the guide's own query for it returns nothing.
+
+## Polaris log batch — first cluster run, 2026-09-29
+
+Release `polaris-log-batch` rev 1, image `polaris-log-batch:0.1.0` (`6cbd52db993f`), CronJob `3 * * * *`
+`Asia/Seoul`. Story: [`sessions/2026-09-29-polaris-log-batch-first-run.md`](../sessions/2026-09-29-polaris-log-batch-first-run.md).
+
+| fact | value |
+|---|---|
+| input on the PVC before the first run | 17 files, **130,393,487 bytes** (2 rolls, 1 live `.log`, 14 orphan `.log`) |
+| local `--dry-run` rehearsal (macOS, Python 3.12) | **838 MB peak RSS**, 2.5 s — 82 % of the old 1Gi limit, so the limit is now **2Gi** |
+| manual Job `log-batch-manual-1` | Complete in **9 s**; 27 hours published `20260927-22` .. `20260929-00` |
+| manual run vs rehearsal | **identical** on lines_in / processed / dropped / malformed / access_* / errors_kept / distinct_* for all 27 hours |
+| `lines_in == processed + dropped + malformed` | holds on 27/27; `pod_list_error` null on 27/27 |
+| the hours with data | `-22` 1,669 in / 782 processed · `-23` 18,872 / 9,391 · `0928-00` 47 / 0 (all step15 load and pod starts) |
+| first scheduled Job | started **02:03:00 KST** exactly, 4 s, published exactly one hour (`20260929-01`, empty) |
+| moved to `done/` | 2 rolls + **14 orphans** (as `….<hour>.orphan`); live `q6pz6` file, `legacy-shared/`, `sizetest/` untouched |

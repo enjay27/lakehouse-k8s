@@ -107,8 +107,9 @@ unpublished hour from files still in place, to identical bytes.
    `images/polaris-log-batch/` (Dockerfile, the script baked in) and chart `charts/polaris-log-batch/`
    (ServiceAccount, pods-read-only Role, CronJob). The Polaris chart no longer mentions the batch; the
    two share only `polaris-logs-pvc`, and the batch chart states the Polaris facts it depends on under
-   `polaris:` (claim, logsDir, podPrefix, podSelector). NOT rendered or built from Cowork. Then:
-   parallel run with Fluent Bit tiers 2/3; reconcile.
+   `polaris:` (claim, logsDir, podPrefix, podSelector). **Built, installed and run 2026-09-29**
+   (limit 2Gi after an 838 MB rehearsal peak; `.memory/sessions/2026-09-29-polaris-log-batch-first-run.md`).
+   Then: parallel run with Fluent Bit tiers 2/3; reconcile.
 6. Handover contract to the Observability team; retire tiers 2/3.
 
 ## Step 2 — what the spike must establish (from the running object)

@@ -53,14 +53,15 @@ containerSecurityContext:
     drop: ["ALL"]
 
 # The whole hour's lines are held in memory while they are judged; size the limit to production's
-# hourly volume before going there.
+# hourly volume before going there. Measured 2026-09-29: a local --dry-run over the PVC's 130 MB
+# (step15's 18,872-line hour 20260927-23) peaked at 838 MB RSS -- 82 % of the old 1Gi. Hence 2Gi.
 resources:
   requests:
     cpu: 100m
     memory: 128Mi
   limits:
     cpu: "1"
-    memory: 1Gi
+    memory: 2Gi
 
 # ReadWriteOnce: on a multi-node cluster the Job must land on the node holding the log volume
 # (podAffinity to the Polaris pods), or the volume must be RWX. OrbStack is one node: empty.

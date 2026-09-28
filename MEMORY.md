@@ -11,10 +11,10 @@ memory tree merged. It surfaced four things ([session](.memory/sessions/2026-09-
 bring MinIO up EMPTY** (`#53`, do not upgrade it before reading); **Fluent Bit dropped 2 chunks to
 OpenSearch on 09-27** (`#49`); matrix reports since 09-18 carry "Polaris 1.3.0" in their header (fixed forward).
 
-**Log batch** (`logging/HANDOFF-polaris-log-batch-2026-09-28.md`): per-pod hourly JSON files on
-`polaris-logs-pvc` are **live** (`#48` closed: shared file lost 44.5 %). The batch script is tested (40 tests,
-Lua parity on 5 seeds). **NEEDS KADE:** docker build, helm lint + dry-run + install of
-`charts/polaris-log-batch/`, one manual Job run.
+**Log batch** (`logging/HANDOFF-polaris-log-batch-2026-09-28.md`): **LIVE since 2026-09-29** — release
+`polaris-log-batch`, hourly at HH:03 KST, limit 2Gi (rehearsal peaked 838 MB). First run published 27 hours,
+matched the local rehearsal on every count, moved 14 orphans ([session](.memory/sessions/2026-09-29-polaris-log-batch-first-run.md)).
+Next: Lua parity on real traffic, parallel run vs Fluent Bit tiers 2/3.
 
 **Lua pipeline:** `WINDOW_SECONDS` target **3600** (decided 2026-09-21) is **not rolled**; live is still the
 verification 30 (`logging/HANDOFF-pipeline-next-2026-09-16.md`). Roll with `bash releases/fluent-bit/apply-lua.sh`.

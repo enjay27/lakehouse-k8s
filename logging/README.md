@@ -5,7 +5,7 @@ Two pipelines, one of them replacing the other:
 | pipeline | state |
 |---|---|
 | **Fluent Bit Lua** — DaemonSet `benchmarks-fluent-bit` tails Polaris stdout → OpenSearch `k8s-logs-*` / `polaris-logs-*` / `polaris-report-*` (schema v6) | **live** — configuration in `../releases/fluent-bit/` |
-| **Batch** — Polaris writes one JSON file per pod to PVC `polaris-logs-pvc`, rolled hourly (KST); CronJob `polaris-log-batch` processes each closed hour | file logging **live**; batch **written and tested, never built or run on the cluster** |
+| **Batch** — Polaris writes one JSON file per pod to PVC `polaris-logs-pvc`, rolled hourly (KST); CronJob `polaris-log-batch` processes each closed hour | file logging **live**; batch **live** since 2026-09-29 (release `polaris-log-batch`, first 27 hours published) |
 
 Documents deleted in the 2026-09-29 cleanup are listed in
 [`../docs/DELETED-2026-09-29.md`](../docs/DELETED-2026-09-29.md), with the command that recovers each one.

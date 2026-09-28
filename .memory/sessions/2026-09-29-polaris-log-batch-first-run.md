@@ -1,0 +1,66 @@
+# 2026-09-29 — the log batch, built, installed and run on the cluster
+
+First session on Kade's Mac rather than in Cowork, so `kubectl` / `helm` 4.1.4 / Docker 29.4 all
+reached the cluster (context `orbstack`, Kubernetes 1.35.6). Everything the 09-28 handoff marked
+"NEEDS KADE" was done here, in its order.
+
+## Preconditions (01:48 KST, read-only)
+- One Polaris pod, `54c794779c-q6pz6`, Running 25 h. Labels `instance`/`name` = `benchmarks-polaris`,
+  `fsGroup` 10001, `runAsUser` 10000, claim `polaris-logs-pvc` — the batch chart's `polaris:` block
+  matches. Polaris does **not** set `runAsGroup`; the batch sets 10001. Harmless: files land 10000:10001
+  either way (setgid directory + fsGroup).
+- Files named `polaris-benchmarks-polaris-*`; no `polaris-sizetest-*` being written, so step15's test
+  settings are not live. No `movetest/`.
+- No CronJob / Role / ConfigMap from `9ec82a4` (the batch inside the Polaris chart) — it was never applied.
+- 40 batch tests green; `helm lint` + `--dry-run=client --debug` clean. Job pod labels carry
+  `polaris-log-batch`, never Polaris's selector.
+
+## The one change: memory limit 1Gi -> 2Gi
+Before running anything on the PVC, copied its 17 files (130,393,487 bytes) into a scratchpad with
+`kubectl exec … cat`, restored their mtimes from `stat -c %Y` in the pod (the quiet/deferred logic reads
+mtime), and ran `polaris_log_batch.py --no-pod-list --dry-run` under `/usr/bin/time -l`:
+**peak RSS 838 MB, 2.5 s**, 27 hours, invariant held on all 27, 0 malformed. 838 MB is 82 % of the
+1Gi limit — an OOMKill on the first run was a live risk, driven entirely by step15's two ~64 MB files
+(hour `20260927-23`, 18,872 lines, ~6.9 KB/line). Kade chose 2Gi. Steady-state hours are tiny; revisit
+when sizing for production.
+
+Measured on macOS with Python 3.12, the image runs 3.11-slim: comparable, not identical. The in-cluster
+peak was not measured (the Job pod was gone before anything could sample it; no metrics-server check made).
+
+## Build, install, manual run (01:51–01:52)
+- `docker build -t polaris-log-batch:0.1.0` -> `6cbd52db993f`. `.dockerignore` kept the stray
+  `__pycache__` out.
+- `helm upgrade --install polaris-log-batch … -f charts/polaris-log-batch/values.yaml` -> revision 1.
+  `auth can-i list pods` as the SA: **yes**. CronJob: `3 * * * *`, `Asia/Seoul`, limit 2Gi.
+- `log-batch-manual-1`: **Complete in 9 s**. 27 `published` events, `20260927-22` .. `20260929-00`.
+  **Every counted field identical to the local rehearsal** (lines_in, processed, dropped, malformed,
+  access_*, errors_kept, distinct_*). `lines_in == processed + dropped + malformed` on all 27;
+  `pod_list_error: null` on all 27.
+
+| hour | lines_in | processed | dropped | malformed |
+|---|---|---|---|---|
+| 20260927-22 | 1,669 | 782 | 887 | 0 |
+| 20260927-23 | 18,872 | 9,391 | 9,481 | 0 |
+| 20260928-00 | 47 | 0 | 47 | 0 |
+| 20260928-01 .. 20260929-00 | 0 | 0 | 0 | 0 (24 empty hours, published as empty files) |
+
+PVC afterwards: `processed-logs/` 27 files (`20260927-23.jsonl` 124.5 MB / 9,391 lines),
+`aggregated-logs/` 27, `malformed/` empty; the two `-22.gz` rolls and **14 orphan `.log` files** in
+`done/20260927/` and `done/20260928/` (names `…log.<hour>.orphan`, including `2tklb` and step15's
+two 64 MB files). Untouched as required: the live `q6pz6` file (reported under `idle_log_files`),
+`legacy-shared/`, `sizetest/`. Checkpoint `last_published: 20260929-00`.
+
+## First scheduled run
+`polaris-log-batch-29843583`, pod started **2026-09-28T17:03:00Z = 02:03:00 KST** (the `timeZone` field
+works), Complete in 4 s. Published **exactly one hour**, `20260929-01`: 0 lines (no traffic), `pod_list_error`
+null, nothing moved, `q6pz6` reported idle (last line `20260928-00`). Checkpoint `last_published: 20260929-01`,
+28 files in `processed-logs/`. Handoff step 4 passes.
+
+## Not done
+- Step 5 of the handoff (step16 Lua parity on real per-pod files). The only real hours on disk are the
+  step15 load test's; the next real traffic is a better input.
+- Parallel run against Fluent Bit tiers 2/3 and the count reconciliation.
+- `processed-logs/20260927-23.jsonl` is 124.5 MB of step15 load on a 5Gi PVC. Retention is by mtime
+  (SPEC §보존): the outputs go ~2026-10-02 01:52 KST (3 days after publication), but the moved raw files
+  in `done/` keep their **original** mtime, so `done/20260927/` goes ~09-30 23:20 — 1.9 days after
+  publication, not the 3 PLAN D5 says. The SPEC documents this; PLAN D5's wording is the looser one.
