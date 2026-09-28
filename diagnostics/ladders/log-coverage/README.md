@@ -1,332 +1,62 @@
-# `log-coverage/` — what the Polaris log pipeline keeps, and what it throws away
+# `log-coverage/` — Polaris API traffic, and what the log pipeline keeps of it
 
-## Concept
+Drives every Polaris operation the vendored OpenAPI specs name, at every status this build can
+produce (a **286-cell grid**), and checks what reached OpenSearch through the Fluent Bit
+DaemonSet (`benchmarks-fluent-bit`, schema v6). The logging side of the pipeline is described in
+[`../../../logging/README.md`](../../../logging/README.md).
 
-Polaris writes JSON to `/deployments/logs/polaris.log` on a PVC. A Fluent Bit Deployment
-(`fb-polaris-shipper`, in `datahub-hynix`) tails it, splits the Quarkus access-log line into
-typed fields, applies a **retention policy** written in Lua, and posts what survives to
-VictoriaLogs.
+**History.** Until 2026-09-18 a second pipeline (`fb-polaris-shipper` → VictoriaLogs) ran beside the
+DaemonSet, and the v1 notebook `polaris_log_coverage.ipynb` measured that one. Both are gone; the
+v1 notebook and its documents were deleted on 2026-09-29 (see
+[`../../../docs/DELETED-2026-09-29.md`](../../../docs/DELETED-2026-09-29.md)).
 
-```
-Polaris (Quarkus, JDK21)
-  └─ JSON per line → /deployments/logs/polaris.log        on PVC polaris-shared-logs-pvc
-       └─ fb-polaris-shipper tails it read-only
-            ├─ [modify]          message→_msg, timestamp→_time, add app=polaris
-            ├─ [lua] polaris_access_log    parse the access-log line into fields
-            ├─ [lua] polaris_noise_filter  decide what is kept      ← the thing under test
-            ├─ [record_modifier] drop processName, loggerClassName, processId
-            └─ [http] → VictoriaLogs /insert/jsonline
-```
+## The two halves
 
-The policy — **v3, deployed 2026-09-04** (`fb-values.yaml` sha256 `89aa2624f1f5…`), first
-match wins:
+The run is split on purpose: **traffic** knows nothing about logging, and **verification** knows
+nothing about how the traffic was made. `src/make_traffic.py` and `src/traffic_helpers.py` never
+import `log_coverage` or `os_report`; `tests/test_make_traffic.py` asserts that import graph.
+Why: [`PLAN-split-traffic-and-verification.md`](PLAN-split-traffic-and-verification.md).
 
-| # | rule | effect |
-|---|---|---|
-| 0 | tag `polaris.report` | becomes the **flush report** — see below |
-| 1 | `level` is ERROR or WARN | keep |
-| 2 | not an access-log record | keep, untouched |
-| — | *every access-log record is **counted** here, before any decision* | |
-| 3 | `http_status >= 400`, or unparseable | keep — **all of them, no cap** |
-| 4 | PUT / DELETE / PATCH | keep |
-| 5 | POST under `/api/management/` | keep — **all**; POST anywhere else, counted only |
-| 6 | GET / HEAD, 2xx | counted only |
-| 7 | anything else | keep |
-
-**Per-day deduplication is gone.** No dedup keys, no KST buckets, no cap, and no per-pod state
-for a shipper restart to lose. v3 closes the audit hole v2's first run measured — ten mutations
-that produced no record at all, including a credential reset — because **in Polaris POST is the
-create verb**, and rule 5 now keeps every management POST. It pays for that by turning
-successful reads into counts.
-
-### The scheduled flush report
-
-A `dummy` INPUT tagged `polaris.report` ticks every 30 s into the same Lua filter instance. On
-each `WINDOW_SECONDS` boundary the filter replaces the tick with an **array** of records and
-resets its counters; they land on their own stream, `{app="polaris-shipper-report",
-level="REPORT"}`, so `app:polaris` queries are unaffected.
-
-**The tick rate is not the report period.** A tick inside the current window is dropped; only
-the boundary emits. Schema v1: three record types (`summary`, `resource`, `principal`) on one
-envelope, and the field names are contract.
-
-The margin equality — `sum(resource.requests) == sum(principal.requests) == access_seen -
-parse_errors` — is the schema's only real self-check, because `errors` deliberately overlaps
-`reads` and `writes` (reads/writes counted by method, errors by status). `access_kept +
-access_counted == access_seen` looks like a second check but is **tautological**: the filter
-computes `access_kept` by subtraction. It is worth asserting only end to end, where it becomes
-a transport check on Fluent Bit's array split and VictoriaLogs' ingest.
-
-There is a **second, unrelated** Fluent Bit — a DaemonSet shipping container stdout to an
-OpenSearch in Docker. It is not part of this test. A line present in OpenSearch and absent
-from VictoriaLogs is that DaemonSet, not a finding here. `polaris_test_utils.search_logs` and
-its siblings all talk to OpenSearch; `src/vlogs.py` is the one that talks to VictoriaLogs.
-
-## Purpose
-
-For every Polaris API: *if something went wrong on this endpoint tomorrow, would there be a
-record of it?* The notebook drives the whole surface, then reports what was stored against
-what the deployed policy says should have been.
-
-Under **v2** the answer was "no" for ten endpoints before the notebook started, and
-demonstrating that concretely was the point. **v3 closes that list** — every one of the
-management mutations below is now stored — so the table is kept as the record of what was
-wrong and what the fix had to reach:
-
-| dropped, and it is a mutation | consequence |
+| file | |
 |---|---|
-| `POST /v1/principals` | a principal is created invisibly and deleted visibly |
-| `POST /v1/principal-roles`, `POST /v1/catalogs/{c}/catalog-roles`, `POST /v1/catalogs` | same shape |
-| **`POST /v1/principals/{p}/reset`** | **a credential reset leaves no trace at all** |
-| `POST /v1/{c}/tables/rename`, `POST /v1/{c}/views/rename` | the path carries no `/namespaces/{ns}/tables` segment, so it misses the kept-POST patterns |
-| `POST /v1/{c}/namespaces`, `POST /v1/{c}/namespaces/{ns}/properties` | namespace creation and property changes |
-| `POST /api/catalog/v1/oauth/tokens` | by design — so "who authenticated" is unanswerable, only "who failed" |
+| `polaris_api_traffic_v1.ipynb` | **traffic only** — drives the grid (phases B–J), waits once for a window boundary, and prints the run id, phase times and request ids the verifier needs |
+| `run_traffic.py` | the same traffic from a shell: `--dry-run` builds all 286 requests and contacts nothing; `--profile smoke` / `full` drive Polaris (**mutates**) |
+| `polaris_log_coverage_v2.ipynb` | traffic **and** verification against OpenSearch, phased on report-window boundaries |
+| `preflight_os_report.sh` | read-only: do the `polaris-*` indices exist, which report schema is flowing, which Lua is running |
+| `fetch_specs.sh` | vendors the OpenAPI documents into `spec/` (**gitignored** — a fresh clone must run it before `pytest`, or 13 tests fail and 49 error on `SpecUnavailable`); `spec/inventory.json` is tracked |
 
-Rule 5's own comment said the drop was *aimed at the OAuth token endpoint*; the blast radius
-was never bounded to it. v3 bounds it by prefix instead — `POST` under `/api/management/` is
-kept, everything else is counted — so the OAuth token endpoint is still dropped by design and
-"who authenticated" is still unanswerable, while "who created a principal" now is.
+## Documents
 
-**What v3 gave up to get there:** a successful read leaves no individual record, so per-call
-access frequency and the timestamp of any single read are gone. They survive only as counts in
-the window aggregate. That is the trade, and the notebook reports both halves.
-
-And two things the pipeline cannot tell you whatever the policy says: **there is no `%D`**, so
-no request's duration is recorded anywhere; and the access log is written when the response
-is, so **a request that hangs leaves no line at all**.
+| file | |
+|---|---|
+| [`SCENARIO-logging-test.md`](SCENARIO-logging-test.md) | the test scenario both halves implement — cited by `make_traffic`, `traffic_helpers` and `log_coverage` |
+| [`PLAN-split-traffic-and-verification.md`](PLAN-split-traffic-and-verification.md) | the boundary between the halves |
+| [`PLAN-api-status-matrix.md`](PLAN-api-status-matrix.md) | the design of the 286-cell grid (the v2 notebook's plan) |
+| [`PLAN-log-coverage.md`](PLAN-log-coverage.md) | how the oracle in `src/log_coverage.py` works |
+| [`REPORT-for-local-k8s.md`](REPORT-for-local-k8s.md) | the traffic run's report format, as the verifier reads it |
+| [`doc-what-this-test-measures.md`](doc-what-this-test-measures.md) | what the 286 cells cover, what is logged, what is summarised |
+| [`doc-api-status-matrix-results.md`](doc-api-status-matrix-results.md) | results of v2 run `1789436277` |
 
 ## How to run
 
 ```bash
-kubectl -n logging       port-forward svc/vlsingle-victoria-logs-single-server 9428:9428
-kubectl -n datahub-hynix port-forward deploy/fb-polaris-shipper 2020:2020        # metrics
-# optional, for the eventListener `events` table in cell 6:
-kubectl -n datahub-hynix port-forward pod/benchmarks-postgresql-postgresql-ha-postgresql-0 5433:5432
-
-./fetch_specs.sh          # once — vendors the 1.3.0 OpenAPI documents
-uv run jupyter lab        # then Restart & Run All on polaris_log_coverage.ipynb
+./fetch_specs.sh                                                   # once per clone
+uv run python diagnostics/ladders/log-coverage/run_traffic.py --dry-run
+export OPENSEARCH_PASS=...          # v2 notebook only; never in a config file
+uv run jupyter lab      # Restart & Run All on polaris_api_traffic_v1.ipynb or the v2 notebook
 ```
 
-`local` env only, and it mutates: a catalog, principals, roles, namespaces, a table and a
-view are created and then deleted. **The cleanup DELETEs are part of the test** — cell 9 is a
-measurement, not tidying.
+`local` env only. Both notebooks **mutate**: a catalog, principals, roles, namespaces, a table and a
+view are created and deleted, and 500s are provoked (~300 calls). The cleanup DELETEs are part of
+the measurement.
 
-Two things invalidate a run and are recorded before and after: **Polaris scaling** (the HPA
-allows 3 replicas appending to one log file — `local-k8s` #8) and **the shipper restarting**
-(rule 6's dedup state is per-pod and in memory, so a restart re-logs the first hit per table).
+Pin Polaris to one replica first: the HPA can scale it mid-run (`active-issues` `#39`).
 
-### Prerequisites the notebook checks for you
+## The oracle and its fixture
 
-- `victorialogs_url`, `fluentbit_metrics_url` in `src/config/common.yaml`; `fb_values_path` in
-  `src/config/local.yaml` (see `local.example.yaml`).
-- **A Lua interpreter.** macOS ships none — `brew install lua`, or a TeX install already
-  provides `luatex --luaonly`. Cell 0 aborts without one, and says so.
-
-## Why a Lua interpreter is a hard requirement
-
-The "expected" column is not a table anyone typed. `log_coverage.Policy` extracts
-`polaris_noise_filter` out of the **deployed** `local-k8s/logging/fb-values.yaml` and runs it,
-over synthetic records shaped exactly like the ones Fluent Bit tails, in one interpreter so
-rule 6's day-buckets build up in issue order. Same mechanism as
-`local-k8s/logging/scripts/test-polaris-filters.py`, for the same reason: *the tests cannot
-drift from what ships*.
-
-There is deliberately **no Python re-implementation to fall back on**. A port that agrees with
-itself is not evidence, and the first time it disagreed with the Lua the notebook would report
-a pipeline finding that was really a translation bug.
-
-This is also why `test_log_coverage.py` has two kinds of test. The **invariants** must hold
-under any policy worth shipping — an error is never deduplicated away, every DELETE is kept, a
-line that will not parse is kept rather than dropped. The **characterization** test records
-what today's policy does and is *expected to fail when the policy changes*. When it does, read
-the diff it prints, decide the change was intended, and update the test and
-`doc-log-coverage-results.md` together — a report nobody updated is worse than no report.
-
-## Status — 2026-09-04: v3 is deployed, the harness covers it, the run has not happened
-
-**Run 1's finding is resolved.** The v2 policy was never installed — written 2026-09-03T08:26Z,
-shipper pod up since 08:04Z, `helm upgrade` never run, 0 of 34 expected drops dropped. That is
-history: the running ConfigMap now carries **v3** and matches the file (`89aa2624f1f5…`).
-
-**What has been verified here, offline, against the deployed Lua:**
-
-- **Every one of 14 representative records gets its v3 disposition.** Management POSTs are
-  KEPT — the hole v2 left open is closed. Successful reads, `/config`, table LISTs, renames and
-  the token exchange are COUNTED only.
-- **The report's three record types, its margins, zero-carry and carry decay all hold**, driven
-  through `_now_override` across three simulated windows without waiting for a boundary.
-- **All six `resource_kind` values are reachable**, and `/namespaces/ns/tables/t/metrics`
-  normalises onto `/namespaces/ns/tables/t` — v2 emitted two rows for one table.
-- **An error never creates a resource key.** A 404 on a table nobody read lands in `__other__`,
-  which is what keeps the margins exact, and the request is still stored in full by rule 3.
-- **67 tests green** (`test_log_coverage` 40, `test_vlogs` 27).
-
-**Two findings from building it, both about the filter rather than the harness:**
-
-1. **A startup blind spot.** `report_tick` opens its first window on the FIRST tick, and
-   `count_record()` returns immediately while `counts` is nil. Records processed between shipper
-   start and that first tick are routed correctly but appear in **no report at all**. Bounded by
-   the tick interval (30 s), and the window they land in is flagged `partial_window: true`. That
-   is exactly the first report observed: seq=1, `access_seen: 0`, `partial_window: true`, for a
-   pod that started at 07:12:37 inside the 07:00–07:30 window.
-2. **`WINDOW_SECONDS` is not a parameter you can pass in.** The filter indexes windows with its
-   own constant, so a caller that assumes 60 while the shipper runs 1800 crosses no boundary and
-   gets an empty result rather than an error. `Policy.report_windows` now refuses a mismatch.
-
-**Still open, and only the cluster can answer it: does Fluent Bit split the array?** The oracle
-proves the filter *returns* three record types; only the running pipeline proves Fluent Bit
-splits them into three records and that VictoriaLogs indexes their numbers as numbers. The one
-window flushed so far had `access_seen: 0` — no traffic, so no resource or principal rows to
-split into. **Cell 0b gates on it and cell 11 settles it**, because the run itself makes the
-traffic.
-
-**Fast-run settings are live and are TEMPORARY** (`fb-values.yaml` sha256 `063c184df3f9…`):
-`WINDOW_SECONDS` 1800 → **30**, dummy INPUT `Interval_Sec` 30 → **5**. Six ticks per window, so
-scheduling jitter cannot make the filter skip one. **Revert both together** when the run of
-record is done — the values file carries the note. Nothing in the notebook or the tests
-hardcodes either number: `Policy.window_seconds` and `Policy.tick_seconds` read them from the
-deployed file, and `test_the_tick_rate_is_not_the_report_period` broke correctly on the change
-rather than passing vacuously.
-
-**Verified end to end, 2026-09-04 08:23–08:25Z** (`verify_v3_settings.ipynb`, since deleted):
-the fast-run settings are DEPLOYED (pod `…68b4959db4-4f7tf`, up 08:14:13Z), **Fluent Bit splits
-the array** — `{summary: 1, resource: 3, principal: 2}` for one window — VictoriaLogs indexes
-the numbers as numbers (`requests:>0` matched 3 rows), no raw tick leaks, and **zero-carry and
-carry decay hold in the pipeline**, not only in the oracle: 3 of 3 resources carried at an
-explicit 0 into the next window and none carried into the one after. `report_seq` 20 → 21,
-counters reset, one summary per window per host at six ticks per window. **68 tests green under
-real `pytest`.** The last open question from the previous session is closed.
-
-Two things that run corrected, both harness bugs rather than pipeline findings, and the reason
-the verify notebook was worth running: `check_invariants` read VictoriaLogs' own `_stream` /
-`_stream_id` as schema drift and would have failed on **every** window of the real run; and the
-skipped-window check compared window starts across a shipper restart and a `WINDOW_SECONDS`
-change, so it reported the 1800→30 switch as a skipped window.
-
-Also observed, and worth knowing before reading a principal row: the OAuth token exchange is
-attributed to principal **`-`** — `%u` writes a dash when no principal is authenticated yet.
-
-## Run 1 of the v3 notebook — 2026-09-04, run `1788511328`
-
-**The report works. 132 calls, correlation exact on all 132, no shipper restart, no scaling,
-zero replay duplicates.** 49 calls kept and 82 counted (the 132nd is the client timeout, which
-completed no request and has no verdict); **6 of 6 management POSTs stored** — five by rule 5 and
-the 403 `reset` by rule 3, which matches first — and that is the v2 audit hole closed and
-measured. All six `resource_kind` values present, per-window and merged invariants clean,
-**zero-carry 44 rows, decay confirmed, no skipped windows**. Client-side latency (the only
-source, there is no `%D`): median 13 ms, p95 41 ms, max 90 ms.
-
-**And one thing that reads as a pass and is not: the oracle diff failed.** `oracle diff, THIS
-run's fixture resources | 66 mismatches` sits two lines under "merged invariants OK" in the
-results document, and cell 11 is the cell that makes "all schema coverage" checkable rather than
-asserted. 66 mismatches on paths that belong to this run alone is that cell going red, reported
-as a scalar with none of the rows named. Whatever else run 1 established, it did not establish
-that the pipeline agrees with the deployed Lua.
-
-**Four defects the run exposed at the time — three in the harness, none in the filter:**
-
-1. **The 403 probe went out untagged.** `probe()` tagged `[pc, ic, adm_pc, adm_ic]` and the call
-   used `denied_ic`, so it carried no `Polaris-Request-Id` and could not be found: reported as
-   `EXPECTED STORED, ABSENT` for a record that was certainly there. This is the *same* fault run 1
-   found in the negative cell, reintroduced in a new probe. `probe()` now tags every live client.
-2. **`GET /config` without a warehouse returns 400 on this build**, so three calls labelled
-   "counted; v2 stored every one" actually exercised rule 3 and were kept. The probe now passes
-   `warehouse`.
-3. **`neg.500_null_pointer` returned 200**, so the run produced **no WARN or ERROR record at all**
-   — and questions 1 and 3 (the distinct WARN messages, and whether stack traces survive) have no
-   data. `0 of 0` is not an answer, and the report now says NOT ANSWERED instead of printing a
-   zero that reads like a result.
-4. **The view probe 404s** because the happy path renames `probe_view` and drops it. It still
-   exercises rule 3 and still classifies as `view`, but it is not a successful view read; the
-   `view` kind is earned by the happy path's own `load_view`/`head_view`. Relabelled.
-
-**Volume, and the question the previous run left open:** 2,117 records for 132 calls — 16 per
-call — of which only ~50 are access-log records. **The retention policy governs a few percent of
-the volume; the rest are application lines riding through untouched by rule 2.** The report now
-prints the `loggerName` breakdown, which is the input to the only remaining volume decision.
-`fluentbit_filter_drop_records_total` is still unknown: the metrics port-forward was down.
-
-**One thing not exercised:** the run reported a single 30-second window, so the merge path that
-`merge_windows` exists for did not run live. It is covered by tests, not by this run — and the
-single window is itself unexplained: 49 merged rows for a run with 30 distinct resource keys and
-four error-only ones. Nothing in the run reconciled the two, which is why the notebook now does.
-
-## Harness review — 2026-09-07: what the results document could not be checked against
-
-Reading run 1's document against the code that wrote it turned up nine places where a number was
-computed from the wrong thing, or a result was implied and never stated. None is a finding about
-the filter; all of them are reasons the next run's document can be trusted where this one's
-cannot.
-
-| what was wrong | why it happened | now |
-|---|---|---|
-| "Management POSTs kept: 5 of 5" — six were driven | the count filtered `M.path`, truncated to 58 chars for display | `lc.mgmt_post_stats` reads `path_full`, and splits the kept ones by status: a 403 `reset` is kept by rule 3 whatever rule 5 does |
-| `principal_row` identical on all 132 rows | it was assigned `DRIVE_PRINCIPAL`, a constant | `lc.principal_of` reads each request's own `Authorization` header; the oracle replays each call as its measured principal |
-| the margin equality proved nothing | one identity drove everything, so `sum(principal.requests)` IS the run total | a read-heavy 403 batch as `nb_<run>_denied` and a write-heavy batch as the run principal — PLAN 6.2's two mixes |
-| 66 fixture mismatches as a bare number | the doc printed `len(ours)` | every one is named in the document, and the table line says FAILING |
-| `merged rows: 49`, unreconciled | nothing compared rows to the calls that explain them | `lc.reconcile_merged_rows` names the unexplained and the missing keys |
-| 2,117 records vs 2,109 in the matrix | records with a run request id for a call outside `ALL_CALLS`, or none at all | `lc.reconcile_volume` — attributed / other run ids / untagged, and they must sum |
-| `http_status:"404" -> 138` for a run with 23 | the check scans 24h cluster-wide | it carries its scope, and cell 7 takes the run-scoped reading beside it |
-| `window_start` and `counted_where` missing (PLAN 7) | both need the report, which cell 8 does not have | cell 11b adds them once cell 10 has run |
-| `/metrics` folding, `resources_other`, `response_bytes`, the record-time bracket | computed or implied, never stated | one PASS/FAIL assertions block, `lc.named_assertions` |
-
-Nine new cases in `test_log_coverage.py` cover the module functions these use.
-
-**Next:** re-run the notebook with the reviewed harness (below) and read the oracle diff row by
-row — that is the question run 1 left open. Then revert `WINDOW_SECONDS` and `Interval_Sec`
-together.
-
-## Coverage: 500 error — 2026-09-07
-
-**The ERROR path had never been driven on purpose.** `neg.500_null_pointer` returned **200 for
-three runs running**: `create_catalog_no_endpoint` omitted `endpointInternal` only, and this
-build falls back to `endpoint`, so the NullPointerException it was named for cannot happen any
-more. Nothing caught it, because nothing asserted on its status and the report's
-"0 of 0 WARN/ERROR records carried an exception object" reads exactly like an answer. Every 500
-this pipeline has ever stored arrived by accident, from the PG-HA read-after-write failures on
-`create_namespace` / `create_view` — and those are writes that **committed**, so they are not
-evidence about unhandled exceptions at all.
-
-**A 500 is two records, and section 5c checks each half separately.** The access-log line
-(`http_status 500`) is kept by rule 3 *and* counted — every access-log record is counted before
-any keep/drop decision. The application ERROR line is not an access-log record, so rule 2 hands
-it to rule 1: kept, and counted into nothing. Only the second half carries the exception
-payload, and it is stored **flattened**, as `exception.frames`. A check that reads one half
-passes while the other is missing.
-
-**The provoker is a ladder, not a probe.** `lc.provokers_500` returns three API-only, reversible
-rungs — a catalog whose *both* storage endpoints point at a dead port, a catalog on a bucket
-that does not exist, and a stale-`entityVersion` PUT (`[assumed]`; `update_catalog`'s own
-docstring says that is a 409). `lc.drive_500` walks them and stops at the first that really
-returns 500. **If none fires it reports NOT PROVOKED and question 3 stays unanswered** — it does
-not fall back to counting the accidental 500s. All three rungs are `[assumed]` until a run says
-otherwise; the ladder is ordered, not proven.
-
-The full scenario — every rung, every assertion, and what each outcome means —
-is `doc-500-coverage-scenario.md`.
-
-**Driven as a pure-500 burst inside one window** (`PLAN-log-coverage-schema-v2` §2), so
-`errors_4xx` and `auth_denied` have a *predicted* value of zero. `>=` on the 5xx count, because
-neighbour traffic lands in the same window; `==` on the negatives, because nothing driven there
-can add a 4xx — an inequality would pass a filter that charged the 500 to the wrong counter.
-
-`errors_5xx` is a **schema v2** field, and the oracle reads v2 as of 2026-09-07. The VOID path
-stays anyway: a window from an older filter carries no error split at all, and a check that
-reads a missing field as `0` reports PASS for a measurement nobody took — the same shape as
-`0 of 0`. **Absent is not zero.**
-
-## Files
-
-| file | |
-|---|---|
-| `HANDOFF-500-coverage-2026-09-07.md` | **read this first if you are starting cold** — state, what is settled, what is open, and the next actions in order |
-| `PLAN-log-coverage-schema-v2.md` | the report **schema** v2 plan, from `local-k8s` — the harness fixes this repo still owes it, and §4 is the 500 gap |
-| `PLAN-log-coverage-v3.md` | **read this first** — policy v3, the scheduled report, and what the notebook must prove about both |
-| `PLAN-log-coverage.md` | the v2 plan. Still the right description of how the oracle works; its policy table is superseded |
-| `polaris_log_coverage.ipynb` | the run. Cells 0–14, linear, `Restart & Run All`. Cells 11–14 are the scheduled report and need real boundaries. |
-| `fetch_specs.sh` | vendors the 1.3.0 OpenAPI documents (this Polaris serves none of its own) |
-| `spec/` | the vendored documents — gitignored; `spec/inventory.json` is tracked |
-| `doc-500-coverage-scenario.md` | the 500 scenario in full — the ladder, every assertion, and what each outcome means. Read before running section 5c |
-| `doc-log-coverage-results.md` | written by cell 10, for someone who was not there |
-| `../src/vlogs.py` | the VictoriaLogs client |
-| `../src/log_coverage.py` | the deployed-Lua oracle, the three-way inventory, the tagged driver |
+`src/log_coverage.py` computes the **expected** column by running the real Lua in a Lua interpreter
+rather than a Python port: a port that agrees with itself is not evidence. Its Lua comes from
+`tests/fixtures/fb-values-shipper.yaml`, the uninstalled shipper's values (policy v2/v3), which is
+**not** the live DaemonSet's `releases/fluent-bit/polaris_access_log.lua` (v6). Moving the oracle
+onto the live Lua is open as merge seam M3. Needs `luajit`, `lua` or `luatex --luaonly`
+(`brew install luajit`).
