@@ -346,4 +346,5 @@ Release `polaris-log-batch` rev 1, image `polaris-log-batch:0.1.0` (`6cbd52db993
 | first scheduled Job | started **02:03:00 KST** exactly, 4 s, published exactly one hour (`20260929-01`, empty) |
 | step16 parity on real traffic, hour `20260929-02` (1,012 lines) | **22 diffs, all SPEC §9.1's kind**: 7 errors before their resource's first success, +7 requests / +1,068 bytes on resource rows = −7 / −1,068 on `__errors__`; **every summary counter identical** |
 | simulated 03:02 run on hour 02 (`--dry-run --now`, real checkpoint) | exactly one hour; 1,012 in / 495 processed / 517 dropped / 0 malformed; peak RSS **35 MB** |
+| hour 02 as actually published (07:37:55, after the Mac slept 03:00:27–07:36:53) | **identical to the simulation on all 39 summary fields**; late roll moved to `done/20260928/` |
 | moved to `done/` | 2 rolls + **14 orphans** (as `….<hour>.orphan`); live `q6pz6` file, `legacy-shared/`, `sizetest/` untouched |

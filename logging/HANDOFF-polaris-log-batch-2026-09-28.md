@@ -120,6 +120,11 @@ Expected differences only of the documented kind: an error before its resource's
 - **The batch chart restates Polaris facts** under `polaris:` (claim, logsDir, podPrefix, podSelector).
   Change one side, change the other.
 - **The Job pod must never carry Polaris's selector labels** (it would receive catalog traffic).
+- **The cluster stops when the Mac sleeps.** On 2026-09-29 the Mac idle-slept 03:00–07:36: no Jobs ran,
+  and on wake one run published all 5 missed hours (by design). The first create after wake fails
+  `Unauthorized`; the next succeeds. A late publish on OrbStack is not a batch fault — check `pmset -g log`.
+- **Read the checkpoint, not the Job log.** At `*/2` with `successfulJobsHistoryLimit` 3 a publishing Job's
+  log is pruned within ~6 minutes; `.state/checkpoint.json` and the output files are the record.
 - **`maxBackupIndex` deletes.** It bounds `.N` rolls within one hour; the step15 control lost 1929
   lines to it before the limit was raised for the test.
 - **Rotation is lazy**: no file for an idle hour; that is why the batch reads current files too.

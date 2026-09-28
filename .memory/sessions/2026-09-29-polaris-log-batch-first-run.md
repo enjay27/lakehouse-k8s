@@ -109,4 +109,23 @@ Wrong turns:
   read-only, where `lupa.luajit21` imports. Swapping in `lua51` would have tested a runtime Fluent Bit
   does not use.
 
-Still open: the real 03:02 publish (compare it to the simulation above); the in-cluster memory peak.
+## The "03:02" run happened at 07:37 — the Mac slept
+Checked at 07:38. Hour 02 was published at **07:37:55**, together with hours 03–06, by
+`polaris-log-batch-29843916`, the first Job after a 4½-hour gap. Cause, from `pmset -g log`: **Idle Sleep
+at 03:00:27**, only DarkWakes (maintenance, ~15 min apart) until a power-button **Wake at 07:36:53**.
+The 03:00 Job ran (03:00:00, 4 s) and correctly found hour 02 not ready (`last_ready` = 01 until 03:01);
+03:02 never came. On wake the CronJob controller's first create failed `Error creating job: Unauthorized`
+(credentials stale after the VM suspend), the next succeeded; the pod started 60 s after the Job was created.
+`startingDeadlineSeconds` 60 skipped the ~135 missed starts, and one run caught up all 5 hours from the
+checkpoint — the catch-up design working as intended.
+
+**Hour 02 as published vs the 02:23 simulation: identical on all 39 summary fields** (1,012 in / 495
+processed / 517 dropped / 0 malformed; `processed-logs/20260929-02.jsonl` has 495 lines). `pod_list_error`
+null (the simulation had pod listing off). `moved` 1: the late `q6pz6.log.2026-09-28-00.gz` is in
+`done/20260928/`, as predicted from the code. Hours 03–06: empty, published.
+
+The Job logs of 03:00–07:36 are gone for good only because no Jobs existed; but note that with
+`successfulJobsHistoryLimit` 3 at a 2-minute cadence, **a publishing Job's log is pruned within ~6 minutes**
+— this check read the checkpoint and outputs, which is where the record lives.
+
+Still open: the in-cluster memory peak.
