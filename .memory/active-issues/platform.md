@@ -5,13 +5,30 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#53 — OPEN. `helm upgrade benchmarks-minio ./charts/minio` would bring MinIO up EMPTY.** Found
+2026-09-29 by comparing the release with a render. The live release is **revision 1, installed
+2026-08-19**, and its manifest (`helm get manifest`) is a **Deployment** plus a standalone PVC
+**`benchmarks-minio-data`** (5Gi, `helm.sh/resource-policy: keep`), image
+`minio/minio:RELEASE.2024-01-01T16-36-33Z`. `charts/minio/` did not produce that: it had no
+`templates/` until `d136fe8` (2026-09-03), and what it renders now (`--dry-run=client`) is a
+**StatefulSet with `volumeClaimTemplates`**. An upgrade would delete the Deployment, keep the old
+PVC (the `keep` policy) and let the StatefulSet claim a *new* empty volume, so the Iceberg warehouse
+(`data-catalog-bucket`) and Argo artifacts would appear to vanish, with the data orphaned in
+`benchmarks-minio-data`. Nothing has been upgraded; the chart has simply never been applied.
+Before any MinIO upgrade: decide whether the chart should adopt the existing PVC (an
+`existingClaim`-style value on a Deployment) or migrate the data, and diff
+`helm template` against `helm get manifest` first.
+
 **#49 — OPEN. Fluent Bit dropped chunks bound for OpenSearch.** Found 2026-09-29 by
 `step3-postupgrade.sh` §2: the `benchmarks-fluent-bit` pod log shows chunk
 `1-1790521489.391596114.flb` and chunk `1-1790522239.385528886.flb` failing to flush and then
 `cannot be retried` (log times 2026-09-27 15:05:30 and 15:18:24, `tail.0 > opensearch.0`). Each is
 a batch of tier-1 records that never reached OpenSearch. Not yet known: how many records, what
 OpenSearch answered (the warn lines carry no HTTP status), whether it recurs, and whether the log
-times are UTC (the image's default) or KST. Next: `kubectl -n datahub-hynix logs ds/benchmarks-fluent-bit | grep -E 'cannot be retried|\[error\]'`
+times are UTC (the image's default) or KST. **Same symptom as `#19` (fixed 09-09 with
+`Buffer_Size False`) and `#29` (the `k8s-logs` output discarding chunks under traffic on 5.1.1,
+dropped undiagnosed on 09-16)** — both are in *Resolved*. This one is `out_id=0`; read `#29` before
+diagnosing. Next: `kubectl -n datahub-hynix logs ds/benchmarks-fluent-bit | grep -E 'cannot be retried|\[error\]'`
 for the frequency, and the OpenSearch side for the rejection reason.
 
 **#50 — OPEN QUESTION (Kade decides). Review P5: the Lua and the Fluent Bit config are two deploy
@@ -29,148 +46,6 @@ whose main reason, hot reload, has been gone since then. Moot if the batch pipel
 is the subchart default; "pgpool pod count 3" inverts silently if the value is ever set to 1; and
 `persistence.size` 10Gi cannot be checked with `df`: `/bitnami/postgresql` reports 203G because
 OrbStack's local-path provisioner does not enforce the request. Check the PVC spec instead.
-
-**#52 — RESOLVED-INSTRUCTIVE 2026-09-29. `apply-lua.sh` refused to run for 8 days after the merge.**
-The 09-21 merge moved `fluent-bit/` to `releases/fluent-bit/` but not the paths inside the
-scripts: `apply-lua.sh` cd'd to the repo root and exited `FATAL: run inside the local-k8s repo`;
-`step3-postupgrade.sh` and `step11-replay-window.py` failed the same way. Fixed; the read-only half of
-`apply-lua.sh` was run from a subdirectory (context, 5 Lua suites ALL PASS, `kubectl diff` = 0), and
-step3 §3 passed (ConfigMap sha `f92bb6d4dbbfc346` == repo). **The lesson:** the merge's test repair
-fixed what pytest could see, and no gate runs the shell scripts, so a path moved under them failed only
-when someone ran them.
-
-**#48 — OPEN. File logging is back on with ONE `polaris.log` shared by every replica, so `#8`'s
-hazard returns the moment a second Polaris JVM exists.** 2026-09-27. **ROLLED ~18:34 KST, and a second
-JVM existed by 22:21 the same day.**
-
-**Evidence (Kade, 2026-09-27 ~22:25 KST):** two pods of ONE ReplicaSet (`6f86777d49-l5q8m`, age 3h49m;
-`6f86777d49-nvj5j`, age 3m28s) — same pod-template hash, so HPA scale-out, not a rollout. In the PVC:
-`polaris.log.2026-09-27-18.gz` (gzip -t ok; JSON; first/last `timestamp` 18:35:07 / 18:51:18 +09:00)
-and `polaris.log` (first line 22:21:43 `Installed features` — the new pod's startup), both mtime 22:21.
-So the NEW pod's first write rolled the OLD pod's file. The old pod still holds its own rotation state
-(next roll due 19:00, suffix -18): its next write goes to the renamed inode, and its first write then
-rolls the new pod's `polaris.log` to the same `-18.gz` name. HPA trigger NOT the memory baseline, as I
-first guessed: `kubectl get hpa` at ~22:25 showed cpu 1%/80%, memory 32%/80%, replicas 2 — a transient
-spike, cause unknown. At that load it scales back to 1 after the 5-min stabilisation window; the
-ReplicaSet usually deletes the NEWER pod, which leaves the old one with the stale rotation state.
-
-**CONFIRMED BY EXPERIMENT (Kade, 2026-09-27 ~22:35 KST).** One request port-forwarded to the OLD pod
-(`l5q8m`, 401 on `/api/catalog/v1/config`). Afterwards `polaris.log.2026-09-27-18.gz` held only
-`22:21:43.086…` .. `22:21:43.579…` +09:00 — the NEW pod's startup lines — and none of the 18:35–18:51
-content it held minutes earlier. The old pod's first write after its stale 19:00 deadline rolled the
-new pod's file onto the existing `-18` name: the real hour 18 is overwritten and 22:xx is labelled 18.
-"Pods only append, so one file is safe" (the premise of the one-file decision) is false here: appends
-are fine, the per-JVM rename-and-reopen is not. Until fixed it recurs every hour while 2+ pods run.
-
-**FIX WRITTEN, NOT ROLLED (2026-09-27, Kade chose it):** `logging.file.fileName: polaris-${HOSTNAME}.log`
-— one file per pod, the batch job merges them per hour and seals files of deleted pods. Open until the
-pod's `ls` shows per-pod names after the upgrade. Shared-era leftovers (`polaris.log`,
-`polaris.log.2026-09-27-18.gz` — now mislabelled 22:21 content) go to `legacy-shared/`, not to the job.
-
-**ROLLED ~22:37 KST (Kade).** `ls` shows one file per pod, named after the pod: `polaris-benchmarks-polaris-
-7f4d69c67c-{2tklb,bmt4t,rz56d}.log` (~3.58 KB each, startup lines) — `${HOSTNAME}` expanded. Three pods came
-up in the new ReplicaSet, so the HPA scaled out during the roll again (a JVM-startup CPU spike is the likely
-trigger, unconfirmed). `legacy-shared/` holds the shared-era `polaris.log` (15229 B, last write 22:37 when the
-old pods stopped) and `polaris.log.2026-09-27-18.gz` — now 942 B with mtime 22:30, down from 1241 B at 22:21:
-**overwritten a second time** before the move, more evidence for this entry. Open until each pod's first
-hourly `.gz` appears under its own name; closing it also needs the batch job's orphan sealing, because the
-HPA scaling back from 3 leaves unrotated `polaris-<pod>.log` files that nothing else will ever roll.
-
-**Per-pod hourly roll VERIFIED (Kade, 23:02 KST):** `…-bmt4t.log.2026-09-27-22.gz` (37141 B) and
-`…-rz56d.log.2026-09-27-22.gz` (31975 B), each rolled at 23:02 on that pod's first write after 23:00, each
-under its own name — no collision. `…-2tklb.log` (231675 B, last write 22:48) did NOT roll: either that pod
-is idle, or the HPA removed it and this is the first real orphan. The collision half of this entry is
-closed; the orphan half moves to the batch job (P1), which must seal files like this one.
-
-**ORPHAN CONFIRMED (Kade, ~23:05 KST):** only `bmt4t` and `rz56d` are running; the HPA removed `2tklb`.
-`polaris-benchmarks-polaris-7f4d69c67c-2tklb.log` (22:37–22:48) will never roll. Every line in an
-unrotated file belongs to one hour — a pod rolls before writing the first line of a new hour — so the
-seal name is that file's last-write hour: `…-2tklb.log.2026-09-27-22.gz`. Its last line may be cut
-if the pod was killed mid-write (D3: `malformed/`). This file is P1's first real sealing fixture.
-
-**Re-asked 2026-09-27 (Kade): one file for all pods, with small SIZE rotation?** Written as a countable
-test instead of argued: `logging/scripts/step15-shared-file-size-rotation-test.sh shared|perpod|restore`
-— 2 pods, `maxFileSize 100k`, N requests each tagged `?sizetest=<run>-<i>`, every i must appear exactly
-once across all rolls. Prediction (mine, unverified): `shared` loses lines — each JVM keeps its own byte
-count and rolls on its own; the other JVM keeps writing into the renamed file, which the `.gz` roll then
-compresses and deletes. `perpod` is the control and should lose none.
-
-**First runs (Kade, runs `1790518433` shared, `1790518698` perpod) tested NOTHING:** same pods before and
-after (`7f4d69c67c-bmt4t/rz56d`, 36–41 min old), no `polaris-sizetest-*` file, found 0 of 3000. The chart
-has no config-checksum annotation, so `helm upgrade` rewrote the ConfigMap and rolled no pod — `#38`'s
-"pod ran an older ConfigMap for days", again. The 6000 tagged requests went into the real
-`polaris-<pod>.log` files instead (`count` mode can recount them there). step15 now `rollout restart`s
-after every upgrade and refuses to send traffic until each running pod's `quarkus.log.file.path` is
-the test one and the test file exists.
-
-**Second runs (Kade): shared found 160/3000, per-pod CONTROL found 1071/3000 — both missing from id 1.**
-The control failing means the TEST was broken: `maxBackupIndex` 50 bounds the `.N` rolls within one
-hour and deletes the oldest beyond it, and at `maxFileSize 100k` 3000 requests (plus whatever else each
-401 logs) out-rolled it — oldest ids gone in both modes. Not evidence either way on sharing. step15 now
-sets `maxBackupIndex=5000` and prints each file group's highest roll index. Production is unaffected
-(2Gi per hour never size-rolls), but it is a live demonstration that `maxBackupIndex` DELETES.
-
-**step15 v3 (Kade: "refer traffic test: diagnostics/ladders/log-coverage/polaris_api_traffic_v1.ipynb").**
-The check now rides the notebook's own contract — section 13: the log "must hold EXACTLY <TOTAL> access
-lines from this run, one per id" — by counting `mdc.requestId = nb-<RUN>-*` on access lines across the
-test file and all its rolls. A background curl load (`?sizetest=<load>-<i>`, new connection per request)
-keeps both pods writing and rolling while the notebook runs, since the notebook's keep-alive sessions
-may all land on one pod. Flow: `shared|perpod` (configure + precheck, no traffic) → `load` → notebook →
-`verify <RUN> <TOTAL|ids-file> <load>` → `restore`. Analyzer checked on synthetic files only.
-**v4 — no notebook (Kade):** `step15 run shared|perpod` does it all: configure → load → `run_traffic.py
---profile full` (same grid as the notebook, via `make_traffic.drive`) → verify against its
-`traffic-<RUN>.json` `calls[].request_id`, the exact issued list. Found on the way: `run_traffic.py`
-could not import `make_traffic` since the 2026-09-21 move (`.parent.parent / "src"` → a path that does
-not exist); now walks up to `src/` like the notebooks. Its `--dry-run` builds 297 requests.
-
-**RESULT (Kade, 2026-09-28, 2 pods, maxFileSize 50k, maxBackupIndex 5000, no roll index near the cap):**
-
-| mode | load (4000 tagged requests) | traffic `run_traffic.py --profile full` |
-|---|---|---|
-| `shared` (one file) | **found 2220, MISSING 1780 (44.5 %)**, gaps scattered (5, 7, 10, 11, 13 …) | not pasted |
-| `shared`, repeat (09-28) | **found 2231, MISSING 1769 (44.2 %)**, gaps scattered (7, 8, 16, 20 …) | **issued 327, found 127, MISSING 200 (61 %)**, dup 0 |
-| `perpod` (control) | **found 4000, MISSING 0**, dup 0 | issued 327, found 329, MISSING 0, dup 5, 2 ids not in the issued list |
-
-Scattered gaps, not oldest-first, is the signature of the other JVM writing into a file already rolled
-away and deleted — not of `maxBackupIndex`. **One shared file loses nearly half the lines under rotation — reproduced: 44.5 % then 44.2 % of the
-load, 61 % of the real traffic grid — and one file per pod loses none. Decided and measured: one file per pod.** The perpod `LOSS` verdict came only
-from the 5 duplicated ids — almost certainly the harness sending two requests under one id
-(`grant_privilege`'s skip-if-present GET + PUT and its 404 retry, `polaris_rest.py`), which the
-"exactly one per id" contract since 2026-09-21 does not cover. step15 now prints each duplicate's lines
-and fails only on the same line appearing twice. **#48 CLOSED for the log-file design**; the orphan case
-belongs to the batch job (P1). **2026-09-28 (Kade): no orphan special case at all** — the job reads every pod's
-current `.log` as well as its rolls and keeps the lines by `timestamp` in `[H, H+1)`, so a removed pod's
-unrotated file is just another source. PLAN *Batch algorithm* revised. Orphaned `.log` files (last line in a published
-hour, quiet > 120 s) then move to `done/…/polaris-<pod>.log.<hour>.orphan` (Kade). **Refined the same day
-(Kade): an orphan must ALSO be a pod the Kubernetes API no longer lists** — the CronJob lists
-`benchmarks-polaris` pods (read-only namespaced Role) and a file whose pod name is absent is orphaned.
-Both conditions, so a live pod's file is never moved; the untested "idle pod finds its file moved"
-path is gone. API failure → move nothing that run.
-
-
-`logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
-`logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the
-batch pipeline in `logging/PLAN-polaris-log-batch-2026-09-27.md`. Kade chose one file for the whole
-Deployment over per-pod files. Checked from the chart, not the cluster: every replica renders the same
-ConfigMap, `quarkus.log.file.path = /deployments/logs/polaris.log`, and nothing in `templates/` or
-`values.yaml` puts a pod name in it — **the HPA does not create per-pod files.**
-
-One writer is safe. Two are not: HPA scale-out (max 3) or a RollingUpdate's surge pod each open the
-same path with independent JBoss rotation state — one renames the file while the other keeps writing
-into the renamed inode, or rolls the other's fresh lines under the previous hour's name. `#40`'s
-bursts of same-size `.1`–`.14` rolls minutes apart are the shape this produces, and were never ruled
-out. **Watch for it:** records from two `hostName`s inside one rotated file, or an hour with two
-same-name rolls. **The fix is one line** — `fileName: polaris-${HOSTNAME}.log` (Kubernetes sets
-`HOSTNAME` to the pod name) — plus the batch job sealing a deleted pod's last file. The other safe
-shape is `replicaCount: 1`, HPA off, `strategy: Recreate`.
-
-Also written with it, each to be confirmed from the running pod (PLAN step 2):
-`QUARKUS_LOG_FILE_JSON_ENABLED=true` (the variable `#38` deleted, live again now the handler is on),
-`QUARKUS_LOG_FILE_ROTATION_ROTATE_ON_BOOT=false`, `TZ=Asia/Seoul` (the suffix is formatted in the JVM
-zone; `timestamp`/`_time` gain `+09:00`, which the `_time` date mapping accepts), `maxFileSize: 2Gi`
-(size roll made unreachable — it cannot be disabled once a suffix is set), `maxBackupIndex: 50`,
-the claim outside the release (first cut used the chart's own `<fullname>-logs`; Kade's first check found
-no such claim — `NotFound` — and asked for the PVC to exist first). **NOT VERIFIED: no helm, no kubectl from the Cowork session that wrote it.**
 
 **#47 — The operational report window is 1 hour, not 30 minutes. Decided 2026-09-21, not rolled, and
 the thing to watch after it rolls is not size but the per-window caps.** 2026-09-21.
@@ -430,6 +305,799 @@ without `--debug`; this repeats `#43`'s lesson in a third place.
 an unreachable cluster printed "could not list policies" and the script still offered `--apply`.
 An unreachable preflight now exits 2 and blocks the write.
 
+**#43 — step3's presence checks could pass while asserting nothing: FIXED, NOT RE-RUN.**
+2026-09-18. Found while verifying `#42`, on this session's own defect.
+
+`step3-postupgrade.sh` has three verdict functions and only one of them counts:
+
+```
+ok()  -> PASS
+bad() -> FAIL, FAIL=$((FAIL+1))     <- the only one RESULT reads
+huh() -> ????                        <- does not
+```
+
+The `#42` presence checks called `huh` on zero documents, copying the existing `message` idiom,
+which is non-fatal because a pre-traffic run legitimately has none. **So `RESULT: post-upgrade
+checks passed` was compatible with both thread fields being completely absent** — and the
+pre-traffic run of the `#42` roll demonstrates it exactly: `????` on all three presence checks,
+`RESULT: post-upgrade checks passed`. A gate that passes for the wrong reason, which is the same
+class of bug as querying bare `threadName` under the v6 template.
+
+**`#42` is verified regardless, because the `PASS` lines were read directly** (367/367) rather
+than inferred from the RESULT line. The hole was in what a *future* reader of that RESULT line
+would have been entitled to conclude.
+
+**Fixed: the checks are now self-arming.** `$M`, the count of documents carrying `message`, is
+the arming signal. If documents are being written since pod start and the thread fields are
+absent *from those documents*, that is a real `bad` — not a "run traffic and re-try". Only when
+nothing has been written at all is 0 uninformative, and only then does it stay `huh`.
+
+**The general shape is still there and is deliberate**, so do not "fix" it wholesale: `huh`
+exists for checks that genuinely cannot distinguish "broken" from "not yet". The rule that came
+out of this: **a presence check needs an arming signal, or it is not a check.** Any future
+presence assertion added to step3 should name what makes its zero meaningful.
+
+**NOT VERIFIED:** `bash -n` only. The new `bad` branch has never been exercised — it fires only
+when `message > 0` and the field count is 0, which is precisely the state the `#42` roll did not
+produce. Re-running step3 as-is should reproduce the same all-`PASS` section 5.
+
+**#41 — OPEN. A 1.6.0 pod crashed three times at rollout: `Reason: Error`, exit code 1, dead
+four seconds after start. NOT an OOMKill.** 2026-09-18.
+
+```
+Last State:  Terminated   Reason: Error   Exit Code: 1
+Started:     Fri, 18 Sep 2026 14:41:12 +0900
+Finished:    Fri, 18 Sep 2026 14:41:16 +0900      <- four seconds
+```
+
+`benchmarks-polaris-6dcf6758f9-5vpmc` carries `restartCount 3`; its sibling `…-fl8jd` has 0.
+14:41 KST is 05:41 UTC, which is the rollout minute, so the three crashes were at start-up and
+the pod has been `Running` since. **The upgrade is verified regardless** — the pod that
+serves traffic is this one, and the listener, console JSON and metastore checks all passed on
+it. This is about an unexplained crash loop, not a broken upgrade.
+
+**OOMKill was my first suspect and it is wrong.** `Reason: Error` with exit code 1 is the
+process exiting, not the kernel killing it; an OOMKill reports `OOMKilled` and exit 137. So the
+`1.33Gi` max heap in a `2Gi` limit is not implicated by this evidence, and the memory-pressure
+story belongs to `#39` alone.
+
+**Four seconds is the useful number.** It is too fast for a JDBC connect timeout and too slow
+for the JVM rejecting a VM option outright, which lands in well under a second. That points at
+Quarkus starting and then failing — a config validation error, a bind failure, or something the
+application does at boot.
+
+**Candidates, in the order the evidence favours them:**
+
+1. **A start-up race between simultaneously starting pods against the metastore.** Three pods
+   came up within the same minute and Polaris does metastore work at boot. This repo already
+   has an entry for intermittent duplicate-key/500s from PG replica lag, and three concurrent
+   bootstraps of realm `POLARIS` is the shape that provokes it. That the *second* pod never
+   crashed fits a race that one loser hits.
+2. **An unrecognized VM option.** `-XX:+ZGenerational` is valid on JDK 21 and the running image
+   is `java-21-openjdk-21.0.11`, so this *should* be clean — but **the runbook's own
+   `Unrecognized VM option` check was never run**, and the runbook predicted precisely this
+   presentation ("CrashLoopBackOff with nothing useful in the Polaris log"). Cheap to exclude.
+3. **A Quarkus config validation failure** on one of the changed keys — the plural
+   `event-listener.types` is read successfully by the surviving pod, so this is unlikely, but a
+   validation error is exit 1 at about this latency.
+
+**One command answers it**, and it also covers candidate 2:
+
+```bash
+kubectl -n datahub-hynix logs benchmarks-polaris-6dcf6758f9-5vpmc --previous
+kubectl -n datahub-hynix logs benchmarks-polaris-6dcf6758f9-5vpmc --previous \
+  | grep -iE 'unrecognized vm option|error|exception|caused by' | head -30
+```
+
+**Run it before that pod is replaced.** `--previous` keeps only the most recent terminated
+container, and `#39`'s flapping means pods come and go on their own — this reading is
+perishable in the same way step 0's were, and the replica count is already back to 1.
+
+**#39 — OPEN, and it has already fired. `targetMemoryUtilizationPercentage: 80` against a
+`1Gi` memory request is a ratchet, not an autoscaler: this JVM exceeds the target at idle, so
+the HPA pins Polaris at `maxReplicas` and cannot come back down.** 2026-09-18, measured minutes
+after step 4.
+
+```
+benchmarks-polaris   cpu: 2%/80%   memory: 88%/80%   MINPODS 1   MAXPODS 3   REPLICAS 3
+```
+
+**Three pods at 2% CPU.** The scale-up was entirely the memory metric, and the arithmetic says
+it was inevitable:
+
+| quantity | value | source |
+|---|---|---|
+| memory **request** | `1Gi` | `values.yaml` `resources.requests.memory` — **HPA utilisation is measured against the REQUEST**, not the limit |
+| memory **limit** | `2Gi` | `resources.limits.memory` — this is what the JVM sees as available |
+| JVM **initial** heap | 50% of the limit = **`1Gi`** | `JAVA_TOOL_OPTIONS: -XX:InitialRAMPercentage=50.0` |
+| JVM **max** heap | 65% of the limit = **`1.33Gi`** | `-XX:MaxRAMPercentage=65.0` |
+
+The JVM commits a **1Gi initial heap — exactly the whole memory request — before serving a
+single API call**, and then adds metaspace, code cache, thread stacks and direct buffers on
+top. So memory utilisation starts near or above 100% of the request and stays there. The
+observed 88% is a working-set figure and slightly under that estimate, which fits; the
+direction is what matters. **The target is exceeded at idle.**
+
+Two consequences:
+
+1. ~~**It will not scale back down.**~~ **WRONG, and corrected within the hour: it scaled
+   3 → 2.** The next `get pods` showed **two** pods. So utilisation *does* fall back below the
+   target, and the reason is that **ZGC uncommits unused heap by default** (`-XX:+ZUncommit`,
+   after `ZUncommitDelay`) — `InitialRAMPercentage` sizes the heap at start but does not pin
+   the resident set there for ever. The memory metric is therefore **not monotonic**, and the
+   "ratchet" reasoning was too strong.
+
+   **What replaces it is not better news, just a different failure.** The metric still has
+   nothing to do with load — it tracks JVM heap behaviour — so the HPA **flaps**: up on
+   warm-up and GC pressure, down after ZGC returns pages, at `cpu: 2%` throughout. Pod churn
+   rather than a stuck maximum. For `#15` that is worse, not better: replica count changes
+   under a running ladder, so hypothesis C is **intermittently** live and a run can straddle a
+   scale event.
+
+   **The full observed sequence, 2026-09-18, inside about one hour:**
+   `0` (step 2d) → `1` (step 4's explicit scale) → **`3`** (HPA, on memory at 2% CPU) → `2` →
+   **`1`**. It is back at `minReplicas` with the cluster idle. So the resting state is 1, the
+   scale-up is a warm-up artefact, and **hypothesis C is live only during the up-phases** —
+   which is exactly the condition under which a ladder run gives an irreproducible answer.
+2. **It was at `maxReplicas` with its target unmet at the moment it was measured**, so at that
+   instant it had no headroom for a genuine CPU-load event. Given the flapping above, treat
+   this as a recurring condition rather than a permanent one.
+
+**What it drags in:** `#15` hypothesis C is **alive again** (three entity caches to diverge —
+see that entry's 2026-09-18 note); three writers into `events`; three times the JDBC
+connections through Pgpool. `#8`'s *specific* hazard — three pods appending one shared log
+file — is the one thing that is **not** live, because `#38` establishes the file handler is off.
+**`#8`'s prediction was right and its stated mechanism was wrong**, which is worth more than
+either fact alone.
+
+**Watch for OOMKills.** Max heap is 1.33Gi against a 2Gi limit, which leaves ~0.67Gi for
+everything non-heap. That is not obviously enough, and three pods on one OrbStack node
+multiplies the node-level pressure. Check `restartCount` and `lastState.terminated.reason`.
+
+**Do not fix this mid-verification.** *Polaris is not to be changed* still stands, and this is a
+values change that needs its own plan. The options, for that plan and not for now:
+
+- **drop `targetMemoryUtilizationPercentage` entirely** and keep CPU only — scaling a JVM on
+  memory is the anti-pattern that produced this, since a JVM's footprint reflects its heap
+  settings rather than its load;
+- **raise `requests.memory`** to above the real footprint (≥`1.5Gi`) so the ratio means
+  something;
+- **`autoscaling.enabled: false` with `replicaCount: 1`**, which is what `#8` recommended
+  before any of this and would have prevented it.
+
+Note `replicaCount: 1` *is* already in `values.yaml` and does nothing: `deployment.yaml` emits
+`replicas:` only when autoscaling is disabled. That is correct chart behaviour, not a bug — but
+it is why "replicaCount is 1" must never be read as "there is one pod".
+
+**#37 — OPEN. The Polaris chart's `pre-upgrade` hook runs `bitnami/kubectl:latest`, pulled
+`Always`, from a catalog Bitnami retired. It is the most likely cause of a step-4 failure and
+it has nothing to do with Polaris.** 2026-09-18, found by reading the step 3 render.
+
+`polaris/templates/secret-rsa-key-hook.yaml` registers four `pre-install,pre-upgrade` objects:
+ServiceAccount / Role / RoleBinding at hook-weight `-10`, then a **Job at weight `0` running
+`bitnami/kubectl:latest`** that creates `polaris-rsa-key-pair-secret`. `backoffLimit: 3`.
+
+- **No `imagePullPolicy` on that Job, and the tag is `:latest`** → Kubernetes defaults to
+  `Always`, so every `helm upgrade` performs a live registry pull. The image cached on the node
+  from the install 30 days ago does not help.
+- **Bitnami moved its public Docker Hub catalog to `bitnamilegacy/` on 2025-08-28**, leaving
+  community users "a reduced number of hardened images … published only under the `latest` tag
+  and intended for development purposes". `bitnami/kubectl` went unavailable, came back, and
+  upstream has left its future availability unresolved (bitnami/containers#86977).
+
+**Failure mode is safe but misleading:** the upgrade stops at the hook with nothing changed,
+and the symptom is `ImagePullBackOff` on a Job named `benchmarks-polaris-rsa-keygen` — it does
+not look like a Polaris problem at all. Pre-check with `docker pull bitnami/kubectl:latest`.
+
+**Fallback if it will not pull:** the Job's script is idempotent and self-skipping (secret
+exists → `exit 0`), so with `polaris-rsa-key-pair-secret` present, `--no-hooks` changes nothing.
+**Verify the secret exists first** — without it, `--no-hooks` leaves the token broker
+unbootstrapped and the failure presents as an auth error, which is
+`RESET-AND-CLEAN-INSTALL.md` §2.3's trap from the other side.
+
+**CHECKED 2026-09-18: it pulls.** `Status: Image is up to date for bitnami/kubectl:latest`,
+digest **`sha256:b29d8c1665b70817259ceecaea16ab27aab6368b48daf485d19436c809067492`**. So step 4
+was cleared to run with hooks. **Record that digest — it is the known-good pin**, captured
+while `:latest` still resolved to a working image, and it is what the fix should point at:
+
+```yaml
+image: bitnami/kubectl@sha256:b29d8c1665b70817259ceecaea16ab27aab6368b48daf485d19436c809067492
+```
+
+A digest pin also makes `imagePullPolicy: Always` harmless, since a digest cannot move.
+
+**The fix is to pin the image, and it was NOT a step-4 decision** — the chart must not be
+edited mid-upgrade. Still OPEN afterwards: this hook runs on **every** future upgrade of this
+chart, so a green pull today is not a green pull next month; that is the standing fragility,
+and one successful check does not close it. Related: `#2` (charts that pin no image at all).
+
+**#36 — OPEN QUESTION, cheap to settle, no structural risk. The live metastore was not
+bootstrapped from a file carrying v3's table comments, and `schema.sql` is the exact shape of
+what it was.** 2026-09-18.
+
+`obj_description` over `polaris_schema` after the migration: `scan_metrics_report` and
+`commit_metrics_report` carry their comments (so the script that ran was post-`935c7ed` or the
+shipped file — that part is confirmed good). But **all four comments v3 defines are absent** —
+`version`, `entities`, `grant_records`, `principal_authentication_data`. Not a random subset:
+it is exactly the set. (`events` and `policy_mapping_record` are correctly blank; v3 never
+comments them.)
+
+**No structural risk, and this is the part to read first.** Compared object by object with the
+verifier's parser, `postgresql/schema/schema.sql` and `schema_v3.sql` declare the **same 10
+objects, 0 differing**, both version 3. The difference between them is **24 `COMMENT ON`
+statements and nothing else** — `schema.sql` has zero, `bootstrap.sql` has zero and declares no
+version at all. The live database is structurally complete v3: all 21 indexes present,
+including v3's `idx_entities`, `idx_locations`, `idx_policy_mapping_record` and the
+`CONSTRAINT constraint_name` unique index on `entities` (an upstream naming wart, in both
+files — not a defect here). So the v3 → v4 migration was applied to a correct baseline and
+`#34`'s finding is unaffected.
+
+**What is open is provenance, and there are two candidates:**
+
+1. the metastore was bootstrapped by applying `postgresql/schema/schema.sql` by hand — it is
+   *precisely* v3-minus-comments, which is *precisely* the live shape; or
+2. Polaris 1.3.0 bootstrapped it from its own jar's `schema-v3.sql`, and upstream added those
+   comments between 1.3.0 and 1.6.0 — the file we diffed in `#34` came from the **1.6.0** jar.
+
+`RESET-AND-CLEAN-INSTALL.md` points at (2): it bootstraps through `bootstrapCredentials` and
+`persistence.relationalJdbc` and **never applies a repo SQL file**. No chart template, values
+file or script in this repo references any of the three SQL files either. But (1) matches the
+observed shape exactly, so neither is settled.
+
+**The discriminator, three commands, worth doing at the next `docker pull` and not before:**
+extract `postgres/schema-v3.sql` from the **1.3.0** image and count its `COMMENT ON` lines.
+24 → the database came from `schema.sql`, and `schema.sql` is load-bearing history rather than
+a "local variant". 0 → upstream added them after 1.3.0, and `schema.sql` is probably a copy of
+1.3.0's own v3.
+
+**Either way, two things to fix in the docs once known:** `CLAUDE.md` calls `schema.sql` and
+`bootstrap.sql` "the local variants" without saying that one of them is v3 minus comments and
+may be what built this database; and `RESET-AND-CLEAN-INSTALL.md` never names a schema file, so
+the next clean install cannot reproduce this one deliberately. **Do not add the four missing
+comments to the live database** — they are the evidence, and cosmetic.
+
+**#15 — Polaris 500s on create-then-resolve, and it is a NullPointerException, not a
+"PG-HA read-after-write signature". OPEN.**
+
+Every 500 this cluster has stored is a `java.lang.NullPointerException` logged by
+`org.apache.polaris.service.exception.IcebergExceptionMapper`. Eight of them in run
+`1788760757`, `05:59:20Z .. 05:59:33Z`, in three signatures:
+
+| exception.message | n | on |
+|---|---|---|
+| `…getPassthroughResolvedPath(Object)" is null` | 6 | `POST …/{catalog}/namespaces` |
+| `grantee_not_found: grantee={}, [… name='catalog_admin' …]` | 1 | `POST /api/management/v1/catalogs` |
+| `metadata` | 1 | `POST …/namespaces/probe_ns/views` |
+
+*2026-09-18 — HYPOTHESIS C IS DEAD for the current cluster.* The handoff gave hypothesis C
+(the namespace request lands on a *different* Polaris pod than the catalog create, whose
+entity cache never saw it) more weight than A or B, on the grounds that round-robin across
+replicas is deterministic in a way replication lag is not, which fits 3-of-3. Runbook step 0b
+settles it: **there is exactly one Polaris pod**, `REPLICAS 1` with the HPA idle at 1% CPU,
+and the deployment reports `1/1`. With one pod there is no second cache to diverge from. C
+cannot be the mechanism here.
+
+Two caveats before this is treated as closed. `#15`'s evidence came from a differently-seeded
+cluster (run `1788760757`), so what is settled is that C is not the mechanism *now*, not that
+it never was. And the HPA is live again (`#8`, 2026-09-18) — if a future ladder run pushes
+Polaris past the target, C comes back. **Pin `replicaCount` / disable autoscaling before the
+post-upgrade ladder run if you want C held dead for the duration.**
+
+> ### *2026-09-18, LATER THE SAME DAY — HYPOTHESIS C IS ALIVE AGAIN. This paragraph outlived its truth by about six hours.*
+>
+> **`REPLICAS 3`.** The HPA scaled Polaris to three pods within minutes of step 4, on
+> **memory** (`memory: 88%/80%`) at **`cpu: 2%`** — so not from a ladder run, and not from
+> load at all. See `#39`: it is arithmetic, and it will not come back down. The caveat above
+> named the right risk and the wrong trigger, and the mitigation it recommended was never
+> applied.
+>
+> **So C is back on the table for any `#15` work from now on**, and it is no longer
+> conditional: three pods is the steady state until `#39` is fixed. Anything that reads
+> "hypothesis C is dead" — including MEMORY.md as it stood — is stale. **Pin `replicaCount`
+> and disable autoscaling before the post-upgrade ladder run**, or the run measures a
+> three-cache cluster and cannot distinguish C from A.
+
+That leaves **A** (stale reads through Pgpool — the `database_redirect_preference_list`
+remedy in the handoff addresses it) and **B** (a 1.3.0 resolver/entity-cache bug, which the
+1.6.0 upgrade is itself the experiment for).
+**The trigger is a fresh parent entity, not load.** Three of the six namespace NPEs are the
+`polaris-learning` 500-ladder's *setup* step — one per rung, `nb1788760757bh`, `…dns`,
+`…nobkt`, **3 of 3 brand-new catalogs**, each 500ing on the first namespace created in it.
+The catalog-create NPE is the same shape one level up: the `catalog_admin` role is created
+and immediately looked up as a grantee, and the lookup returns nothing.
+
+**Read-after-write against a standby remains the plausible mechanism** — an entity written
+on the primary and resolved microseconds later — but that label had been treated as settled
+and it never was. What the log carries is an unresolved entity and an NPE. Do not write
+"PG-HA read-after-write" into a document again without the replication evidence beside it.
+
+**The denominator cannot be read from this pipeline, by construction.** Scoped to the window,
+`POST …/namespaces` stored **6 x 500** — 3 on the fixture catalog, 1 each on `nb1788760757bh`,
+`…dns`, `…nobkt` — **and 1 x 409, and nothing else**. No 2xx, at any scope: that path is not
+under `/api/management/`, so rule 5 does not keep it and a **successful namespace create leaves
+no individual record**. Rule 3 keeps the failures. So `stats by (http_status)` over stored
+access records for this path can only ever return errors, and its zero is the policy working,
+not a measurement. The per-resource `writes` counter cannot supply it either: two of the three
+fixture 500s were charged to `__other__` because the key did not exist yet, so the key's own
+`writes` is 2 for 4 error POSTs.
+
+**It exists in the driver.** The notebook knows every call it made and its status; the ladder
+simply throws its setup statuses away. That single omission is why the three 500s were
+invisible AND why the rate is unmeasurable — one fix closes both.
+
+**What is established:** 3 of 3 brand-new catalogs 500 on the first namespace created in them,
+and the namespace is usable afterwards — each rung went on to `create_table` and got a 4xx from
+the storage layer, which requires the namespace to exist. Consistent with a write that
+committed and a resolution that then dereferenced null.
+
+**Two consequences, both real.** For the platform: writes 500 at roughly 3% (8 of 275
+requests in 60s) on a single-node cluster, and nothing was watching. For
+`polaris-learning`: this is the **repeatable provoker** `HANDOFF-500-coverage` §4.1 says does
+not exist — API-only, no `kubectl`, no `pg_wal_replay_pause()`. Detail in
+[`sessions/2026-09-07-500-coverage-review.md`](sessions/2026-09-07-500-coverage-review.md).
+
+**#14 — The noise filter governs 4.5% of the volume, and policy v2 is not running yet. OPEN.**
+
+Two things, from the second coverage run (`polaris-learning/log-coverage`, 2026-09-04, run
+`1788498536`, against `fb-values.yaml` sha256 `b56c135b87d6281b`).
+
+**a. The measurement.** 122 calls stored 2,026 records. Counting the coverage matrix rather
+than its summary: **90 access-log records and 1,928 application lines.** The filter can only
+act on the first group — rules 1 and 2 keep every application line untouched — so dropping 34
+of them removed **1.7%** of what would otherwise be stored. Rules 3–7 are an *audit-fidelity*
+control. Anyone tuning them for storage is tuning the wrong 4.5%; the volume lever is the
+DEBUG SQL records in #5b, and #5b already says **route them, do not turn them down**.
+Settle where the 1,928 come from with one `stats by (loggerName)` before designing that.
+
+**One number in that report does not agree with itself.** Question 5 says "34 of 122 calls
+produce no record at all", but those same 34 calls carry **628 application lines**, and
+`90 + 1,928 ≈ 2,026` implies the `app_lines` column is counted from VictoriaLogs. If it is,
+a dropped `create_principal` still leaves 13 correlated records and only the access-log line
+— method, path, status, principal — is lost. Real, but not "invisible". Settle which source
+that column reads before repeating the stronger claim.
+
+**b. Policy v3, written 2026-09-04, NOT RUNNING.** Deliberately, and it is #13's shape again,
+so treat the upgrade as a change: `shipper-v3-upgrade-runbook.md`. **v2 was never deployed** —
+it was superseded before installation, so there is no v2 baseline in the cluster and no reason
+to look for one.
+
+```
+1. ERROR / WARN ........................ keep      (no deprecated exclusion — see below)
+2. not an access-log record ............ keep
+--- every access-log record is COUNTED here ---
+3. status >= 400, or unparseable ....... keep, ALL of them, no cap
+4. PUT / DELETE / PATCH ................ keep, all
+5. POST under /api/management/ ......... keep, all
+   POST anywhere else ..................  counted only
+6. GET / HEAD, 2xx .....................  counted only
+7. anything else ....................... keep
+```
+
+**What it preserves, and this is the point of the shape:** 100% of authorization failures —
+every 401 and 403 is a full record via rule 3 — and 100% of identity and grant mutations.
+What becomes a count is traffic that succeeded routinely.
+
+**Rule 5 is split, not simplified, because in Polaris POST is the CREATE verb.**
+`create_principal`, `create_principal_role`, `create_catalog_role` and
+`reset_principal_credentials` are all POSTs; PUT covers only assignment and grants, DELETE only
+removal. Summarising POST wholesale — the obvious simplification — would make a principal
+invisibly created and visibly deleted, which is the asymmetry this pipeline exists to expose.
+Catalog POSTs (`create_table`, `commit_table`, both renames, `report_metrics`, `oauth/tokens`)
+are data-plane volume and are counted.
+
+**Rule 1 has no "deprecated config" exclusion and needs none.** `polaris/values.yaml:315` sets
+`io.quarkus.config: "OFF"`, so those warnings are never written; the coverage run independently
+saw zero across 122 calls. The values file alone would not be evidence here (#5) — the run
+agreeing with it is. The TODO is deleted, not deferred.
+
+**The dedup cap question is gone, not answered.** v2 kept one read per principal per object per
+KST day and needed a per-key table to do it, which is what `DEDUP_MAX_KEYS` was placeholding
+for. v3 never stores a successful read individually, so there is no key to remember. The civil-
+day arithmetic, both day buckets, `seen_before` and the cap are all deleted — about 90 lines.
+
+**The flush report, schema v1.** A `dummy` INPUT tagged `polaris.report` ticks and reaches the
+*same* Lua filter instance (state is per-instance, so `Match` is `polaris.*`); on a
+`WINDOW_SECONDS` boundary the filter returns an **array** of records instead of the tick and
+resets the counters. Steady state is a 30-minute window on the :00/:30 wall-clock boundary with
+a 30s tick — **but the deployed values file is on the temporary fast-run setting right now, see
+d. below before reading a report.** Array return is documented behaviour — "this value can be an array of tables... the
+input record is effectively split into multiple records" — but has never run here (#14c).
+Lands on `{app="polaris-shipper-report", level="REPORT"}`, its own stream.
+
+Three record types on one envelope (`schema_version`, `report_type`, `report_seq`, `hostname`,
+`window_start`/`window_end`/`window_seconds`, `_time` = window end):
+
+| type | carries |
+|---|---|
+| `summary` | `access_seen` / `access_kept` / `access_counted` (**kept + counted == seen**), `counted_get`, `counted_post`, `errors_kept`, `parse_errors`, `distinct_resources`, `distinct_principals`, `resources_other`, `principals_other`, `min_record_time`, `max_record_time`, `partial_window` |
+| `resource` | `resource`, `resource_kind`, `requests`, `reads`, `writes`, `errors`, `response_bytes` |
+| `principal` | `user_principal_name`, `requests`, `reads`, `writes`, `errors`, `response_bytes` |
+
+**Two margins, never the cross product** — `resource -> count` and `principal -> count`, so
+state is |resources| + |principals| rather than their product. The consequence is in the source
+because it will otherwise be misread as an audit trail: the report says *which resources are
+hot* and *who is generating load*, and **cannot** say *who read which resource*. Under v3 that
+question has no record behind it at all — a deliberate trade, taken knowingly.
+
+Four things worth knowing about the schema:
+
+- **`sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors.** The two
+  margins must agree. It is asserted in the test suite and it is Phase 4's last check — a
+  dashboard that verifies it knows whether to trust a trend before drawing one.
+- **The resource key is the resource, not the URL.** `/tables/t/metrics` counts under
+  `/tables/t`. v2 emitted two rows for one table — measured, not supposed — and a trend
+  computed on a key that splits is simply wrong.
+- **Errors increment an existing resource key but never create one**, so a client walking
+  invented table names cannot fill the key space. Their counts are not lost: they land in
+  `__other__`, which keeps the margin totals exact, and every one is stored in full by rule 3.
+- **Zero-carry, exactly one window.** A resource falling from 100k reads to none emits an
+  explicit `0` rather than vanishing from the output, then decays. The fall is the direction
+  you most want to see and a missing row cannot express it.
+
+`user_principal_name` deliberately reuses the access-log field name, so one filter spans a
+principal's stored 403s and their per-window counts. `resource` is a new name because it is a
+normalized identity, not a request path.
+
+**c. What is still unverified, and no test can reach it:** that this Fluent Bit build splits an
+array return into separate records, and that the dummy input's tag reaches the filter instance.
+Both documented, neither run. Runbook Phase 4 distinguishes them and names the fallback.
+
+**d. TEMPORARY: the report window is 30 seconds, not 30 minutes.** Set 2026-09-04 at Kade's
+request so a coverage run crosses three window boundaries in ~2 minutes instead of ~90 — the
+handoff's §4 needs three, for `report_seq`, zero-carry and carry decay. In
+`logging/fb-values.yaml`: `WINDOW_SECONDS = 30` (was 1800) and the dummy INPUT's
+`Interval_Sec 5` (was 30).
+
+**Revert both together.** The tick has to stay well under the window: `report_tick` reports
+whatever `counts` holds under the index it was *opened* with, and records accumulate into the
+open window regardless of their own timestamps, so if the tick period reaches the window period
+ordinary jitter lets a boundary pass unnoticed — the skipped window never opens and its records
+are folded into the previous window's index. At 1800/30 the margin is 60×; at 30/30 there is
+none. That is why the tick moved too, and it is not cosmetic.
+
+Two consequences while it is set:
+
+- **Report volume is ~60× steady state.** Zero-carry emits every non-zero key once more as an
+  explicit `0`, so even an idle pipeline ships a summary plus carried rows every 30s.
+- **The first window after the `helm upgrade` is a replay, not traffic.** The tail DB is on an
+  `emptyDir` with `Read_from_Head true` and VictoriaLogs does not deduplicate on ingest, so the
+  upgrade replays the whole log file — and at 30s the entire replay lands in *one* window as a
+  spike. A window whose `min_record_time`/`max_record_time` span far exceeds `window_seconds`
+  is a replay. Do not trust it.
+
+Nothing else reads the constant. `logging/scripts/test-polaris-filters.py` now parses
+`WINDOW_SECONDS` off the deployed Lua and expresses every tick offset as a multiple of it
+(it hardcoded 1800, so `T0 + 900` — "a tick inside the window" — would have become a tick 30
+windows later and failed for the wrong reason). 48/48 at 30s. The runbook, roadmap #7 and
+`POLARIS-LOG-COVERAGE-V3-HANDOFF.md` still describe the 30-minute steady state on purpose.
+
+**Decided by this policy, and therefore no longer open:** the 4xx cap (there is none — all
+errors kept), collection listings (counted, like every other successful read), `report_metrics`
+(counted, as a catalog POST), and the dedup cap (deleted with the dedup).
+
+**Still deferred, each with a number behind it:**
+
+| | evidence | why deferred |
+|---|---|---|
+| the 95.5% — routing the DEBUG SQL records | 1,928 of 2,018 stored records are application lines | needs the `loggerName` distribution first; #5b already fixes the direction — route, never turn down |
+| no `%D` — no request duration is recorded anywhere | the access-log pattern carries no latency token | Polaris-side, and **Polaris is not to be changed** (#11). The *no stack traces* half of this row is **CLOSED** — see immediately below |
+| retention for the report stream | reads now live only as counts | VictoriaLogs single has one global retention and no disk cap (#7); the counts eventually want a TSDB, roadmap 7 |
+| `neg.client_timeout` "EXPECTED DROPPED, PRESENT" | the run's only matrix discrepancy | oracle artefact — a call with no client-side status is not predictable and should not be scored `drop`. Harness fix, in `polaris-learning` |
+
+**CLOSED 2026-09-07 — stack traces DO survive, and the `0 of 5` was a mis-named search.**
+Run `1788760757`: **8 of 8** WARN/ERROR records carry an exception payload, stored flattened as
+`exception.exceptionType`, `exception.frames`, `exception.message`, `exception.refId`.
+VictoriaLogs flattens nested objects, so a query for `exception` matches nothing and a
+`grep -c stackTrace` finds nothing — **two searches for a name this build does not emit,
+agreeing with each other**, which is what the `0 of 5` was. Query `exception.*`, never
+`exception`. The fact with its numbers is in [`roadmap.md`](roadmap.md), *Handing back*; the
+review that re-proved it is
+[`sessions/2026-09-07-500-coverage-review.md`](sessions/2026-09-07-500-coverage-review.md).
+Only the `%D` half of that row is still open, and it is Polaris-side.
+
+**READING THE REPORT STREAM — three false findings came from not doing this.** Every query
+against `app:polaris-shipper-report` must carry **`schema_version:2`**, and anything about
+sequence continuity must also carry **`hostname:"…"`**.
+
+- **The stream holds v1 AND v2 records side by side.** The shipper pod was replaced at
+  `2026-09-07T04:21:30Z` (`…68b4959db4-4f7tf` v1 -> `…55b7bf586d-5kt5l` v2). A `sum(errors_4xx)`
+  over any range spanning that instant silently under-counts: the v1 records have no such field,
+  and an absent field behaves like a zero inside a sum. Cell 0b gates the POLICY's schema
+  version; nothing gates the QUERY's.
+- **`report_seq` is per pod and resets to 1 on restart.** `min`/`max`/`count` across two
+  generations manufactures a phantom gap — it read as "50 reports lost", then as "a backlog
+  draining", and it was neither. The schema's own claim is *one summary per **(host, window)***;
+  the host is not decoration.
+- **`sum()` over an empty group returns `NaN` in LogsQL; `count()` returns 0.** A v1 summary has
+  no `carried_rows`, so summing it yields NaN, which a naive comparison reads as a mismatch.
+- **`_time` on a report record is the window END**, not its start. Seq 196 (`window_start
+  05:59:00`) appears at `05:59:30`.
+- **Every count must carry its denominator.** Ask `stats count()` for the scope first. Three
+  times in one session a number arrived with no scope and read like an answer — 25 vs 6 on an
+  unfiltered `_time`, a 5-row UI truncation read as a full result, and the cross-pod seq range.
+  Each was caught only because an independent number disagreed.
+
+**#1 — The repo has not been reconciled against the live cluster. OPEN.**
+Kade reset and rebuilt the cluster on 2026-09-03 without following
+`RESET-AND-CLEAN-INSTALL.md`, and resolved the four config blockers during the
+install. Those fixes are in the running releases; whether they are also in the
+`values.yaml` files here is **unknown**. Until someone diffs them, nothing on disk
+is evidence of what is deployed:
+
+```bash
+helm -n datahub-hynix list
+helm -n datahub-hynix get values <release> > /tmp/<release>-live.yaml   # then diff
+```
+
+The four blockers this closes out — Polaris `bootstrapCredentials` rendering `""`,
+three conflicting MinIO credential sets (one of them plaintext at
+`spark/values.yaml:30`), the stale `polaris-persistence-secret.yaml`, and the
+unpinned images in `kafka/` / `schema-registry/` / `datahub/` — are **resolved in
+the cluster**. Two of them are worth checking on disk regardless: a plaintext
+secret key stays a leaked secret even after the cluster stops using it, and an
+unpinned image is still unpinned for the next install.
+
+**#3 — `minio/values.yaml` defeats its own chart's credential guard. OPEN (low).**
+`minio/templates/secret.yaml` refuses to render when `auth.rootPassword` is empty —
+CLAUDE.md's Zero Hardcoded Credentials rule, enforced at install time, which is the
+right place for it. But the committed values carry `rootUser: "minio"` /
+`rootPassword: "minio"` as defaults, so the guard never fires and an install with no
+`--set-string` quietly comes up with a publicly known password. Either blank the
+defaults so the guard does its job, or accept that this cluster's object store has a
+guessable root credential. Cheap either way; just pick one deliberately.
+
+**#4 — `fluent-bit/values.yaml` carries a plaintext OpenSearch password. OPEN.**
+`HTTP_Passwd Str0ngP@ssw0rd123!` appears twice, in a **committed** file — the Zero
+Hardcoded Credentials rule broken in tracked history. Rewriting the file does not unleak
+it; the credential has to be rotated on the OpenSearch side as well. The fix in the values
+is a Secret plus `${VAR}` expansion in the Fluent Bit config, not a different literal.
+`polaris/values.yaml:408-409` (`minioadmin`/`minioadmin`) is the same class of problem and
+should go the same way.
+
+**#9 — A plaintext database password in the live release. OPEN.**
+`persistence.relationalJdbc.secret.password: polaris` in `helm get values` output. Same class
+as #3 and #4. Separately, `minio.accessKeyId`/`secretAccessKey: minioadmin` sit beside
+`minio.existingSecret: benchmarks-minio-credentials` — two credential sources for one client,
+which is how #1's "three conflicting MinIO credential sets" began.
+
+**#11 — Unexplained, NOT pursued: file logging reads as off, and ships anyway.**
+The running config says `quarkus.log.file.enabled=false`, and Polaris is nonetheless writing
+a file that the shipper tails — **Kade confirms the pipeline works and ships continuously**,
+which is an observation, where the prediction that it would break at the next restart was an
+inference. This session's inferences about this pipeline were wrong four times; his
+observation wins. **Polaris config is not to be changed.**
+
+Left here because it is genuinely unexplained, not because it needs action. Whoever picks it
+up: `ls -l --full-time /deployments/logs/` twice, thirty seconds apart, says whether the file
+is live or stale, and the Polaris pod's start time against the ConfigMap's last write says
+whether the JVM predates it. Do not turn it into a change on the strength of the reasoning
+alone.
+
+**#5b — What is actually wrong in the shipped records. OPEN.**
+Established from two raw records off the VMUI JSON tab, after two earlier readings of the
+same pipeline from a *rendered* view were both wrong. `_time` is **not** an ingest stamp —
+it is the record's own Quarkus time (`...13.911654221Z`), 178µs *earlier* than Fluent Bit's
+own `date` (`...13.911832Z`), which an ingest stamp cannot be; the nanoseconds are the JBoss
+JSON formatter printing the full `Instant`. And every record **does** carry `loggerName` —
+the stream-fields panel was showing the *stream* (`{app, level}`), not the field list.
+**A `_stream` is not a field list and a histogram bucket is not a clock. Read the record.**
+
+Working, and not to be "fixed": Quarkus JSON file logging, `_time`, `_msg`, `_stream` on
+`{app, level}` (low-cardinality, the right choice), and **`mdc.requestId` + `mdc.realmId`,
+which make the spec's §7 end-to-end trace query work today**. Note `polaris/values.yaml` has
+`logging.mdc: {}` and `_stream_fields=app,level,loggerName` — the cluster is right and the
+repo is wrong on both, which is #5 again.
+
+Actually wrong:
+
+| what | evidence | fix |
+|---|---|---|
+| `date` duplicates `_time` on every record | `"date": "1788417313.911832"` beside `_time` | `json_date_key false` on the HTTP output |
+| `processName` is a 60-byte JVM path on every record; `loggerClassName`, `processId` near-valueless | in every record | `record_modifier` `Remove_key` |
+| **DEBUG SQL records are ~1.5KB each** — full statement, every bound parameter, an embedded JSON blob escaped four deep — and are nearly every row | the sample `_msg` | **Do NOT just set `DatasourceOperations` to INFO.** `polaris-learning` depends on that logger being at DEBUG (`roadmap.md`, *Handing back*: `check_sql_logging.py` must print *SQL DEBUG logging is WORKING*). Turning it down to save space breaks the only consumer this platform exists for. Route it instead — its own stream, or leave it to the console→OpenSearch path and keep VictoriaLogs for the rest. |
+| bound parameter values are written to the log | S3 paths and internal properties in the sample | same fix; worth knowing before this pattern reaches anything with real data in it |
+| `response_size` is `-` for zero-byte responses | `"... 200 -"` | regex `[\d-]+`, not `\d+` |
+| no latency token in the access-log pattern | the access-log `_msg` | add `%D`; the spec's own P99 panels need it |
+
+The tail `DB`, `Skip_Long_Lines Off` and the absent buffering are now **confirmed live** by
+the revision-10 diff, not merely suspected. Unchanged as faults: a restart replays the file
+from byte 0, and a line over `Buffer_Max_Size` stops the tail rather than being skipped.
+
+**#6 — A shared PVC cannot cross namespaces. OPEN (design constraint, decide before building).**
+PVCs are namespaced. Polaris runs in `datahub-hynix`, so the file-tailing shipper must run
+in `datahub-hynix` too — only VictoriaLogs stays in `logging`, which is what
+`environments.md` already says that namespace is for. `ReadWriteOnce` is survivable only
+because OrbStack is one node; it stops being survivable the moment anything is scheduled
+elsewhere. The alternative that avoids the PVC entirely is to add a second OUTPUT to the
+existing DaemonSet and drop the Deployment — at the cost of the access-log field extraction
+and the dedup filter, which need the file path to be worth building.
+
+**#26 — Report rows are stamped by a tick that fires 3.673s late, and the matrix fires every phase
+on the boundary. OPEN, LIVE, and it is the reason three gates in run `1789370776` did not mean what
+they said.** 2026-09-14. Measured from the OpenSearch report + log exports, not from config:
+
+- **The skew is constant, not erratic.** All 11 rows (`seq` 184..194) emitted at
+  `window_end + 3.673s`, σ < 2ms. It cannot drift: `Interval_Sec 5` **divides** `WINDOW_SECONDS 30`,
+  so the tick phase against the window grid is fixed for the life of the process. Row `[W, W+30)`
+  really covers about `[W+3.7, W+33.7)`. Bounded independently to **+1.55s..+3.67s** for `seq=186`
+  by its own emit timestamp — a 30s shift is arithmetically excluded.
+- **The notebook lands every burst inside that dead zone.** Traffic starts 0.52–0.61s after each
+  boundary and finishes within ~1s, so 100% of a phase is attributed to the previous row.
+- **`{-30: 5, 0: 1}` is one rule, not two.** `lead_s` measures distance to the *label*, so it reads
+  −30 for a boundary-aligned burst and ≈0 for a mid-window one. The single `0` row is `seq=185`,
+  the setup burst at 07:26:16.9 — the only traffic in the run that did not start on a boundary.
+  **The report's "no single offset can correct it, do not quote window-scoped gates" is withdrawn.**
+- **Confirmed against the other pipeline:** `access_kept` equals the access docs in the real window
+  in **7 of 7** windows, 343 == 343 total.
+- **Consequences already visible:** Gate 4 `writes=1 granted=3` is two adjacent rows (3 grants at
+  07:29:00.55–.61; the teardown DELETE at 07:29:31.35). Gate 4 `auth_denied=0` is **not** the
+  ROLE_KINDS exemption and the 403 did **not** fall to `__errors__` — it is on the role row in the
+  neighbouring report row (`auth_denied=1`). Gate 2's VOID is the same class.
+- **Cheapest fix is in the notebook, not the pipeline:** start each phase ~5s past the boundary
+  (> `Interval_Sec`). Re-typing the window from record times is a *design change* — the Lua refuses
+  it deliberately, so a replayed record is not re-dated — and must be argued as one.
+
+Full derivation, including the wrong turn that nearly filed this as a constant 30s shift, in
+[`sessions/2026-09-14-window-skew-review.md`](sessions/2026-09-14-window-skew-review.md).
+
+**2026-09-15 — FIX CONFIRMED by run `1789460891`; two corrections.** Bursts started +11.5s and
++6.6s past the boundary; errors per row 2 / 251 == detail docs, by label, no shift. (a) **The tick
+does drift**: same pod, `seq` unbroken 440→854, offset 3.673s → 2.77s — divisibility fixes the grid,
+not the timer. The `Interval_Sec + 1.5` lag is immune; a hardcoded 3.673 is not. (b) The run put
+**every phase in one window**, so per-phase window gates (Gate 4's grant count on a busy role) read
+the whole matrix. Downgrade to MONITOR once phases are one-per-window again.
+[`sessions/2026-09-15-rerun-1789460891-review.md`](sessions/2026-09-15-rerun-1789460891-review.md).
+
+## Resolved, kept because they recur
+
+*Entries from here to the next horizontal rule were moved out of Open on 2026-09-29 because their
+headings say CLOSED / RESOLVED / ROLLED / SETTLED / WITHDRAWN (or, where noted, the body does). Text unedited.*
+
+**#52 — RESOLVED-INSTRUCTIVE 2026-09-29. `apply-lua.sh` refused to run for 8 days after the merge.**
+The 09-21 merge moved `fluent-bit/` to `releases/fluent-bit/` but not the paths inside the
+scripts: `apply-lua.sh` cd'd to the repo root and exited `FATAL: run inside the local-k8s repo`;
+`step3-postupgrade.sh` and `step11-replay-window.py` failed the same way. Fixed; the read-only half of
+`apply-lua.sh` was run from a subdirectory (context, 5 Lua suites ALL PASS, `kubectl diff` = 0), and
+step3 §3 passed (ConfigMap sha `f92bb6d4dbbfc346` == repo). **The lesson:** the merge's test repair
+fixed what pytest could see, and no gate runs the shell scripts, so a path moved under them failed only
+when someone ran them.
+
+**#48 — OPEN. File logging is back on with ONE `polaris.log` shared by every replica, so `#8`'s
+
+> *Moved from Open to Resolved on 2026-09-29 — its body records the closure (per-pod files, step15, 2026-09-28); the heading still said OPEN.*
+
+hazard returns the moment a second Polaris JVM exists.** 2026-09-27. **ROLLED ~18:34 KST, and a second
+JVM existed by 22:21 the same day.**
+
+**Evidence (Kade, 2026-09-27 ~22:25 KST):** two pods of ONE ReplicaSet (`6f86777d49-l5q8m`, age 3h49m;
+`6f86777d49-nvj5j`, age 3m28s) — same pod-template hash, so HPA scale-out, not a rollout. In the PVC:
+`polaris.log.2026-09-27-18.gz` (gzip -t ok; JSON; first/last `timestamp` 18:35:07 / 18:51:18 +09:00)
+and `polaris.log` (first line 22:21:43 `Installed features` — the new pod's startup), both mtime 22:21.
+So the NEW pod's first write rolled the OLD pod's file. The old pod still holds its own rotation state
+(next roll due 19:00, suffix -18): its next write goes to the renamed inode, and its first write then
+rolls the new pod's `polaris.log` to the same `-18.gz` name. HPA trigger NOT the memory baseline, as I
+first guessed: `kubectl get hpa` at ~22:25 showed cpu 1%/80%, memory 32%/80%, replicas 2 — a transient
+spike, cause unknown. At that load it scales back to 1 after the 5-min stabilisation window; the
+ReplicaSet usually deletes the NEWER pod, which leaves the old one with the stale rotation state.
+
+**CONFIRMED BY EXPERIMENT (Kade, 2026-09-27 ~22:35 KST).** One request port-forwarded to the OLD pod
+(`l5q8m`, 401 on `/api/catalog/v1/config`). Afterwards `polaris.log.2026-09-27-18.gz` held only
+`22:21:43.086…` .. `22:21:43.579…` +09:00 — the NEW pod's startup lines — and none of the 18:35–18:51
+content it held minutes earlier. The old pod's first write after its stale 19:00 deadline rolled the
+new pod's file onto the existing `-18` name: the real hour 18 is overwritten and 22:xx is labelled 18.
+"Pods only append, so one file is safe" (the premise of the one-file decision) is false here: appends
+are fine, the per-JVM rename-and-reopen is not. Until fixed it recurs every hour while 2+ pods run.
+
+**FIX WRITTEN, NOT ROLLED (2026-09-27, Kade chose it):** `logging.file.fileName: polaris-${HOSTNAME}.log`
+— one file per pod, the batch job merges them per hour and seals files of deleted pods. Open until the
+pod's `ls` shows per-pod names after the upgrade. Shared-era leftovers (`polaris.log`,
+`polaris.log.2026-09-27-18.gz` — now mislabelled 22:21 content) go to `legacy-shared/`, not to the job.
+
+**ROLLED ~22:37 KST (Kade).** `ls` shows one file per pod, named after the pod: `polaris-benchmarks-polaris-
+7f4d69c67c-{2tklb,bmt4t,rz56d}.log` (~3.58 KB each, startup lines) — `${HOSTNAME}` expanded. Three pods came
+up in the new ReplicaSet, so the HPA scaled out during the roll again (a JVM-startup CPU spike is the likely
+trigger, unconfirmed). `legacy-shared/` holds the shared-era `polaris.log` (15229 B, last write 22:37 when the
+old pods stopped) and `polaris.log.2026-09-27-18.gz` — now 942 B with mtime 22:30, down from 1241 B at 22:21:
+**overwritten a second time** before the move, more evidence for this entry. Open until each pod's first
+hourly `.gz` appears under its own name; closing it also needs the batch job's orphan sealing, because the
+HPA scaling back from 3 leaves unrotated `polaris-<pod>.log` files that nothing else will ever roll.
+
+**Per-pod hourly roll VERIFIED (Kade, 23:02 KST):** `…-bmt4t.log.2026-09-27-22.gz` (37141 B) and
+`…-rz56d.log.2026-09-27-22.gz` (31975 B), each rolled at 23:02 on that pod's first write after 23:00, each
+under its own name — no collision. `…-2tklb.log` (231675 B, last write 22:48) did NOT roll: either that pod
+is idle, or the HPA removed it and this is the first real orphan. The collision half of this entry is
+closed; the orphan half moves to the batch job (P1), which must seal files like this one.
+
+**ORPHAN CONFIRMED (Kade, ~23:05 KST):** only `bmt4t` and `rz56d` are running; the HPA removed `2tklb`.
+`polaris-benchmarks-polaris-7f4d69c67c-2tklb.log` (22:37–22:48) will never roll. Every line in an
+unrotated file belongs to one hour — a pod rolls before writing the first line of a new hour — so the
+seal name is that file's last-write hour: `…-2tklb.log.2026-09-27-22.gz`. Its last line may be cut
+if the pod was killed mid-write (D3: `malformed/`). This file is P1's first real sealing fixture.
+
+**Re-asked 2026-09-27 (Kade): one file for all pods, with small SIZE rotation?** Written as a countable
+test instead of argued: `logging/scripts/step15-shared-file-size-rotation-test.sh shared|perpod|restore`
+— 2 pods, `maxFileSize 100k`, N requests each tagged `?sizetest=<run>-<i>`, every i must appear exactly
+once across all rolls. Prediction (mine, unverified): `shared` loses lines — each JVM keeps its own byte
+count and rolls on its own; the other JVM keeps writing into the renamed file, which the `.gz` roll then
+compresses and deletes. `perpod` is the control and should lose none.
+
+**First runs (Kade, runs `1790518433` shared, `1790518698` perpod) tested NOTHING:** same pods before and
+after (`7f4d69c67c-bmt4t/rz56d`, 36–41 min old), no `polaris-sizetest-*` file, found 0 of 3000. The chart
+has no config-checksum annotation, so `helm upgrade` rewrote the ConfigMap and rolled no pod — `#38`'s
+"pod ran an older ConfigMap for days", again. The 6000 tagged requests went into the real
+`polaris-<pod>.log` files instead (`count` mode can recount them there). step15 now `rollout restart`s
+after every upgrade and refuses to send traffic until each running pod's `quarkus.log.file.path` is
+the test one and the test file exists.
+
+**Second runs (Kade): shared found 160/3000, per-pod CONTROL found 1071/3000 — both missing from id 1.**
+The control failing means the TEST was broken: `maxBackupIndex` 50 bounds the `.N` rolls within one
+hour and deletes the oldest beyond it, and at `maxFileSize 100k` 3000 requests (plus whatever else each
+401 logs) out-rolled it — oldest ids gone in both modes. Not evidence either way on sharing. step15 now
+sets `maxBackupIndex=5000` and prints each file group's highest roll index. Production is unaffected
+(2Gi per hour never size-rolls), but it is a live demonstration that `maxBackupIndex` DELETES.
+
+**step15 v3 (Kade: "refer traffic test: diagnostics/ladders/log-coverage/polaris_api_traffic_v1.ipynb").**
+The check now rides the notebook's own contract — section 13: the log "must hold EXACTLY <TOTAL> access
+lines from this run, one per id" — by counting `mdc.requestId = nb-<RUN>-*` on access lines across the
+test file and all its rolls. A background curl load (`?sizetest=<load>-<i>`, new connection per request)
+keeps both pods writing and rolling while the notebook runs, since the notebook's keep-alive sessions
+may all land on one pod. Flow: `shared|perpod` (configure + precheck, no traffic) → `load` → notebook →
+`verify <RUN> <TOTAL|ids-file> <load>` → `restore`. Analyzer checked on synthetic files only.
+**v4 — no notebook (Kade):** `step15 run shared|perpod` does it all: configure → load → `run_traffic.py
+--profile full` (same grid as the notebook, via `make_traffic.drive`) → verify against its
+`traffic-<RUN>.json` `calls[].request_id`, the exact issued list. Found on the way: `run_traffic.py`
+could not import `make_traffic` since the 2026-09-21 move (`.parent.parent / "src"` → a path that does
+not exist); now walks up to `src/` like the notebooks. Its `--dry-run` builds 297 requests.
+
+**RESULT (Kade, 2026-09-28, 2 pods, maxFileSize 50k, maxBackupIndex 5000, no roll index near the cap):**
+
+| mode | load (4000 tagged requests) | traffic `run_traffic.py --profile full` |
+|---|---|---|
+| `shared` (one file) | **found 2220, MISSING 1780 (44.5 %)**, gaps scattered (5, 7, 10, 11, 13 …) | not pasted |
+| `shared`, repeat (09-28) | **found 2231, MISSING 1769 (44.2 %)**, gaps scattered (7, 8, 16, 20 …) | **issued 327, found 127, MISSING 200 (61 %)**, dup 0 |
+| `perpod` (control) | **found 4000, MISSING 0**, dup 0 | issued 327, found 329, MISSING 0, dup 5, 2 ids not in the issued list |
+
+Scattered gaps, not oldest-first, is the signature of the other JVM writing into a file already rolled
+away and deleted — not of `maxBackupIndex`. **One shared file loses nearly half the lines under rotation — reproduced: 44.5 % then 44.2 % of the
+load, 61 % of the real traffic grid — and one file per pod loses none. Decided and measured: one file per pod.** The perpod `LOSS` verdict came only
+from the 5 duplicated ids — almost certainly the harness sending two requests under one id
+(`grant_privilege`'s skip-if-present GET + PUT and its 404 retry, `polaris_rest.py`), which the
+"exactly one per id" contract since 2026-09-21 does not cover. step15 now prints each duplicate's lines
+and fails only on the same line appearing twice. **#48 CLOSED for the log-file design**; the orphan case
+belongs to the batch job (P1). **2026-09-28 (Kade): no orphan special case at all** — the job reads every pod's
+current `.log` as well as its rolls and keeps the lines by `timestamp` in `[H, H+1)`, so a removed pod's
+unrotated file is just another source. PLAN *Batch algorithm* revised. Orphaned `.log` files (last line in a published
+hour, quiet > 120 s) then move to `done/…/polaris-<pod>.log.<hour>.orphan` (Kade). **Refined the same day
+(Kade): an orphan must ALSO be a pod the Kubernetes API no longer lists** — the CronJob lists
+`benchmarks-polaris` pods (read-only namespaced Role) and a file whose pod name is absent is orphaned.
+Both conditions, so a live pod's file is never moved; the untested "idle pod finds its file moved"
+path is gone. API failure → move nothing that run.
+
+
+`logging.file.enabled: true` (hourly `.yyyy-MM-dd-HH.gz`, PVC `polaris-logs-pvc` created before the release by
+`logging/k8s/polaris-logs-pvc.yaml` and mounted via `logging.file.storage.existingClaim`) for the
+batch pipeline in `logging/PLAN-polaris-log-batch-2026-09-27.md`. Kade chose one file for the whole
+Deployment over per-pod files. Checked from the chart, not the cluster: every replica renders the same
+ConfigMap, `quarkus.log.file.path = /deployments/logs/polaris.log`, and nothing in `templates/` or
+`values.yaml` puts a pod name in it — **the HPA does not create per-pod files.**
+
+One writer is safe. Two are not: HPA scale-out (max 3) or a RollingUpdate's surge pod each open the
+same path with independent JBoss rotation state — one renames the file while the other keeps writing
+into the renamed inode, or rolls the other's fresh lines under the previous hour's name. `#40`'s
+bursts of same-size `.1`–`.14` rolls minutes apart are the shape this produces, and were never ruled
+out. **Watch for it:** records from two `hostName`s inside one rotated file, or an hour with two
+same-name rolls. **The fix is one line** — `fileName: polaris-${HOSTNAME}.log` (Kubernetes sets
+`HOSTNAME` to the pod name) — plus the batch job sealing a deleted pod's last file. The other safe
+shape is `replicaCount: 1`, HPA off, `strategy: Recreate`.
+
+Also written with it, each to be confirmed from the running pod (PLAN step 2):
+`QUARKUS_LOG_FILE_JSON_ENABLED=true` (the variable `#38` deleted, live again now the handler is on),
+`QUARKUS_LOG_FILE_ROTATION_ROTATE_ON_BOOT=false`, `TZ=Asia/Seoul` (the suffix is formatted in the JVM
+zone; `timestamp`/`_time` gain `+09:00`, which the `_time` date mapping accepts), `maxFileSize: 2Gi`
+(size roll made unreachable — it cannot be disabled once a suffix is set), `maxBackupIndex: 50`,
+the claim outside the release (first cut used the chart's own `<fullname>-logs`; Kade's first check found
+no such claim — `NotFound` — and asked for the PVC to exist first). **NOT VERIFIED: no helm, no kubectl from the Cowork session that wrote it.**
+
 **#42 — `threadName` / `threadId` RESTORED to `polaris-logs-*`, REVERSING `#30`: ROLLED AND
 VERIFIED ON TRAFFIC 2026-09-18.** Decision B (Kade), taken on the cost analysis below rather
 than on the original premise, which was half wrong.
@@ -658,94 +1326,6 @@ arrives with the next daily index, and indices created 2026-09-16...18 simply la
 was written in a Cowork session with no `helm`/`kubectl`/`docker` reach (CLAUDE.md). The
 inverted gates have had `bash -n` only; neither has been run against a render or a cluster.
 
-**#43 — step3's presence checks could pass while asserting nothing: FIXED, NOT RE-RUN.**
-2026-09-18. Found while verifying `#42`, on this session's own defect.
-
-`step3-postupgrade.sh` has three verdict functions and only one of them counts:
-
-```
-ok()  -> PASS
-bad() -> FAIL, FAIL=$((FAIL+1))     <- the only one RESULT reads
-huh() -> ????                        <- does not
-```
-
-The `#42` presence checks called `huh` on zero documents, copying the existing `message` idiom,
-which is non-fatal because a pre-traffic run legitimately has none. **So `RESULT: post-upgrade
-checks passed` was compatible with both thread fields being completely absent** — and the
-pre-traffic run of the `#42` roll demonstrates it exactly: `????` on all three presence checks,
-`RESULT: post-upgrade checks passed`. A gate that passes for the wrong reason, which is the same
-class of bug as querying bare `threadName` under the v6 template.
-
-**`#42` is verified regardless, because the `PASS` lines were read directly** (367/367) rather
-than inferred from the RESULT line. The hole was in what a *future* reader of that RESULT line
-would have been entitled to conclude.
-
-**Fixed: the checks are now self-arming.** `$M`, the count of documents carrying `message`, is
-the arming signal. If documents are being written since pod start and the thread fields are
-absent *from those documents*, that is a real `bad` — not a "run traffic and re-try". Only when
-nothing has been written at all is 0 uninformative, and only then does it stay `huh`.
-
-**The general shape is still there and is deliberate**, so do not "fix" it wholesale: `huh`
-exists for checks that genuinely cannot distinguish "broken" from "not yet". The rule that came
-out of this: **a presence check needs an arming signal, or it is not a check.** Any future
-presence assertion added to step3 should name what makes its zero meaningful.
-
-**NOT VERIFIED:** `bash -n` only. The new `bad` branch has never been exercised — it fires only
-when `message > 0` and the field count is 0, which is precisely the state the `#42` roll did not
-produce. Re-running step3 as-is should reproduce the same all-`PASS` section 5.
-
-**#41 — OPEN. A 1.6.0 pod crashed three times at rollout: `Reason: Error`, exit code 1, dead
-four seconds after start. NOT an OOMKill.** 2026-09-18.
-
-```
-Last State:  Terminated   Reason: Error   Exit Code: 1
-Started:     Fri, 18 Sep 2026 14:41:12 +0900
-Finished:    Fri, 18 Sep 2026 14:41:16 +0900      <- four seconds
-```
-
-`benchmarks-polaris-6dcf6758f9-5vpmc` carries `restartCount 3`; its sibling `…-fl8jd` has 0.
-14:41 KST is 05:41 UTC, which is the rollout minute, so the three crashes were at start-up and
-the pod has been `Running` since. **The upgrade is verified regardless** — the pod that
-serves traffic is this one, and the listener, console JSON and metastore checks all passed on
-it. This is about an unexplained crash loop, not a broken upgrade.
-
-**OOMKill was my first suspect and it is wrong.** `Reason: Error` with exit code 1 is the
-process exiting, not the kernel killing it; an OOMKill reports `OOMKilled` and exit 137. So the
-`1.33Gi` max heap in a `2Gi` limit is not implicated by this evidence, and the memory-pressure
-story belongs to `#39` alone.
-
-**Four seconds is the useful number.** It is too fast for a JDBC connect timeout and too slow
-for the JVM rejecting a VM option outright, which lands in well under a second. That points at
-Quarkus starting and then failing — a config validation error, a bind failure, or something the
-application does at boot.
-
-**Candidates, in the order the evidence favours them:**
-
-1. **A start-up race between simultaneously starting pods against the metastore.** Three pods
-   came up within the same minute and Polaris does metastore work at boot. This repo already
-   has an entry for intermittent duplicate-key/500s from PG replica lag, and three concurrent
-   bootstraps of realm `POLARIS` is the shape that provokes it. That the *second* pod never
-   crashed fits a race that one loser hits.
-2. **An unrecognized VM option.** `-XX:+ZGenerational` is valid on JDK 21 and the running image
-   is `java-21-openjdk-21.0.11`, so this *should* be clean — but **the runbook's own
-   `Unrecognized VM option` check was never run**, and the runbook predicted precisely this
-   presentation ("CrashLoopBackOff with nothing useful in the Polaris log"). Cheap to exclude.
-3. **A Quarkus config validation failure** on one of the changed keys — the plural
-   `event-listener.types` is read successfully by the surviving pod, so this is unlikely, but a
-   validation error is exit 1 at about this latency.
-
-**One command answers it**, and it also covers candidate 2:
-
-```bash
-kubectl -n datahub-hynix logs benchmarks-polaris-6dcf6758f9-5vpmc --previous
-kubectl -n datahub-hynix logs benchmarks-polaris-6dcf6758f9-5vpmc --previous \
-  | grep -iE 'unrecognized vm option|error|exception|caused by' | head -30
-```
-
-**Run it before that pod is replaced.** `--previous` keeps only the most recent terminated
-container, and `#39`'s flapping means pods come and go on their own — this reading is
-perishable in the same way step 0's were, and the replica count is already back to 1.
-
 **#40 — CLOSED UNANSWERED 2026-09-18, AND IT CANNOT BE REOPENED: THE EVIDENCE WAS DELETED
 WITH THE PVC.** Half of it was answered — `#44` established the bound was per-day, because the
 live pod ran `file-suffix: .yyyy-MM-dd.gz` while `values.yaml` said `~`, so `.14` against a
@@ -803,124 +1383,6 @@ closes `#8` as *bitten*. One value means the rotation burst was volume, and only
 then and could not scale at all** — so on that date one pod is the more likely answer, which
 would make this volume rather than interleaving. Check rather than assume; the same entry's
 metrics claim has already been overtaken once today.
-
-**#39 — OPEN, and it has already fired. `targetMemoryUtilizationPercentage: 80` against a
-`1Gi` memory request is a ratchet, not an autoscaler: this JVM exceeds the target at idle, so
-the HPA pins Polaris at `maxReplicas` and cannot come back down.** 2026-09-18, measured minutes
-after step 4.
-
-```
-benchmarks-polaris   cpu: 2%/80%   memory: 88%/80%   MINPODS 1   MAXPODS 3   REPLICAS 3
-```
-
-**Three pods at 2% CPU.** The scale-up was entirely the memory metric, and the arithmetic says
-it was inevitable:
-
-| quantity | value | source |
-|---|---|---|
-| memory **request** | `1Gi` | `values.yaml` `resources.requests.memory` — **HPA utilisation is measured against the REQUEST**, not the limit |
-| memory **limit** | `2Gi` | `resources.limits.memory` — this is what the JVM sees as available |
-| JVM **initial** heap | 50% of the limit = **`1Gi`** | `JAVA_TOOL_OPTIONS: -XX:InitialRAMPercentage=50.0` |
-| JVM **max** heap | 65% of the limit = **`1.33Gi`** | `-XX:MaxRAMPercentage=65.0` |
-
-The JVM commits a **1Gi initial heap — exactly the whole memory request — before serving a
-single API call**, and then adds metaspace, code cache, thread stacks and direct buffers on
-top. So memory utilisation starts near or above 100% of the request and stays there. The
-observed 88% is a working-set figure and slightly under that estimate, which fits; the
-direction is what matters. **The target is exceeded at idle.**
-
-Two consequences:
-
-1. ~~**It will not scale back down.**~~ **WRONG, and corrected within the hour: it scaled
-   3 → 2.** The next `get pods` showed **two** pods. So utilisation *does* fall back below the
-   target, and the reason is that **ZGC uncommits unused heap by default** (`-XX:+ZUncommit`,
-   after `ZUncommitDelay`) — `InitialRAMPercentage` sizes the heap at start but does not pin
-   the resident set there for ever. The memory metric is therefore **not monotonic**, and the
-   "ratchet" reasoning was too strong.
-
-   **What replaces it is not better news, just a different failure.** The metric still has
-   nothing to do with load — it tracks JVM heap behaviour — so the HPA **flaps**: up on
-   warm-up and GC pressure, down after ZGC returns pages, at `cpu: 2%` throughout. Pod churn
-   rather than a stuck maximum. For `#15` that is worse, not better: replica count changes
-   under a running ladder, so hypothesis C is **intermittently** live and a run can straddle a
-   scale event.
-
-   **The full observed sequence, 2026-09-18, inside about one hour:**
-   `0` (step 2d) → `1` (step 4's explicit scale) → **`3`** (HPA, on memory at 2% CPU) → `2` →
-   **`1`**. It is back at `minReplicas` with the cluster idle. So the resting state is 1, the
-   scale-up is a warm-up artefact, and **hypothesis C is live only during the up-phases** —
-   which is exactly the condition under which a ladder run gives an irreproducible answer.
-2. **It was at `maxReplicas` with its target unmet at the moment it was measured**, so at that
-   instant it had no headroom for a genuine CPU-load event. Given the flapping above, treat
-   this as a recurring condition rather than a permanent one.
-
-**What it drags in:** `#15` hypothesis C is **alive again** (three entity caches to diverge —
-see that entry's 2026-09-18 note); three writers into `events`; three times the JDBC
-connections through Pgpool. `#8`'s *specific* hazard — three pods appending one shared log
-file — is the one thing that is **not** live, because `#38` establishes the file handler is off.
-**`#8`'s prediction was right and its stated mechanism was wrong**, which is worth more than
-either fact alone.
-
-**Watch for OOMKills.** Max heap is 1.33Gi against a 2Gi limit, which leaves ~0.67Gi for
-everything non-heap. That is not obviously enough, and three pods on one OrbStack node
-multiplies the node-level pressure. Check `restartCount` and `lastState.terminated.reason`.
-
-**Do not fix this mid-verification.** *Polaris is not to be changed* still stands, and this is a
-values change that needs its own plan. The options, for that plan and not for now:
-
-- **drop `targetMemoryUtilizationPercentage` entirely** and keep CPU only — scaling a JVM on
-  memory is the anti-pattern that produced this, since a JVM's footprint reflects its heap
-  settings rather than its load;
-- **raise `requests.memory`** to above the real footprint (≥`1.5Gi`) so the ratio means
-  something;
-- **`autoscaling.enabled: false` with `replicaCount: 1`**, which is what `#8` recommended
-  before any of this and would have prevented it.
-
-Note `replicaCount: 1` *is* already in `values.yaml` and does nothing: `deployment.yaml` emits
-`replicas:` only when autoscaling is disabled. That is correct chart behaviour, not a bug — but
-it is why "replicaCount is 1" must never be read as "there is one pod".
-
-**#37 — OPEN. The Polaris chart's `pre-upgrade` hook runs `bitnami/kubectl:latest`, pulled
-`Always`, from a catalog Bitnami retired. It is the most likely cause of a step-4 failure and
-it has nothing to do with Polaris.** 2026-09-18, found by reading the step 3 render.
-
-`polaris/templates/secret-rsa-key-hook.yaml` registers four `pre-install,pre-upgrade` objects:
-ServiceAccount / Role / RoleBinding at hook-weight `-10`, then a **Job at weight `0` running
-`bitnami/kubectl:latest`** that creates `polaris-rsa-key-pair-secret`. `backoffLimit: 3`.
-
-- **No `imagePullPolicy` on that Job, and the tag is `:latest`** → Kubernetes defaults to
-  `Always`, so every `helm upgrade` performs a live registry pull. The image cached on the node
-  from the install 30 days ago does not help.
-- **Bitnami moved its public Docker Hub catalog to `bitnamilegacy/` on 2025-08-28**, leaving
-  community users "a reduced number of hardened images … published only under the `latest` tag
-  and intended for development purposes". `bitnami/kubectl` went unavailable, came back, and
-  upstream has left its future availability unresolved (bitnami/containers#86977).
-
-**Failure mode is safe but misleading:** the upgrade stops at the hook with nothing changed,
-and the symptom is `ImagePullBackOff` on a Job named `benchmarks-polaris-rsa-keygen` — it does
-not look like a Polaris problem at all. Pre-check with `docker pull bitnami/kubectl:latest`.
-
-**Fallback if it will not pull:** the Job's script is idempotent and self-skipping (secret
-exists → `exit 0`), so with `polaris-rsa-key-pair-secret` present, `--no-hooks` changes nothing.
-**Verify the secret exists first** — without it, `--no-hooks` leaves the token broker
-unbootstrapped and the failure presents as an auth error, which is
-`RESET-AND-CLEAN-INSTALL.md` §2.3's trap from the other side.
-
-**CHECKED 2026-09-18: it pulls.** `Status: Image is up to date for bitnami/kubectl:latest`,
-digest **`sha256:b29d8c1665b70817259ceecaea16ab27aab6368b48daf485d19436c809067492`**. So step 4
-was cleared to run with hooks. **Record that digest — it is the known-good pin**, captured
-while `:latest` still resolved to a working image, and it is what the fix should point at:
-
-```yaml
-image: bitnami/kubectl@sha256:b29d8c1665b70817259ceecaea16ab27aab6368b48daf485d19436c809067492
-```
-
-A digest pin also makes `imagePullPolicy: Always` harmless, since a digest cannot move.
-
-**The fix is to pin the image, and it was NOT a step-4 decision** — the chart must not be
-edited mid-upgrade. Still OPEN afterwards: this hook runs on **every** future upgrade of this
-chart, so a green pull today is not a green pull next month; that is the standing fragility,
-and one successful check does not close it. Related: `#2` (charts that pin no image at all).
 
 **#38 — CLOSED 2026-09-18 by removal.** The two `QUARKUS_LOG_FILE_JSON_*` variables are deleted
 from `polaris/values.yaml`, the PVC they nominally fed is deleted, and `logging.file.enabled`
@@ -1017,52 +1479,10 @@ logs in VictoriaLogs.
 **And a new question the archive raises — see `#40`.** The per-day suffixes run to `.14` while
 `values.yaml` sets `rotation.maxBackupIndex: 5`.
 
-**#36 — OPEN QUESTION, cheap to settle, no structural risk. The live metastore was not
-bootstrapped from a file carrying v3's table comments, and `schema.sql` is the exact shape of
-what it was.** 2026-09-18.
-
-`obj_description` over `polaris_schema` after the migration: `scan_metrics_report` and
-`commit_metrics_report` carry their comments (so the script that ran was post-`935c7ed` or the
-shipped file — that part is confirmed good). But **all four comments v3 defines are absent** —
-`version`, `entities`, `grant_records`, `principal_authentication_data`. Not a random subset:
-it is exactly the set. (`events` and `policy_mapping_record` are correctly blank; v3 never
-comments them.)
-
-**No structural risk, and this is the part to read first.** Compared object by object with the
-verifier's parser, `postgresql/schema/schema.sql` and `schema_v3.sql` declare the **same 10
-objects, 0 differing**, both version 3. The difference between them is **24 `COMMENT ON`
-statements and nothing else** — `schema.sql` has zero, `bootstrap.sql` has zero and declares no
-version at all. The live database is structurally complete v3: all 21 indexes present,
-including v3's `idx_entities`, `idx_locations`, `idx_policy_mapping_record` and the
-`CONSTRAINT constraint_name` unique index on `entities` (an upstream naming wart, in both
-files — not a defect here). So the v3 → v4 migration was applied to a correct baseline and
-`#34`'s finding is unaffected.
-
-**What is open is provenance, and there are two candidates:**
-
-1. the metastore was bootstrapped by applying `postgresql/schema/schema.sql` by hand — it is
-   *precisely* v3-minus-comments, which is *precisely* the live shape; or
-2. Polaris 1.3.0 bootstrapped it from its own jar's `schema-v3.sql`, and upstream added those
-   comments between 1.3.0 and 1.6.0 — the file we diffed in `#34` came from the **1.6.0** jar.
-
-`RESET-AND-CLEAN-INSTALL.md` points at (2): it bootstraps through `bootstrapCredentials` and
-`persistence.relationalJdbc` and **never applies a repo SQL file**. No chart template, values
-file or script in this repo references any of the three SQL files either. But (1) matches the
-observed shape exactly, so neither is settled.
-
-**The discriminator, three commands, worth doing at the next `docker pull` and not before:**
-extract `postgres/schema-v3.sql` from the **1.3.0** image and count its `COMMENT ON` lines.
-24 → the database came from `schema.sql`, and `schema.sql` is load-bearing history rather than
-a "local variant". 0 → upstream added them after 1.3.0, and `schema.sql` is probably a copy of
-1.3.0's own v3.
-
-**Either way, two things to fix in the docs once known:** `CLAUDE.md` calls `schema.sql` and
-`bootstrap.sql` "the local variants" without saying that one of them is v3 minus comments and
-may be what built this database; and `RESET-AND-CLEAN-INSTALL.md` never names a schema file, so
-the next clean install cannot reproduce this one deliberately. **Do not add the four missing
-comments to the live database** — they are the evidence, and cosmetic.
-
 **#35 — OPEN. The metastore is at schema v4 and the running Polaris is 1.3.0. Upstream
+
+> *Moved from Open to Resolved on 2026-09-29 — overtaken: Polaris 1.6.0 has run on metastore schema v4 since 2026-09-18.*
+
 documents no behaviour for a server older than its schema.** 2026-09-18.
 
 Step 2 executed: `version_value = 4` read back from primary pg-1, nine tables in
@@ -1141,6 +1561,9 @@ with whether the two table comments made it in (absent if the script that ran pr
 `935c7ed`). See `#35` for the state step 2 leaves behind.
 
 **#33 — Polaris 1.6.0 is committed to the chart and NOT applied. The cluster still runs 1.3.0-incubating.** 2026-09-18.
+
+> *Moved from Open to Resolved on 2026-09-29 — overtaken: Polaris 1.6.0 was rolled out and verified on 2026-09-18.*
+
 
 `polaris/values.yaml` now pins `image.tag: "1.6.0"`, `polaris/Chart.yaml` says
 `version`/`appVersion` 1.6.0, `polaris/templates/configmap.yaml` emits the plural
@@ -1602,287 +2025,6 @@ unfiltered. **It must not become the precedent** — the plan gives tiers 2 and 
 spanning a Polaris restart should be near `max(sequence)`, not the true line count. Nobody has
 run it.
 
-**#15 — Polaris 500s on create-then-resolve, and it is a NullPointerException, not a
-"PG-HA read-after-write signature". OPEN.**
-
-Every 500 this cluster has stored is a `java.lang.NullPointerException` logged by
-`org.apache.polaris.service.exception.IcebergExceptionMapper`. Eight of them in run
-`1788760757`, `05:59:20Z .. 05:59:33Z`, in three signatures:
-
-| exception.message | n | on |
-|---|---|---|
-| `…getPassthroughResolvedPath(Object)" is null` | 6 | `POST …/{catalog}/namespaces` |
-| `grantee_not_found: grantee={}, [… name='catalog_admin' …]` | 1 | `POST /api/management/v1/catalogs` |
-| `metadata` | 1 | `POST …/namespaces/probe_ns/views` |
-
-*2026-09-18 — HYPOTHESIS C IS DEAD for the current cluster.* The handoff gave hypothesis C
-(the namespace request lands on a *different* Polaris pod than the catalog create, whose
-entity cache never saw it) more weight than A or B, on the grounds that round-robin across
-replicas is deterministic in a way replication lag is not, which fits 3-of-3. Runbook step 0b
-settles it: **there is exactly one Polaris pod**, `REPLICAS 1` with the HPA idle at 1% CPU,
-and the deployment reports `1/1`. With one pod there is no second cache to diverge from. C
-cannot be the mechanism here.
-
-Two caveats before this is treated as closed. `#15`'s evidence came from a differently-seeded
-cluster (run `1788760757`), so what is settled is that C is not the mechanism *now*, not that
-it never was. And the HPA is live again (`#8`, 2026-09-18) — if a future ladder run pushes
-Polaris past the target, C comes back. **Pin `replicaCount` / disable autoscaling before the
-post-upgrade ladder run if you want C held dead for the duration.**
-
-> ### *2026-09-18, LATER THE SAME DAY — HYPOTHESIS C IS ALIVE AGAIN. This paragraph outlived its truth by about six hours.*
->
-> **`REPLICAS 3`.** The HPA scaled Polaris to three pods within minutes of step 4, on
-> **memory** (`memory: 88%/80%`) at **`cpu: 2%`** — so not from a ladder run, and not from
-> load at all. See `#39`: it is arithmetic, and it will not come back down. The caveat above
-> named the right risk and the wrong trigger, and the mitigation it recommended was never
-> applied.
->
-> **So C is back on the table for any `#15` work from now on**, and it is no longer
-> conditional: three pods is the steady state until `#39` is fixed. Anything that reads
-> "hypothesis C is dead" — including MEMORY.md as it stood — is stale. **Pin `replicaCount`
-> and disable autoscaling before the post-upgrade ladder run**, or the run measures a
-> three-cache cluster and cannot distinguish C from A.
-
-That leaves **A** (stale reads through Pgpool — the `database_redirect_preference_list`
-remedy in the handoff addresses it) and **B** (a 1.3.0 resolver/entity-cache bug, which the
-1.6.0 upgrade is itself the experiment for).
-**The trigger is a fresh parent entity, not load.** Three of the six namespace NPEs are the
-`polaris-learning` 500-ladder's *setup* step — one per rung, `nb1788760757bh`, `…dns`,
-`…nobkt`, **3 of 3 brand-new catalogs**, each 500ing on the first namespace created in it.
-The catalog-create NPE is the same shape one level up: the `catalog_admin` role is created
-and immediately looked up as a grantee, and the lookup returns nothing.
-
-**Read-after-write against a standby remains the plausible mechanism** — an entity written
-on the primary and resolved microseconds later — but that label had been treated as settled
-and it never was. What the log carries is an unresolved entity and an NPE. Do not write
-"PG-HA read-after-write" into a document again without the replication evidence beside it.
-
-**The denominator cannot be read from this pipeline, by construction.** Scoped to the window,
-`POST …/namespaces` stored **6 x 500** — 3 on the fixture catalog, 1 each on `nb1788760757bh`,
-`…dns`, `…nobkt` — **and 1 x 409, and nothing else**. No 2xx, at any scope: that path is not
-under `/api/management/`, so rule 5 does not keep it and a **successful namespace create leaves
-no individual record**. Rule 3 keeps the failures. So `stats by (http_status)` over stored
-access records for this path can only ever return errors, and its zero is the policy working,
-not a measurement. The per-resource `writes` counter cannot supply it either: two of the three
-fixture 500s were charged to `__other__` because the key did not exist yet, so the key's own
-`writes` is 2 for 4 error POSTs.
-
-**It exists in the driver.** The notebook knows every call it made and its status; the ladder
-simply throws its setup statuses away. That single omission is why the three 500s were
-invisible AND why the rate is unmeasurable — one fix closes both.
-
-**What is established:** 3 of 3 brand-new catalogs 500 on the first namespace created in them,
-and the namespace is usable afterwards — each rung went on to `create_table` and got a 4xx from
-the storage layer, which requires the namespace to exist. Consistent with a write that
-committed and a resolution that then dereferenced null.
-
-**Two consequences, both real.** For the platform: writes 500 at roughly 3% (8 of 275
-requests in 60s) on a single-node cluster, and nothing was watching. For
-`polaris-learning`: this is the **repeatable provoker** `HANDOFF-500-coverage` §4.1 says does
-not exist — API-only, no `kubectl`, no `pg_wal_replay_pause()`. Detail in
-[`sessions/2026-09-07-500-coverage-review.md`](sessions/2026-09-07-500-coverage-review.md).
-
-**#14 — The noise filter governs 4.5% of the volume, and policy v2 is not running yet. OPEN.**
-
-Two things, from the second coverage run (`polaris-learning/log-coverage`, 2026-09-04, run
-`1788498536`, against `fb-values.yaml` sha256 `b56c135b87d6281b`).
-
-**a. The measurement.** 122 calls stored 2,026 records. Counting the coverage matrix rather
-than its summary: **90 access-log records and 1,928 application lines.** The filter can only
-act on the first group — rules 1 and 2 keep every application line untouched — so dropping 34
-of them removed **1.7%** of what would otherwise be stored. Rules 3–7 are an *audit-fidelity*
-control. Anyone tuning them for storage is tuning the wrong 4.5%; the volume lever is the
-DEBUG SQL records in #5b, and #5b already says **route them, do not turn them down**.
-Settle where the 1,928 come from with one `stats by (loggerName)` before designing that.
-
-**One number in that report does not agree with itself.** Question 5 says "34 of 122 calls
-produce no record at all", but those same 34 calls carry **628 application lines**, and
-`90 + 1,928 ≈ 2,026` implies the `app_lines` column is counted from VictoriaLogs. If it is,
-a dropped `create_principal` still leaves 13 correlated records and only the access-log line
-— method, path, status, principal — is lost. Real, but not "invisible". Settle which source
-that column reads before repeating the stronger claim.
-
-**b. Policy v3, written 2026-09-04, NOT RUNNING.** Deliberately, and it is #13's shape again,
-so treat the upgrade as a change: `shipper-v3-upgrade-runbook.md`. **v2 was never deployed** —
-it was superseded before installation, so there is no v2 baseline in the cluster and no reason
-to look for one.
-
-```
-1. ERROR / WARN ........................ keep      (no deprecated exclusion — see below)
-2. not an access-log record ............ keep
---- every access-log record is COUNTED here ---
-3. status >= 400, or unparseable ....... keep, ALL of them, no cap
-4. PUT / DELETE / PATCH ................ keep, all
-5. POST under /api/management/ ......... keep, all
-   POST anywhere else ..................  counted only
-6. GET / HEAD, 2xx .....................  counted only
-7. anything else ....................... keep
-```
-
-**What it preserves, and this is the point of the shape:** 100% of authorization failures —
-every 401 and 403 is a full record via rule 3 — and 100% of identity and grant mutations.
-What becomes a count is traffic that succeeded routinely.
-
-**Rule 5 is split, not simplified, because in Polaris POST is the CREATE verb.**
-`create_principal`, `create_principal_role`, `create_catalog_role` and
-`reset_principal_credentials` are all POSTs; PUT covers only assignment and grants, DELETE only
-removal. Summarising POST wholesale — the obvious simplification — would make a principal
-invisibly created and visibly deleted, which is the asymmetry this pipeline exists to expose.
-Catalog POSTs (`create_table`, `commit_table`, both renames, `report_metrics`, `oauth/tokens`)
-are data-plane volume and are counted.
-
-**Rule 1 has no "deprecated config" exclusion and needs none.** `polaris/values.yaml:315` sets
-`io.quarkus.config: "OFF"`, so those warnings are never written; the coverage run independently
-saw zero across 122 calls. The values file alone would not be evidence here (#5) — the run
-agreeing with it is. The TODO is deleted, not deferred.
-
-**The dedup cap question is gone, not answered.** v2 kept one read per principal per object per
-KST day and needed a per-key table to do it, which is what `DEDUP_MAX_KEYS` was placeholding
-for. v3 never stores a successful read individually, so there is no key to remember. The civil-
-day arithmetic, both day buckets, `seen_before` and the cap are all deleted — about 90 lines.
-
-**The flush report, schema v1.** A `dummy` INPUT tagged `polaris.report` ticks and reaches the
-*same* Lua filter instance (state is per-instance, so `Match` is `polaris.*`); on a
-`WINDOW_SECONDS` boundary the filter returns an **array** of records instead of the tick and
-resets the counters. Steady state is a 30-minute window on the :00/:30 wall-clock boundary with
-a 30s tick — **but the deployed values file is on the temporary fast-run setting right now, see
-d. below before reading a report.** Array return is documented behaviour — "this value can be an array of tables... the
-input record is effectively split into multiple records" — but has never run here (#14c).
-Lands on `{app="polaris-shipper-report", level="REPORT"}`, its own stream.
-
-Three record types on one envelope (`schema_version`, `report_type`, `report_seq`, `hostname`,
-`window_start`/`window_end`/`window_seconds`, `_time` = window end):
-
-| type | carries |
-|---|---|
-| `summary` | `access_seen` / `access_kept` / `access_counted` (**kept + counted == seen**), `counted_get`, `counted_post`, `errors_kept`, `parse_errors`, `distinct_resources`, `distinct_principals`, `resources_other`, `principals_other`, `min_record_time`, `max_record_time`, `partial_window` |
-| `resource` | `resource`, `resource_kind`, `requests`, `reads`, `writes`, `errors`, `response_bytes` |
-| `principal` | `user_principal_name`, `requests`, `reads`, `writes`, `errors`, `response_bytes` |
-
-**Two margins, never the cross product** — `resource -> count` and `principal -> count`, so
-state is |resources| + |principals| rather than their product. The consequence is in the source
-because it will otherwise be misread as an audit trail: the report says *which resources are
-hot* and *who is generating load*, and **cannot** say *who read which resource*. Under v3 that
-question has no record behind it at all — a deliberate trade, taken knowingly.
-
-Four things worth knowing about the schema:
-
-- **`sum(resource.requests) == sum(principal.requests) == access_seen - parse_errors.** The two
-  margins must agree. It is asserted in the test suite and it is Phase 4's last check — a
-  dashboard that verifies it knows whether to trust a trend before drawing one.
-- **The resource key is the resource, not the URL.** `/tables/t/metrics` counts under
-  `/tables/t`. v2 emitted two rows for one table — measured, not supposed — and a trend
-  computed on a key that splits is simply wrong.
-- **Errors increment an existing resource key but never create one**, so a client walking
-  invented table names cannot fill the key space. Their counts are not lost: they land in
-  `__other__`, which keeps the margin totals exact, and every one is stored in full by rule 3.
-- **Zero-carry, exactly one window.** A resource falling from 100k reads to none emits an
-  explicit `0` rather than vanishing from the output, then decays. The fall is the direction
-  you most want to see and a missing row cannot express it.
-
-`user_principal_name` deliberately reuses the access-log field name, so one filter spans a
-principal's stored 403s and their per-window counts. `resource` is a new name because it is a
-normalized identity, not a request path.
-
-**c. What is still unverified, and no test can reach it:** that this Fluent Bit build splits an
-array return into separate records, and that the dummy input's tag reaches the filter instance.
-Both documented, neither run. Runbook Phase 4 distinguishes them and names the fallback.
-
-**d. TEMPORARY: the report window is 30 seconds, not 30 minutes.** Set 2026-09-04 at Kade's
-request so a coverage run crosses three window boundaries in ~2 minutes instead of ~90 — the
-handoff's §4 needs three, for `report_seq`, zero-carry and carry decay. In
-`logging/fb-values.yaml`: `WINDOW_SECONDS = 30` (was 1800) and the dummy INPUT's
-`Interval_Sec 5` (was 30).
-
-**Revert both together.** The tick has to stay well under the window: `report_tick` reports
-whatever `counts` holds under the index it was *opened* with, and records accumulate into the
-open window regardless of their own timestamps, so if the tick period reaches the window period
-ordinary jitter lets a boundary pass unnoticed — the skipped window never opens and its records
-are folded into the previous window's index. At 1800/30 the margin is 60×; at 30/30 there is
-none. That is why the tick moved too, and it is not cosmetic.
-
-Two consequences while it is set:
-
-- **Report volume is ~60× steady state.** Zero-carry emits every non-zero key once more as an
-  explicit `0`, so even an idle pipeline ships a summary plus carried rows every 30s.
-- **The first window after the `helm upgrade` is a replay, not traffic.** The tail DB is on an
-  `emptyDir` with `Read_from_Head true` and VictoriaLogs does not deduplicate on ingest, so the
-  upgrade replays the whole log file — and at 30s the entire replay lands in *one* window as a
-  spike. A window whose `min_record_time`/`max_record_time` span far exceeds `window_seconds`
-  is a replay. Do not trust it.
-
-Nothing else reads the constant. `logging/scripts/test-polaris-filters.py` now parses
-`WINDOW_SECONDS` off the deployed Lua and expresses every tick offset as a multiple of it
-(it hardcoded 1800, so `T0 + 900` — "a tick inside the window" — would have become a tick 30
-windows later and failed for the wrong reason). 48/48 at 30s. The runbook, roadmap #7 and
-`POLARIS-LOG-COVERAGE-V3-HANDOFF.md` still describe the 30-minute steady state on purpose.
-
-**Decided by this policy, and therefore no longer open:** the 4xx cap (there is none — all
-errors kept), collection listings (counted, like every other successful read), `report_metrics`
-(counted, as a catalog POST), and the dedup cap (deleted with the dedup).
-
-**Still deferred, each with a number behind it:**
-
-| | evidence | why deferred |
-|---|---|---|
-| the 95.5% — routing the DEBUG SQL records | 1,928 of 2,018 stored records are application lines | needs the `loggerName` distribution first; #5b already fixes the direction — route, never turn down |
-| no `%D` — no request duration is recorded anywhere | the access-log pattern carries no latency token | Polaris-side, and **Polaris is not to be changed** (#11). The *no stack traces* half of this row is **CLOSED** — see immediately below |
-| retention for the report stream | reads now live only as counts | VictoriaLogs single has one global retention and no disk cap (#7); the counts eventually want a TSDB, roadmap 7 |
-| `neg.client_timeout` "EXPECTED DROPPED, PRESENT" | the run's only matrix discrepancy | oracle artefact — a call with no client-side status is not predictable and should not be scored `drop`. Harness fix, in `polaris-learning` |
-
-**CLOSED 2026-09-07 — stack traces DO survive, and the `0 of 5` was a mis-named search.**
-Run `1788760757`: **8 of 8** WARN/ERROR records carry an exception payload, stored flattened as
-`exception.exceptionType`, `exception.frames`, `exception.message`, `exception.refId`.
-VictoriaLogs flattens nested objects, so a query for `exception` matches nothing and a
-`grep -c stackTrace` finds nothing — **two searches for a name this build does not emit,
-agreeing with each other**, which is what the `0 of 5` was. Query `exception.*`, never
-`exception`. The fact with its numbers is in [`roadmap.md`](roadmap.md), *Handing back*; the
-review that re-proved it is
-[`sessions/2026-09-07-500-coverage-review.md`](sessions/2026-09-07-500-coverage-review.md).
-Only the `%D` half of that row is still open, and it is Polaris-side.
-
-**READING THE REPORT STREAM — three false findings came from not doing this.** Every query
-against `app:polaris-shipper-report` must carry **`schema_version:2`**, and anything about
-sequence continuity must also carry **`hostname:"…"`**.
-
-- **The stream holds v1 AND v2 records side by side.** The shipper pod was replaced at
-  `2026-09-07T04:21:30Z` (`…68b4959db4-4f7tf` v1 -> `…55b7bf586d-5kt5l` v2). A `sum(errors_4xx)`
-  over any range spanning that instant silently under-counts: the v1 records have no such field,
-  and an absent field behaves like a zero inside a sum. Cell 0b gates the POLICY's schema
-  version; nothing gates the QUERY's.
-- **`report_seq` is per pod and resets to 1 on restart.** `min`/`max`/`count` across two
-  generations manufactures a phantom gap — it read as "50 reports lost", then as "a backlog
-  draining", and it was neither. The schema's own claim is *one summary per **(host, window)***;
-  the host is not decoration.
-- **`sum()` over an empty group returns `NaN` in LogsQL; `count()` returns 0.** A v1 summary has
-  no `carried_rows`, so summing it yields NaN, which a naive comparison reads as a mismatch.
-- **`_time` on a report record is the window END**, not its start. Seq 196 (`window_start
-  05:59:00`) appears at `05:59:30`.
-- **Every count must carry its denominator.** Ask `stats count()` for the scope first. Three
-  times in one session a number arrived with no scope and read like an answer — 25 vs 6 on an
-  unfiltered `_time`, a 5-row UI truncation read as a full result, and the cross-pod seq range.
-  Each was caught only because an independent number disagreed.
-
-**#1 — The repo has not been reconciled against the live cluster. OPEN.**
-Kade reset and rebuilt the cluster on 2026-09-03 without following
-`RESET-AND-CLEAN-INSTALL.md`, and resolved the four config blockers during the
-install. Those fixes are in the running releases; whether they are also in the
-`values.yaml` files here is **unknown**. Until someone diffs them, nothing on disk
-is evidence of what is deployed:
-
-```bash
-helm -n datahub-hynix list
-helm -n datahub-hynix get values <release> > /tmp/<release>-live.yaml   # then diff
-```
-
-The four blockers this closes out — Polaris `bootstrapCredentials` rendering `""`,
-three conflicting MinIO credential sets (one of them plaintext at
-`spark/values.yaml:30`), the stale `polaris-persistence-secret.yaml`, and the
-unpinned images in `kafka/` / `schema-registry/` / `datahub/` — are **resolved in
-the cluster**. Two of them are worth checking on disk regardless: a plaintext
-secret key stays a leaked secret even after the cluster stops using it, and an
-unpinned image is still unpinned for the next install.
-
 **#2 — Which sink does Fluent Bit ship to? SETTLED — both halves, as of 2026-09-08.**
 Not one shipper choosing a sink — **two releases**. Confirmed from `helm list` on
 2026-09-03: **`fb-polaris-shipper`**, namespace **`datahub-hynix`**, chart
@@ -1898,23 +2040,6 @@ Two things that follow. The shipper is in `datahub-hynix`, which is the only nam
 could be in — #6 was a real constraint and is already satisfied. And **revision 10** on a
 file that has never matched the cluster is the shape of #5: ten upgrades of configuration
 this repo cannot account for.
-
-**#3 — `minio/values.yaml` defeats its own chart's credential guard. OPEN (low).**
-`minio/templates/secret.yaml` refuses to render when `auth.rootPassword` is empty —
-CLAUDE.md's Zero Hardcoded Credentials rule, enforced at install time, which is the
-right place for it. But the committed values carry `rootUser: "minio"` /
-`rootPassword: "minio"` as defaults, so the guard never fires and an install with no
-`--set-string` quietly comes up with a publicly known password. Either blank the
-defaults so the guard does its job, or accept that this cluster's object store has a
-guessable root credential. Cheap either way; just pick one deliberately.
-
-**#4 — `fluent-bit/values.yaml` carries a plaintext OpenSearch password. OPEN.**
-`HTTP_Passwd Str0ngP@ssw0rd123!` appears twice, in a **committed** file — the Zero
-Hardcoded Credentials rule broken in tracked history. Rewriting the file does not unleak
-it; the credential has to be rotated on the OpenSearch side as well. The fix in the values
-is a Secret plus `${VAR}` expansion in the Fluent Bit config, not a different literal.
-`polaris/values.yaml:408-409` (`minioadmin`/`minioadmin`) is the same class of problem and
-should go the same way.
 
 **#5 — RESOLVED 2026-09-18, AND THE CLAIM IS REFUTED. `polaris/values.yaml` DOES describe the
 running Polaris.**
@@ -2064,12 +2189,6 @@ and it is not "removed by lack of metrics" any more. Unchanged in the 1.6.0 comm
 mid-upgrade** — runbook step 2d scales the deployment to 0 for the migration and the HPA
 `minReplicas: 1` may scale it straight back up. Check after scaling, do not assume.
 
-**#9 — A plaintext database password in the live release. OPEN.**
-`persistence.relationalJdbc.secret.password: polaris` in `helm get values` output. Same class
-as #3 and #4. Separately, `minio.accessKeyId`/`secretAccessKey: minioadmin` sit beside
-`minio.existingSecret: benchmarks-minio-credentials` — two credential sources for one client,
-which is how #1's "three conflicting MinIO credential sets" began.
-
 **#10 — RESOLVED-INSTRUCTIVE: there was never a hidden config source.**
 The ConfigMap and pod env, read directly, say `quarkus.log.file.enabled=false` — matching the
 live release values *and* `polaris/values.yaml` on disk. Everything agrees. The divergence
@@ -2084,19 +2203,6 @@ inert — **it is the switch holding the pipeline off.** It reads as inert preci
 the only value it has ever written is the one with no visible effect. `QUARKUS_LOG_FILE_JSON_*`
 is real but orthogonal: JSON formatting for a handler that is disabled.
 
-**#11 — Unexplained, NOT pursued: file logging reads as off, and ships anyway.**
-The running config says `quarkus.log.file.enabled=false`, and Polaris is nonetheless writing
-a file that the shipper tails — **Kade confirms the pipeline works and ships continuously**,
-which is an observation, where the prediction that it would break at the next restart was an
-inference. This session's inferences about this pipeline were wrong four times; his
-observation wins. **Polaris config is not to be changed.**
-
-Left here because it is genuinely unexplained, not because it needs action. Whoever picks it
-up: `ls -l --full-time /deployments/logs/` twice, thirty seconds apart, says whether the file
-is live or stale, and the Polaris pod's start time against the ConfigMap's last write says
-whether the JVM predates it. Do not turn it into a change on the strength of the reasoning
-alone.
-
 **#12 — WITHDRAWN.** Proposed flipping `logging.file.enabled: true` and deleting the
 `extraVolumes` pair. Kade's call: Polaris works, leave it. The reasoning behind it is in the
 session file if the situation ever changes; the mount-path collision it warns about
@@ -2104,46 +2210,10 @@ session file if the situation ever changes; the mount-path collision it warns ab
 with the existing `extraVolumeMounts` on the same path) stays true and would bite anyone who
 enables that flag without removing the pair.
 
-**#5b — What is actually wrong in the shipped records. OPEN.**
-Established from two raw records off the VMUI JSON tab, after two earlier readings of the
-same pipeline from a *rendered* view were both wrong. `_time` is **not** an ingest stamp —
-it is the record's own Quarkus time (`...13.911654221Z`), 178µs *earlier* than Fluent Bit's
-own `date` (`...13.911832Z`), which an ingest stamp cannot be; the nanoseconds are the JBoss
-JSON formatter printing the full `Instant`. And every record **does** carry `loggerName` —
-the stream-fields panel was showing the *stream* (`{app, level}`), not the field list.
-**A `_stream` is not a field list and a histogram bucket is not a clock. Read the record.**
-
-Working, and not to be "fixed": Quarkus JSON file logging, `_time`, `_msg`, `_stream` on
-`{app, level}` (low-cardinality, the right choice), and **`mdc.requestId` + `mdc.realmId`,
-which make the spec's §7 end-to-end trace query work today**. Note `polaris/values.yaml` has
-`logging.mdc: {}` and `_stream_fields=app,level,loggerName` — the cluster is right and the
-repo is wrong on both, which is #5 again.
-
-Actually wrong:
-
-| what | evidence | fix |
-|---|---|---|
-| `date` duplicates `_time` on every record | `"date": "1788417313.911832"` beside `_time` | `json_date_key false` on the HTTP output |
-| `processName` is a 60-byte JVM path on every record; `loggerClassName`, `processId` near-valueless | in every record | `record_modifier` `Remove_key` |
-| **DEBUG SQL records are ~1.5KB each** — full statement, every bound parameter, an embedded JSON blob escaped four deep — and are nearly every row | the sample `_msg` | **Do NOT just set `DatasourceOperations` to INFO.** `polaris-learning` depends on that logger being at DEBUG (`roadmap.md`, *Handing back*: `check_sql_logging.py` must print *SQL DEBUG logging is WORKING*). Turning it down to save space breaks the only consumer this platform exists for. Route it instead — its own stream, or leave it to the console→OpenSearch path and keep VictoriaLogs for the rest. |
-| bound parameter values are written to the log | S3 paths and internal properties in the sample | same fix; worth knowing before this pattern reaches anything with real data in it |
-| `response_size` is `-` for zero-byte responses | `"... 200 -"` | regex `[\d-]+`, not `\d+` |
-| no latency token in the access-log pattern | the access-log `_msg` | add `%D`; the spec's own P99 panels need it |
-
-The tail `DB`, `Skip_Long_Lines Off` and the absent buffering are now **confirmed live** by
-the revision-10 diff, not merely suspected. Unchanged as faults: a restart replays the file
-from byte 0, and a line over `Buffer_Max_Size` stops the tail rather than being skipped.
-
-**#6 — A shared PVC cannot cross namespaces. OPEN (design constraint, decide before building).**
-PVCs are namespaced. Polaris runs in `datahub-hynix`, so the file-tailing shipper must run
-in `datahub-hynix` too — only VictoriaLogs stays in `logging`, which is what
-`environments.md` already says that namespace is for. `ReadWriteOnce` is survivable only
-because OrbStack is one node; it stops being survivable the moment anything is scheduled
-elsewhere. The alternative that avoids the PVC entirely is to add a second OUTPUT to the
-existing DaemonSet and drop the Deployment — at the cost of the access-log field extraction
-and the dedup filter, which need the file path to be worth building.
-
 **#7 — `logging/victoria-values.yaml` is sized for the spec's peak, not for this laptop. OPEN (low).**
+
+> *Moved from Open to Resolved on 2026-09-29 — moot: VictoriaLogs was uninstalled on 2026-09-18.*
+
 50Gi PV and a 4Gi memory limit come from the 140M-records/day column of the design doc, on
 the single OrbStack node that already needs >7GB for the full platform set. Two specific
 gaps rather than just the sizing: there is **no `retention.maxDiskSpaceUsageBytes`**, so
@@ -2152,42 +2222,6 @@ gaps rather than just the sizing: there is **no `retention.maxDiskSpaceUsageByte
 endpoint onto the Mac, since VictoriaLogs single has no auth. **`persistence.size` is
 now-or-never** — if the PVC is already bound at 50Gi, that is what this cluster has.
 
-
-**#26 — Report rows are stamped by a tick that fires 3.673s late, and the matrix fires every phase
-on the boundary. OPEN, LIVE, and it is the reason three gates in run `1789370776` did not mean what
-they said.** 2026-09-14. Measured from the OpenSearch report + log exports, not from config:
-
-- **The skew is constant, not erratic.** All 11 rows (`seq` 184..194) emitted at
-  `window_end + 3.673s`, σ < 2ms. It cannot drift: `Interval_Sec 5` **divides** `WINDOW_SECONDS 30`,
-  so the tick phase against the window grid is fixed for the life of the process. Row `[W, W+30)`
-  really covers about `[W+3.7, W+33.7)`. Bounded independently to **+1.55s..+3.67s** for `seq=186`
-  by its own emit timestamp — a 30s shift is arithmetically excluded.
-- **The notebook lands every burst inside that dead zone.** Traffic starts 0.52–0.61s after each
-  boundary and finishes within ~1s, so 100% of a phase is attributed to the previous row.
-- **`{-30: 5, 0: 1}` is one rule, not two.** `lead_s` measures distance to the *label*, so it reads
-  −30 for a boundary-aligned burst and ≈0 for a mid-window one. The single `0` row is `seq=185`,
-  the setup burst at 07:26:16.9 — the only traffic in the run that did not start on a boundary.
-  **The report's "no single offset can correct it, do not quote window-scoped gates" is withdrawn.**
-- **Confirmed against the other pipeline:** `access_kept` equals the access docs in the real window
-  in **7 of 7** windows, 343 == 343 total.
-- **Consequences already visible:** Gate 4 `writes=1 granted=3` is two adjacent rows (3 grants at
-  07:29:00.55–.61; the teardown DELETE at 07:29:31.35). Gate 4 `auth_denied=0` is **not** the
-  ROLE_KINDS exemption and the 403 did **not** fall to `__errors__` — it is on the role row in the
-  neighbouring report row (`auth_denied=1`). Gate 2's VOID is the same class.
-- **Cheapest fix is in the notebook, not the pipeline:** start each phase ~5s past the boundary
-  (> `Interval_Sec`). Re-typing the window from record times is a *design change* — the Lua refuses
-  it deliberately, so a replayed record is not re-dated — and must be argued as one.
-
-Full derivation, including the wrong turn that nearly filed this as a constant 30s shift, in
-[`sessions/2026-09-14-window-skew-review.md`](sessions/2026-09-14-window-skew-review.md).
-
-**2026-09-15 — FIX CONFIRMED by run `1789460891`; two corrections.** Bursts started +11.5s and
-+6.6s past the boundary; errors per row 2 / 251 == detail docs, by label, no shift. (a) **The tick
-does drift**: same pod, `seq` unbroken 440→854, offset 3.673s → 2.77s — divisibility fixes the grid,
-not the timer. The `Interval_Sec + 1.5` lag is immune; a hardcoded 3.673 is not. (b) The run put
-**every phase in one window**, so per-phase window gates (Gate 4's grant count on a busy role) read
-the whole matrix. Downgrade to MONITOR once phases are one-per-window again.
-[`sessions/2026-09-15-rerun-1789460891-review.md`](sessions/2026-09-15-rerun-1789460891-review.md).
 
 **#27 — Policy v4 / report schema v4. CLOSED: rolled 2026-09-15, superseded by v5 (`#28`, rev 17) and the refactor (`#31`).** 2026-09-15.
 *(Header corrected 2026-09-16; the body below is the original record, "WRITTEN AND NOT ROLLED" as of 2026-09-15.)*
@@ -2235,7 +2269,8 @@ still its own last step.
 - **After rolling, the plan's gates G1–G8** (`logging/archive/2026-09-15-PLAN-audit-allowlist.md` §5).
   Any v3 dashboard reading `carried_rows` or counting zero rows breaks by design; filter `schema_version`.
 
-## Resolved, kept because they recur
+---
+
 
 **#29 — Tier 1 OUTPUT 2 (`opensearch.1`, `kube.*` → k8s-logs) still discards chunks under traffic, on 5.1.1. DROPPED by Kade 2026-09-16 — not diagnosed, not fixed.** 2026-09-16.
 **Dropped (Kade, 2026-09-16 late: "drop #29, since task done"):** no further diagnosis is planned. The fault was never read: the

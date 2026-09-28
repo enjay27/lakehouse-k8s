@@ -1,7 +1,7 @@
 # Roadmap — what is done, what is next
 
 A line here needs a **number or a verified state**. Anything still hypothetical
-belongs in [`active-issues.md`](active-issues.md); the story of how it was found
+belongs in [`active-issues/platform.md`](../active-issues/platform.md); the story of how it was found
 belongs in [`sessions/`](sessions/).
 
 ## Done
@@ -17,7 +17,7 @@ OpenSearch runs in Docker, outside the cluster. Detail in
 
 **Current (2026-09-16, late) — read this first; the table below is the VictoriaLogs-shipper era and mostly historical.**
 The built pipeline is the Fluent Bit DaemonSet → OpenSearch, policy v5 / report schema 6 with the refactored one-filter Lua
-(`active-issues.md` #28, #30, #31, #32, all verified on traffic). The order of work is
+(`active-issues/platform.md` #28, #30, #31, #32, all verified on traffic). The order of work is
 `logging/HANDOFF-pipeline-next-2026-09-16.md` §3; the task table is `logging/PLAN-audit-log-todo-2026-09-16.md`; open design
 decisions are `logging/REVIEW-pipeline-2026-09-16.md` P1–P12. Retention/ISM is the Monitoring team's.
 
@@ -33,13 +33,13 @@ gaps is [`sessions/2026-09-03-polaris-vlogs-audit.md`](sessions/2026-09-03-polar
 
 | # | step | why it is next |
 |---|---|---|
-| 1 | **Done** — access-log field extraction, the retention policy (`polaris_noise_filter`), and the shipper's silent faults: tail `DB`, `Skip_Long_Lines On`, `Rotate_Wait`, filesystem buffering, `json_date_key false`, per-record `Remove_key` | all in `logging/fb-values.yaml`; **46/46** in `logging/scripts/test-polaris-filters.py`. Installed 2026-09-04T04:57:36Z and measured working (34 of 34 drops). **Policy v2 written 2026-09-04 and not yet installed** — `active-issues.md` #14. `Alias` on the filters now makes `fluentbit_filter_drop_records_total` attributable per filter; sample it **before** the v2 upgrade. |
+| 1 | **Done** — access-log field extraction, the retention policy (`polaris_noise_filter`), and the shipper's silent faults: tail `DB`, `Skip_Long_Lines On`, `Rotate_Wait`, filesystem buffering, `json_date_key false`, per-record `Remove_key` | all in `logging/fb-values.yaml`; **46/46** in `logging/scripts/test-polaris-filters.py`. Installed 2026-09-04T04:57:36Z and measured working (34 of 34 drops). **Policy v2 written 2026-09-04 and not yet installed** — `active-issues/platform.md` #14. `Alias` on the filters now makes `fluentbit_filter_drop_records_total` attributable per filter; sample it **before** the v2 upgrade. |
 | 2 | **Done** — the API-coverage notebook exists in `polaris-learning/log-coverage` and has run twice (2026-09-04). It runs the *deployed* Lua as its oracle, which is what caught #13 | it is what answers the parked questions — the WARN messages behind the "Deprecated Config" exclusion, where a PUT body is logged (or that the PostgreSQL `events` table is the real audit channel), whether stack traces survive, whether `mdc.requestId` joins reliably, and the create/delete audit asymmetry below. |
 | 2 | Give the tail DB a PVC instead of the emptyDir | the emptyDir survives a container restart but not `helm upgrade`, and a fresh DB with `Read_from_Head true` re-posts the whole file. Block to uncomment is in `fb-values.yaml`. |
-| 3 | Harden VictoriaLogs: `retention.maxDiskSpaceUsageBytes`, right-size 50Gi/4Gi, decide on the 9428 `LoadBalancer` | `active-issues.md` #7. 9428 is unauthenticated ingest **and** query; `persistence.size` is now-or-never. |
+| 3 | Harden VictoriaLogs: `retention.maxDiskSpaceUsageBytes`, right-size 50Gi/4Gi, decide on the 9428 `LoadBalancer` | `active-issues/platform.md` #7. 9428 is unauthenticated ingest **and** query; `persistence.size` is now-or-never. |
 | 4 | Rotate the OpenSearch password (#4), the JDBC password (#9), the MinIO keys | a committed credential stays leaked after the file is edited. Three places now. |
 | 4b | **Decided, in policy v2** — rule 5 is now a drop-list, not a keep-list: every POST is kept except `/oauth/tokens`, which is kept once per principal per KST day | the asymmetry was measured, not predicted: eight endpoints including `reset_principal_credentials` left no access-log record. Cost of the fix, in that run's profile: **+10 records per 122 calls, 0.5%**. Not running until the shipper is upgraded (#14b). |
-| 5 | Decide on `autoscaling` vs the shared log file | `active-issues.md` #8. Three Polaris pods appending to one file; RWO does not stop it on one node. Needs a Polaris change, so it waits. |
+| 5 | Decide on `autoscaling` vs the shared log file | `active-issues/platform.md` #8. Three Polaris pods appending to one file; RWO does not stop it on one node. Needs a Polaris change, so it waits. |
 | 6 | `%D` in the access-log pattern — **then exempt slow requests from dedup** | spec §7's P99 panels need it, and a table GET that normally takes 8ms taking 4s is exactly the record daily dedup discards. Needs a Polaris change, so parked with #5. |
 | 6b | The "Deprecated Config" WARN exclusion, and PUT request bodies | hook is in the filter, marked TODO. Request bodies are not in the access log at all — Kade is locating the source. |
 | 6c | **Report schema v2 — DEPLOYED 2026-09-07 and measured correct** (run `1788755035`, sha `d58b9203a8304030`: both margins 158, `errors_4xx` 41/41/41, `auth_denied` 12/12/12, `bytes_total` 1,186,348 on both sides; 38 active + 4 + 6 carried = 48 rows, carry decays in two windows). **The harness has not caught up — 34 mismatches, none a filter fault** ([`HANDOFF-harness-schema-v2`](../logging/archive/2026-09-07-HANDOFF-harness-schema-v2.md)). `SCHEMA_VERSION 2`: `distinct_resources`/`_principals` count only rows with `requests > 0`, remainder in `carried_rows`; `counted_get` -> `counted_read` (it counted HEAD); added `errors_4xx`/`errors_5xx`/`auth_denied`, `bytes_total`, `resources_other_distinct`, `windows_skipped` | **60/60** in `logging/scripts/test-polaris-filters.py`, incl. a new suite 4 that fails when a numeric field is missing from `type_int_key` — the failure mode is a silently-stored string and an empty numeric query. `helm lint`/`--dry-run` NOT run, no cluster reach. Decisions in [`sessions/2026-09-07-report-schema-v2.md`](sessions/2026-09-07-report-schema-v2.md). |
@@ -49,7 +49,7 @@ gaps is [`sessions/2026-09-03-polaris-vlogs-audit.md`](sessions/2026-09-03-polar
 **Measured 2026-09-04, and it reframes the exercise:** 122 API calls stored **2,026
 records** — 90 access-log lines and **1,928 application lines**. The noise filter can only act
 on the first group, so it governs **4.5% of the volume** and its 34 drops removed **1.7%**.
-Rules 3–7 buy audit fidelity, not storage; storage is the DEBUG SQL records (`active-issues.md`
+Rules 3–7 buy audit fidelity, not storage; storage is the DEBUG SQL records (`active-issues/platform.md`
 #5b), which must be *routed*, not turned down.
 
 Numbers worth holding on to, from the design doc: the pipeline is specified for **10M/day
@@ -99,7 +99,7 @@ export by `logging/scripts/step14-sample-doc.py`.
 ## Polaris 1.6.0 — the numbers, and what to assert after the upgrade
 
 Established 2026-09-18 by reading upstream at tag `apache-polaris-1.6.0`. Cluster side
-unverified — see `active-issues.md` #33.
+unverified — see `active-issues/platform.md` #33.
 
 | fact | value |
 |---|---|
@@ -237,7 +237,7 @@ cluster it describes no longer exists.
   first time — seq 1, `window_start 04:21:30Z`, `partial_window: true`, `access_seen 0`, so the
   hole is real, bounded by the tick interval, and cost nothing on this pod.
 - **Polaris 500s only on the create path.** 15 five-hundreds in 5 windows out of ~400, in two
-  clusters matching the two notebook runs; every idle hour is clean. `active-issues.md` #15.
+  clusters matching the two notebook runs; every idle hour is clean. `active-issues/platform.md` #15.
 - **A gap in the report stream is usually the OrbStack VM suspending with the laptop**, not a
   stalled filter: 1,495 ticks against ~65.5h of uptime where `Interval_Sec 5` implies ~47,000.
   **No measurement over the report stream that spans a sleep can be read as elapsed time.**

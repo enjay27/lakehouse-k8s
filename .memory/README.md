@@ -1,26 +1,29 @@
 # The memory tree — which file takes what
 
-Merged 2026-09-21 from two repos. Where a file existed in both, the two are kept side by side
-with a `-platform` / `-catalog` suffix rather than blended: `active-issues` alone is 183 KB +
-111 KB, and a 289 KB lookup file is not a lookup file. **Reconciling them is a tracked
-follow-up** (`active-issues/merge.md`), not something the merge commit attempted.
-
-- **platform** = the cluster and what ships to it — `charts/ releases/ logging/ schema/ runbooks/`
-  (was the `local-k8s` repo).
-- **catalog** = the suite that measures it — `src/ tests/ notebooks/ diagnostics/`
-  (was the `polaris-learning` repo).
+`../MEMORY.md` is the index: under ~40 lines, its *Now* section says what is next and what is
+written but not running. Everything with more detail lives here.
 
 | file | takes |
 |---|---|
-| `../MEMORY.md` | the <40-line index. *Now*: what is next, and what is written but not running |
-| `active-issues/platform.md` · `catalog.md` | anything you should not trust yet — a value, a number, a tool, a runbook. Configuration written but never applied lives here |
-| `active-issues/merge.md` | the follow-ups the 2026-09-21 merge deliberately deferred |
-| `roadmap/platform.md` · `catalog.md` | facts with numbers; milestones; the verification assertions |
-| `sessions/` | the blow-by-blow, **including the wrong turns** — the part most likely to be repeated if lost. 37 files, flat, chronological across both halves |
-| `environments-platform.md` · `-catalog.md` | contexts, namespaces, ports, and what must never run where. **Read before running anything** |
-| `goal-platform.md` · `-catalog.md` | the standing objective and structural model of each half |
-| `repository-map-platform.md` · `-catalog.md` | **pre-merge maps.** Paths in them are stale; `CLAUDE.md` has the current layout |
-| `completed-platform.md` · `-catalog.md` | finished structural work |
+| [`environments.md`](environments.md) | **read before running anything** — the one cluster, the three suite environments, ports, PVCs, secrets |
+| [`goal.md`](goal.md) | the standing objective and what is actually deployed |
+| [`active-issues/platform.md`](active-issues/platform.md) | cluster, charts, Fluent Bit, OpenSearch, PostgreSQL. Numbered `#1`–`#53`; *Open* first, then *Resolved, kept because they recur*, then *Standing constraints*. Configuration written but never applied lives here |
+| [`active-issues/catalog.md`](active-issues/catalog.md) | the suite: coverage denominators, harness gaps, notebook defects. Unnumbered; a bare `#N` always means platform |
+| [`active-issues/merge.md`](active-issues/merge.md) | what the 2026-09-21 merge deferred, and what has since closed |
+| [`roadmap/platform.md`](roadmap/platform.md) · [`roadmap/catalog.md`](roadmap/catalog.md) | facts with numbers, milestones, and the verification assertions to run after a change |
+| [`completed.md`](completed.md) | finished structural work |
+| [`sessions/`](sessions/) | `YYYY-MM-DD-topic.md`, one per session, flat and chronological across both halves — the blow-by-blow, **including the wrong turns** |
 
-**A fact with a number goes in `roadmap/`; the story goes in `sessions/`.** Neither goes in
-`MEMORY.md`, which is an index and nothing else.
+## Rules
+
+- **A fact with a number goes in `roadmap/`; the story goes in `sessions/`.** The wrong turns do not
+  survive summarising, and they are the part most likely to be repeated.
+- **Written is not live.** Anything not verified against the running cluster belongs in
+  `active-issues/`, not `roadmap/`.
+- **Check a number's denominator before quoting it.** The coverage denominator moved from 63
+  operations / 286 cells to 65 / 297 when the 1.6.0 documents were vendored on 2026-09-21;
+  `assert_denominator` hard-fails on drift. Re-record deliberately, never to turn a red run green.
+- **A HANDOFF or PLAN is not memory.** It lives beside the code it describes, for someone starting
+  cold. Link it; do not copy it.
+- Session records name paths as they were. Documents deleted in the 2026-09-29 cleanup are indexed
+  in [`../docs/DELETED-2026-09-29.md`](../docs/DELETED-2026-09-29.md).

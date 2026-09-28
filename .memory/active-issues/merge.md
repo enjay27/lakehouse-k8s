@@ -1,19 +1,17 @@
-# Merge follow-ups — deferred by the 2026-09-21 Big Merge
+# Merge follow-ups — deferred by the 2026-09-21 merge
 
-**M8 (suite half) and M9 done 2026-09-21. M1-M7 and M10 open.**
+**Open: M3, M6, M10. Everything else is closed** (M1, M8-suite and M9 on 2026-09-21; the rest in the
+2026-09-29 cleanup on branch `refactor/2026-09-29-cleanup`).
 
-The merge commit relocated files and changed no content. Everything below is a known,
-deliberate seam left for a follow-up commit of its own.
-
-| # | what | where | why it was deferred |
-|---|---|---|---|
-| M1 | ~~Notebook `sys.path` bootstrap depth is wrong~~ **DONE 2026-09-21** — 52 relaid onto a walk-up root, verified by execution, gated by `tests/test_notebook_bootstrap.py` |
-| M2 | Absolute cross-repo paths still point at the old repo | `diagnostics/ladders/api-sql-profile/reset_realm.sh:37-38`, `src/config/local.example.yaml:33`, `src/log_coverage.py:170` | they resolve today because the old repo still exists on disk. They must become repo-relative before the old directories are removed |
-| M3 | `fb_values_path` points at a dead release | `src/config/*.example.yaml`, `src/log_coverage.py:185`, `tests/test_log_coverage.py:162` | `logging/fb-values.yaml` describes the shipper uninstalled 2026-09-18. The live policy is `releases/fluent-bit/polaris_access_log.lua` + `values.yaml`. **Whether the suite has been validating against the wrong file is an open question, not a settled finding** — it needs tracing, which is a task, not a move |
-| M4 | The two `.memory` halves are namespaced, not merged | `.memory/active-issues/`, `.memory/roadmap/`, `.memory/*-platform.md` / `*-catalog.md` | 183 KB + 111 KB and 33 KB + 124 KB. Blending them is content work with real judgement in it |
-| M5 | Issue numbers collide across halves | `.memory/active-issues/` | platform `#24` and catalog `#24` are different issues. Renumbering needs M4 done first |
-| M6 | Jupytext pairing not set up | `notebooks/` | agreed as a follow-up. Pairing 66 notebooks generates 66 new `.py` files and changes the diff workflow — its own commit, its own verification |
-| M7 | `repository-map-*.md` describe the pre-merge layout | `.memory/` | kept as historical record. `CLAUDE.md` carries the current layout |
-| M8 | ~~Neither DoD gate has been run~~ **suite gate GREEN 2026-09-21; platform gate still unrun** | — | `pytest`: **996 passed, 0 failed**, after the M9 repair below. `black`/`isort` clean. The **platform gate has still never run** — a Cowork session has no `helm`, no `kubectl`, no cluster — so charts, values and templates remain unverified |
-| M9 | ~~20 of 21 test modules failed to import~~ **FIXED 2026-09-21** | `pyproject.toml`, `tests/` | Not a deferred seam — a defect this document missed. Moving tests into `tests/` broke every `Path(__file__).parent / "src"`. Fixed with `pythonpath = ["src"]` + `testpaths`, deleting 20 per-file inserts, and rewriting 10 structurally-moved paths. Four sat behind `skipif` guards and would have reported *skipped* rather than failed. See `.memory/sessions/2026-09-21-merge-test-repair.md` |
-| M10 | A clone cannot pass the suite until `fetch_specs.sh` runs | `diagnostics/ladders/log-coverage/spec/` | The vendored OpenAPI documents are gitignored downloads and are in no clone. Without them 13 tests fail and 49 error with `SpecUnavailable`. **Not a merge artifact** — a fresh clone of the pre-merge repo behaves identically. Needs saying in a README that does not yet exist |
+| # | what | state |
+|---|---|---|
+| M1 | Notebook `sys.path` bootstrap depth | **DONE 2026-09-21** — walk-up root, gated by `tests/test_notebook_bootstrap.py` |
+| M2 | Absolute paths into the old `~/hynix/local-k8s` checkout | **DONE 2026-09-29.** `reset_realm.sh` now uses repo-relative `schema/`; `log_coverage.resolve_fb_values` uses `tests/fixtures/`; `local.example.yaml` drops `fb_values_path`. The 44 policy tests had passed only because the old checkout still existed. The same class of bug was in `releases/fluent-bit/apply-lua.sh` and two `logging/scripts/`: `fluent-bit/` instead of `releases/fluent-bit/` (platform `#52`) |
+| M3 | The oracle reads the uninstalled shipper's Lua | **OPEN.** The file is now `tests/fixtures/fb-values-shipper.yaml` (policy v2/v3); the live DaemonSet runs `releases/fluent-bit/polaris_access_log.lua` (v6). Moving the oracle onto the live Lua is a change with its own verification, not a path swap |
+| M4 | The two `.memory` halves namespaced, not merged | **DONE 2026-09-29.** `goal`, `environments`, `completed` merged into single files; the pre-merge READMEs and indexes deleted. `active-issues/` and `roadmap/` stay split by *domain* (platform / catalog), and the platform file's *Open* section now holds only open entries |
+| M5 | Issue numbers collide across halves | **CLOSED 2026-09-29, no collision.** `active-issues/catalog.md` numbers nothing (its one `#N` is upstream `#379`). Convention: a bare `#N` is a platform issue |
+| M6 | Jupytext pairing | **OPEN** — its own commit, its own verification |
+| M7 | `repository-map-*.md` describe the pre-merge layout | **DONE 2026-09-29** — deleted; `CLAUDE.md` carries the layout |
+| M8 | Neither DoD gate had run | **DONE 2026-09-29.** Suite: pytest green (1069). Platform: `helm lint` all four local charts; `--dry-run=client` minio, polaris, polaris-log-batch and fluent-bit. **postgresql still not dry-run** — its `postgresql-ha` subchart is not downloaded (`helm dependency build` first) |
+| M9 | 20 of 21 test modules failed to import | **FIXED 2026-09-21** |
+| M10 | A clone cannot pass the suite until `fetch_specs.sh` runs | **OPEN** until the root `README.md` says so |

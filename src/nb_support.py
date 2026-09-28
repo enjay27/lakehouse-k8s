@@ -94,7 +94,7 @@ PG_URL = None
 PG_CONFIG = {}
 BASE_MGMT = BASE_CAT = None
 #: Quarkus management port. 8182 on this cluster -- NOT 8282, which is what
-#: the upstream docs default to (.memory/environments-platform.md).
+#: the upstream docs default to (.memory/environments.md).
 QUARKUS_MGMT_PORT = 8182
 PURGE_DELETES_FILES = None
 POLARIS_VERSION = None

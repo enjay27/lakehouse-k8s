@@ -1,8 +1,15 @@
 # Completed structural work
 
+Merged 2026-09-29 from `completed-platform.md` and `completed-catalog.md`. Finished and not to be
+re-litigated. Paths and file names below are as they were at the time; several documents they
+name were deleted on 2026-09-29 (`../docs/DELETED-2026-09-29.md`).
+
+# Platform
+
+
 Finished and not to be re-litigated. Anything here that is *written but not yet
 proved against a running cluster* is cross-listed in
-[`active-issues.md`](active-issues.md) — being finished as a piece of work is not
+[`active-issues/platform.md`](active-issues/platform.md) — being finished as a piece of work is not
 the same as being verified.
 
 ## 2026-08-18 — the rebuild was diagnosed and documented
@@ -14,7 +21,7 @@ the same as being verified.
   image audit, insurance exports, teardown, a 12-step ordered reinstall with a gate
   per step, and a verification block. Plus `preflight-triage.sh`.
 - **Audited the repo against the handoff** and found seven config blockers the
-  handoff did not know about — the surviving ones are `active-issues.md` #1, #3, #4.
+  handoff did not know about — the surviving ones are `active-issues/platform.md` #1, #3, #4.
 - **Decisions taken:** full OrbStack reset (not namespace-only); reinstall
   everything; image versions unchanged; write templates for the local MinIO chart
   rather than switching to an upstream one.
@@ -51,7 +58,7 @@ was deployed as a K8s DaemonSet and confirmed working. OpenSearch was not part o
 it runs in Docker, outside the cluster and outside this repo.
 
 Not done, deliberately: the verification assertions were not run, and the repo was not
-reconciled against the live releases. Both are `active-issues.md` #1. The two root
+reconciled against the live releases. Both are `active-issues/platform.md` #1. The two root
 runbooks become historical here — they are still the best account of *why* the rebuild
 was needed (#F1, #F2), but they are no longer a procedure anyone should follow.
 
@@ -87,7 +94,7 @@ All in `logging/fb-values.yaml`; no `--set` flags, the values file is the defini
 
 **Cross-listed, and the distinction matters here more than anywhere:** policy v2 (rule 5
 inverted, the principal-keyed dedup key, the flush report) and the whole of the above's second
-revision are **written and not running** — `active-issues.md` #14. Being finished as a piece
+revision are **written and not running** — `active-issues/platform.md` #14. Being finished as a piece
 of work is not the same as being the running object; this repo has now made that mistake
 twice in the same file.
 
@@ -136,3 +143,13 @@ API server outright. `enabled: false` was silently load-bearing for the deployme
 report with no recorded output. **Closed 2026-09-18:** VictoriaLogs' own 50 Gi PVC in namespace
 `logging` was deleted manually by Kade — `helm uninstall` does not remove it. The teardown is
 complete end to end, and `logging` is now an empty namespace with no reason to exist.
+
+# Suite
+
+
+Finished and not expected to change. Kept out of the roadmap so the roadmap
+stays a list of what is live.
+
+- [x] **Refactor pass 1 (2026-06-30):** migrated the canonical `purge-practice/refactor/` set into the `src/` + per-domain structure above (via `git mv`). Added per-dir READMEs. Notebooks now bootstrap `src/`. Fixed a latent bug where `common.yaml` lived outside `config/` and was never loaded.
+- [x] **Refactor pass 2 (2026-06-30):** migrated `test/`, `notebooks/`, `error-cases/`, and `purge-practice/` root into the new categories (`availability/`, `rbac/`, `diagnostics/`, `etl/`, `scenario/` + existing dirs). Consolidated all Polaris suites onto `src/` (3 dup util copies → `attic/`; confirmed `src/` is a superset of their APIs). Repointed 25 utils-importing notebooks to `src/` with `require_not_prod()` guards (availability excluded — PROD-safe). Wrote READMEs for the new categories. DataHub left untouched.
+

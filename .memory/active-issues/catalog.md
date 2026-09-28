@@ -3,6 +3,17 @@
 Open faults, and resolved ones kept with a strikethrough where the reasoning
 still matters. A `~~struck~~` entry is history, not a live problem.
 
+**Numbering.** Suite issues are not numbered. A bare `#N` anywhere in this repo means a
+**platform** issue (`active-issues/platform.md`); `#379` below is upstream Polaris. (The merge's
+feared "platform `#24` vs catalog `#24`" collision, M5, does not exist in this file.)
+
+- **A PLAINTEXT PRINCIPAL SECRET IS COMMITTED IN `03_api_index_matrix.ipynb` (OPEN; tracked in
+  `MEMORY.md` since 2026-09-21, recorded here 2026-09-29).** `diagnostics/ladders/api-sql-profile/03_api_index_matrix.ipynb`
+  prints a `clientId`/`clientSecret` pair with `json.dumps(..., indent=2)`, and the literal 32-hex
+  secret is in a committed output cell, so it is in git history. Fix: rotate that principal's
+  credential on the local realm, then strip the outputs with `/nb-sanitize` and stop the cell
+  printing the secret. Stripping alone does not help, because history keeps it.
+
 - **RUN `1789955605` — THE VIEW FIX IS WORTH +6 CELLS AND THE FIXTURE CATALOG STILL WILL NOT DROP (2026-09-21).** First drive with session 17's changes. Coverage reads **245/297**, but on the shared 286-cell subset it is **231 -> 239**, and it decomposes exactly: **+6** for the fixture view (`loadView` 2+403, `viewExists` 2+403, `replaceView` 2+403), **+3** for the rename family (`registerTable`/`createTable`/`createView` 409), **-1** for `renameView` 409. Fully covered operations 31/63 -> **35/65**. **Quote the +8, not the 245/297**: the denominators differ and the subset is the only comparable figure.
 - **TAGGING IS COMPLETE AND THE WINDOW PROVES IT (2026-09-21, run `1789955605`).** **198 of 198** kept access lines inside the window carry `nb-<run>-`, against 167 of 186 the run before. Phase I contributes 20; both ladder prepare/cleanup ids are present; the 43 untagged lines in the export are all OUTSIDE the window, which is the fixture setup being correctly excluded. This is what makes the rest close: **`counted_404` = 100 = the grid's 91 plus the teardown's 9**, and the teardown's nine were invisible until phase I was tagged. `auth_denied` 110 = 60x401 + 50x403; `errors_5xx` 7 = 4 grid + 3 ladder; kept 198 + counted 156 = seen 354 = Σ principals = Σ resources. **Gate 2 reproduced byte-for-byte: `last_write_bytes` 1941.**
 - **THE `{prefix}_shared` ROLE WAS A CAUSE, NOT THE CAUSE — THE FIXTURE CATALOG STILL LEAKS (2026-09-21, run `1789955605`, INSTRUMENTED NOT FIXED).** `delete catalog role apimatrix1789955605_shared -> 204` and `delete catalog apimatrix1789955605_cat -> 400`, with the app log saying it in words at last: **`Catalog 'apimatrix1789955605_cat' cannot be dropped, it is not empty`**. So `9f3ae10`'s diagnosis was incomplete and the teardown comment's original suspect is back: `createNamespace` at its 400 cell returned **500** with `Cannot invoke "Namespace.levels()" because "namespace" is null`, in both of the last two runs. **The teardown now walks (`walk_namespaces`, nested-aware), lists catalog roles instead of naming them, deletes with `purge=True`, and prints `remaining_in_catalog` on a refusal. An EMPTY inventory is the finding** — Polaris says not-empty and the API that manages it sees nothing, which is the shape a write that committed during a 500 leaves. The next drive answers it.
