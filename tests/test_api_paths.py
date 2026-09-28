@@ -54,7 +54,9 @@ def _built_urls():
 def test_every_management_path_exists_in_the_spec():
     spec = {_placeholders(p) for p in yaml.safe_load(MGMT.read_text())["paths"]}
     built = [p for w, p in _built_urls() if w == "mgmt"]
-    assert built, "found no management URLs in polaris_rest -- the extractor regex broke"
+    assert (
+        built
+    ), "found no management URLs in polaris_rest -- the extractor regex broke"
     assert not [p for p in built if p not in spec], (
         f"PolarisREST builds management paths the 1.6.0 document does not define: "
         f"{[p for p in built if p not in spec]}"
@@ -65,7 +67,9 @@ def test_every_management_path_exists_in_the_spec():
 def test_every_catalog_path_exists_in_the_spec():
     # base_cat already carries /v1, so a spec path /v1/{prefix}/x is /{X}/x here.
     spec = {
-        _placeholders(p[3:]) for p in yaml.safe_load(CAT.read_text())["paths"] if p.startswith("/v1/")
+        _placeholders(p[3:])
+        for p in yaml.safe_load(CAT.read_text())["paths"]
+        if p.startswith("/v1/")
     }
     built = [p for w, p in _built_urls() if w == "cat"]
     assert built, "found no catalog URLs in polaris_rest -- the extractor regex broke"

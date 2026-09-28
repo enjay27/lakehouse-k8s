@@ -15,10 +15,7 @@ import sys
 
 sys.path.insert(
     0,
-    str(
-        pathlib.Path(__file__).resolve().parent.parent
-        / "images/polaris-log-batch"
-    ),
+    str(pathlib.Path(__file__).resolve().parent.parent / "images/polaris-log-batch"),
 )
 import polaris_log_batch as plb  # noqa: E402
 

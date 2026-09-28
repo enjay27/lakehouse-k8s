@@ -11,7 +11,7 @@ single most important thing on this page.
 | tree | half | DoD gate |
 |---|---|---|
 | `charts/` `releases/` `logging/` `schema/` `runbooks/` | platform | `helm lint` + `--dry-run=client --debug` |
-| `src/` `tests/` `notebooks/` `diagnostics/` | suite | `pytest` + `black . && isort .` |
+| `src/` `tests/` `notebooks/` `diagnostics/` | suite | `pytest` + `isort . && black .` |
 
 ---
 
@@ -178,7 +178,7 @@ Upstream creates exactly three non-key indexes — `idx_entities`, `idx_location
 - `kubectl -n datahub-hynix port-forward pod/benchmarks-postgresql-postgresql-ha-postgresql-0 5433:5432`
 
 ### Suite
-- `uv sync` (add a package: `uv add <pkg>`) · `pytest` · `black . && isort .`
+- `uv sync` (add a package: `uv add <pkg>`) · `pytest` · `isort . && black .`
 - Notebook suites: **Restart & Run All**, top to bottom, no out-of-order cell dependencies.
 
 ---
@@ -242,8 +242,8 @@ Steps 1 and 2 depend on the half:
 
 **Suite (`src/` `tests/` `notebooks/` `diagnostics/`)**
 1. All test notebook cells run sequentially with zero runtime or compilation errors.
-2. `pytest` green, then format with `black . && isort .` (black **last** — no `[tool.isort]`
-   profile is set).
+2. `pytest` green, then format with `isort . && black .`. `pyproject.toml` sets isort's `black`
+   profile; without it the two tools undo each other and no order is clean (measured 2026-09-29).
 
 ---
 

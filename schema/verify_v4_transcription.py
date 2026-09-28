@@ -248,11 +248,17 @@ class Report:
             print(f"  {line}")
         if not self.failures:
             print("\nPASS -- the transcription agrees with the shipped schema.")
-            print("Either script may be run in step 2e. Prefer the shipped one; keep ours")
+            print(
+                "Either script may be run in step 2e. Prefer the shipped one; keep ours"
+            )
             print("for its version guard. Still read version_value back in 2f.")
             return 0
-        print(f"\nFAIL -- {len(self.failures)} problem(s). Do NOT run the transcribed script.")
-        print("Run the SHIPPED schema-v4.sql in step 2e instead; it is the authority.\n")
+        print(
+            f"\nFAIL -- {len(self.failures)} problem(s). Do NOT run the transcribed script."
+        )
+        print(
+            "Run the SHIPPED schema-v4.sql in step 2e instead; it is the authority.\n"
+        )
         for headline, detail in self.failures:
             print(f"* {headline}")
             if detail:
@@ -263,13 +269,21 @@ class Report:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--v3", required=True, help="schema-v3.sql extracted from the 1.6.0 image")
-    ap.add_argument("--v4", required=True, help="schema-v4.sql extracted from the 1.6.0 image")
+    ap.add_argument(
+        "--v3", required=True, help="schema-v3.sql extracted from the 1.6.0 image"
+    )
+    ap.add_argument(
+        "--v4", required=True, help="schema-v4.sql extracted from the 1.6.0 image"
+    )
     ap.add_argument("--migration", required=True, help="migrate_v3_to_v4.sql")
     args = ap.parse_args()
 
     texts = {}
-    for label, path in (("v3", args.v3), ("v4", args.v4), ("migration", args.migration)):
+    for label, path in (
+        ("v3", args.v3),
+        ("v4", args.v4),
+        ("migration", args.migration),
+    ):
         try:
             with open(path, encoding="utf-8") as fh:
                 texts[label] = fh.read()
@@ -310,7 +324,9 @@ def main():
     for key in added:
         kind, name = key
         if key not in mig:
-            r.fail(f"CLAIM 2 BROKEN -- v4 adds {kind} {name} and the migration omits it")
+            r.fail(
+                f"CLAIM 2 BROKEN -- v4 adds {kind} {name} and the migration omits it"
+            )
         elif mig[key] != v4[key]:
             r.fail(
                 f"CLAIM 2 BROKEN -- {kind} {name} is transcribed differently from the shipped file",
@@ -336,7 +352,9 @@ def main():
         if n in rm:
             continue
         if COSMETIC.match(n):
-            r.note(f"NOTE, annotation only -- v4 has a `{kind}` the migration omits: {n}")
+            r.note(
+                f"NOTE, annotation only -- v4 has a `{kind}` the migration omits: {n}"
+            )
         else:
             r.fail(
                 f"CLAIM 3 BROKEN -- v4 adds a `{kind}` statement and the migration omits it. "

@@ -36,3 +36,8 @@ dev = [
 # One anchored setting replaces them and survives the next move.
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.isort]
+# Without this, isort and black have no fixed point: each run undoes part of the
+# other, in either order (measured 2026-09-29).
+profile = "black"

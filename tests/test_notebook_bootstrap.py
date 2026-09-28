@@ -46,7 +46,9 @@ def _notebooks():
 
 def _code(nb):
     return [
-        "".join(c["source"]) for c in json.load(nb.open())["cells"] if c["cell_type"] == "code"
+        "".join(c["source"])
+        for c in json.load(nb.open())["cells"]
+        if c["cell_type"] == "code"
     ]
 
 
@@ -57,7 +59,9 @@ IDS = [str(f.relative_to(REPO)) for f in WITH_BOOT]
 
 def test_the_self_contained_set_has_not_grown():
     """A notebook losing its bootstrap should fail here, not at someone's desk."""
-    found = {str(f.relative_to(REPO)) for f in ALL} - {str(f.relative_to(REPO)) for f in WITH_BOOT}
+    found = {str(f.relative_to(REPO)) for f in ALL} - {
+        str(f.relative_to(REPO)) for f in WITH_BOOT
+    }
     assert found == NO_BOOTSTRAP, (
         f"notebooks without a src/ bootstrap changed.\n"
         f"  newly missing one: {sorted(found - NO_BOOTSTRAP)}\n"
@@ -75,12 +79,23 @@ def test_bootstrap_resolves_from_the_notebooks_own_directory(nb):
 
     whole = "\n".join(code)
     mods = sorted(
-        {m for m in SRCMODS if re.search(r"^\s*(?:import|from)\s+" + m + r"\b", whole, re.M)}
+        {
+            m
+            for m in SRCMODS
+            if re.search(r"^\s*(?:import|from)\s+" + m + r"\b", whole, re.M)
+        }
     )
-    prog = snippet + "\nimport importlib\nfor m in %r:\n    importlib.import_module(m)\n" % (mods,)
+    prog = (
+        snippet
+        + "\nimport importlib\nfor m in %r:\n    importlib.import_module(m)\n" % (mods,)
+    )
 
     r = subprocess.run(
-        [sys.executable, "-c", prog], cwd=nb.parent, capture_output=True, text=True, timeout=120
+        [sys.executable, "-c", prog],
+        cwd=nb.parent,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     assert r.returncode == 0, (
         f"{nb.relative_to(REPO)} cannot reach src/ when run from its own directory.\n"

@@ -178,8 +178,12 @@ def init_env(env=None):
     # Quarkus management interface. Config key wins; otherwise derive it by
     # swapping the Polaris API port for the Quarkus one, so an existing
     # <env>.yaml that predates this key keeps working.
-    POLARIS_MGMT_URL = os.environ.get("POLARIS_MGMT_URL") or CFG.get("polaris_mgmt_url") or re.sub(
-        r":(\d+)(/|$)", lambda m: f":{QUARKUS_MGMT_PORT}{m.group(2)}", POLARIS_URL
+    POLARIS_MGMT_URL = (
+        os.environ.get("POLARIS_MGMT_URL")
+        or CFG.get("polaris_mgmt_url")
+        or re.sub(
+            r":(\d+)(/|$)", lambda m: f":{QUARKUS_MGMT_PORT}{m.group(2)}", POLARIS_URL
+        )
     )
 
     # Build the MinIO REST client (pure requests + SigV4; no s3fs/boto3)

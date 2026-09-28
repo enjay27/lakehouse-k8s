@@ -27,7 +27,6 @@ import pathlib
 import re
 import shutil
 import sys
-
 from datetime import datetime
 
 from openpyxl import Workbook

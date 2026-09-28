@@ -4,7 +4,10 @@ Groups statements by mdc.requestId so each group is one request, then profiles
 each. Reproduces (or refutes) the documented reference figures.
 """
 
-import sys, pathlib, collections, statistics
+import collections
+import pathlib
+import statistics
+import sys
 
 sys.path.insert(0, sys.argv[1])
 import api_trace as a

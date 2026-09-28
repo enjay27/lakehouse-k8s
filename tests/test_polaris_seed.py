@@ -35,7 +35,11 @@ from polaris_seed import (
     revert_grants,
 )
 from polaris_seed import seed as _seed  # noqa: E402
-from polaris_seed import teardown, upgrade_grants, verify_counts
+from polaris_seed import (
+    teardown,
+    upgrade_grants,
+    verify_counts,
+)
 
 #: Storage config for the fake cluster. `seed()` requires a bucket and a MinIO
 #: endpoint even when `create_tables` is False, because every catalog carries a
