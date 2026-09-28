@@ -34,8 +34,9 @@ ROOT_CLIENT="${POLARIS_ROOT_CLIENT:-root}"
 ROOT_SECRET="${POLARIS_ROOT_SECRET:-polaris-secret}"
 REALM="${POLARIS_REALM:-POLARIS}"
 
-SCHEMA_SQL="${SCHEMA_SQL:-$HOME/hynix/local-k8s/postgresql/schema/schema.sql}"
-BOOTSTRAP_SQL="${BOOTSTRAP_SQL:-$HOME/hynix/local-k8s/postgresql/schema/bootstrap.sql}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+SCHEMA_SQL="${SCHEMA_SQL:-$REPO_ROOT/schema/schema.sql}"
+BOOTSTRAP_SQL="${BOOTSTRAP_SQL:-$REPO_ROOT/schema/bootstrap.sql}"
 
 PG_USER="${PG_USER:-polaris}"
 PG_DB="${PG_DB:-polaris}"

@@ -304,7 +304,7 @@ def render_matrix_report(
     *,
     case=None,
     identity=None,
-    polaris_version="1.3.0-incubating",
+    polaris_version=None,
     realm="POLARIS",
     schema_version=None,
     schema_verdict=None,
@@ -316,12 +316,17 @@ def render_matrix_report(
     `case` and `identity` are what the three-identity design adds: without them
     a reader cannot tell whose authorization a 403 column describes, and three
     reports that differ only by caller would be indistinguishable.
+
+    `polaris_version` has no default version string on purpose: it defaulted
+    to "1.3.0-incubating" and kept stamping that on reports after the 1.6.0
+    upgrade. Callers pass `init_env`'s `POLARIS_VERSION`.
     """
     ts = (now or datetime.now()).strftime("%Y-%m-%d %H:%M")
     head = [
         "# API → SQL → MinIO Access Matrix",
         "",
-        f"Generated {ts} from a live local run — Polaris {polaris_version}, "
+        f"Generated {ts} from a live local run — "
+        f"Polaris {polaris_version or 'version unrecorded'}, "
         f"realm {realm}.",
     ]
     if schema_version is not None:

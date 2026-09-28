@@ -436,12 +436,16 @@ def do_drive(args):
         print("  ! ZERO statements captured. The report will be empty; do not")
         print("    publish it. See HANDOFF-api-index-matrix.md §1.")
 
+    from polaris_test_utils import POLARIS_VERSION, REALM
+
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     text = rep.render_matrix_report(
         res.records,
         api_table_matrix(res.records),
         case=args.case,
         identity=getattr(ctx.pc, "principal_name", None),
+        polaris_version=POLARIS_VERSION,
+        realm=REALM,
     )
     #: latest=False by default: only `doc-*-latest.md` is tracked, so refreshing
     #: it would replace the only version-controlled copy of the previous report.
