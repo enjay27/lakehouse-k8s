@@ -5,6 +5,40 @@ settle), **RESOLVED-INSTRUCTIVE** (fixed, kept because the failure mode recurs).
 
 ## Open
 
+**#49 — OPEN. Fluent Bit dropped chunks bound for OpenSearch.** Found 2026-09-29 by
+`step3-postupgrade.sh` §2: the `benchmarks-fluent-bit` pod log shows chunk
+`1-1790521489.391596114.flb` and chunk `1-1790522239.385528886.flb` failing to flush and then
+`cannot be retried` (log times 2026-09-27 15:05:30 and 15:18:24, `tail.0 > opensearch.0`). Each is
+a batch of tier-1 records that never reached OpenSearch. Not yet known: how many records, what
+OpenSearch answered (the warn lines carry no HTTP status), whether it recurs, and whether the log
+times are UTC (the image's default) or KST. Next: `kubectl -n datahub-hynix logs ds/benchmarks-fluent-bit | grep -E 'cannot be retried|\[error\]'`
+for the frequency, and the OpenSearch side for the rejection reason.
+
+**#50 — OPEN QUESTION (Kade decides). Review P5: the Lua and the Fluent Bit config are two deploy
+units.** Carried from `REVIEW-pipeline-2026-09-16.md` (deleted 2026-09-29), still undecided. The Lua
+ships as a kustomize ConfigMap and the config as a Helm release; their order is manual, and the
+wrong order is harmful (`#31`: one order stops every input, the other stores every access line as
+a parse error). `apply-lua.sh`'s restart logic and step3's "started after the ConfigMap" check exist
+only because of this split. **A:** one Helm release, `luaScripts` fed from the file (`--set-file`,
+Argo CD `fileParameters` in prod), the chart's `checksum/luascripts` restarts on change. **B:** keep
+the ConfigMap and put its sha in a pod annotation. Either reverses the 09-16 ConfigMap choice,
+whose main reason, hot reload, has been gone since then. Moot if the batch pipeline replaces the Lua.
+
+**#51 — OPEN (low). Three PostgreSQL roadmap assertions cannot fail.** Carried from
+`charts/polaris/HANDOFF-upgrade-1.6.0-2026-09-17.md` (deleted 2026-09-29). `postgresql.replicaCount: 3`
+is the subchart default; "pgpool pod count 3" inverts silently if the value is ever set to 1; and
+`persistence.size` 10Gi cannot be checked with `df`: `/bitnami/postgresql` reports 203G because
+OrbStack's local-path provisioner does not enforce the request. Check the PVC spec instead.
+
+**#52 — RESOLVED-INSTRUCTIVE 2026-09-29. `apply-lua.sh` refused to run for 8 days after the merge.**
+The 09-21 merge moved `fluent-bit/` to `releases/fluent-bit/` but not the paths inside the
+scripts: `apply-lua.sh` cd'd to the repo root and exited `FATAL: run inside the local-k8s repo`;
+`step3-postupgrade.sh` and `step11-replay-window.py` failed the same way. Fixed; the read-only half of
+`apply-lua.sh` was run from a subdirectory (context, 5 Lua suites ALL PASS, `kubectl diff` = 0), and
+step3 §3 passed (ConfigMap sha `f92bb6d4dbbfc346` == repo). **The lesson:** the merge's test repair
+fixed what pytest could see, and no gate runs the shell scripts, so a path moved under them failed only
+when someone ran them.
+
 **#48 — OPEN. File logging is back on with ONE `polaris.log` shared by every replica, so `#8`'s
 hazard returns the moment a second Polaris JVM exists.** 2026-09-27. **ROLLED ~18:34 KST, and a second
 JVM existed by 22:21 the same day.**
