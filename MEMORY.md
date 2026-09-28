@@ -14,7 +14,7 @@ OpenSearch on 09-27** (`#49`); matrix reports since 09-18 carry "Polaris 1.3.0" 
 **Log batch** (`logging/HANDOFF-polaris-log-batch-2026-09-28.md`): **LIVE since 2026-09-29** — release
 `polaris-log-batch`, **TEST PHASE: every 2 min** (prod is HH:03; restore after), limit 2Gi (rehearsal peaked 838 MB). First run published 27 hours,
 matched the local rehearsal on every count, moved 14 orphans ([session](.memory/sessions/2026-09-29-polaris-log-batch-first-run.md)).
-Next: Lua parity on real traffic, parallel run vs Fluent Bit tiers 2/3.
+Lua parity on real traffic **done** (only SPEC §9.1 diffs). Next: parallel run vs Fluent Bit tiers 2/3.
 
 **Lua pipeline:** `WINDOW_SECONDS` target **3600** (decided 2026-09-21) is **not rolled**; live is still the
 verification 30 (`logging/HANDOFF-pipeline-next-2026-09-16.md`). Roll with `bash releases/fluent-bit/apply-lua.sh`.

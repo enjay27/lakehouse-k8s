@@ -76,3 +76,37 @@ comment in `values.yaml`: restore them when the test phase ends.
 Verified: `polaris-log-batch-29843594` started 02:14:00 KST and `-29843596` 02:16:00 KST, Complete in 4 s
 and 5 s. **An idle run prints nothing** (hour `20260929-02` is not ready until 03:01) — an empty Job log
 with status Complete is the normal case in this phase, not a fault.
+
+## Handoff step 5 — parity on real traffic (02:17–02:40)
+Traffic, local only (`run_traffic.py --env local`): `smoke` run `1790615875` (27 calls, 25 covered; the
+`deleteCatalog -> 400` is the known undroppable fixture catalog) then `full` run `1790615924` (327 calls,
+278 covered, 8 windows 02:19:00–02:22:30 KST; 7 responses of 500). All inside hour `20260929-02`.
+
+**A late roll of an already-published hour.** The first write after 26 idle hours (02:17) rolled the pod's
+09-28 00:17 startup lines into `q6pz6.log.2026-09-28-00.gz` — an hour published at 01:52 from the `.log`.
+Not double-counted: its lines are timestamped hour 00 and hour 02 selects by timestamp. Not leaked:
+`housekeep_after` moves every roll named <= the hour just published, so it goes to `done/20260928/` with
+hour 02. (Checked in code; the real move is still to be seen on the PVC.)
+
+**Simulated the 03:02 run instead of waiting (Kade's call).** Copied the live `.log`, the late `.gz` and
+the real `.state/checkpoint.json` (`last_published 20260929-01`) out with mtimes restored, ran
+`--dry-run --no-pod-list --now 2026-09-29T03:02:00+09:00`: exactly one hour, `20260929-02` — 1,012 in /
+495 processed / 517 dropped / 0 malformed, invariant holds, `errors_5xx` 7 (= the 7 driven 500s),
+83 resources, 5 principals, peak RSS 35 MB.
+
+**step16 parity on those files: 22 diffs, every one the documented kind (SPEC §9.1).** 7 error requests
+that precede their resource's first success in the hour — 2 × GET 404 on `apimatrix1790615875_cat`,
+2 × GET 404 on `apimatrix1790615924_cat`, 3 × POST 500 on `bh_ns/tables` — sit in `__errors__` in the Lua
+and in the resource row in the batch. Exactly conserved: +7 requests / +1,068 bytes on the resource rows,
+−7 / −1,068 on `__errors__`, and the same for reads, writes, 4xx, 5xx. Errors *after* a success (DELETE 400,
+401, 403) agree. **Every summary counter identical.** Synthetic seed 7 identical in the same run.
+
+Wrong turns:
+- `P="kubectl … --"; $P cat …` — zsh does not word-split, the same trap the cleanup session recorded.
+  Write the command out.
+- **lupa 2.8 on macOS arm64 ships lua51–lua55 but no `luajit21`**, so step16 cannot run on the Mac.
+  Ran it unchanged in `docker run --rm --platform linux/amd64 python:3.11-slim` with the repo mounted
+  read-only, where `lupa.luajit21` imports. Swapping in `lua51` would have tested a runtime Fluent Bit
+  does not use.
+
+Still open: the real 03:02 publish (compare it to the simulation above); the in-cluster memory peak.

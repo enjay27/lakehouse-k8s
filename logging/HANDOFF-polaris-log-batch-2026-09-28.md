@@ -92,7 +92,12 @@ on the PVC → uid/gid in `charts/polaris-log-batch/values.yaml` must equal Pola
 After the next HH:03, `kubectl -n datahub-hynix get jobs` shows a `polaris-log-batch-<n>` Job that
 published exactly one hour.
 
-### 5. Parity on real logs (optional, strong)
+### 5. Parity on real logs (optional, strong) — DONE 2026-09-29
+Hour `20260929-02` (`run_traffic.py` smoke + full): 22 diffs, all the documented kind — 7 errors before
+their resource's first success, conserved exactly; every summary counter identical. **On an Apple-silicon
+Mac, lupa has no `luajit21`**: run step16 in `docker run --rm --platform linux/amd64 -v "$PWD":/repo:ro
+python:3.11-slim` (`pip install lupa` inside). Detail: `.memory/sessions/2026-09-29-polaris-log-batch-first-run.md`.
+
 Copy one hour's files out (`kubectl exec … cat` — the Polaris image has no tar/zcat), then
 `pip install lupa && python3 logging/scripts/step16-batch-lua-parity.py --file <files…> --hour YYYYMMDD-HH`.
 Expected differences only of the documented kind: an error before its resource's first success

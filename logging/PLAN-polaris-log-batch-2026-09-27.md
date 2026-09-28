@@ -101,7 +101,7 @@ unpublished hour from files still in place, to identical bytes.
    Run by hand: `python3 polaris_log_batch.py --log-dir DIR [--no-pod-list] [--now ISO] [--dry-run]`.
 4. Parity: **`logging/scripts/step16-batch-lua-parity.py`** runs the Lua filter itself (LuaJIT via `lupa`)
    and the batch on the same records — **identical on 5 seeds × ~5,300 lines** (2026-09-28); a
-   deliberately broken rule shows up as a diff. Still to do: `--file` against real per-pod files.
+   deliberately broken rule shows up as a diff. `--file` against real per-pod files: **done 2026-09-29** on hour `20260929-02` — only the documented diffs (7 errors before first success), every summary counter identical.
 5. **A separate build and release** (Kade, 2026-09-28 — first written inside the Polaris chart as
    `templates/log-batch.yaml` + a ConfigMap, then moved out the same day): image
    `images/polaris-log-batch/` (Dockerfile, the script baked in) and chart `charts/polaris-log-batch/`
