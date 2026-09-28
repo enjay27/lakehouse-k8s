@@ -1,18 +1,14 @@
 """Query the OpenSearch half of the Polaris log pipeline.
 
-WHY THIS IS NOT `vlogs`
------------------------
-There are two Fluent Bits running the same Lua and they do not read the same
-input, do not ship to the same place, and -- as of 2026-09-10 -- do not run the
-same schema version:
-
-    benchmarks-fluent-bit   DaemonSet   CRI stdout        -> OpenSearch   v3
-    fb-polaris-shipper      Deployment  PVC polaris.log   -> VictoriaLogs v2
-
-`src/vlogs.py` speaks LogsQL to the second one. `polaris_test_utils.os_client()`
-speaks to OpenSearch but is pinned to `k8s-logs-*`, the stock DaemonSet index,
-which is NOT `polaris-report-*` / `polaris-logs-*`. Neither could ask the
-questions in `GUIDE-schema-v3-testing.md`, so this module exists.
+WHY THIS MODULE EXISTS
+----------------------
+Until 2026-09-18 two Fluent Bits ran the same Lua: the DaemonSet
+`benchmarks-fluent-bit` (CRI stdout -> OpenSearch) and the Deployment
+`fb-polaris-shipper` (PVC `polaris.log` -> VictoriaLogs), with its own LogsQL
+client `vlogs.py`. The shipper, VictoriaLogs and `vlogs.py` are gone; the
+DaemonSet is the pipeline. `polaris_test_utils.os_client()` speaks to OpenSearch
+but is pinned to `k8s-logs-*`, the stock DaemonSet index, which is NOT
+`polaris-report-*` / `polaris-logs-*` -- so this module exists to query those.
 
 WHAT IS ENFORCED HERE RATHER THAN LEFT TO CALL SITES
 ----------------------------------------------------

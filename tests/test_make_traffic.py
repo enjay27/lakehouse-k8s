@@ -43,7 +43,7 @@ SPEC = (
 #: traffic side may not reach any of them, at module scope or inside a
 #: function.
 LOGGING_MODULES = frozenset(
-    {"log_coverage", "os_report", "vlogs", "opensearch_alert_provisioner"}
+    {"log_coverage", "os_report", "opensearch_alert_provisioner"}
 )
 
 #: `polaris_test_utils` is NOT on that list and the exemption is deliberate:
@@ -113,8 +113,8 @@ def test_traffic_helpers_does_not_import_back():
 
 
 def test_log_coverage_still_re_exports_every_moved_name():
-    """`polaris_log_coverage.ipynb` is the v1 RUN OF RECORD and must keep
-    working unedited while the split happens around it."""
+    """The log-coverage notebooks call the moved names as `lc.<name>` and must
+    keep working unedited while the split happens around them."""
     import log_coverage as lc
     import traffic_helpers as th
 

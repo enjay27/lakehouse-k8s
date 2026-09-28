@@ -6,7 +6,7 @@ boundary argument is `log-coverage/PLAN-split-traffic-and-verification.md`.
 
 **The one rule this file exists to enforce.** It has no logging concept. It
 does not know what a report window means, it does not read the Fluent Bit
-ConfigMap, and it never imports `log_coverage`, `os_report` or `vlogs`.
+ConfigMap, and it never imports `log_coverage` or `os_report`.
 `window_seconds` arrives as an ARGUMENT from the side that owns it, and the
 run is described in terms of what was asked of Polaris and what Polaris said.
 `test_make_traffic.py` asserts the import graph rather than trusting the

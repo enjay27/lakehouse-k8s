@@ -76,9 +76,10 @@ from datetime import datetime, timezone
 # Everything below used to be defined in this file. It was moved out so
 # `make_traffic` can be written without importing a logging module -- see
 # `traffic_helpers`' docstring and `SCENARIO-logging-test.md` §3. The names
-# are re-exported rather than relocated at every call site because
-# `polaris_log_coverage.ipynb` is the v1 RUN OF RECORD: it must keep
-# working, unedited, while the split happens around it.
+# are re-exported rather than relocated at every call site because the
+# log-coverage notebooks call them as `lc.<name>`. (The v1 run of record,
+# `polaris_log_coverage.ipynb`, needed VictoriaLogs and was removed
+# 2026-09-29; it is on `archive/pre-cleanup-2026-09-29`.)
 from traffic_helpers import (  # noqa: F401
     _PARAM,
     _as_int,
@@ -155,20 +156,20 @@ def lua_binary():
 
 
 def resolve_fb_values(explicit=None):
-    """Find the deployed Fluent Bit values file, or None.
+    """Find the shipper's Fluent Bit values file, or None.
 
-    In order: what the caller passed, `$FB_VALUES_PATH`, the documented
-    location, and finally the sibling checkout two levels up from this repo.
-    That last one resolves correctly both on the machine (`~/hynix/local-k8s`)
-    and inside a Cowork mount (`.../mnt/local-k8s`), which is what lets the
-    policy tests run in either place without a config file.
+    In order: what the caller passed, `$FB_VALUES_PATH`, and the copy in this
+    repo at `tests/fixtures/fb-values-shipper.yaml`. That file is the values of
+    `fb-polaris-shipper`, uninstalled 2026-09-18 with VictoriaLogs: it is the
+    oracle's fixture now, not configuration. The live policy is
+    `releases/fluent-bit/polaris_access_log.lua`; pointing the oracle at it is
+    an open question (active-issues M3), not a path swap.
     """
     here = pathlib.Path(__file__).resolve().parents[1]
     for cand in (
         explicit,
         os.environ.get("FB_VALUES_PATH"),
-        "~/hynix/local-k8s/logging/fb-values.yaml",
-        here / ".." / ".." / "local-k8s" / "logging" / "fb-values.yaml",
+        here / "tests" / "fixtures" / "fb-values-shipper.yaml",
     ):
         if not cand:
             continue
@@ -179,22 +180,19 @@ def resolve_fb_values(explicit=None):
 
 
 def load_policy(fb_values_path=None, key=LUA_KEY):
-    """Read the deployed Lua out of the Fluent Bit values file.
+    """Read the shipper's Lua out of a Fluent Bit values file.
 
-    `fb_values_path` comes from `init_env()` (`FB_VALUES_PATH`), defaulting to
-    `~/hynix/local-k8s/logging/fb-values.yaml`. That file is the ONE
-    authoritative copy of the script -- the chart renders `luaScripts` into a
-    ConfigMap mounted at `/fluent-bit/scripts/`, and nothing is passed with
-    `--set`.
+    `fb_values_path` defaults to `tests/fixtures/fb-values-shipper.yaml` (see
+    `resolve_fb_values`). The chart rendered `luaScripts` into a ConfigMap
+    mounted at `/fluent-bit/scripts/`, and nothing was passed with `--set`.
     """
     import yaml
 
     p = resolve_fb_values(fb_values_path)
     if p is None:
         raise PolicyUnavailable(
-            "fb-values.yaml not found. Set fb_values_path in "
-            "src/config/local.yaml (see local.example.yaml), or export "
-            "FB_VALUES_PATH."
+            "fb-values.yaml not found: pass a path, export FB_VALUES_PATH, or "
+            "restore tests/fixtures/fb-values-shipper.yaml."
         )
     raw = p.read_bytes()
     doc = yaml.safe_load(raw.decode("utf-8"))

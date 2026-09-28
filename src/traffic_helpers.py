@@ -10,12 +10,12 @@ boundary forbids.
 
 So the traffic half moved here, **verbatim**. Nothing in this file was
 rewritten; the docstrings still describe the runs that earned them.
-`log_coverage` re-imports every name below, which is why
-`polaris_log_coverage.ipynb` -- the v1 run of record -- keeps working untouched.
+`log_coverage` re-imports every name below, so notebooks that call them as
+`lc.<name>` keep working untouched.
 
 The dependency runs ONE WAY and the guard in `test_make_traffic.py` asserts it:
 
-    make_traffic  ->  traffic_helpers        (never log_coverage, os_report, vlogs)
+    make_traffic  ->  traffic_helpers        (never log_coverage, os_report)
     log_coverage  ->  traffic_helpers
 
 A helper belongs here if it *issues a request or shapes one*. It belongs in

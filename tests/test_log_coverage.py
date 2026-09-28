@@ -157,7 +157,7 @@ def test_a_configmap_carrying_a_stale_filter_is_not_a_match():
 # ------------------------------------------------------------- the oracle
 def _policy():
     if lc.resolve_fb_values() is None:
-        pytest.skip("local-k8s/logging/fb-values.yaml not reachable from here")
+        pytest.skip("tests/fixtures/fb-values-shipper.yaml is missing")
     try:
         lc.lua_binary()
     except lc.PolicyUnavailable as exc:

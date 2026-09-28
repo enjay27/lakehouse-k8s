@@ -29,8 +29,3 @@ polaris_version: "1.6.0"   # helm revision 9, deployed 2026-09-18 17:33 KST.
                            # string, so a stale value mislabels every run.
 purge_deletes_files: false      # issue #379 present locally → purge orphans files.
                                 # MEASURED ON 1.3.0, NOT RE-TESTED ON 1.6.0.
-
-# The Fluent Bit values file whose luaScripts block IS the deployed retention
-# policy. log-coverage/ runs that Lua to compute its "expected" column, so the
-# matrix cannot drift from what ships. Not a secret; per-machine, hence here.
-fb_values_path: ~/hynix/local-k8s/logging/fb-values.yaml
