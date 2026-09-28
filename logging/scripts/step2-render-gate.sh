@@ -4,14 +4,14 @@
 #
 # Checks a rendered manifest of `benchmarks-fluent-bit` before any helm upgrade.
 #
-#   kubectl kustomize fluent-bit/ > /tmp/render-lua.txt          # the Lua ConfigMap (v5+)
+#   kubectl kustomize releases/fluent-bit/ > /tmp/render-lua.txt          # the Lua ConfigMap (v5+)
 #   helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
-#     --version 0.57.6 -n datahub-hynix -f fluent-bit/values.yaml \
+#     --version 0.57.6 -n datahub-hynix -f releases/fluent-bit/values.yaml \
 #     --dry-run=client > /tmp/render-after.txt                     # NO --set-file since v5
 #   bash logging/scripts/step2-render-gate.sh /tmp/render-after.txt /tmp/render-lua.txt
 #
 # SINCE POLICY v5 (2026-09-16) THE LUA IS NOT IN THE HELM RENDER. It ships as its own
-# ConfigMap `polaris-fluent-bit-lua` (fluent-bit/kustomization.yaml), mounted through
+# ConfigMap `polaris-fluent-bit-lua` (releases/fluent-bit/kustomization.yaml), mounted through
 # extraVolumes. So the Lua-content checks moved to the second argument (the kustomize
 # output), and the helm render is checked for the wiring instead: the volume and the path.
 # HOT RELOAD WAS REMOVED THE SAME DAY (rev 17 had it): the render must carry NO reloader and
@@ -42,7 +42,7 @@ set -uo pipefail
 R="${1:-/tmp/render-after.txt}"
 L="${2:-/tmp/render-lua.txt}"
 [ -r "$R" ] || { echo "FATAL: cannot read $R"; exit 2; }
-[ -r "$L" ] || { echo "FATAL: cannot read $L (kubectl kustomize fluent-bit/ > $L)"; exit 2; }
+[ -r "$L" ] || { echo "FATAL: cannot read $L (kubectl kustomize releases/fluent-bit/ > $L)"; exit 2; }
 grep -q 'kind: DaemonSet' "$R" || echo "WARN: no 'kind: DaemonSet' in $R — is this the right render?"
 
 FAIL=0
@@ -160,10 +160,10 @@ STILL NOT PROVEN BY ANY OF THIS, and each has bitten this pipeline before:
   * that tier 1 still works on Fluent Bit 5.1.1. That is the one change reaching
     node-wide collection: confirm k8s-logs is still receiving after the rollout.
   * that the deployed script matches the file: step3 compares the sha of ConfigMap
-    polaris-fluent-bit-lua against fluent-bit/polaris_access_log.lua.
+    polaris-fluent-bit-lua against releases/fluent-bit/polaris_access_log.lua.
   * that the pod was RESTARTED after the ConfigMap last changed. Fluent Bit reads the Lua
     only at start; step3 compares the container start time with the ConfigMap's last change.
-    A Lua-only change goes through fluent-bit/apply-lua.sh (apply + restart in one step).
-  * ORDER: `kubectl apply -k fluent-bit/` BEFORE `helm upgrade`. A pod whose volume names a
+    A Lua-only change goes through releases/fluent-bit/apply-lua.sh (apply + restart in one step).
+  * ORDER: `kubectl apply -k releases/fluent-bit/` BEFORE `helm upgrade`. A pod whose volume names a
     ConfigMap that does not exist stays in ContainerCreating.
 EOT

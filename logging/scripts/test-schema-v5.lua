@@ -1,6 +1,6 @@
 -- 리포트 스키마 v5 / 정책 v5 회귀 테스트 — 404 집계만 + 요청 ID 보류.
 --
---   cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua
+--   cp releases/fluent-bit/polaris_access_log.lua /tmp/polaris.lua
 --   luajit logging/scripts/test-schema-v5.lua
 --
 -- v3/v4 동작은 test-schema-v3.lua / test-schema-v4.lua 가 계속 검증한다 (schema_version 기대값 6).

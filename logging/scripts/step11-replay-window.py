@@ -8,7 +8,7 @@ it compares the filter's output with the filter applied to the raw input, field 
     python3 logging/scripts/step11-replay-window.py .scratch/readout-2026-09-15T092000Z
 
 Needs `luajit` (Fluent Bit's runtime) or `lua5.1` on PATH. Run from the repo root.
-The Lua is fluent-bit/polaris_access_log.lua as it is in the repo -- if it differs from
+The Lua is releases/fluent-bit/polaris_access_log.lua as it is in the repo -- if it differs from
 the deployed ConfigMap (step3's sha check), a diff here means "repo != deployed", not a fault.
 
 First measured 2026-09-15 window 09:20:00Z (run 1789463971): 64 rows, 28 fields, 0 mismatches.
@@ -21,8 +21,8 @@ import json, os, re, shutil, subprocess, sys, tempfile
 
 d = sys.argv[1] if len(sys.argv) > 1 else sys.exit(__doc__)
 lua_bin = shutil.which("luajit") or shutil.which("lua5.1") or sys.exit("need luajit or lua5.1 on PATH")
-# POLARIS_LUA=<file> replays a candidate script instead (e.g. logging/candidates/*.lua).
-script = os.path.abspath(os.environ.get("POLARIS_LUA", "fluent-bit/polaris_access_log.lua"))
+# POLARIS_LUA=<file> replays a candidate script instead of the deployed one.
+script = os.path.abspath(os.environ.get("POLARIS_LUA", "releases/fluent-bit/polaris_access_log.lua"))
 rep = json.load(open(f"{d}/report.json"))
 t1 = json.load(open(f"{d}/tier1.json"))
 summary = [r for r in rep if r.get("report_type") == "summary"]

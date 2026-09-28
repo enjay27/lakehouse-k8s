@@ -19,11 +19,11 @@ NS=datahub-hynix
 DS=benchmarks-fluent-bit
 # sha256 (first 16) of the repo script, computed now -- so it cannot go stale. Run from the
 # repo root. Since policy v5 (2026-09-16) the script ships as its own ConfigMap
-# polaris-fluent-bit-lua (`bash fluent-bit/apply-lua.sh`), not through Helm/--set-file.
+# polaris-fluent-bit-lua (`bash releases/fluent-bit/apply-lua.sh`), not through Helm/--set-file.
 # kustomize v5.4.3 was measured to store the bytes verbatim, so the ConfigMap must hash identically.
 # (v4 as committed dfbbe21: f364c89653dfe481. v3 was the shipper's aa180e90b9f69bda.)
 LUA_CM=polaris-fluent-bit-lua
-LUA_FILE=fluent-bit/polaris_access_log.lua
+LUA_FILE=releases/fluent-bit/polaris_access_log.lua
 [ -r "$LUA_FILE" ] || { echo "FATAL: run from the repo root ($LUA_FILE not found)"; exit 2; }
 LUA_SHA_EXPECT=$(shasum -a 256 "$LUA_FILE" | cut -c1-16)
 FAIL=0
@@ -56,7 +56,7 @@ echo "=== 3. Is the DEPLOYED script the one in the repo -- and has the process L
 SHA=$(kubectl -n $NS get configmap $LUA_CM \
       -o jsonpath='{.data.polaris_access_log\.lua}' 2>/dev/null | shasum -a 256 | cut -c1-16)
 EMPTY_SHA=$(printf '' | shasum -a 256 | cut -c1-16)
-if [ -z "$SHA" ] || [ "$SHA" = "$EMPTY_SHA" ]; then bad "no $LUA_CM ConfigMap / no polaris_access_log.lua key (kubectl apply -k fluent-bit/)"
+if [ -z "$SHA" ] || [ "$SHA" = "$EMPTY_SHA" ]; then bad "no $LUA_CM ConfigMap / no polaris_access_log.lua key (kubectl apply -k releases/fluent-bit/)"
 elif [ "$SHA" = "$LUA_SHA_EXPECT" ]; then ok "ConfigMap lua sha $SHA matches the repo"
 else bad "ConfigMap lua sha $SHA != expected $LUA_SHA_EXPECT — deployed script differs from the file"; fi
 # No hot reload since 2026-09-16: Fluent Bit reads the Lua ONCE, at container start. The mounted file is
@@ -68,7 +68,7 @@ CM_T=$(kubectl -n $NS get configmap $LUA_CM -o jsonpath='{range .metadata.manage
 START_T=$(kubectl -n $NS get pod "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="fluent-bit")].state.running.startedAt}' 2>/dev/null)
 if [ -z "$CM_T" ] || [ -z "$START_T" ]; then huh "could not read ConfigMap change time ($CM_T) or container start ($START_T)"
 elif [[ ! "$START_T" < "$CM_T" ]]; then ok "fluent-bit started $START_T, after the ConfigMap's last change $CM_T -- it runs this script"
-else bad "fluent-bit started $START_T, BEFORE the ConfigMap changed at $CM_T -- the OLD script is running: bash fluent-bit/apply-lua.sh --restart"; fi
+else bad "fluent-bit started $START_T, BEFORE the ConfigMap changed at $CM_T -- the OLD script is running: bash releases/fluent-bit/apply-lua.sh --restart"; fi
 CONTAINERS=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[*].name}')
 [ "$CONTAINERS" = "fluent-bit" ] && ok "one container: fluent-bit (no reloader)" || bad "containers are '$CONTAINERS' -- expected only fluent-bit (hot reload removed)"
 ARGS=$(kubectl -n $NS get ds/$DS -o jsonpath='{.spec.template.spec.containers[?(@.name=="fluent-bit")].args}')

@@ -1,5 +1,5 @@
 -- R4 (2026-09-16 리팩터): 기동 직후 첫 틱 "이전" 에 들어온 레코드도 집계되는가.
---   cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua && luajit logging/scripts/test-first-tick.lua
+--   cp releases/fluent-bit/polaris_access_log.lua /tmp/polaris.lua && luajit logging/scripts/test-first-tick.lua
 -- 리팩터 이전 스크립트는 6건 FAIL 한다 (첫 틱 전 레코드가 어느 카운터에도 없었다). apply-lua.sh 가 돌린다.
 dofile("/tmp/polaris.lua")
 dofile("logging/scripts/test-raw-access-shim.lua")

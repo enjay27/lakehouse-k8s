@@ -104,7 +104,7 @@ for c in \
   "benchmarks-argo         argo/argo-workflows           argo/values.yaml" \
   "benchmarks-airflow      apache-airflow/airflow        airflow/values.yaml" \
   "benchmarks-jupyter      jupyterhub/jupyterhub         jupyter/values.yaml" \
-  "benchmarks-fluent-bit   fluent/fluent-bit             fluent-bit/values.yaml" \
+  "benchmarks-fluent-bit   fluent/fluent-bit             releases/fluent-bit/values.yaml" \
   "benchmarks-spark        bitnami/spark                 spark/values.yaml" ; do
     set -- $c
     echo "=== $1 ==="

@@ -1,6 +1,6 @@
 -- 리포트 스키마 v4 / 정책 v4 회귀 테스트. "배포되는" 스크립트 텍스트에 대해 돌린다.
 --
---   cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua     # 배포되는 스크립트 파일 그대로
+--   cp releases/fluent-bit/polaris_access_log.lua /tmp/polaris.lua     # 배포되는 스크립트 파일 그대로
 --   luajit logging/scripts/test-schema-v4.lua        # Fluent Bit 과 같은 LuaJIT (lua5.1 도 가능)
 --   luajit logging/scripts/test-schema-v3.lua        # v3 동작(분류, last_*, 롤, __errors__)
 --

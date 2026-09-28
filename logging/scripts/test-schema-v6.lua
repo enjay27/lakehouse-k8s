@@ -1,6 +1,6 @@
 -- 리포트 스키마 v6 회귀 테스트 — 메시지 필드 이름 `message`, 리포트 봉투 app/level 제거, 문장은 요약 행에만.
 --
---   cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua && luajit logging/scripts/test-schema-v6.lua
+--   cp releases/fluent-bit/polaris_access_log.lua /tmp/polaris.lua && luajit logging/scripts/test-schema-v6.lua
 -- 정책 동작(적재/집계)은 v3/v4/v5 테스트가 본다. 여기서는 v6 에서 바뀐 "문서 모양" 만 본다.
 dofile("/tmp/polaris.lua")
 dofile("logging/scripts/test-raw-access-shim.lua")

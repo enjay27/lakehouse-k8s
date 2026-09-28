@@ -1,4 +1,4 @@
-# `fluent-bit/` — what is deployed
+# `releases/fluent-bit/` — what is deployed
 
 Five files. Together they are the **only** log pipeline in this cluster: one DaemonSet release,
 `benchmarks-fluent-bit` (chart `fluent-bit-0.57.6`, image `5.1.1`, namespace `datahub-hynix`), tailing
@@ -34,10 +34,10 @@ Recovery: check out the previous script and run `apply-lua.sh` again.
 `type_int_key`, say):
 
 ```bash
-bash fluent-bit/apply-lua.sh --no-restart     # ConfigMap first, no restart
+bash releases/fluent-bit/apply-lua.sh --no-restart     # ConfigMap first, no restart
 bash logging/scripts/step2-render-gate.sh ...  # render gate
 helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
-  --version 0.57.6 -n datahub-hynix -f fluent-bit/values.yaml   # Helm's checksum annotation restarts the pod
+  --version 0.57.6 -n datahub-hynix -f releases/fluent-bit/values.yaml   # Helm's checksum annotation restarts the pod
 ```
 
 with **no restart in between**. A pod that comes up with only one half of the change either fails filter

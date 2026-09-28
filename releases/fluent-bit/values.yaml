@@ -26,11 +26,11 @@
 #
 # ── v4 → v5 에서 바뀐 것 (2026-09-16) ─────────────────────────────────────────────────
 #   * Lua 는 Helm 값이 아니라 별도 ConfigMap `polaris-fluent-bit-lua` 로 배포한다.
-#     원본 fluent-bit/polaris_access_log.lua, 래퍼 fluent-bit/kustomization.yaml.
+#     원본 releases/fluent-bit/polaris_access_log.lua, 래퍼 releases/fluent-bit/kustomization.yaml.
 #     `--set-file` 은 더 이상 쓰지 않는다.
 #   * hot reload 는 쓰지 않는다 (2026-09-16, Kade 결정). Fluent Bit 은 설정과 Lua 를 파드 시작 때만
 #     읽는다. 변경은 항상 파드 재시작으로 반영된다 — Helm config 변경은 차트의 checksum/config
-#     어노테이션이 재시작시키고, Lua 변경은 fluent-bit/apply-lua.sh 가 apply 후 재시작한다.
+#     어노테이션이 재시작시키고, Lua 변경은 releases/fluent-bit/apply-lua.sh 가 apply 후 재시작한다.
 #   * FILTER 3 의 script 경로: /fluent-bit/polaris-lua/polaris_access_log.lua (FILTER 2 는 R1 로 합쳐져 없다)
 #   * FILTER 3 정수 키 목록: counted_404 app_dropped_404 held_orphans held_pending 추가.
 #   판정 규칙(404 집계만 + 요청 ID 보류, 허용 목록, 커밋 시간, 시크릿 가드)은 전부 Lua 에 있다.
@@ -39,18 +39,18 @@
 #
 # ── 설치 / 업그레이드 ─────────────────────────────────────────────────────────────────
 #   kubectl config current-context        # 반드시 orbstack
-#   cd ~/hynix/local-k8s
+#   cd ~/hynix/lakehouse-k8s
 #   # 0) Lua 단위 테스트 (Fluent Bit 과 같은 LuaJIT)
-#   cp fluent-bit/polaris_access_log.lua /tmp/polaris.lua
+#   cp releases/fluent-bit/polaris_access_log.lua /tmp/polaris.lua
 #   luajit logging/scripts/test-schema-v3.lua && luajit logging/scripts/test-schema-v4.lua \
 #     && luajit logging/scripts/test-schema-v5.lua && luajit logging/scripts/test-schema-v6.lua \
 #     && luajit logging/scripts/test-first-tick.lua
 #   # 1) Lua ConfigMap — 파드가 마운트하므로 Helm 보다 먼저 존재해야 한다
-#   kubectl apply -k fluent-bit/
+#   kubectl apply -k releases/fluent-bit/
 #   # 2) 렌더 + 게이트 (Lua ConfigMap 렌더와 Helm 렌더 둘 다), 통과하면 --dry-run 없이 실행
-#   kubectl kustomize fluent-bit/ > /tmp/render-lua.txt
+#   kubectl kustomize releases/fluent-bit/ > /tmp/render-lua.txt
 #   helm upgrade --install benchmarks-fluent-bit fluent/fluent-bit \
-#     --version 0.57.6 -n datahub-hynix -f fluent-bit/values.yaml \
+#     --version 0.57.6 -n datahub-hynix -f releases/fluent-bit/values.yaml \
 #     --dry-run=client > /tmp/render-after.txt
 #   bash logging/scripts/step2-render-gate.sh /tmp/render-after.txt /tmp/render-lua.txt
 #   # 3) 롤 후, 저장소 루트에서 (템플릿이 바뀌었으면 step9 / step12 로 재적용)
@@ -58,7 +58,7 @@
 #   bash logging/scripts/step9-report-index-template.sh
 #   bash logging/scripts/step12-logs-index-template.sh
 #
-#   이후 스크립트만 바꿀 때는 Helm 없이:  bash fluent-bit/apply-lua.sh
+#   이후 스크립트만 바꿀 때는 Helm 없이:  bash releases/fluent-bit/apply-lua.sh
 #     (컨텍스트 확인 → Lua 테스트 v3–v6 + first-tick → kubectl apply -k → rollout restart → rollout status).
 #   ⚠ apply 만 하고 재시작하지 않으면 파드는 이전 스크립트로 계속 돈다 — 아무 경고도 없다 (#13/#20).
 #     step3 는 fluent-bit 컨테이너 시작 시각이 ConfigMap 마지막 변경보다 늦은지 확인한다.
@@ -149,9 +149,9 @@ tolerations:
 
 # ── Lua 스크립트 ────────────────────────────────────────────────────────────────────
 # 차트의 luaScripts 는 비워 둔다. 스크립트는 kustomize 가 만드는 ConfigMap
-# `polaris-fluent-bit-lua` 에 있고 (fluent-bit/kustomization.yaml), 아래 extraVolumes 로
+# `polaris-fluent-bit-lua` 에 있고 (releases/fluent-bit/kustomization.yaml), 아래 extraVolumes 로
 # /fluent-bit/polaris-lua/ 에 마운트된다. 파일은 kubelet 이 갱신하지만 Fluent Bit 은 시작 때만 읽으므로
-# 반영은 재시작으로 한다 (fluent-bit/apply-lua.sh). luaScripts 가 비어 있고 hotReload 가 꺼져 있으면
+# 반영은 재시작으로 한다 (releases/fluent-bit/apply-lua.sh). luaScripts 가 비어 있고 hotReload 가 꺼져 있으면
 # 차트는 `<릴리스>-luascripts` ConfigMap 과 /fluent-bit/scripts 마운트를 만들지 않는다.
 luaScripts: {}
 
