@@ -64,3 +64,15 @@ null, nothing moved, `q6pz6` reported idle (last line `20260928-00`). Checkpoint
   (SPEC §보존): the outputs go ~2026-10-02 01:52 KST (3 days after publication), but the moved raw files
   in `done/` keep their **original** mtime, so `done/20260927/` goes ~09-30 23:20 — 1.9 days after
   publication, not the 3 PLAN D5 says. The SPEC documents this; PLAN D5's wording is the looser one.
+
+## Test phase: every 2 minutes (release rev 2, 02:12)
+Kade asked for the Job to run every 2 minutes during testing. The script's unit is the closed KST hour
+(`HOUR`, `last_ready = floor_hour(now - grace) - 1h`), so a schedule change alone does not give output
+every 2 minutes — asked; Kade chose **schedule only** over making the window configurable (a code change
+whose test output would no longer match the hourly production contract). Values: `*/2 * * * *`,
+`activeDeadlineSeconds` 3000 -> 110 (a run must end before the next start; runs take 4–9 s),
+`startingDeadlineSeconds` 600 -> 60. Read back from the running CronJob. Production values are kept in a
+comment in `values.yaml`: restore them when the test phase ends.
+Verified: `polaris-log-batch-29843594` started 02:14:00 KST and `-29843596` 02:16:00 KST, Complete in 4 s
+and 5 s. **An idle run prints nothing** (hour `20260929-02` is not ready until 03:01) — an empty Job log
+with status Complete is the normal case in this phase, not a fault.

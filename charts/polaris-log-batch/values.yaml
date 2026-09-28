@@ -14,12 +14,16 @@ image:
   # repository at the internal registry Jenkins pushes to, and use IfNotPresent.
   pullPolicy: Never
 
-schedule: "3 * * * *"
+# TEST PHASE (Kade, 2026-09-29): every 2 minutes. The script still publishes whole closed KST hours,
+# so each hour appears once, ~1-3 min after H+1:00; the other runs that hour find nothing ready and
+# exit. Production values, to restore after the test phase:
+#   schedule "3 * * * *" · activeDeadlineSeconds 3000 · startingDeadlineSeconds 600
+schedule: "*/2 * * * *"
 # Kubernetes >= 1.27. The script computes KST itself; this only makes the schedule read as KST.
 timeZone: Asia/Seoul
 suspend: false
-activeDeadlineSeconds: 3000   # a run normally takes seconds; stop a stuck one before the next hour
-startingDeadlineSeconds: 600
+activeDeadlineSeconds: 110    # a run normally takes seconds; stop a stuck one before the next start
+startingDeadlineSeconds: 60   # a start missed by more than this is skipped, not run late
 backoffLimit: 1
 successfulJobsHistoryLimit: 3
 failedJobsHistoryLimit: 3

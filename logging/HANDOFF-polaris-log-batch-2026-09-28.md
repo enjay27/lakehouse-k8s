@@ -10,7 +10,7 @@ Replace the Fluent Bit Lua pipeline for Polaris audit logs with files our team o
 
 ```
 Polaris pods --per-pod JSON log, hourly KST .gz--> PVC polaris-logs-pvc (/deployments/logs)
-CronJob polaris-log-batch (HH:03 KST) -----------> processed-logs/ aggregated-logs/ malformed/ on the same PVC
+CronJob polaris-log-batch (HH:03 KST; */2 in the test phase) -> processed-logs/ aggregated-logs/ malformed/ on the same PVC
 Observability team (not us) ---------------------> fetch from the PVC -> OpenSearch
 ```
 
@@ -30,6 +30,11 @@ Observability team (not us) ---------------------> fetch from the PVC -> OpenSea
 published 27 hours (`20260927-22` .. `20260929-00`), moved 2 rolls + 14 orphans to `done/`, and matched a
 local `--dry-run` rehearsal on every count. The rehearsal peaked at **838 MB** RSS against the old 1Gi
 limit (step15's 64 MB files), hence 2Gi. Remaining: step 5 onwards.
+
+**Test phase (release rev 2, 2026-09-29): the CronJob runs every 2 minutes** (`*/2 * * * *`,
+`activeDeadlineSeconds` 110, `startingDeadlineSeconds` 60). The script still publishes whole closed KST
+hours, so output still appears once per hour, ~1–3 min after H+1:00; the other runs exit with nothing
+ready. **Restore before production:** `3 * * * *` · 3000 · 600 (also written in `values.yaml`).
 
 ## Do next, in this order
 
